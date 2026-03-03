@@ -1,0 +1,29 @@
+{
+  "name": "dotli",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-noise": "^17.0.0",
+    "@chainsafe/libp2p-yamux": "^8.0.1",
+    "@ensdomains/content-hash": "^3.0.0",
+    "@helia/unixfs": "^7.0.4",
+    "@libp2p/websockets": "^10.1.4",
+    "@multiformats/blake2": "^2.0.2",
+    "@multiformats/multiaddr": "^13.0.1",
+    "@noble/hashes": "^2.0.1",
+    "helia": "^6.0.20",
+    "multiformats": "^13.4.2",
+    "polkadot-api": "^1.23.3",
+    "viem": "^2.46.3"
+  }
+}
