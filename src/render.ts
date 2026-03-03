@@ -5,6 +5,7 @@
 // Uses blob URLs so the container bridge can communicate via postMessage.
 
 import { setupContainer } from "./container";
+import type { ArchiveFiles } from "./archive";
 
 const app = document.getElementById("app")!;
 
@@ -12,22 +13,14 @@ let currentDispose: (() => void) | null = null;
 let currentBlobUrl: string | null = null;
 
 /**
- * Render HTML content in a sandboxed iframe with host-container bridge.
+ * Render single-file HTML content in a sandboxed iframe with host-container bridge.
  *
  * Creates a blob URL from the content and passes it to createIframeProvider,
  * which sets iframe.src itself. The container bridge enables postMessage
  * communication between the SPA and dot.li.
  */
 export function renderContent(content: Uint8Array, label: string): void {
-  // Clean up previous container
-  if (currentDispose) {
-    currentDispose();
-    currentDispose = null;
-  }
-  if (currentBlobUrl) {
-    URL.revokeObjectURL(currentBlobUrl);
-    currentBlobUrl = null;
-  }
+  cleanup();
 
   const html = new TextDecoder().decode(content);
 
@@ -36,21 +29,78 @@ export function renderContent(content: Uint8Array, label: string): void {
   const blobUrl = URL.createObjectURL(blob);
   currentBlobUrl = blobUrl;
 
-  // Clear the app container
+  renderIframe(blobUrl, label);
+}
+
+/**
+ * Render a multi-file SPA archive via the Service Worker.
+ *
+ * Sends the file map to the SW, then loads the iframe from the SW scope.
+ * The SW intercepts all fetch requests and serves files from the archive.
+ */
+export async function renderArchive(
+  files: ArchiveFiles,
+  label: string,
+): Promise<void> {
+  cleanup();
+
+  const sw = navigator.serviceWorker?.controller;
+  if (!sw) {
+    // SW not ready — fall back to rendering index.html as single file
+    const indexHtml = files["index.html"];
+    if (indexHtml) {
+      return renderContent(indexHtml, label);
+    }
+    throw new Error("No service worker and no index.html in archive");
+  }
+
+  // Convert Uint8Arrays to ArrayBuffers for structured clone transfer
+  const transferableFiles: Record<string, ArrayBuffer> = {};
+  for (const [path, data] of Object.entries(files)) {
+    const copy = new ArrayBuffer(data.byteLength);
+    new Uint8Array(copy).set(data);
+    transferableFiles[path] = copy;
+  }
+
+  // Send archive to the SW
+  sw.postMessage(
+    { type: "SET_ARCHIVE", files: transferableFiles },
+    Object.values(transferableFiles),
+  );
+
+  // Small delay to let the SW process the message
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // Load the iframe from the SW scope
+  const swUrl = `${window.location.origin}/dotli-app/index.html`;
+  renderIframe(swUrl, label);
+}
+
+function renderIframe(url: string, label: string): void {
   app.innerHTML = "";
 
   const iframe = document.createElement("iframe");
   iframe.sandbox.add("allow-scripts", "allow-same-origin");
   iframe.style.cssText =
     "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
-  // Don't set iframe.src — the container provider does that
 
   document.body.style.margin = "0";
   document.body.style.overflow = "hidden";
   app.appendChild(iframe);
 
-  // Wire up the host-container bridge (sets iframe.src to blobUrl)
-  currentDispose = setupContainer(iframe, blobUrl, label);
+  // Wire up the host-container bridge (sets iframe.src)
+  currentDispose = setupContainer(iframe, url, label);
+}
+
+function cleanup(): void {
+  if (currentDispose) {
+    currentDispose();
+    currentDispose = null;
+  }
+  if (currentBlobUrl) {
+    URL.revokeObjectURL(currentBlobUrl);
+    currentBlobUrl = null;
+  }
 }
 
 /**

@@ -19,6 +19,7 @@
     "@chainsafe/libp2p-yamux": "^8.0.1",
     "@ensdomains/content-hash": "^3.0.0",
     "@helia/unixfs": "^7.0.4",
+    "@ipld/car": "^5.4.2",
     "@libp2p/websockets": "^10.1.4",
     "@multiformats/blake2": "^2.0.2",
     "@multiformats/multiaddr": "^13.0.1",

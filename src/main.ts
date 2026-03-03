@@ -3,8 +3,14 @@
 // Flow: parse URL → resolve .dot name via smoldot → fetch content from Bulletin → render in iframe
 
 import { resolveDotName, destroyClient } from "./resolve";
-import { fetchContent, destroyHelia } from "./fetch";
-import { renderContent, showStatus, showError, showLanding } from "./render";
+import { fetchArchive, destroyHelia } from "./fetch";
+import {
+  renderContent,
+  renderArchive,
+  showStatus,
+  showError,
+  showLanding,
+} from "./render";
 import { initAuth } from "./auth";
 import { initTopBar } from "./topbar";
 
@@ -35,10 +41,34 @@ function parseDotLabel(): string | null {
   return null;
 }
 
+/**
+ * Register the Service Worker for multi-file SPA support.
+ * The SW intercepts requests under /dotli-app/ and serves files from an in-memory archive.
+ */
+async function registerServiceWorker(): Promise<void> {
+  if (!("serviceWorker" in navigator)) return;
+
+  try {
+    const reg = await navigator.serviceWorker.register("/sw.js");
+    // Wait for the SW to be active
+    if (reg.active) return;
+    await new Promise<void>((resolve) => {
+      const sw = reg.installing || reg.waiting;
+      if (!sw) return resolve();
+      sw.addEventListener("statechange", () => {
+        if (sw.state === "activated") resolve();
+      });
+    });
+  } catch (err) {
+    console.warn("[dot.li] Service worker registration failed:", err);
+  }
+}
+
 async function main(): Promise<void> {
-  // Initialize auth adapter and top bar UI (non-blocking)
+  // Initialize auth adapter, top bar UI, and service worker (non-blocking)
   initAuth();
   initTopBar();
+  registerServiceWorker();
 
   const label = parseDotLabel();
 
@@ -65,12 +95,16 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Step 2: Fetch the content from Bulletin Chain
-    const content = await fetchContent(cid, showStatus);
+    // Step 2: Fetch the content (detects single file vs directory)
+    const result = await fetchArchive(cid, showStatus);
 
     // Step 3: Render in sandboxed iframe
     showStatus("Rendering...");
-    renderContent(content, label);
+    if (result.type === "archive") {
+      await renderArchive(result.files, label);
+    } else {
+      renderContent(result.content, label);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     showError("Resolution failed", message);

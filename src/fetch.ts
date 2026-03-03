@@ -15,6 +15,7 @@ import { from as hasherFrom } from "multiformats/hashes/hasher";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { BULLETIN_PEERS, IPFS_GATEWAY } from "./config";
 import type { StatusCallback } from "./resolve";
+import { isCarFile, parseIpfsResponse, type ArchiveFiles } from "./archive";
 
 const keccak256Hasher = hasherFrom({
   name: "keccak-256",
@@ -149,6 +150,94 @@ export async function fetchContent(
 
   // Fallback to gateway
   return await fetchViaGateway(cidString, onStatus);
+}
+
+// ── Multi-file archive support ─────────────────────────────
+
+export type FetchResult =
+  | { type: "single"; content: Uint8Array }
+  | { type: "archive"; files: ArchiveFiles };
+
+/**
+ * Fetch content as CAR archive from the IPFS gateway.
+ * The gateway's ?format=car returns the entire directory tree in one response.
+ */
+async function fetchCarFromGateway(
+  cidString: string,
+  onStatus?: StatusCallback,
+): Promise<Uint8Array> {
+  const url = `${IPFS_GATEWAY}/ipfs/${cidString}?format=car`;
+  onStatus?.("Fetching archive from IPFS gateway...");
+
+  const response = await fetch(url, {
+    headers: { Accept: "application/vnd.ipld.car" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gateway CAR fetch failed: HTTP ${response.status}`);
+  }
+
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/**
+ * Fetch content by CID, supporting both single files and multi-file directories.
+ *
+ * Strategy:
+ * 1. Fetch via P2P first (works for single files on Bulletin Chain)
+ * 2. If the fetched content is a CAR file (directory), parse it into an archive
+ * 3. If P2P fails, try gateway with ?format=car (returns directory as CAR)
+ * 4. Parse whatever we get — parseIpfsResponse handles both CAR and raw content
+ */
+export async function fetchArchive(
+  cidString: string,
+  onStatus?: StatusCallback,
+): Promise<FetchResult> {
+  // Try P2P first (fast for single files on Bulletin Chain)
+  try {
+    const content = await fetchViaP2P(cidString, onStatus);
+    // Check if P2P returned a CAR file (unlikely but handle it)
+    if (isCarFile(content)) {
+      onStatus?.("Parsing archive...");
+      const files = await parseIpfsResponse(content);
+      return toFetchResult(files);
+    }
+    return { type: "single", content };
+  } catch (p2pError) {
+    onStatus?.(
+      `P2P failed (${(p2pError as Error).message}), trying gateway...`,
+    );
+  }
+
+  // Try gateway with CAR format (handles both directories and single files)
+  try {
+    const carBuffer = await fetchCarFromGateway(cidString, onStatus);
+    onStatus?.("Parsing content...");
+    const files = await parseIpfsResponse(carBuffer);
+    return toFetchResult(files);
+  } catch (carError) {
+    onStatus?.(
+      `CAR fetch failed (${(carError as Error).message}), trying raw gateway...`,
+    );
+  }
+
+  // Final fallback: plain gateway fetch (single file)
+  const content = await fetchViaGateway(cidString, onStatus);
+  return { type: "single", content };
+}
+
+/**
+ * Convert a parsed file map to a FetchResult.
+ * If the archive only contains index.html, treat it as a single file.
+ */
+function toFetchResult(files: ArchiveFiles): FetchResult {
+  const keys = Object.keys(files);
+  if (keys.length === 1 && keys[0] === "index.html") {
+    return { type: "single", content: files["index.html"]! };
+  }
+  const fileCount = keys.length;
+  console.log(`[dot.li] Loaded archive with ${fileCount} file(s):`, keys);
+  return { type: "archive", files };
 }
 
 /**
