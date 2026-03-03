@@ -372,6 +372,88 @@
                 cursor: not-allowed;
             }
 
+            /* ── Desktop Banner ───────────────────────── */
+            .desktop-banner {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                z-index: 900;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 12px 16px;
+                background: #fff;
+                border-radius: 10px;
+                box-shadow: 0 2px 20px rgba(0, 0, 0, 0.4);
+                max-width: 320px;
+                opacity: 1;
+                transform: translateY(0);
+                transition:
+                    opacity 0.3s ease,
+                    transform 0.3s ease;
+            }
+            .desktop-banner.hidden {
+                opacity: 0;
+                transform: translateY(12px);
+                pointer-events: none;
+            }
+            .desktop-banner-icon {
+                flex-shrink: 0;
+                width: 32px;
+                height: 32px;
+                background: #000;
+                border-radius: 8px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .desktop-banner-icon svg {
+                width: 16px;
+                height: 16px;
+            }
+            .desktop-banner-text {
+                flex: 1;
+                min-width: 0;
+            }
+            .desktop-banner-text a {
+                display: block;
+                font-size: 0.78rem;
+                font-weight: 500;
+                color: #000;
+                text-decoration: none;
+                line-height: 1.35;
+            }
+            .desktop-banner-text a:hover {
+                text-decoration: underline;
+            }
+            .desktop-banner-text .subtitle {
+                font-size: 0.68rem;
+                font-weight: 400;
+                color: #666;
+                margin-top: 1px;
+            }
+            .desktop-banner-close {
+                flex-shrink: 0;
+                width: 20px;
+                height: 20px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: none;
+                border: none;
+                color: #999;
+                cursor: pointer;
+                border-radius: 4px;
+                transition:
+                    color 0.15s,
+                    background 0.15s;
+                padding: 0;
+            }
+            .desktop-banner-close:hover {
+                color: #000;
+                background: #eee;
+            }
+
             /* ── App Content ─────────────────────────── */
             #app {
                 display: flex;
@@ -494,6 +576,75 @@
                 <p id="status">Initializing...</p>
             </div>
         </div>
+        <!-- Desktop Download Banner -->
+        <div class="desktop-banner" id="desktop-banner">
+            <div class="desktop-banner-icon">
+                <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#fff"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                    <line x1="8" y1="21" x2="16" y2="21" />
+                    <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+            </div>
+            <div class="desktop-banner-text">
+                <a
+                    href="https://polkadot.com/get-started/polkadot-for-desktop"
+                    target="_blank"
+                    rel="noopener"
+                >
+                    Get Polkadot Desktop
+                    <span class="subtitle"
+                        >Full experience with native performance</span
+                    >
+                </a>
+            </div>
+            <button
+                class="desktop-banner-close"
+                id="desktop-banner-close"
+                aria-label="Dismiss"
+            >
+                <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <script>
+            (function () {
+                var banner = document.getElementById("desktop-banner");
+                if (localStorage.getItem("desktop-banner-dismissed")) {
+                    banner.remove();
+                } else {
+                    document
+                        .getElementById("desktop-banner-close")
+                        .addEventListener("click", function () {
+                            banner.classList.add("hidden");
+                            localStorage.setItem(
+                                "desktop-banner-dismissed",
+                                "1",
+                            );
+                            setTimeout(function () {
+                                banner.remove();
+                            }, 300);
+                        });
+                }
+            })();
+        </script>
         <script type="module" src="/src/main.ts"></script>
     </body>
 </html>
