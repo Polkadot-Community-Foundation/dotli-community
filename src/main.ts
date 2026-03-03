@@ -47,6 +47,10 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Show the .dot domain in the URL bar
+  const urlBar = document.getElementById("topbar-url")!;
+  urlBar.innerHTML = `<div class="topbar-url-pill"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span><span class="dot-domain">${label}</span><span class="dot-tld">.dot</span></span></div>`;
+
   showStatus(`Resolving ${label}.dot...`);
 
   try {

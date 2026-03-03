@@ -15,6 +15,7 @@ import { fromPromise } from "neverthrow";
 import { getAuthState, onAuthStateChange, type AuthState } from "./auth";
 import { showSignPayloadModal, showSignRawModal } from "./signing";
 import { deriveProductPublicKey } from "./account";
+import { createChainProvider, isChainSupported } from "./chains";
 
 /**
  * Set up the host container for an iframe displaying a .dot SPA.
@@ -52,16 +53,19 @@ export function setupContainer(
 
   // ── Feature support ────────────────────────────────────
 
-  container.handleFeatureSupported((_params, { ok }) => {
-    // No chain registry support yet
-    return ok(false);
+  container.handleFeatureSupported((params, { ok }) => {
+    switch (params.tag) {
+      case "Chain":
+        return ok(isChainSupported(params.value));
+      default:
+        return ok(false);
+    }
   });
 
   // ── Chain connection ───────────────────────────────────
 
-  container.handleChainConnection((_genesisHash) => {
-    // No chain providers in the web version yet
-    return null;
+  container.handleChainConnection((genesisHash) => {
+    return createChainProvider(genesisHash);
   });
 
   // ── Accounts ───────────────────────────────────────────

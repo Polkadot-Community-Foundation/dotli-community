@@ -27,6 +27,32 @@ import {
 
 export type StatusCallback = (status: string) => void;
 
+// Shared smoldot instance and relay chain — reused by chain provider factory
+let smoldotInstance: ReturnType<typeof startFromWorker> | null = null;
+let relayChainPromise: Promise<
+  Awaited<ReturnType<ReturnType<typeof startFromWorker>["addChain"]>>
+> | null = null;
+
+/**
+ * Get or create the shared smoldot instance.
+ */
+export function getSmoldot(): ReturnType<typeof startFromWorker> {
+  if (!smoldotInstance) {
+    smoldotInstance = startFromWorker(new SmWorker());
+  }
+  return smoldotInstance;
+}
+
+/**
+ * Get or create the Paseo relay chain (needed as potentialRelayChain for parachains).
+ */
+export function getRelayChain() {
+  if (!relayChainPromise) {
+    relayChainPromise = getSmoldot().addChain({ chainSpec: paseoChainSpec });
+  }
+  return relayChainPromise;
+}
+
 let clientInstance: PolkadotClient | null = null;
 let apiInstance: ReturnType<PolkadotClient["getUnsafeApi"]> | null = null;
 
@@ -40,10 +66,10 @@ async function ensureClient(
   if (apiInstance) return apiInstance;
 
   onStatus?.("Starting light client...");
-  const smoldot = startFromWorker(new SmWorker());
+  const smoldot = getSmoldot();
 
   onStatus?.("Adding Paseo relay chain...");
-  const relayChain = await smoldot.addChain({ chainSpec: paseoChainSpec });
+  const relayChain = await getRelayChain();
 
   onStatus?.("Adding Asset Hub Paseo...");
   const chain = smoldot.addChain({
