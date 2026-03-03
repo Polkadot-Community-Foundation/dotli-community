@@ -228,6 +228,43 @@ export async function resolveDotName(
 }
 
 /**
+ * Resolve the owner of a .dot name.
+ *
+ * @param label - The domain label (e.g., "myapp" for "myapp.dot")
+ * @returns The EVM address of the owner, or null if the domain doesn't exist
+ */
+export async function resolveOwner(label: string): Promise<string | null> {
+  const api = await ensureClient();
+
+  const domain = `${label}.dot`;
+  const node = namehash(domain);
+
+  const calldata = encodeFunctionData({
+    abi: REGISTRY_ABI,
+    functionName: "owner",
+    args: [node as `0x${string}`],
+  });
+
+  try {
+    const result = await reviveCall(api, CONTRACTS.DOTNS_REGISTRY, calldata);
+    const owner = decodeFunctionResult({
+      abi: REGISTRY_ABI,
+      functionName: "owner",
+      data: result,
+    }) as unknown as string;
+
+    // Zero address means no owner
+    if (!owner || owner === "0x0000000000000000000000000000000000000000") {
+      return null;
+    }
+
+    return owner;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Destroy the light client (cleanup).
  */
 export function destroyClient(): void {

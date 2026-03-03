@@ -32,6 +32,13 @@ export const REGISTRY_ABI = [
     outputs: [{ name: "", type: "bool" }],
     stateMutability: "view",
   },
+  {
+    type: "function",
+    name: "owner",
+    inputs: [{ name: "node", type: "bytes32" }],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+  },
 ] as const;
 
 // --- Revive dry-run limits (max values for read-only calls) ---

@@ -70,7 +70,7 @@
                 font-size: 0.75rem;
                 color: #888;
                 letter-spacing: 0.01em;
-                user-select: all;
+                user-select: none;
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
@@ -83,9 +83,116 @@
                 color: #555;
                 font-weight: 500;
             }
+            .topbar-url-pill {
+                cursor: pointer;
+                transition: border-color 0.15s;
+            }
+            .topbar-url-pill:hover {
+                border-color: #444;
+            }
             .topbar-url-pill svg {
                 flex-shrink: 0;
                 color: #444;
+            }
+
+            /* ── Domain Info Popover ─────────────────── */
+            .domain-popover {
+                display: none;
+                position: fixed;
+                top: 44px;
+                left: 50%;
+                transform: translateX(-50%);
+                width: 280px;
+                background: #171717;
+                border: 1px solid #333;
+                border-radius: 10px;
+                z-index: 1500;
+                padding: 14px 16px;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            }
+            .domain-popover.open {
+                display: block;
+            }
+            .domain-popover-row {
+                display: flex;
+                align-items: baseline;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            .domain-popover-row:last-child {
+                margin-bottom: 0;
+            }
+            .domain-popover-label {
+                font-size: 0.68rem;
+                color: #666;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                flex-shrink: 0;
+                width: 48px;
+            }
+            .domain-popover-value {
+                font-size: 0.75rem;
+                color: #ccc;
+                font-family:
+                    ui-monospace, "Cascadia Code", "Source Code Pro", Menlo,
+                    Consolas, monospace;
+                word-break: break-all;
+                line-height: 1.4;
+            }
+            .domain-popover-value.loading {
+                color: #555;
+            }
+            .domain-popover-copy {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 18px;
+                height: 18px;
+                background: none;
+                border: 1px solid #333;
+                border-radius: 4px;
+                color: #666;
+                cursor: pointer;
+                flex-shrink: 0;
+                padding: 0;
+                margin-left: 4px;
+                transition:
+                    color 0.15s,
+                    border-color 0.15s;
+                vertical-align: middle;
+            }
+            .domain-popover-copy:hover {
+                color: #fff;
+                border-color: #555;
+            }
+            .honor-badge {
+                display: inline-block;
+                font-size: 0.68rem;
+                font-family: system-ui, sans-serif;
+                font-weight: 500;
+                padding: 1px 8px;
+                border-radius: 4px;
+                letter-spacing: 0.02em;
+            }
+            .honor-badge.unknown {
+                color: #777;
+                background: #222;
+                border: 1px solid #333;
+            }
+            .honor-badge.neutral {
+                color: #a3a3a3;
+                background: #1a1a1a;
+                border: 1px solid #404040;
+            }
+            .honor-badge.positive {
+                color: #4ade80;
+                background: #0a1f0f;
+                border: 1px solid #16532a;
+            }
+            .honor-badge.negative {
+                color: #f87171;
+                background: #1f0a0a;
+                border: 1px solid #531616;
             }
             .topbar-right {
                 display: flex;
@@ -566,6 +673,24 @@
                 </svg>
                 Log out
             </button>
+        </div>
+
+        <!-- Domain Info Popover -->
+        <div class="domain-popover" id="domain-popover">
+            <div class="domain-popover-row">
+                <span class="domain-popover-label">Owner</span>
+                <span
+                    class="domain-popover-value loading"
+                    id="domain-popover-owner"
+                    >Resolving...</span
+                >
+            </div>
+            <div class="domain-popover-row">
+                <span class="domain-popover-label">Honor</span>
+                <span class="domain-popover-value" id="domain-popover-honor"
+                    ><span class="honor-badge unknown">Unknown</span></span
+                >
+            </div>
         </div>
 
         <!-- App Content -->
