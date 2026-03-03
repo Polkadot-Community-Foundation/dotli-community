@@ -93,6 +93,10 @@ async function main(): Promise<void> {
       domainPopover.classList.remove("open");
     }
   });
+  // Close popover when iframe gets focus (clicking into the app content)
+  window.addEventListener("blur", () => {
+    domainPopover.classList.remove("open");
+  });
 
   showStatus(`Resolving ${label}.dot...`);
 
