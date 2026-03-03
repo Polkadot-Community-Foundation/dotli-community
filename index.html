@@ -15,30 +15,213 @@
                 color: #e0e0e0;
                 font-family: system-ui, sans-serif;
             }
-            #app {
+
+            /* ── Top Bar ─────────────────────────────── */
+            #topbar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 40px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                background: #111;
+                border-bottom: 1px solid #222;
+                padding: 0 12px;
+                z-index: 1000;
+            }
+            .topbar-left {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .topbar-logo svg {
+                display: block;
+                width: 16px;
+                height: 18px;
+            }
+            .topbar-brand {
+                font-size: 0.85rem;
+                font-weight: 600;
+                color: #fff;
+                letter-spacing: 0.02em;
+            }
+            .topbar-right {
+                display: flex;
+                align-items: center;
+            }
+            .topbar-btn {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                min-height: 100vh;
-                text-align: center;
+                gap: 6px;
+                height: 28px;
+                padding: 0 10px;
+                background: transparent;
+                border: 1px solid #333;
+                border-radius: 6px;
+                color: #ccc;
+                font-size: 0.75rem;
+                font-family: inherit;
+                cursor: pointer;
+                transition:
+                    background 0.15s,
+                    border-color 0.15s;
             }
-            .loading {
-                max-width: 480px;
-                padding: 2rem;
+            .topbar-btn:hover {
+                background: #1a1a1a;
+                border-color: #444;
             }
-            .loading h1 {
-                font-size: 1.5rem;
+
+            /* User initials badge (matches desktop InnerBackdrop) */
+            .user-badge {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 20px;
+                height: 20px;
+                border-radius: 6px;
+                background: #000;
                 color: #fff;
-                margin-bottom: 0.75rem;
+                font-size: 8px;
+                font-weight: 500;
+                letter-spacing: 0.12px;
+                text-transform: uppercase;
             }
-            .loading .accent {
-                color: #e6007a;
+
+            /* ── Auth Modal (QR pairing) ─────────────── */
+            .auth-modal-backdrop {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.7);
+                z-index: 2000;
+                align-items: center;
+                justify-content: center;
             }
-            #status {
+            .auth-modal-backdrop.open {
+                display: flex;
+            }
+            .auth-modal {
+                background: #151515;
+                border: 1px solid #2a2a2a;
+                border-radius: 16px;
+                padding: 24px;
+                text-align: center;
+                max-width: 340px;
+                width: 100%;
+            }
+            .auth-modal h2 {
+                font-size: 1rem;
+                color: #fff;
+                margin-bottom: 4px;
+            }
+            .auth-modal p {
+                font-size: 0.8rem;
                 color: #888;
-                font-size: 0.95rem;
-                line-height: 1.6;
+                margin-bottom: 16px;
+                line-height: 1.4;
             }
+            .auth-modal-qr {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 200px;
+            }
+            .auth-modal-qr canvas {
+                border-radius: 8px;
+            }
+            .auth-modal-close {
+                margin-top: 16px;
+                padding: 6px 16px;
+                background: transparent;
+                border: 1px solid #333;
+                border-radius: 6px;
+                color: #888;
+                font-size: 0.8rem;
+                font-family: inherit;
+                cursor: pointer;
+                transition: background 0.15s;
+            }
+            .auth-modal-close:hover {
+                background: #1a1a1a;
+            }
+            .auth-modal-error {
+                color: #f87171;
+                font-size: 0.8rem;
+                margin-bottom: 12px;
+            }
+            .auth-modal-retry {
+                padding: 6px 16px;
+                background: #e6007a;
+                border: none;
+                border-radius: 6px;
+                color: #fff;
+                font-size: 0.8rem;
+                font-family: inherit;
+                cursor: pointer;
+                transition: opacity 0.15s;
+            }
+            .auth-modal-retry:hover {
+                opacity: 0.85;
+            }
+
+            /* ── User Popover ────────────────────────── */
+            .user-popover {
+                display: none;
+                position: fixed;
+                top: 44px;
+                right: 12px;
+                width: 220px;
+                background: #171717;
+                border: 1px solid #404040;
+                border-radius: 12px;
+                z-index: 1500;
+                overflow: hidden;
+            }
+            .user-popover.open {
+                display: block;
+            }
+            .user-popover-name {
+                padding: 12px 14px 8px;
+            }
+            .user-popover-name .label {
+                font-size: 0.75rem;
+                color: #a3a3a3;
+            }
+            .user-popover-name .name {
+                font-size: 0.9rem;
+                font-weight: 500;
+                color: #fafafa;
+                margin-top: 2px;
+            }
+            .user-popover-divider {
+                border-top: 1px solid #404040;
+            }
+            .user-popover-disconnect {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                width: 100%;
+                padding: 10px 14px;
+                background: transparent;
+                border: none;
+                color: #f87171;
+                font-size: 0.85rem;
+                font-family: inherit;
+                cursor: pointer;
+                transition: background 0.15s;
+            }
+            .user-popover-disconnect:hover {
+                background: #262626;
+            }
+            .user-popover-disconnect svg {
+                width: 18px;
+                height: 18px;
+            }
+
+            /* ── Spinner (shared) ────────────────────── */
             .spinner {
                 width: 24px;
                 height: 24px;
@@ -53,9 +236,218 @@
                     transform: rotate(360deg);
                 }
             }
+
+            /* ── Signing Modals ───────────────────────── */
+            .signing-modal-backdrop {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.7);
+                z-index: 3000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .signing-modal {
+                background: #151515;
+                border: 1px solid #2a2a2a;
+                border-radius: 16px;
+                padding: 24px;
+                max-width: 420px;
+                width: 100%;
+            }
+            .signing-modal h2 {
+                font-size: 1rem;
+                color: #fff;
+                margin-bottom: 16px;
+            }
+            .signing-fields {
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                max-height: 50vh;
+                overflow-y: auto;
+                margin-bottom: 20px;
+            }
+            .signing-field-label {
+                font-size: 0.7rem;
+                color: #888;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                margin-bottom: 4px;
+            }
+            .signing-field-value {
+                font-size: 0.85rem;
+                color: #e0e0e0;
+                word-break: break-all;
+                line-height: 1.5;
+            }
+            .signing-field-value.mono {
+                font-family:
+                    ui-monospace, "Cascadia Code", "Source Code Pro", Menlo,
+                    Consolas, "DejaVu Sans Mono", monospace;
+                font-size: 0.75rem;
+                color: #aaa;
+                background: #0d0d0d;
+                border: 1px solid #222;
+                border-radius: 6px;
+                padding: 8px;
+                max-height: 120px;
+                overflow-y: auto;
+            }
+            .signing-modal-footer {
+                display: flex;
+                gap: 8px;
+                justify-content: flex-end;
+            }
+            .signing-btn-cancel {
+                padding: 8px 16px;
+                background: transparent;
+                border: 1px solid #333;
+                border-radius: 8px;
+                color: #888;
+                font-size: 0.85rem;
+                font-family: inherit;
+                cursor: pointer;
+                transition: background 0.15s;
+            }
+            .signing-btn-cancel:hover {
+                background: #1a1a1a;
+            }
+            .signing-btn-sign {
+                padding: 8px 20px;
+                background: #e6007a;
+                border: none;
+                border-radius: 8px;
+                color: #fff;
+                font-size: 0.85rem;
+                font-family: inherit;
+                cursor: pointer;
+                transition: opacity 0.15s;
+            }
+            .signing-btn-sign:hover {
+                opacity: 0.85;
+            }
+            .signing-btn-sign:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+
+            /* ── App Content ─────────────────────────── */
+            #app {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: calc(100vh - 40px);
+                margin-top: 40px;
+                text-align: center;
+            }
+            .loading {
+                max-width: 480px;
+                padding: 2rem;
+            }
+            .loading h1 {
+                font-size: 1.5rem;
+                color: #fff;
+                margin-bottom: 0.75rem;
+            }
+            .accent {
+                color: #e6007a;
+            }
+            #status {
+                color: #888;
+                font-size: 0.95rem;
+                line-height: 1.6;
+            }
         </style>
     </head>
     <body>
+        <!-- Top Bar -->
+        <div id="topbar">
+            <div class="topbar-left">
+                <div class="topbar-logo">
+                    <svg
+                        width="16"
+                        height="18"
+                        viewBox="0 0 16 18"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                    >
+                        <path
+                            d="M9.9873 14.1348C10.8273 14.1348 11.462 14.3911 11.6113 14.8604C11.8447 15.6051 10.7691 16.609 9.20801 17.1016C7.64706 17.5964 6.1908 17.3912 5.95508 16.6465C5.7363 15.9482 6.6685 15.0218 8.07227 14.5029L8.3584 14.4023C8.93466 14.2203 9.49501 14.1348 9.9873 14.1348ZM2.23828 9.9248C2.99193 9.9248 3.82268 10.226 4.52734 10.8213C5.85738 11.9442 6.23288 13.6886 5.36719 14.7158C4.50142 15.7428 2.71861 15.6629 1.38867 14.54C0.100568 13.4522 -0.291878 11.7823 0.47168 10.7451L0.551758 10.6465C0.957761 10.1634 1.5687 9.92482 2.23828 9.9248ZM15.1748 9.47949C15.2096 9.4795 15.2397 9.48415 15.2676 9.49805C15.6409 9.67081 15.4174 10.9618 14.7617 12.3789C14.1085 13.7956 13.2732 14.8041 12.8975 14.6318C12.5218 14.4591 12.7481 13.168 13.4014 11.751C14.0057 10.4413 14.7665 9.47949 15.1748 9.47949ZM3.42578 2.46387C3.9998 2.46387 4.55096 2.64366 4.9873 3.01953C6.10236 3.97675 6.07202 5.84169 4.92188 7.18164C3.76917 8.52404 1.93275 8.83452 0.817383 7.875C-0.297896 6.91782 -0.267461 5.05292 0.882812 3.71289C1.58276 2.8982 2.5345 2.46396 3.42578 2.46387ZM13.1631 2.80957C13.6391 2.80957 14.4071 3.79925 14.9531 5.15332C15.5458 6.62173 15.6526 7.96206 15.1953 8.14648C14.7355 8.33003 13.8845 7.29114 13.292 5.82324C12.6993 4.35719 12.5892 3.01463 13.0488 2.83008C13.0861 2.8161 13.1235 2.8096 13.1631 2.80957ZM7.82422 0C8.30483 0 8.83683 0.0896562 9.37109 0.276367C10.9576 0.829603 11.9799 2.02888 11.6582 2.95801C11.3362 3.88718 9.78886 4.19295 8.20215 3.63965C6.61582 3.08633 5.5943 1.88706 5.91602 0.958008C6.12834 0.341726 6.87931 6.04412e-05 7.82422 0Z"
+                            fill="#e6007a"
+                        />
+                    </svg>
+                </div>
+                <span class="topbar-brand"
+                    ><span class="accent">dot</span>.li</span
+                >
+            </div>
+            <div class="topbar-right">
+                <button
+                    id="auth-button"
+                    class="topbar-btn"
+                    title="Login with Polkadot App"
+                >
+                    <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+                        />
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- QR Pairing Modal -->
+        <div class="auth-modal-backdrop" id="auth-modal-backdrop">
+            <div class="auth-modal">
+                <h2>Login with Polkadot App</h2>
+                <p>Scan the QR code with your Polkadot App to connect</p>
+                <div class="auth-modal-qr" id="auth-modal-qr">
+                    <div class="spinner"></div>
+                </div>
+                <button class="auth-modal-close" id="auth-modal-close">
+                    Cancel
+                </button>
+            </div>
+        </div>
+
+        <!-- User Popover -->
+        <div class="user-popover" id="user-popover">
+            <div class="user-popover-name">
+                <div class="label">Welcome back</div>
+                <div class="name" id="user-popover-username"></div>
+            </div>
+            <div class="user-popover-divider"></div>
+            <button
+                class="user-popover-disconnect"
+                id="user-popover-disconnect"
+            >
+                <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+                Log out
+            </button>
+        </div>
+
+        <!-- App Content -->
         <div id="app">
             <div class="loading">
                 <h1><span class="accent">dot</span>.li</h1>

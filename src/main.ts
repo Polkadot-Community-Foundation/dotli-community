@@ -5,6 +5,8 @@
 import { resolveDotName, destroyClient } from "./resolve";
 import { fetchContent, destroyHelia } from "./fetch";
 import { renderContent, showStatus, showError, showLanding } from "./render";
+import { initAuth } from "./auth";
+import { initTopBar } from "./topbar";
 
 /**
  * Extract the .dot label from the current hostname.
@@ -34,6 +36,10 @@ function parseDotLabel(): string | null {
 }
 
 async function main(): Promise<void> {
+  // Initialize auth adapter and top bar UI (non-blocking)
+  initAuth();
+  initTopBar();
+
   const label = parseDotLabel();
 
   if (!label) {
@@ -60,7 +66,7 @@ async function main(): Promise<void> {
 
     // Step 3: Render in sandboxed iframe
     showStatus("Rendering...");
-    renderContent(content);
+    renderContent(content, label);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     showError("Resolution failed", message);
