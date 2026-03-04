@@ -7,7 +7,7 @@ export default defineConfig({
   use: {
     baseURL: "http://mytestapp.localhost:5173",
     browserName: "chromium",
-    headless: true,
+    headless: process.env.HEADLESS === "1",
     bypassCSP: true,
   },
   reporter: [["list"], ["json", { outputFile: "tests/results.json" }]],

@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test:perf": "PERF_RUNS=5 npx playwright test tests/cold-start.spec.ts",
     "test:perf:base": "PERF_RUNS=10 PERF_SAVE_BASE=1 npx playwright test tests/cold-start.spec.ts",
-    "test:perf:headed": "npx playwright test tests/cold-start.spec.ts --headed",
+    "test:perf:headless": "HEADLESS=1 npx playwright test tests/cold-start.spec.ts",
     "test:perf:compare": "npx tsx tests/compare.ts",
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",
