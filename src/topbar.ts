@@ -30,6 +30,9 @@ const userPopoverDisconnect = document.getElementById(
 // Hexagon SVG for the logged-out state
 const HEXAGON_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
 
+// Track the current QR payload to prevent stale canvas appends
+let currentQrPayload: string | null = null;
+
 // ── Init ───────────────────────────────────────────────────
 
 export function initTopBar(): void {
@@ -39,9 +42,9 @@ export function initTopBar(): void {
   // Modal close button
   modalClose.addEventListener("click", closeModal);
 
-  // Clicking backdrop closes modal
+  // Clicking backdrop (outside modal) closes modal
   modalBackdrop.addEventListener("click", (e) => {
-    if (e.target === modalBackdrop) closeModal();
+    if (e.target === e.currentTarget) closeModal();
   });
 
   // Disconnect button
@@ -98,29 +101,40 @@ function renderLoggedIn(state: AuthState & { status: "authenticated" }): void {
   authButton.innerHTML = `<div class="user-badge">${initials}</div>`;
   authButton.title = "Account";
 
-  // Update popover
-  const username =
-    state.identity?.fullUsername ??
-    state.identity?.liteUsername ??
-    "Unknown user";
+  // Update popover with identity name or truncated account address
+  let username: string;
+  if (state.identity?.fullUsername || state.identity?.liteUsername) {
+    username = state.identity.fullUsername ?? state.identity.liteUsername!;
+  } else {
+    // Fallback to truncated account address
+    const id = Array.from(state.session.remoteAccount.accountId)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    username = `0x${id.slice(0, 6)}...${id.slice(-4)}`;
+  }
   userPopoverUsername.textContent = username;
 }
 
 function renderPairing(payload: string): void {
+  currentQrPayload = payload;
+
   if (!payload) {
     // Initial state — show spinner
     modalQr.innerHTML = `<div class="spinner"></div>`;
     return;
   }
 
-  // Render QR code (toCanvas is async)
+  // Render QR code (toCanvas is async — guard against stale appends)
   const canvas = document.createElement("canvas");
+  const capturedPayload = payload;
   QRCode.toCanvas(canvas, payload, {
     width: 200,
     margin: 2,
     color: { dark: "#000000", light: "#ffffff" },
   })
     .then(() => {
+      // Only append if this payload is still current
+      if (currentQrPayload !== capturedPayload) return;
       modalQr.innerHTML = "";
       modalQr.appendChild(canvas);
     })
@@ -165,6 +179,9 @@ function handleAuthButtonClick(): void {
   if (state.status === "authenticated") {
     // Toggle user popover
     userPopover.classList.toggle("open");
+  } else if (state.status === "attesting") {
+    // Attestation still running in background — just reshow the modal
+    modalBackdrop.classList.add("open");
   } else {
     // Open modal and start pairing
     openModal();
@@ -184,8 +201,10 @@ function openModal(): void {
 
 function closeModal(): void {
   modalBackdrop.classList.remove("open");
+
   const state = getAuthState();
-  if (state.status === "pairing" || state.status === "attesting") {
+  // Only abort during pairing or error — let attestation continue in background
+  if (state.status === "pairing" || state.status === "error") {
     abortPairing();
   }
 }
