@@ -11,7 +11,6 @@ import {
   type AttestationStatus,
   type Identity,
   type UserSession,
-  type StoredUserSession,
 } from "@novasamatech/host-papp";
 import { createLocalStorageAdapter } from "@novasamatech/storage-adapter";
 import { createLazyClient } from "@novasamatech/statement-store";
@@ -106,30 +105,11 @@ async function resolveIdentityAndSetAuth(session: UserSession): Promise<void> {
   }
 }
 
-function setAuthFromStoredSession(storedSession: StoredUserSession): void {
-  if (!adapter) return;
-  if (currentState.status === "authenticated") return;
-
-  // First check if a full UserSession is already available in the session manager
-  const sessions = adapter.sessions.sessions.read();
-  const fullSession = sessions.find((s) => s.id === storedSession.id);
-
-  if (fullSession) {
-    resolveIdentityAndSetAuth(fullSession);
-    return;
-  }
-
-  // The full session isn't in the manager yet (attestation still running).
-  // Set authenticated with the stored session cast as UserSession for display.
-  // The session manager subscription will update with the full session later.
-  setState({
-    status: "authenticated",
-    session: storedSession as UserSession,
-    identity: null,
-  });
-}
-
-function checkForNewSession(): void {
+/**
+ * Pick up the first available session from the adapter.
+ * Used as a fallback after pairing/attestation finishes.
+ */
+function pickUpSession(): void {
   if (!adapter) return;
   if (currentState.status === "authenticated") return;
 
@@ -146,6 +126,9 @@ let unsubAttestation: (() => void) | null = null;
 
 export function startPairing(): void {
   if (!adapter) return;
+
+  // Show spinner immediately (don't wait for subscription callback)
+  setState({ status: "pairing", payload: "" });
 
   // Clean up previous subscriptions (without aborting the adapter)
   unsubPairing?.();
@@ -167,11 +150,12 @@ export function startPairing(): void {
           setState({ status: "error", message: status.message });
           break;
         case "finished":
-          // Pairing done — the session is already available in the status.
-          // Attestation (on-chain identity registration) may still be running
-          // in the background, but we don't need to block login on it.
-          console.log("[dot.li auth] pairing finished, using session directly");
-          setAuthFromStoredSession(status.session);
+          // Pairing handshake done — attestation runs in parallel.
+          // Transition to "attesting" so it shows a spinner and
+          // the modal can't be dismissed (which would abort attestation).
+          if (currentState.status !== "authenticated") {
+            setState({ status: "attesting" });
+          }
           break;
       }
     },
@@ -188,9 +172,10 @@ export function startPairing(): void {
           setState({ status: "error", message: status.message });
           break;
         case "finished":
-          // Attestation done — try to pick up session immediately
-          // (the sessions subscription should also fire, but as a fallback)
-          checkForNewSession();
+          // Attestation done — session should now be saved.
+          // The sessions.subscribe() callback is the primary pickup path,
+          // but call pickUpSession() as a fallback.
+          pickUpSession();
           break;
       }
     },
@@ -200,14 +185,16 @@ export function startPairing(): void {
     (result) => {
       console.log("[dot.li auth] authenticate() resolved:", result);
       if (result.isOk() && result.value) {
-        console.log(
-          "[dot.li auth] authenticate() success, session:",
-          result.value,
-        );
-        checkForNewSession();
+        // authenticate() resolved successfully — session is now persisted.
+        // Pick up via sessions subscription or fallback here.
+        pickUpSession();
       } else if (result.isErr()) {
         console.error("[dot.li auth] authenticate() error:", result.error);
-        if (currentState.status !== "authenticated") {
+        // Only show error if we're still in an active auth flow (not idle/authenticated)
+        if (
+          currentState.status !== "authenticated" &&
+          currentState.status !== "idle"
+        ) {
           setState({ status: "error", message: result.error.message });
         }
       }
@@ -219,11 +206,18 @@ export function startPairing(): void {
 }
 
 export function abortPairing(): void {
-  if (adapter) adapter.sso.abortAuthentication();
+  // Unsubscribe first to prevent status callbacks from firing during abort
   unsubPairing?.();
   unsubAttestation?.();
   unsubPairing = null;
   unsubAttestation = null;
+
+  if (adapter) adapter.sso.abortAuthentication();
+
+  // Reset to idle so the UI is clean
+  if (currentState.status !== "authenticated") {
+    setState({ status: "idle" });
+  }
 }
 
 export async function disconnect(): Promise<void> {
