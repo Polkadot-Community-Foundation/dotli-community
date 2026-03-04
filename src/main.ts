@@ -142,6 +142,11 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Start loading the resolve chunk immediately — the network request fires
+  // now while we do synchronous DOM setup below. By the time we await it,
+  // the chunk is already (partially) downloaded.
+  const resolveChunkPromise = import("./resolve");
+
   // Show the .dot domain in the URL bar
   const urlBar = document.getElementById("topbar-url");
   if (urlBar === null) {
@@ -172,15 +177,18 @@ async function main(): Promise<void> {
   showStatus(`Resolving ${label}.dot...`);
 
   try {
-    // Step 0: Ensure service worker is ready (needed to serve archive files)
+    // Start SW registration in parallel with resolution — SW is only needed
+    // before rendering, not before resolving. This saves ~100-500ms.
     performance.mark("dotli:sw:start");
-    await registerServiceWorker();
-    performance.mark("dotli:sw:end");
+    const swReady = registerServiceWorker().then(() => {
+      performance.mark("dotli:sw:end");
+    });
 
-    // Step 1: Resolve the .dot name to a CID via smoldot + dotNS (lazy load)
+    // Step 1: Resolve the .dot name to a CID via smoldot + dotNS
+    // The chunk was already requested above (before DOM setup)
     performance.mark("dotli:resolve:start");
     const { resolveDotName, resolveOwner, destroyClient } =
-      await import("./resolve");
+      await resolveChunkPromise;
     destroyClientFn = destroyClient;
     const cid = await resolveDotName(label, showStatus);
     performance.mark("dotli:resolve:end");
@@ -192,6 +200,9 @@ async function main(): Promise<void> {
       );
       return;
     }
+
+    // Ensure SW is ready before rendering (it was started in parallel above)
+    await swReady;
 
     // Step 2: Fetch content + resolve owner in parallel
     // Fire-and-forget: populates the domain popover when ready
