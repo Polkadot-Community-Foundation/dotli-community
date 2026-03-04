@@ -65,13 +65,17 @@ async function ensureClient(
 ): Promise<ReturnType<PolkadotClient["getUnsafeApi"]>> {
   if (apiInstance) return apiInstance;
 
+  performance.mark("dotli:smoldot:init:start");
   onStatus?.("Starting light client...");
   const smoldot = getSmoldot();
 
   onStatus?.("Adding Paseo relay chain...");
+  performance.mark("dotli:smoldot:relay:start");
   const relayChain = await getRelayChain();
+  performance.mark("dotli:smoldot:relay:end");
 
   onStatus?.("Adding Asset Hub Paseo...");
+  performance.mark("dotli:smoldot:parachain:start");
   const chain = smoldot.addChain({
     chainSpec: assetHubPaseoChainSpec,
     potentialRelayChains: [relayChain],
@@ -79,11 +83,15 @@ async function ensureClient(
 
   const provider = getSmProvider(chain);
   clientInstance = createClient(provider);
+  performance.mark("dotli:smoldot:parachain:end");
 
   onStatus?.("Syncing with Asset Hub Paseo...");
+  performance.mark("dotli:smoldot:sync:start");
   await clientInstance.getFinalizedBlock();
+  performance.mark("dotli:smoldot:sync:end");
 
   apiInstance = clientInstance.getUnsafeApi();
+  performance.mark("dotli:smoldot:init:end");
   onStatus?.("Connected to Asset Hub Paseo");
   return apiInstance;
 }

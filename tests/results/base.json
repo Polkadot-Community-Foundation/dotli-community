@@ -1,0 +1,286 @@
+{
+  "cold": {
+    "timestamp": "2026-03-04T19:26:39.033Z",
+    "type": "cold",
+    "phases": {
+      "Total (main)": 21900,
+      "Auth init": 1,
+      "SW registration": 26,
+      "Name resolution": 14154,
+      "  Smoldot init": 12067,
+      "    Relay chain": 189,
+      "    Parachain": 2,
+      "    Chain sync": 11875,
+      "Cache check": 4,
+      "Content fetch": 7702,
+      "  P2P attempt": 5870,
+      "  Gateway fetch": 1829,
+      "  Archive parse": 3,
+      "Render": 12
+    },
+    "browserMetrics": {
+      "domContentLoaded": 225,
+      "jsHeapUsed": 56800000
+    },
+    "networkStats": {
+      "requestCount": 135,
+      "totalBytes": 25653566
+    },
+    "marks": [
+      {
+        "name": "dotli:main:start",
+        "startTime": 320.30000001192093
+      },
+      {
+        "name": "dotli:auth:start",
+        "startTime": 320.80000001192093
+      },
+      {
+        "name": "dotli:auth:end",
+        "startTime": 322.0999999642372
+      },
+      {
+        "name": "dotli:sw:start",
+        "startTime": 323
+      },
+      {
+        "name": "dotli:sw:end",
+        "startTime": 348.69999998807907
+      },
+      {
+        "name": "dotli:resolve:start",
+        "startTime": 348.69999998807907
+      },
+      {
+        "name": "dotli:smoldot:init:start",
+        "startTime": 348.80000001192093
+      },
+      {
+        "name": "dotli:smoldot:relay:start",
+        "startTime": 350.30000001192093
+      },
+      {
+        "name": "dotli:smoldot:relay:end",
+        "startTime": 539.3999999761581
+      },
+      {
+        "name": "dotli:smoldot:parachain:start",
+        "startTime": 539.3999999761581
+      },
+      {
+        "name": "dotli:smoldot:parachain:end",
+        "startTime": 541
+      },
+      {
+        "name": "dotli:smoldot:sync:start",
+        "startTime": 541
+      },
+      {
+        "name": "dotli:smoldot:sync:end",
+        "startTime": 12415.800000011921
+      },
+      {
+        "name": "dotli:smoldot:init:end",
+        "startTime": 12416.099999964237
+      },
+      {
+        "name": "dotli:resolve:end",
+        "startTime": 14502.199999988079
+      },
+      {
+        "name": "dotli:cache-check:start",
+        "startTime": 14502.300000011921
+      },
+      {
+        "name": "dotli:cache-check:end",
+        "startTime": 14505.800000011921
+      },
+      {
+        "name": "dotli:fetch:start",
+        "startTime": 14505.800000011921
+      },
+      {
+        "name": "dotli:fetch:p2p:start",
+        "startTime": 14505.800000011921
+      },
+      {
+        "name": "dotli:fetch:p2p:end",
+        "startTime": 20375.80000001192
+      },
+      {
+        "name": "dotli:fetch:gateway:start",
+        "startTime": 20375.80000001192
+      },
+      {
+        "name": "dotli:fetch:gateway:end",
+        "startTime": 22204.80000001192
+      },
+      {
+        "name": "dotli:fetch:parse:start",
+        "startTime": 22204.80000001192
+      },
+      {
+        "name": "dotli:fetch:parse:end",
+        "startTime": 22208.099999964237
+      },
+      {
+        "name": "dotli:fetch:end",
+        "startTime": 22208.19999998808
+      },
+      {
+        "name": "dotli:render:start",
+        "startTime": 22208.19999998808
+      },
+      {
+        "name": "dotli:render:end",
+        "startTime": 22220.099999964237
+      },
+      {
+        "name": "dotli:main:end",
+        "startTime": 22220.099999964237
+      }
+    ]
+  },
+  "warm": {
+    "timestamp": "2026-03-04T19:27:21.640Z",
+    "type": "warm",
+    "phases": {
+      "Total (main)": 19880,
+      "Auth init": 1,
+      "SW registration": 1,
+      "Name resolution": 14659,
+      "  Smoldot init": 12616,
+      "    Relay chain": 63,
+      "    Parachain": 1,
+      "    Chain sync": 12551,
+      "Cache check": 2,
+      "Content fetch": 5210,
+      "  P2P attempt": 5206,
+      "  Gateway fetch": 3,
+      "  Archive parse": 1,
+      "Render": 7
+    },
+    "browserMetrics": {
+      "domContentLoaded": 136,
+      "jsHeapUsed": 56800000
+    },
+    "networkStats": {
+      "requestCount": 0,
+      "totalBytes": 0
+    },
+    "marks": [
+      {
+        "name": "dotli:main:start",
+        "startTime": 138.5
+      },
+      {
+        "name": "dotli:auth:start",
+        "startTime": 138.5
+      },
+      {
+        "name": "dotli:auth:end",
+        "startTime": 139.80000001192093
+      },
+      {
+        "name": "dotli:sw:start",
+        "startTime": 139.9000000357628
+      },
+      {
+        "name": "dotli:sw:end",
+        "startTime": 140.60000002384186
+      },
+      {
+        "name": "dotli:resolve:start",
+        "startTime": 140.60000002384186
+      },
+      {
+        "name": "dotli:smoldot:init:start",
+        "startTime": 140.60000002384186
+      },
+      {
+        "name": "dotli:smoldot:relay:start",
+        "startTime": 140.9000000357628
+      },
+      {
+        "name": "dotli:smoldot:relay:end",
+        "startTime": 203.69999998807907
+      },
+      {
+        "name": "dotli:smoldot:parachain:start",
+        "startTime": 203.69999998807907
+      },
+      {
+        "name": "dotli:smoldot:parachain:end",
+        "startTime": 204.80000001192093
+      },
+      {
+        "name": "dotli:smoldot:sync:start",
+        "startTime": 204.80000001192093
+      },
+      {
+        "name": "dotli:smoldot:sync:end",
+        "startTime": 12756.100000023842
+      },
+      {
+        "name": "dotli:smoldot:init:end",
+        "startTime": 12756.5
+      },
+      {
+        "name": "dotli:resolve:end",
+        "startTime": 14799.199999988079
+      },
+      {
+        "name": "dotli:cache-check:start",
+        "startTime": 14799.199999988079
+      },
+      {
+        "name": "dotli:cache-check:end",
+        "startTime": 14800.800000011921
+      },
+      {
+        "name": "dotli:fetch:start",
+        "startTime": 14800.800000011921
+      },
+      {
+        "name": "dotli:fetch:p2p:start",
+        "startTime": 14800.800000011921
+      },
+      {
+        "name": "dotli:fetch:p2p:end",
+        "startTime": 20007.19999998808
+      },
+      {
+        "name": "dotli:fetch:gateway:start",
+        "startTime": 20007.19999998808
+      },
+      {
+        "name": "dotli:fetch:gateway:end",
+        "startTime": 20009.80000001192
+      },
+      {
+        "name": "dotli:fetch:parse:start",
+        "startTime": 20009.80000001192
+      },
+      {
+        "name": "dotli:fetch:parse:end",
+        "startTime": 20011.19999998808
+      },
+      {
+        "name": "dotli:fetch:end",
+        "startTime": 20011.19999998808
+      },
+      {
+        "name": "dotli:render:start",
+        "startTime": 20011.19999998808
+      },
+      {
+        "name": "dotli:render:end",
+        "startTime": 20018.100000023842
+      },
+      {
+        "name": "dotli:main:end",
+        "startTime": 20018.100000023842
+      }
+    ]
+  }
+}

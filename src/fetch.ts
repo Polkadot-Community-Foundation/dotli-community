@@ -195,7 +195,9 @@ export async function fetchArchive(
 ): Promise<FetchResult> {
   // Try P2P first (fast for single files on Bulletin Chain)
   try {
+    performance.mark("dotli:fetch:p2p:start");
     const content = await fetchViaP2P(cidString, onStatus);
+    performance.mark("dotli:fetch:p2p:end");
     // Check if P2P returned a CAR file (unlikely but handle it)
     if (isCarFile(content)) {
       onStatus?.("Parsing archive...");
@@ -204,6 +206,7 @@ export async function fetchArchive(
     }
     return { type: "single", content };
   } catch (p2pError) {
+    performance.mark("dotli:fetch:p2p:end");
     onStatus?.(
       `P2P failed (${(p2pError as Error).message}), trying gateway...`,
     );
@@ -211,11 +214,16 @@ export async function fetchArchive(
 
   // Try gateway with CAR format (handles both directories and single files)
   try {
+    performance.mark("dotli:fetch:gateway:start");
     const carBuffer = await fetchCarFromGateway(cidString, onStatus);
+    performance.mark("dotli:fetch:gateway:end");
     onStatus?.("Parsing content...");
+    performance.mark("dotli:fetch:parse:start");
     const files = await parseIpfsResponse(carBuffer);
+    performance.mark("dotli:fetch:parse:end");
     return toFetchResult(files);
   } catch (carError) {
+    performance.mark("dotli:fetch:gateway:end");
     onStatus?.(
       `CAR fetch failed (${(carError as Error).message}), trying raw gateway...`,
     );

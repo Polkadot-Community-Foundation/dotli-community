@@ -117,14 +117,20 @@ async function registerServiceWorker(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  performance.mark("dotli:main:start");
+
   // Initialize auth adapter and top bar UI
+  performance.mark("dotli:auth:start");
   initAuth();
+  performance.mark("dotli:auth:end");
+
   initTopBar();
 
   const label = parseDotLabel();
 
   if (!label) {
     showLanding();
+    performance.mark("dotli:main:end");
     return;
   }
 
@@ -153,10 +159,14 @@ async function main(): Promise<void> {
 
   try {
     // Step 0: Ensure service worker is ready (needed to serve archive files)
+    performance.mark("dotli:sw:start");
     await registerServiceWorker();
+    performance.mark("dotli:sw:end");
 
     // Step 1: Resolve the .dot name to a CID via smoldot + dotNS
+    performance.mark("dotli:resolve:start");
     const cid = await resolveDotName(label, showStatus);
+    performance.mark("dotli:resolve:end");
 
     if (!cid) {
       showError(
@@ -201,22 +211,33 @@ async function main(): Promise<void> {
       });
 
     // Step 2b: Check SW cache before fetching
+    performance.mark("dotli:cache-check:start");
     const cachedFiles = await getCachedArchive(label, cid);
+    performance.mark("dotli:cache-check:end");
+
     if (cachedFiles) {
       showStatus("Rendering (cached)...");
+      performance.mark("dotli:render:start");
       await renderArchive(cachedFiles, label, cid);
+      performance.mark("dotli:render:end");
     } else {
+      performance.mark("dotli:fetch:start");
       const result = await fetchArchive(cid, showStatus);
+      performance.mark("dotli:fetch:end");
 
       // Step 3: Render in sandboxed iframe
       showStatus("Rendering...");
+      performance.mark("dotli:render:start");
       if (result.type === "archive") {
         await renderArchive(result.files, label, cid);
       } else {
         renderContent(result.content, label);
       }
+      performance.mark("dotli:render:end");
     }
+    performance.mark("dotli:main:end");
   } catch (err) {
+    performance.mark("dotli:main:end");
     const message = err instanceof Error ? err.message : String(err);
     showError("Resolution failed", message);
   }

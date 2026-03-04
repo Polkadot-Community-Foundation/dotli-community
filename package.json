@@ -6,10 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:perf": "npx playwright test tests/cold-start.spec.ts",
+    "test:perf:base": "PERF_SAVE_BASE=1 npx playwright test tests/cold-start.spec.ts",
+    "test:perf:headed": "npx playwright test tests/cold-start.spec.ts --headed",
+    "test:perf:compare": "npx tsx tests/compare.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/qrcode": "^1.5.6",
+    "tsx": "^4.21.0",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
     "vite-plugin-wasm": "^3.5.0"

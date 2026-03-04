@@ -1,0 +1,20 @@
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "./tests",
+  timeout: 120_000, // 2 min — smoldot sync can be slow
+  retries: 0,
+  use: {
+    baseURL: "http://mytestapp.localhost:5173",
+    browserName: "chromium",
+    headless: true,
+    bypassCSP: true,
+  },
+  reporter: [["list"], ["json", { outputFile: "tests/results.json" }]],
+  webServer: {
+    command: "npx vite --host",
+    url: "http://localhost:5173",
+    reuseExistingServer: true,
+    timeout: 15_000,
+  },
+});
