@@ -4,6 +4,7 @@
 
 import { resolveDotName, resolveOwner, destroyClient } from "./resolve";
 import { fetchArchive, destroyHelia } from "./fetch";
+import type { ArchiveFiles } from "./archive";
 import {
   renderContent,
   renderArchive,
@@ -13,6 +14,43 @@ import {
 } from "./render";
 import { initAuth } from "./auth";
 import { initTopBar } from "./topbar";
+
+/**
+ * Check if the Service Worker has a cached archive for this domain.
+ * Returns the cached files if the CID matches, null otherwise.
+ */
+async function getCachedArchive(
+  domain: string,
+  cid: string,
+): Promise<ArchiveFiles | null> {
+  const controller = navigator.serviceWorker?.controller;
+  if (!controller) return null;
+
+  return new Promise<ArchiveFiles | null>((resolve) => {
+    const timeout = setTimeout(() => resolve(null), 3_000);
+    const channel = new MessageChannel();
+
+    channel.port1.onmessage = (event) => {
+      clearTimeout(timeout);
+      if (event.data.found && event.data.cid === cid && event.data.files) {
+        // Normalize ArrayBuffers from IndexedDB to Uint8Arrays
+        const raw = event.data.files as Record<string, ArrayBuffer | Uint8Array>;
+        const files: ArchiveFiles = {};
+        for (const [path, data] of Object.entries(raw)) {
+          files[path] = data instanceof Uint8Array ? data : new Uint8Array(data);
+        }
+        resolve(files);
+      } else {
+        resolve(null);
+      }
+    };
+
+    controller.postMessage(
+      { type: "SW_CACHE_LOOKUP_EVENT", domain },
+      [channel.port2],
+    );
+  });
+}
 
 /**
  * Extract the .dot label from the current hostname.
@@ -162,14 +200,21 @@ async function main(): Promise<void> {
         el.classList.remove("loading");
       });
 
-    const result = await fetchArchive(cid, showStatus);
-
-    // Step 3: Render in sandboxed iframe
-    showStatus("Rendering...");
-    if (result.type === "archive") {
-      await renderArchive(result.files, label);
+    // Step 2b: Check SW cache before fetching
+    const cachedFiles = await getCachedArchive(label, cid);
+    if (cachedFiles) {
+      showStatus("Rendering (cached)...");
+      await renderArchive(cachedFiles, label, cid);
     } else {
-      renderContent(result.content, label);
+      const result = await fetchArchive(cid, showStatus);
+
+      // Step 3: Render in sandboxed iframe
+      showStatus("Rendering...");
+      if (result.type === "archive") {
+        await renderArchive(result.files, label, cid);
+      } else {
+        renderContent(result.content, label);
+      }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

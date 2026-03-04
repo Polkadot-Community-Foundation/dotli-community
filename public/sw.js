@@ -46,7 +46,78 @@ function hasExtension(path) {
   return lastDot > lastSlash;
 }
 
-// In-memory file archive: { path: ArrayBuffer }
+// ── IndexedDB persistence ─────────────────────────────────
+
+const DB_NAME = "dotli-sw";
+const DB_VERSION = 1;
+const STORE_NAME = "archives";
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "domain" });
+      }
+    };
+  });
+}
+
+async function saveArchiveToDB(entry) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).put(entry);
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch (error) {
+    console.error("Failed to save archive to IndexedDB:", error);
+  }
+}
+
+async function loadArchiveFromDBByDomain(domain) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const request = tx.objectStore(STORE_NAME).get(domain);
+    const result = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return result || null;
+  } catch (error) {
+    console.error("Failed to load archive from IndexedDB:", error);
+    return null;
+  }
+}
+
+async function loadArchivesFromDB() {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const request = tx.objectStore(STORE_NAME).getAll();
+    const result = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return result;
+  } catch (error) {
+    console.error("Failed to load archives from IndexedDB:", error);
+    return [];
+  }
+}
+
+// In-memory archive cache keyed by domain: { domain, cid, files }
+const archiveCache = new Map();
+// Active archive for serving fetch requests
 let archive = null;
 
 // Activate immediately
@@ -54,8 +125,24 @@ self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
+// Restore archives from IndexedDB on activation
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      try {
+        const archives = await loadArchivesFromDB();
+        for (const entry of archives) {
+          if (entry.domain && entry.cid && entry.files) {
+            archiveCache.set(entry.domain, entry);
+          }
+        }
+        console.log(`Restored ${archives.length} archive(s) from IndexedDB`);
+      } catch (err) {
+        console.error("Failed to restore archives from IndexedDB:", err);
+      }
+      await self.clients.claim();
+    })(),
+  );
 });
 
 // Handle messages from main thread
@@ -67,10 +154,58 @@ self.addEventListener("message", (event) => {
 
   if (event.data && event.data.type === "SET_ARCHIVE") {
     archive = event.data.files; // { path: ArrayBuffer }
+    // Cache by domain if provided (in-memory + IndexedDB)
+    if (event.data.domain && event.data.cid) {
+      const entry = {
+        domain: event.data.domain,
+        cid: event.data.cid,
+        files: event.data.files,
+      };
+      archiveCache.set(event.data.domain, entry);
+      saveArchiveToDB(entry);
+    }
     // Notify sender that archive is loaded
     if (event.source) {
       event.source.postMessage({ type: "ARCHIVE_READY" });
     }
+  }
+
+  if (event.data && event.data.type === "SW_CACHE_LOOKUP_EVENT") {
+    const { domain } = event.data;
+
+    // Check in-memory first
+    const cached = archiveCache.get(domain);
+    if (cached) {
+      for (const port of event.ports) {
+        port.postMessage({
+          found: true,
+          cid: cached.cid,
+          files: cached.files,
+        });
+      }
+      return;
+    }
+
+    // Fall back to IndexedDB
+    loadArchiveFromDBByDomain(domain)
+      .then((entry) => {
+        if (entry && entry.cid && entry.files) {
+          // Restore to in-memory cache
+          archiveCache.set(domain, entry);
+        }
+        for (const port of event.ports) {
+          port.postMessage({
+            found: !!entry,
+            cid: entry?.cid ?? null,
+            files: entry?.files ?? null,
+          });
+        }
+      })
+      .catch(() => {
+        for (const port of event.ports) {
+          port.postMessage({ found: false, cid: null, files: null });
+        }
+      });
   }
 });
 

@@ -41,6 +41,7 @@ export function renderContent(content: Uint8Array, label: string): void {
 export async function renderArchive(
   files: ArchiveFiles,
   label: string,
+  cid?: string,
 ): Promise<void> {
   cleanup();
 
@@ -62,9 +63,9 @@ export async function renderArchive(
     transferableFiles[path] = copy;
   }
 
-  // Send archive to the SW
+  // Send archive to the SW (include domain + cid for caching)
   sw.postMessage(
-    { type: "SET_ARCHIVE", files: transferableFiles },
+    { type: "SET_ARCHIVE", files: transferableFiles, domain: label, cid },
     Object.values(transferableFiles),
   );
 
