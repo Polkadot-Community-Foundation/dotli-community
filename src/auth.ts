@@ -56,8 +56,7 @@ export function initAuth(): void {
 
   adapter = createPappAdapter({
     appId: "dot.li",
-    metadata:
-      "https://raw.githubusercontent.com/novasamatech/host-metadata/main/host-metadata.json",
+    metadata: "https://dot.li/host-metadata.json",
     adapters: { lazyClient, storage },
   });
 
