@@ -40,6 +40,7 @@ export interface PhaseStats {
   min: number;
   max: number;
   values: number[];
+  discarded: number; // iterations removed as outliers (> 2x best time)
 }
 
 export interface RunStats {
@@ -68,7 +69,7 @@ const RESULTS_DIR = path.join(import.meta.dirname, "results");
 const BASE_FILE = path.join(RESULTS_DIR, "base.json");
 const LAST_FILE = path.join(RESULTS_DIR, "last.json");
 const SAVE_AS_BASE = process.env.PERF_SAVE_BASE === "1";
-const NUM_RUNS = parseInt(process.env.PERF_RUNS ?? "3", 10);
+const NUM_RUNS = parseInt(process.env.PERF_RUNS ?? "10", 10);
 
 const PHASE_PAIRS: [string, string, string][] = [
   ["Total (main)", "dotli:main:start", "dotli:main:end"],
@@ -93,7 +94,35 @@ const PHASE_PAIRS: [string, string, string][] = [
 
 // ── Statistics (simple-statistics) ─────────────────────────
 
-function computeStats(values: number[]): PhaseStats {
+/**
+ * Discard outlier values that exceed 2x the best (minimum) time.
+ * P2P connections are inherently noisy — slow iterations where peers are
+ * unreachable skew all metrics. Filtering before stats gives a more
+ * representative picture of actual performance.
+ */
+function filterOutliers(values: number[]): {
+  filtered: number[];
+  discarded: number;
+} {
+  if (values.length < 2) {
+    return { filtered: values, discarded: 0 };
+  }
+  const best = Math.min(...values);
+  const threshold = best * 2;
+  const filtered = values.filter((v) => v <= threshold);
+  // Keep at least 2 values even if most are outliers
+  if (filtered.length < 2) {
+    const sorted = [...values].sort((a, b) => a - b);
+    return {
+      filtered: sorted.slice(0, 2),
+      discarded: values.length - 2,
+    };
+  }
+  return { filtered, discarded: values.length - filtered.length };
+}
+
+function computeStats(rawValues: number[]): PhaseStats {
+  const { filtered: values, discarded } = filterOutliers(rawValues);
   const sorted = [...values].sort((a, b) => a - b);
   const m = ss.mean(values);
   const sd = ss.standardDeviation(values);
@@ -107,6 +136,7 @@ function computeStats(values: number[]): PhaseStats {
     min: sorted[0],
     max: sorted[sorted.length - 1],
     values,
+    discarded,
   };
 }
 
@@ -329,7 +359,9 @@ function printStatsTable(
   for (const name of orderedPhases) {
     const s = stats.phases[name];
     const flag = cvFlag(s.cv);
-    let row = `  ${name.padEnd(22)} ${fmt(s.p50).padStart(9)} ${fmt(s.p95).padStart(9)} ${fmt(s.p99).padStart(9)} ${fmt(s.mean).padStart(9)} ${("±" + fmt(s.stddev)).padStart(9)} ${s.cv.toFixed(2).padStart(5)}${flag}`;
+    const dropped =
+      s.discarded > 0 ? ` ${DIM}(-${String(s.discarded)})${RESET}` : "";
+    let row = `  ${name.padEnd(22)} ${fmt(s.p50).padStart(9)} ${fmt(s.p95).padStart(9)} ${fmt(s.p99).padStart(9)} ${fmt(s.mean).padStart(9)} ${("±" + fmt(s.stddev)).padStart(9)} ${s.cv.toFixed(2).padStart(5)}${flag}${dropped}`;
 
     if (hasBase) {
       if (name in baseStats.phases) {

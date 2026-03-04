@@ -31,6 +31,7 @@ interface PhaseStats {
   min: number;
   max: number;
   values: number[];
+  discarded?: number;
 }
 
 interface RunStats {
