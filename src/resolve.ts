@@ -27,6 +27,32 @@ import {
 
 export type StatusCallback = (status: string) => void;
 
+// Shared smoldot instance and relay chain — reused by chain provider factory
+let smoldotInstance: ReturnType<typeof startFromWorker> | null = null;
+let relayChainPromise: Promise<
+  Awaited<ReturnType<ReturnType<typeof startFromWorker>["addChain"]>>
+> | null = null;
+
+/**
+ * Get or create the shared smoldot instance.
+ */
+export function getSmoldot(): ReturnType<typeof startFromWorker> {
+  if (!smoldotInstance) {
+    smoldotInstance = startFromWorker(new SmWorker());
+  }
+  return smoldotInstance;
+}
+
+/**
+ * Get or create the Paseo relay chain (needed as potentialRelayChain for parachains).
+ */
+export function getRelayChain() {
+  if (!relayChainPromise) {
+    relayChainPromise = getSmoldot().addChain({ chainSpec: paseoChainSpec });
+  }
+  return relayChainPromise;
+}
+
 let clientInstance: PolkadotClient | null = null;
 let apiInstance: ReturnType<PolkadotClient["getUnsafeApi"]> | null = null;
 
@@ -40,10 +66,10 @@ async function ensureClient(
   if (apiInstance) return apiInstance;
 
   onStatus?.("Starting light client...");
-  const smoldot = startFromWorker(new SmWorker());
+  const smoldot = getSmoldot();
 
   onStatus?.("Adding Paseo relay chain...");
-  const relayChain = await smoldot.addChain({ chainSpec: paseoChainSpec });
+  const relayChain = await getRelayChain();
 
   onStatus?.("Adding Asset Hub Paseo...");
   const chain = smoldot.addChain({
@@ -199,6 +225,43 @@ export async function resolveDotName(
 
   onStatus?.(`Resolved "${domain}" → ${cid}`);
   return cid;
+}
+
+/**
+ * Resolve the owner of a .dot name.
+ *
+ * @param label - The domain label (e.g., "myapp" for "myapp.dot")
+ * @returns The EVM address of the owner, or null if the domain doesn't exist
+ */
+export async function resolveOwner(label: string): Promise<string | null> {
+  const api = await ensureClient();
+
+  const domain = `${label}.dot`;
+  const node = namehash(domain);
+
+  const calldata = encodeFunctionData({
+    abi: REGISTRY_ABI,
+    functionName: "owner",
+    args: [node as `0x${string}`],
+  });
+
+  try {
+    const result = await reviveCall(api, CONTRACTS.DOTNS_REGISTRY, calldata);
+    const owner = decodeFunctionResult({
+      abi: REGISTRY_ABI,
+      functionName: "owner",
+      data: result,
+    }) as unknown as string;
+
+    // Zero address means no owner
+    if (!owner || owner === "0x0000000000000000000000000000000000000000") {
+      return null;
+    }
+
+    return owner;
+  } catch {
+    return null;
+  }
 }
 
 /**
