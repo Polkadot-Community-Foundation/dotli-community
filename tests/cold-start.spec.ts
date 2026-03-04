@@ -442,43 +442,53 @@ async function runColdIteration(
   };
 }
 
-async function runWarmIteration(
+/**
+ * Run all warm iterations in a single browser context.
+ * The first load populates caches (SW, IndexedDB, HTTP cache),
+ * then each iteration reloads and measures against warm caches.
+ */
+async function runWarmIterations(
   browser: Browser,
-  index: number,
   total: number,
-): Promise<SingleRun> {
-  console.log(`  Warm iteration ${String(index + 1)}/${String(total)}...`);
-
+): Promise<SingleRun[]> {
   const context = await browser.newContext({
     storageState: undefined,
     serviceWorkers: "allow",
   });
   const page = await context.newPage();
 
-  // First load — populate caches
+  // First load — populate caches (SW registration, IndexedDB archive, etc.)
+  console.log(`  Warm: initial load (populating caches)...`);
   await page.goto("http://mytestapp.localhost:5173/", { waitUntil: "commit" });
   await waitForPipeline(page);
 
-  // Clear marks, reload
-  await page.evaluate(() => {
-    performance.clearMarks();
-  });
-  await page.reload({ waitUntil: "commit" });
-  await waitForPipeline(page);
+  const runs: SingleRun[] = [];
 
-  const marks = await collectMarks(page);
-  const phases = computePhases(marks);
-  const bm = await getBrowserMetrics(page);
+  for (let i = 0; i < total; i++) {
+    console.log(`  Warm iteration ${String(i + 1)}/${String(total)}...`);
+
+    // Clear marks, reload — caches persist across reloads within the context
+    await page.evaluate(() => {
+      performance.clearMarks();
+    });
+    await page.reload({ waitUntil: "commit" });
+    await waitForPipeline(page);
+
+    const marks = await collectMarks(page);
+    const phases = computePhases(marks);
+    const bm = await getBrowserMetrics(page);
+
+    runs.push({
+      phases,
+      domContentLoaded: bm.domContentLoaded,
+      jsHeapUsed: bm.jsHeapUsed,
+      requestCount: 0,
+      totalBytes: 0,
+    });
+  }
 
   await context.close();
-
-  return {
-    phases,
-    domContentLoaded: bm.domContentLoaded,
-    jsHeapUsed: bm.jsHeapUsed,
-    requestCount: 0,
-    totalBytes: 0,
-  };
+  return runs;
 }
 
 // ── Tests ──────────────────────────────────────────────────
@@ -509,10 +519,7 @@ test.describe("Cold Start Performance", () => {
   test(`measure warm start (${String(NUM_RUNS)} iterations)`, async ({
     browser,
   }) => {
-    const runs: SingleRun[] = [];
-    for (let i = 0; i < NUM_RUNS; i++) {
-      runs.push(await runWarmIteration(browser, i, NUM_RUNS));
-    }
+    const runs = await runWarmIterations(browser, NUM_RUNS);
 
     warmStats = aggregateRuns("warm", runs);
 
