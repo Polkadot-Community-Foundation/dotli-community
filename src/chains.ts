@@ -46,8 +46,8 @@ export function createChainProvider(
   genesisHash: string,
 ): JsonRpcProvider | null {
   const key = genesisHash.toLowerCase();
-  const entry = SUPPORTED_CHAINS[key];
-  if (!entry) {
+  const entry = SUPPORTED_CHAINS[key] as ChainEntry | undefined;
+  if (entry === undefined) {
     return null;
   }
 

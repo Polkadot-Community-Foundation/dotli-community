@@ -469,7 +469,7 @@ test.describe("Cold Start Performance", () => {
 
     const base = loadJson(BASE_FILE);
     const last = loadJson(LAST_FILE);
-    printStatsTable("COLD START", coldStats, base, last);
+    printStatsTable("COLD START", coldStats, base?.cold, last?.cold);
 
     expect(runs.length).toBe(NUM_RUNS);
   });
@@ -486,7 +486,7 @@ test.describe("Cold Start Performance", () => {
 
     const base = loadJson(BASE_FILE);
     const last = loadJson(LAST_FILE);
-    printStatsTable("WARM START", warmStats, base, last);
+    printStatsTable("WARM START", warmStats, base?.warm, last?.warm);
 
     expect(runs.length).toBe(NUM_RUNS);
   });

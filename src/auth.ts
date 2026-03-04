@@ -252,7 +252,7 @@ export async function disconnect(): Promise<void> {
 // ── Helpers ────────────────────────────────────────────────
 
 export function shortenName(identity: Identity): string {
-  if (identity.fullUsername !== undefined && identity.fullUsername !== "") {
+  if (identity.fullUsername !== null && identity.fullUsername.length > 0) {
     const parts = identity.fullUsername.split(" ");
     if (parts.length === 1) {
       return identity.fullUsername.slice(0, 2);

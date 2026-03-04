@@ -111,7 +111,9 @@ function joinPath(base: string, name: string): string {
 export async function parseCarFile(buffer: Uint8Array): Promise<ArchiveFiles> {
   const reader = await CarReader.fromBytes(buffer);
   const roots = await reader.getRoots();
-  const rootCid = roots[0] as Awaited<ReturnType<typeof reader.getRoots>>[number] | undefined;
+  const rootCid = roots[0] as
+    | Awaited<ReturnType<typeof reader.getRoots>>[number]
+    | undefined;
 
   if (rootCid === undefined) {
     throw new Error("CAR file has no roots");

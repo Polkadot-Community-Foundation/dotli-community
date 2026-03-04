@@ -146,9 +146,7 @@ async function reviveCall(
 
   const flagsRaw = ok.flags;
   const flagsStr =
-    typeof flagsRaw === "object" &&
-    flagsRaw !== null &&
-    typeof flagsRaw.toString === "function"
+    typeof flagsRaw === "object" && typeof flagsRaw.toString === "function"
       ? flagsRaw.toString()
       : String(flagsRaw ?? 0);
   const flags = BigInt(flagsStr);
@@ -163,7 +161,6 @@ async function reviveCall(
   }
   if (
     data !== undefined &&
-    data !== null &&
     "asHex" in data &&
     typeof data.asHex === "function"
   ) {
@@ -171,7 +168,6 @@ async function reviveCall(
   }
   if (
     data !== undefined &&
-    data !== null &&
     "toHex" in data &&
     typeof data.toHex === "function"
   ) {
@@ -271,7 +267,7 @@ export async function resolveDotName(
 
   // Step 3: Decode the contenthash to a CID
   const cid = decodeIpfsContenthash(contenthashBytes);
-  if (!cid) {
+  if (cid === null || cid === "") {
     onStatus?.(`No content set for "${domain}"`);
     return null;
   }
