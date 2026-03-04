@@ -5,19 +5,28 @@
 
 import { SigningErr } from "@novasamatech/host-api";
 import { toHex } from "@novasamatech/host-api";
-import type { UserSession, SigningPayloadRequest, SigningRawRequest } from "@novasamatech/host-papp";
+import type {
+  UserSession,
+  SigningPayloadRequest,
+  SigningRawRequest,
+} from "@novasamatech/host-papp";
 
-export type SigningResult = {
+export interface SigningResult {
   signature: `0x${string}`;
   signedTransaction?: `0x${string}`;
-};
+}
 
 function truncateAddress(address: string): string {
-  if (address.length <= 16) return address;
+  if (address.length <= 16) {
+    return address;
+  }
   return `${address.slice(0, 8)}...${address.slice(-8)}`;
 }
 
-function createModalDOM(title: string, fields: { label: string; value: string; mono?: boolean }[]): {
+function createModalDOM(
+  title: string,
+  fields: { label: string; value: string; mono?: boolean }[],
+): {
   backdrop: HTMLDivElement;
   signBtn: HTMLButtonElement;
   cancelBtn: HTMLButtonElement;
@@ -46,7 +55,9 @@ function createModalDOM(title: string, fields: { label: string; value: string; m
 
     const value = document.createElement("div");
     value.className = "signing-field-value";
-    if (field.mono) value.classList.add("mono");
+    if (field.mono) {
+      value.classList.add("mono");
+    }
     value.textContent = field.value;
     group.appendChild(value);
 
@@ -89,7 +100,10 @@ export function showSignPayloadModal(
       { label: "Call Data", value: payload.method, mono: true },
     ];
 
-    const { backdrop, signBtn, cancelBtn } = createModalDOM("Sign Transaction", fields);
+    const { backdrop, signBtn, cancelBtn } = createModalDOM(
+      "Sign Transaction",
+      fields,
+    );
 
     cancelBtn.addEventListener("click", () => {
       removeModal(backdrop);
@@ -113,11 +127,11 @@ export function showSignPayloadModal(
           ({ signature, signedTransaction }) => {
             removeModal(backdrop);
             resolve({
-              signature: toHex(signature) as `0x${string}`,
+              signature: toHex(signature),
               signedTransaction: signedTransaction
                 ? typeof signedTransaction === "string"
-                  ? signedTransaction as `0x${string}`
-                  : toHex(signedTransaction) as `0x${string}`
+                  ? (signedTransaction as `0x${string}`)
+                  : toHex(signedTransaction)
                 : undefined,
             });
           },
@@ -145,7 +159,10 @@ export function showSignRawModal(
       { label: "Message", value: String(message), mono: true },
     ];
 
-    const { backdrop, signBtn, cancelBtn } = createModalDOM("Sign Message", fields);
+    const { backdrop, signBtn, cancelBtn } = createModalDOM(
+      "Sign Message",
+      fields,
+    );
 
     cancelBtn.addEventListener("click", () => {
       removeModal(backdrop);
@@ -156,25 +173,23 @@ export function showSignRawModal(
       signBtn.disabled = true;
       signBtn.textContent = "Signing...";
 
-      session
-        .signRaw(payload)
-        .match(
-          ({ signature, signedTransaction }) => {
-            removeModal(backdrop);
-            resolve({
-              signature: toHex(signature) as `0x${string}`,
-              signedTransaction: signedTransaction
-                ? typeof signedTransaction === "string"
-                  ? signedTransaction as `0x${string}`
-                  : toHex(signedTransaction) as `0x${string}`
-                : undefined,
-            });
-          },
-          (e) => {
-            removeModal(backdrop);
-            reject(new SigningErr.Unknown({ reason: e.message }));
-          },
-        );
+      session.signRaw(payload).match(
+        ({ signature, signedTransaction }) => {
+          removeModal(backdrop);
+          resolve({
+            signature: toHex(signature),
+            signedTransaction: signedTransaction
+              ? typeof signedTransaction === "string"
+                ? (signedTransaction as `0x${string}`)
+                : toHex(signedTransaction)
+              : undefined,
+          });
+        },
+        (e) => {
+          removeModal(backdrop);
+          reject(new SigningErr.Unknown({ reason: e.message }));
+        },
+      );
     });
   });
 }

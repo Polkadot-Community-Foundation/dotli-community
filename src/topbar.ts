@@ -44,7 +44,9 @@ export function initTopBar(): void {
 
   // Clicking backdrop (outside modal) closes modal
   modalBackdrop.addEventListener("click", (e) => {
-    if (e.target === e.currentTarget) closeModal();
+    if (e.target === e.currentTarget) {
+      closeModal();
+    }
   });
 
   // Disconnect button
@@ -104,7 +106,7 @@ function renderLoggedIn(state: AuthState & { status: "authenticated" }): void {
   // Update popover with identity name or truncated account address
   let username: string;
   if (state.identity?.fullUsername || state.identity?.liteUsername) {
-    username = state.identity.fullUsername ?? state.identity.liteUsername!;
+    username = state.identity.fullUsername ?? state.identity.liteUsername;
   } else {
     // Fallback to truncated account address
     const id = Array.from(state.session.remoteAccount.accountId)
@@ -134,7 +136,9 @@ function renderPairing(payload: string): void {
   })
     .then(() => {
       // Only append if this payload is still current
-      if (currentQrPayload !== capturedPayload) return;
+      if (currentQrPayload !== capturedPayload) {
+        return;
+      }
       modalQr.innerHTML = "";
       modalQr.appendChild(canvas);
     })
@@ -164,7 +168,9 @@ function renderError(message: string): void {
   const retry = document.createElement("button");
   retry.className = "auth-modal-retry";
   retry.textContent = "Retry";
-  retry.addEventListener("click", () => startPairing());
+  retry.addEventListener("click", () => {
+    startPairing();
+  });
   container.appendChild(retry);
 
   modalQr.innerHTML = "";

@@ -1,18 +1,18 @@
 /**
- * dot.li — Cold Start Performance Test
+ * dot.li — Cold Start Performance Test (multi-run with statistics)
  *
- * Measures the full loading pipeline from a fresh browser context:
- *   HTML parse → JS load → auth init → SW registration → smoldot sync →
- *   name resolution → content fetch → render
+ * Runs the loading pipeline multiple times and computes p50, p95, p99,
+ * mean, stddev, and coefficient of variation using simple-statistics.
  *
- * Prerequisites:
- *   1. Run `npm run dev` in a separate terminal
- *   2. Run `npm run test:perf`        — saves results to tests/results/last.json
- *      Run `npm run test:perf:base`   — saves results to tests/results/base.json (once)
- *      Run `npm run test:perf:compare` — shows diff between base, last, and current
+ * Usage:
+ *   npm run test:perf               — run N iterations, save to last.json
+ *   npm run test:perf:base          — save as base.json (immutable)
+ *   npm run test:perf:compare       — compare base vs last
+ *   PERF_RUNS=5 npm run test:perf   — override iteration count
  */
 
-import { test, expect, type Page, type BrowserContext } from "@playwright/test";
+import { test, expect, type Page, type Browser } from "@playwright/test";
+import * as ss from "simple-statistics";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -30,24 +30,36 @@ interface PhaseResult {
   duration: number;
 }
 
-interface RunResult {
-  timestamp: string;
-  type: "cold" | "warm";
-  phases: Record<string, number>; // phase name → duration ms
-  browserMetrics: {
-    domContentLoaded: number;
-    jsHeapUsed: number;
-  };
-  networkStats: {
-    requestCount: number;
-    totalBytes: number;
-  };
-  marks: PerfMark[];
+export interface PhaseStats {
+  p50: number;
+  p95: number;
+  p99: number;
+  mean: number;
+  stddev: number;
+  cv: number; // coefficient of variation (stddev/mean) — >0.3 = noisy
+  min: number;
+  max: number;
+  values: number[];
 }
 
-interface SavedResults {
-  cold: RunResult;
-  warm: RunResult | null;
+export interface RunStats {
+  timestamp: string;
+  type: "cold" | "warm";
+  iterations: number;
+  phases: Record<string, PhaseStats>;
+  browserMetrics: {
+    domContentLoaded: PhaseStats;
+    jsHeapUsed: PhaseStats;
+  };
+  networkStats: {
+    requestCount: PhaseStats;
+    totalBytes: PhaseStats;
+  };
+}
+
+export interface SavedResults {
+  cold: RunStats;
+  warm: RunStats | null;
 }
 
 // ── Constants ──────────────────────────────────────────────
@@ -56,8 +68,7 @@ const RESULTS_DIR = path.join(import.meta.dirname, "results");
 const BASE_FILE = path.join(RESULTS_DIR, "base.json");
 const LAST_FILE = path.join(RESULTS_DIR, "last.json");
 const SAVE_AS_BASE = process.env.PERF_SAVE_BASE === "1";
-
-// ── Phase definitions (order matters for display) ──────────
+const NUM_RUNS = parseInt(process.env.PERF_RUNS ?? "3", 10);
 
 const PHASE_PAIRS: [string, string, string][] = [
   ["Total (main)", "dotli:main:start", "dotli:main:end"],
@@ -66,7 +77,11 @@ const PHASE_PAIRS: [string, string, string][] = [
   ["Name resolution", "dotli:resolve:start", "dotli:resolve:end"],
   ["  Smoldot init", "dotli:smoldot:init:start", "dotli:smoldot:init:end"],
   ["    Relay chain", "dotli:smoldot:relay:start", "dotli:smoldot:relay:end"],
-  ["    Parachain", "dotli:smoldot:parachain:start", "dotli:smoldot:parachain:end"],
+  [
+    "    Parachain",
+    "dotli:smoldot:parachain:start",
+    "dotli:smoldot:parachain:end",
+  ],
   ["    Chain sync", "dotli:smoldot:sync:start", "dotli:smoldot:sync:end"],
   ["Cache check", "dotli:cache-check:start", "dotli:cache-check:end"],
   ["Content fetch", "dotli:fetch:start", "dotli:fetch:end"],
@@ -75,6 +90,25 @@ const PHASE_PAIRS: [string, string, string][] = [
   ["  Archive parse", "dotli:fetch:parse:start", "dotli:fetch:parse:end"],
   ["Render", "dotli:render:start", "dotli:render:end"],
 ];
+
+// ── Statistics (simple-statistics) ─────────────────────────
+
+function computeStats(values: number[]): PhaseStats {
+  const sorted = [...values].sort((a, b) => a - b);
+  const m = ss.mean(values);
+  const sd = ss.standardDeviation(values);
+  return {
+    p50: Math.round(ss.quantileSorted(sorted, 0.5)),
+    p95: Math.round(ss.quantileSorted(sorted, 0.95)),
+    p99: Math.round(ss.quantileSorted(sorted, 0.99)),
+    mean: Math.round(m),
+    stddev: Math.round(sd),
+    cv: m > 0 ? Math.round((sd / m) * 100) / 100 : 0,
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+    values,
+  };
+}
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -92,7 +126,6 @@ function computePhases(marks: PerfMark[]): PhaseResult[] {
   for (const m of marks) {
     byName.set(m.name, m.startTime);
   }
-
   const phases: PhaseResult[] = [];
   for (const [label, startMark, endMark] of PHASE_PAIRS) {
     const start = byName.get(startMark);
@@ -109,58 +142,6 @@ function computePhases(marks: PerfMark[]): PhaseResult[] {
   return phases;
 }
 
-function phasesToMap(phases: PhaseResult[]): Record<string, number> {
-  const map: Record<string, number> = {};
-  for (const p of phases) {
-    map[p.phase] = p.duration;
-  }
-  return map;
-}
-
-function fmt(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
-}
-
-function fmtDelta(current: number, reference: number): string {
-  const diff = current - reference;
-  const pct = reference > 0 ? ((diff / reference) * 100).toFixed(1) : "N/A";
-  const sign = diff > 0 ? "+" : "";
-  const arrow = diff < 0 ? "faster" : diff > 0 ? "slower" : "same";
-  return `${sign}${fmt(diff)} (${sign}${pct}%) ${arrow}`;
-}
-
-function loadJson(filepath: string): SavedResults | null {
-  try {
-    return JSON.parse(fs.readFileSync(filepath, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-
-function saveJson(filepath: string, data: SavedResults): void {
-  fs.mkdirSync(path.dirname(filepath), { recursive: true });
-  fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
-}
-
-function buildRunResult(
-  type: "cold" | "warm",
-  phases: PhaseResult[],
-  marks: PerfMark[],
-  browserMetrics: { domContentLoaded: number; jsHeapUsed: number },
-  networkStats: { requestCount: number; totalBytes: number },
-): RunResult {
-  return {
-    timestamp: new Date().toISOString(),
-    type,
-    phases: phasesToMap(phases),
-    browserMetrics,
-    networkStats,
-    marks,
-  };
-}
-
-/** Wait for the app pipeline to finish. */
 async function waitForPipeline(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
@@ -176,202 +157,354 @@ async function waitForPipeline(page: Page): Promise<void> {
   await page.waitForTimeout(500);
 }
 
-async function getBrowserMetrics(page: Page) {
+async function getBrowserMetrics(
+  page: Page,
+): Promise<{ domContentLoaded: number; jsHeapUsed: number }> {
   return page.evaluate(() => {
     const nav = performance.getEntriesByType(
       "navigation",
     )[0] as PerformanceNavigationTiming;
-    const memory = (performance as any).memory;
+    const memory = (
+      performance as unknown as {
+        memory?: { usedJSHeapSize: number };
+      }
+    ).memory;
     return {
-      domContentLoaded: Math.round(nav?.domContentLoadedEventEnd ?? 0),
+      domContentLoaded: Math.round(nav.domContentLoadedEventEnd),
       jsHeapUsed: memory?.usedJSHeapSize ?? 0,
     };
   });
 }
 
+function fmt(ms: number): string {
+  if (ms < 1000) {
+    return `${String(ms)}ms`;
+  }
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
+function fmtDelta(current: number, reference: number): string {
+  const diff = current - reference;
+  const pct = reference > 0 ? ((diff / reference) * 100).toFixed(1) : "N/A";
+  const sign = diff > 0 ? "+" : "";
+  const arrow = diff < 0 ? "faster" : diff > 0 ? "slower" : "same";
+  return `${sign}${fmt(diff)} (${sign}${pct}%) ${arrow}`;
+}
+
+function loadJson(filepath: string): SavedResults | null {
+  try {
+    return JSON.parse(fs.readFileSync(filepath, "utf-8")) as SavedResults;
+  } catch {
+    return null;
+  }
+}
+
+function saveJson(filepath: string, data: SavedResults): void {
+  fs.mkdirSync(path.dirname(filepath), { recursive: true });
+  fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
+}
+
+// ── Aggregate per-run data into stats ──────────────────────
+
+interface SingleRun {
+  phases: PhaseResult[];
+  domContentLoaded: number;
+  jsHeapUsed: number;
+  requestCount: number;
+  totalBytes: number;
+}
+
+function aggregateRuns(type: "cold" | "warm", runs: SingleRun[]): RunStats {
+  const phaseNames = new Set<string>();
+  for (const run of runs) {
+    for (const p of run.phases) {
+      phaseNames.add(p.phase);
+    }
+  }
+
+  const phaseStats: Record<string, PhaseStats> = {};
+  for (const name of phaseNames) {
+    const values = runs
+      .map((r) => r.phases.find((p) => p.phase === name)?.duration)
+      .filter((v): v is number => v !== undefined);
+    if (values.length > 0) {
+      phaseStats[name] = computeStats(values);
+    }
+  }
+
+  return {
+    timestamp: new Date().toISOString(),
+    type,
+    iterations: runs.length,
+    phases: phaseStats,
+    browserMetrics: {
+      domContentLoaded: computeStats(runs.map((r) => r.domContentLoaded)),
+      jsHeapUsed: computeStats(runs.map((r) => r.jsHeapUsed)),
+    },
+    networkStats: {
+      requestCount: computeStats(runs.map((r) => r.requestCount)),
+      totalBytes: computeStats(runs.map((r) => r.totalBytes)),
+    },
+  };
+}
+
 // ── Report printing ────────────────────────────────────────
 
-function printPhaseTable(
+const DIM = "\x1b[2m";
+const RESET = "\x1b[0m";
+const YELLOW = "\x1b[33m";
+const RED = "\x1b[31m";
+
+function cvFlag(cv: number): string {
+  if (cv > 0.5) {
+    return `${RED}!!${RESET}`;
+  }
+  if (cv > 0.3) {
+    return `${YELLOW}!${RESET}`;
+  }
+  return "";
+}
+
+function printStatsTable(
   title: string,
-  phases: PhaseResult[],
-  browserMetrics: { domContentLoaded: number; jsHeapUsed: number },
-  networkStats: { requestCount: number; totalBytes: number },
-  basePhases?: Record<string, number>,
-  lastPhases?: Record<string, number>,
-) {
-  const div = "─".repeat(90);
-  const hasBase = basePhases && Object.keys(basePhases).length > 0;
-  const hasLast = lastPhases && Object.keys(lastPhases).length > 0;
+  stats: RunStats,
+  baseStats?: RunStats | null,
+  lastStats?: RunStats | null,
+): void {
+  const div = "─".repeat(120);
+  const hasBase =
+    baseStats !== undefined &&
+    baseStats !== null &&
+    Object.keys(baseStats.phases).length > 0;
+  const hasLast =
+    lastStats !== undefined &&
+    lastStats !== null &&
+    Object.keys(lastStats.phases).length > 0;
 
   console.log(`\n${div}`);
-  console.log(`  ${title}`);
+  console.log(`  ${title}  (${String(stats.iterations)} iterations)`);
   console.log(div);
 
-  console.log(`\n  DOMContentLoaded:  ${fmt(browserMetrics.domContentLoaded)}`);
+  // Browser metrics summary
+  const dcl = stats.browserMetrics.domContentLoaded;
+  const heap = stats.browserMetrics.jsHeapUsed;
+  const reqs = stats.networkStats.requestCount;
+  const bytes = stats.networkStats.totalBytes;
   console.log(
-    `  JS Heap Used:      ${(browserMetrics.jsHeapUsed / 1024 / 1024).toFixed(1)} MB`,
+    `\n  DOMContentLoaded:  p50=${fmt(dcl.p50)}  p95=${fmt(dcl.p95)}  p99=${fmt(dcl.p99)}  cv=${dcl.cv.toFixed(2)}`,
   );
-  console.log(`  Network Requests:  ${networkStats.requestCount}`);
   console.log(
-    `  Bytes Transferred: ${(networkStats.totalBytes / 1024 / 1024).toFixed(2)} MB`,
+    `  JS Heap Used:      p50=${(heap.p50 / 1024 / 1024).toFixed(1)}MB  p95=${(heap.p95 / 1024 / 1024).toFixed(1)}MB`,
+  );
+  console.log(
+    `  Network Requests:  p50=${String(reqs.p50)}  range=${String(reqs.min)}-${String(reqs.max)}`,
+  );
+  console.log(
+    `  Bytes Transferred: p50=${(bytes.p50 / 1024 / 1024).toFixed(2)}MB`,
   );
 
-  // Header
-  let header = `  ${"Phase".padEnd(28)} ${"Duration".padStart(10)}`;
-  if (hasBase) header += ` ${"vs Base".padStart(30)}`;
-  if (hasLast) header += ` ${"vs Last".padStart(30)}`;
-  console.log(`\n${header}`);
+  // Main stats table header
+  let header = `\n  ${"Phase".padEnd(22)} ${"p50".padStart(9)} ${"p95".padStart(9)} ${"p99".padStart(9)} ${"Mean".padStart(9)} ${"StdDev".padStart(9)} ${"CV".padStart(6)}`;
+  if (hasBase) {
+    header += `  ${"vs Base (p50)".padStart(26)}`;
+  }
+  if (hasLast) {
+    header += `  ${"vs Last (p50)".padStart(26)}`;
+  }
+  console.log(header);
 
-  let line = `  ${"─".repeat(28)} ${"─".repeat(10)}`;
-  if (hasBase) line += ` ${"─".repeat(30)}`;
-  if (hasLast) line += ` ${"─".repeat(30)}`;
+  let line = `  ${"─".repeat(22)} ${"─".repeat(9)} ${"─".repeat(9)} ${"─".repeat(9)} ${"─".repeat(9)} ${"─".repeat(9)} ${"─".repeat(6)}`;
+  if (hasBase) {
+    line += `  ${"─".repeat(26)}`;
+  }
+  if (hasLast) {
+    line += `  ${"─".repeat(26)}`;
+  }
   console.log(line);
 
-  for (const p of phases) {
-    let row = `  ${p.phase.padEnd(28)} ${fmt(p.duration).padStart(10)}`;
+  const orderedPhases = PHASE_PAIRS.map(([name]) => name).filter(
+    (name) => name in stats.phases,
+  );
 
-    if (hasBase && basePhases[p.phase] !== undefined) {
-      row += ` ${fmtDelta(p.duration, basePhases[p.phase]).padStart(30)}`;
-    } else if (hasBase) {
-      row += ` ${"—".padStart(30)}`;
+  for (const name of orderedPhases) {
+    const s = stats.phases[name];
+    const flag = cvFlag(s.cv);
+    let row = `  ${name.padEnd(22)} ${fmt(s.p50).padStart(9)} ${fmt(s.p95).padStart(9)} ${fmt(s.p99).padStart(9)} ${fmt(s.mean).padStart(9)} ${("±" + fmt(s.stddev)).padStart(9)} ${s.cv.toFixed(2).padStart(5)}${flag}`;
+
+    if (hasBase) {
+      if (name in baseStats.phases) {
+        row += `  ${fmtDelta(s.p50, baseStats.phases[name].p50).padStart(26)}`;
+      } else {
+        row += `  ${"—".padStart(26)}`;
+      }
     }
 
-    if (hasLast && lastPhases![p.phase] !== undefined) {
-      row += ` ${fmtDelta(p.duration, lastPhases![p.phase]).padStart(30)}`;
-    } else if (hasLast) {
-      row += ` ${"—".padStart(30)}`;
+    if (hasLast) {
+      if (name in lastStats.phases) {
+        row += `  ${fmtDelta(s.p50, lastStats.phases[name].p50).padStart(26)}`;
+      } else {
+        row += `  ${"—".padStart(26)}`;
+      }
     }
 
     console.log(row);
   }
 
+  // Per-iteration breakdown
+  const totalPhase =
+    "Total (main)" in stats.phases ? stats.phases["Total (main)"] : null;
+  if (totalPhase !== null) {
+    console.log(
+      `\n  ${DIM}Iterations: [${totalPhase.values.map((v) => fmt(v)).join(", ")}]${RESET}`,
+    );
+    if (totalPhase.cv > 0.3) {
+      console.log(
+        `  ${YELLOW}Warning: CV=${totalPhase.cv.toFixed(2)} — high variance, results may not be reliable. Consider more iterations.${RESET}`,
+      );
+    }
+  }
+
   console.log(`\n${div}\n`);
+}
+
+// ── Run iterations ─────────────────────────────────────────
+
+async function runColdIteration(
+  browser: Browser,
+  index: number,
+  total: number,
+): Promise<SingleRun> {
+  console.log(`  Cold iteration ${String(index + 1)}/${String(total)}...`);
+
+  const context = await browser.newContext({
+    storageState: undefined,
+    serviceWorkers: "allow",
+  });
+  const page = await context.newPage();
+
+  const requests: { size: number }[] = [];
+  page.on("response", async (response) => {
+    try {
+      const body = await response.body().catch(() => null);
+      requests.push({ size: body?.length ?? 0 });
+    } catch {
+      requests.push({ size: 0 });
+    }
+  });
+
+  await page.goto("http://mytestapp.localhost:5173/", { waitUntil: "commit" });
+  await waitForPipeline(page);
+
+  const marks = await collectMarks(page);
+  const phases = computePhases(marks);
+  const bm = await getBrowserMetrics(page);
+
+  await context.close();
+
+  return {
+    phases,
+    domContentLoaded: bm.domContentLoaded,
+    jsHeapUsed: bm.jsHeapUsed,
+    requestCount: requests.length,
+    totalBytes: requests.reduce((s, r) => s + r.size, 0),
+  };
+}
+
+async function runWarmIteration(
+  browser: Browser,
+  index: number,
+  total: number,
+): Promise<SingleRun> {
+  console.log(`  Warm iteration ${String(index + 1)}/${String(total)}...`);
+
+  const context = await browser.newContext({
+    storageState: undefined,
+    serviceWorkers: "allow",
+  });
+  const page = await context.newPage();
+
+  // First load — populate caches
+  await page.goto("http://mytestapp.localhost:5173/", { waitUntil: "commit" });
+  await waitForPipeline(page);
+
+  // Clear marks, reload
+  await page.evaluate(() => {
+    performance.clearMarks();
+  });
+  await page.reload({ waitUntil: "commit" });
+  await waitForPipeline(page);
+
+  const marks = await collectMarks(page);
+  const phases = computePhases(marks);
+  const bm = await getBrowserMetrics(page);
+
+  await context.close();
+
+  return {
+    phases,
+    domContentLoaded: bm.domContentLoaded,
+    jsHeapUsed: bm.jsHeapUsed,
+    requestCount: 0,
+    totalBytes: 0,
+  };
 }
 
 // ── Tests ──────────────────────────────────────────────────
 
+test.setTimeout(NUM_RUNS * 150_000 + 30_000);
+
 test.describe("Cold Start Performance", () => {
-  let context: BrowserContext;
-  let page: Page;
-  let coldResult: RunResult | null = null;
-  let warmResult: RunResult | null = null;
+  let coldStats: RunStats | null = null;
+  let warmStats: RunStats | null = null;
 
-  test.beforeEach(async ({ browser }) => {
-    context = await browser.newContext({
-      storageState: undefined,
-      serviceWorkers: "allow",
-    });
-    page = await context.newPage();
-  });
+  test(`measure cold start (${String(NUM_RUNS)} iterations)`, async ({
+    browser,
+  }) => {
+    const runs: SingleRun[] = [];
+    for (let i = 0; i < NUM_RUNS; i++) {
+      runs.push(await runColdIteration(browser, i, NUM_RUNS));
+    }
 
-  test.afterEach(async () => {
-    await context.close();
-  });
-
-  test("measure cold start", async () => {
-    // Track network
-    const requests: { url: string; size: number }[] = [];
-    page.on("response", async (response) => {
-      try {
-        const body = await response.body().catch(() => null);
-        requests.push({ url: response.url(), size: body?.length ?? 0 });
-      } catch {
-        requests.push({ url: response.url(), size: 0 });
-      }
-    });
-
-    await page.goto("http://mytestapp.localhost:5173/", {
-      waitUntil: "commit",
-    });
-    await waitForPipeline(page);
-
-    const marks = await collectMarks(page);
-    const phases = computePhases(marks);
-    const browserMetrics = await getBrowserMetrics(page);
-    const networkStats = {
-      requestCount: requests.length,
-      totalBytes: requests.reduce((sum, r) => sum + r.size, 0),
-    };
-
-    // Load comparison data
-    const base = loadJson(BASE_FILE);
-    const last = loadJson(LAST_FILE);
-
-    printPhaseTable(
-      "COLD START",
-      phases,
-      browserMetrics,
-      networkStats,
-      base?.cold.phases,
-      last?.cold.phases,
-    );
-
-    // Store for saving after all tests
-    coldResult = buildRunResult("cold", phases, marks, browserMetrics, networkStats);
-
-    expect(marks.length).toBeGreaterThan(0);
-    expect(marks.find((m) => m.name === "dotli:main:start")).toBeDefined();
-  });
-
-  test("measure warm start", async () => {
-    // First load — populate caches
-    await page.goto("http://mytestapp.localhost:5173/", {
-      waitUntil: "commit",
-    });
-    await waitForPipeline(page);
-
-    // Reload in same context
-    await page.evaluate(() => performance.clearMarks());
-    await page.reload({ waitUntil: "commit" });
-    await waitForPipeline(page);
-
-    const marks = await collectMarks(page);
-    const phases = computePhases(marks);
-    const browserMetrics = await getBrowserMetrics(page);
+    coldStats = aggregateRuns("cold", runs);
 
     const base = loadJson(BASE_FILE);
     const last = loadJson(LAST_FILE);
+    printStatsTable("COLD START", coldStats, base, last);
 
-    printPhaseTable(
-      "WARM START (reload with caches)",
-      phases,
-      browserMetrics,
-      { requestCount: 0, totalBytes: 0 },
-      base?.warm?.phases,
-      last?.warm?.phases,
-    );
+    expect(runs.length).toBe(NUM_RUNS);
+  });
 
-    warmResult = buildRunResult("warm", phases, marks, browserMetrics, {
-      requestCount: 0,
-      totalBytes: 0,
-    });
+  test(`measure warm start (${String(NUM_RUNS)} iterations)`, async ({ browser }) => {
+    const runs: SingleRun[] = [];
+    for (let i = 0; i < NUM_RUNS; i++) {
+      runs.push(await runWarmIteration(browser, i, NUM_RUNS));
+    }
 
-    expect(marks.length).toBeGreaterThan(0);
+    warmStats = aggregateRuns("warm", runs);
+
+    const base = loadJson(BASE_FILE);
+    const last = loadJson(LAST_FILE);
+    printStatsTable("WARM START", warmStats, base, last);
+
+    expect(runs.length).toBe(NUM_RUNS);
   });
 
   test.afterAll(() => {
-    if (!coldResult) return;
+    if (!coldStats) {
+      return;
+    }
 
-    const results: SavedResults = {
-      cold: coldResult,
-      warm: warmResult,
-    };
+    const results: SavedResults = { cold: coldStats, warm: warmStats };
 
     fs.mkdirSync(RESULTS_DIR, { recursive: true });
 
-    // Always save as "last"
     saveJson(LAST_FILE, results);
     console.log(`  Results saved to ${LAST_FILE}`);
 
-    // Save as "base" only if explicitly requested and no base exists yet
     if (SAVE_AS_BASE) {
       if (fs.existsSync(BASE_FILE)) {
-        console.log(
-          `  Base already exists at ${BASE_FILE} — not overwritten.`,
-        );
-        console.log(
-          `  To reset base, delete the file manually and re-run with PERF_SAVE_BASE=1`,
-        );
+        console.log(`  Base already exists — not overwritten.`);
+        console.log(`  Delete ${BASE_FILE} manually to reset.`);
       } else {
         saveJson(BASE_FILE, results);
         console.log(`  Base results saved to ${BASE_FILE}`);

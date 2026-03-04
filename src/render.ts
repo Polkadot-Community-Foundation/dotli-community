@@ -7,7 +7,7 @@
 import { setupContainer } from "./container";
 import type { ArchiveFiles } from "./archive";
 
-const app = document.getElementById("app")!;
+const app = document.getElementById("app") ?? document.body;
 
 let currentDispose: (() => void) | null = null;
 let currentBlobUrl: string | null = null;
@@ -45,12 +45,13 @@ export async function renderArchive(
 ): Promise<void> {
   cleanup();
 
-  const sw = navigator.serviceWorker?.controller;
-  if (!sw) {
+  const sw = navigator.serviceWorker.controller;
+  if (sw === null) {
     // SW not ready — fall back to rendering index.html as single file
-    const indexHtml = files["index.html"];
-    if (indexHtml) {
-      return renderContent(indexHtml, label);
+    const indexHtml = files["index.html"] as Uint8Array | undefined;
+    if (indexHtml !== undefined) {
+      renderContent(indexHtml, label);
+      return;
     }
     throw new Error("No service worker and no index.html in archive");
   }
@@ -98,7 +99,7 @@ function cleanup(): void {
     currentDispose();
     currentDispose = null;
   }
-  if (currentBlobUrl) {
+  if (currentBlobUrl !== null) {
     URL.revokeObjectURL(currentBlobUrl);
     currentBlobUrl = null;
   }
@@ -109,7 +110,9 @@ function cleanup(): void {
  */
 export function showStatus(message: string): void {
   const status = document.getElementById("status");
-  if (status) status.textContent = message;
+  if (status) {
+    status.textContent = message;
+  }
 }
 
 /**

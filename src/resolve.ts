@@ -37,19 +37,17 @@ let relayChainPromise: Promise<
  * Get or create the shared smoldot instance.
  */
 export function getSmoldot(): ReturnType<typeof startFromWorker> {
-  if (!smoldotInstance) {
-    smoldotInstance = startFromWorker(new SmWorker());
-  }
+  smoldotInstance ??= startFromWorker(new SmWorker());
   return smoldotInstance;
 }
 
 /**
  * Get or create the Paseo relay chain (needed as potentialRelayChain for parachains).
  */
-export function getRelayChain() {
-  if (!relayChainPromise) {
-    relayChainPromise = getSmoldot().addChain({ chainSpec: paseoChainSpec });
-  }
+export function getRelayChain(): Promise<
+  Awaited<ReturnType<ReturnType<typeof startFromWorker>["addChain"]>>
+> {
+  relayChainPromise ??= getSmoldot().addChain({ chainSpec: paseoChainSpec });
   return relayChainPromise;
 }
 
@@ -63,7 +61,9 @@ let apiInstance: ReturnType<PolkadotClient["getUnsafeApi"]> | null = null;
 async function ensureClient(
   onStatus?: StatusCallback,
 ): Promise<ReturnType<PolkadotClient["getUnsafeApi"]>> {
-  if (apiInstance) return apiInstance;
+  if (apiInstance) {
+    return apiInstance;
+  }
 
   performance.mark("dotli:smoldot:init:start");
   onStatus?.("Starting light client...");
@@ -115,7 +115,7 @@ async function reviveCall(
   );
 
   // Unwrap the result — same normalization as ReviveClientWrapper
-  const execResult = (result as any).result;
+  const execResult = result.result;
   const ok =
     execResult?.value ??
     (execResult?.isOk ? execResult : null) ??
@@ -133,9 +133,15 @@ async function reviveCall(
 
   // Extract return data
   const data = ok.data;
-  if (typeof data === "string") return data as `0x${string}`;
-  if (typeof data?.asHex === "function") return data.asHex() as `0x${string}`;
-  if (typeof data?.toHex === "function") return data.toHex() as `0x${string}`;
+  if (typeof data === "string") {
+    return data as `0x${string}`;
+  }
+  if (typeof data?.asHex === "function") {
+    return data.asHex() as `0x${string}`;
+  }
+  if (typeof data?.toHex === "function") {
+    return data.toHex() as `0x${string}`;
+  }
   if (data instanceof Uint8Array) {
     return ("0x" +
       Array.from(data)
@@ -153,11 +159,15 @@ function decodeIpfsContenthash(contenthashHex: string): string | null {
   const hex = contenthashHex.startsWith("0x")
     ? contenthashHex.slice(2)
     : contenthashHex;
-  if (!hex || hex === "0" || hex.length < 4) return null;
+  if (!hex || hex === "0" || hex.length < 4) {
+    return null;
+  }
 
   try {
     const codec = getCodec(hex);
-    if (codec !== "ipfs") return null;
+    if (codec !== "ipfs") {
+      return null;
+    }
     return decodeContentHash(hex);
   } catch {
     return null;
@@ -185,7 +195,7 @@ export async function resolveDotName(
   const existsCalldata = encodeFunctionData({
     abi: REGISTRY_ABI,
     functionName: "recordExists",
-    args: [node as `0x${string}`],
+    args: [node],
   });
 
   const existsResult = await reviveCall(
@@ -209,7 +219,7 @@ export async function resolveDotName(
   const contentCalldata = encodeFunctionData({
     abi: CONTENT_RESOLVER_ABI,
     functionName: "contenthash",
-    args: [node as `0x${string}`],
+    args: [node],
   });
 
   const contentResult = await reviveCall(
@@ -250,7 +260,7 @@ export async function resolveOwner(label: string): Promise<string | null> {
   const calldata = encodeFunctionData({
     abi: REGISTRY_ABI,
     functionName: "owner",
-    args: [node as `0x${string}`],
+    args: [node],
   });
 
   try {

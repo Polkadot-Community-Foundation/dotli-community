@@ -1,286 +1,555 @@
 {
   "cold": {
-    "timestamp": "2026-03-04T19:26:39.033Z",
+    "timestamp": "2026-03-04T20:01:20.319Z",
     "type": "cold",
+    "iterations": 3,
     "phases": {
-      "Total (main)": 21900,
-      "Auth init": 1,
-      "SW registration": 26,
-      "Name resolution": 14154,
-      "  Smoldot init": 12067,
-      "    Relay chain": 189,
-      "    Parachain": 2,
-      "    Chain sync": 11875,
-      "Cache check": 4,
-      "Content fetch": 7702,
-      "  P2P attempt": 5870,
-      "  Gateway fetch": 1829,
-      "  Archive parse": 3,
-      "Render": 12
+      "Total (main)": {
+        "p50": 38561,
+        "p95": 45369,
+        "p99": 45369,
+        "mean": 34035,
+        "stddev": 11554,
+        "cv": 0.34,
+        "min": 18175,
+        "max": 45369,
+        "values": [
+          38561,
+          45369,
+          18175
+        ]
+      },
+      "Auth init": {
+        "p50": 1,
+        "p95": 2,
+        "p99": 2,
+        "mean": 1,
+        "stddev": 0,
+        "cv": 0.35,
+        "min": 1,
+        "max": 2,
+        "values": [
+          2,
+          1,
+          1
+        ]
+      },
+      "SW registration": {
+        "p50": 21,
+        "p95": 28,
+        "p99": 28,
+        "mean": 23,
+        "stddev": 4,
+        "cv": 0.17,
+        "min": 19,
+        "max": 28,
+        "values": [
+          28,
+          19,
+          21
+        ]
+      },
+      "    Relay chain": {
+        "p50": 161,
+        "p95": 178,
+        "p99": 178,
+        "mean": 161,
+        "stddev": 14,
+        "cv": 0.09,
+        "min": 143,
+        "max": 178,
+        "values": [
+          178,
+          143,
+          161
+        ]
+      },
+      "    Parachain": {
+        "p50": 2,
+        "p95": 2,
+        "p99": 2,
+        "mean": 2,
+        "stddev": 0,
+        "cv": 0,
+        "min": 2,
+        "max": 2,
+        "values": [
+          2,
+          2,
+          2
+        ]
+      },
+      "Name resolution": {
+        "p50": 24434,
+        "p95": 37403,
+        "p99": 37403,
+        "mean": 24434,
+        "stddev": 12969,
+        "cv": 0.53,
+        "min": 11465,
+        "max": 37403,
+        "values": [
+          37403,
+          11465
+        ]
+      },
+      "  Smoldot init": {
+        "p50": 16289,
+        "p95": 23071,
+        "p99": 23071,
+        "mean": 16289,
+        "stddev": 6782,
+        "cv": 0.42,
+        "min": 9507,
+        "max": 23071,
+        "values": [
+          23071,
+          9507
+        ]
+      },
+      "    Chain sync": {
+        "p50": 16135,
+        "p95": 22926,
+        "p99": 22926,
+        "mean": 16135,
+        "stddev": 6791,
+        "cv": 0.42,
+        "min": 9344,
+        "max": 22926,
+        "values": [
+          22926,
+          9344
+        ]
+      },
+      "Cache check": {
+        "p50": 4,
+        "p95": 4,
+        "p99": 4,
+        "mean": 4,
+        "stddev": 1,
+        "cv": 0.14,
+        "min": 3,
+        "max": 4,
+        "values": [
+          4,
+          3
+        ]
+      },
+      "Content fetch": {
+        "p50": 7304,
+        "p95": 7931,
+        "p99": 7931,
+        "mean": 7304,
+        "stddev": 628,
+        "cv": 0.09,
+        "min": 6676,
+        "max": 7931,
+        "values": [
+          7931,
+          6676
+        ]
+      },
+      "  P2P attempt": {
+        "p50": 5769,
+        "p95": 6086,
+        "p99": 6086,
+        "mean": 5769,
+        "stddev": 317,
+        "cv": 0.05,
+        "min": 5452,
+        "max": 6086,
+        "values": [
+          6086,
+          5452
+        ]
+      },
+      "  Gateway fetch": {
+        "p50": 1532,
+        "p95": 1843,
+        "p99": 1843,
+        "mean": 1532,
+        "stddev": 312,
+        "cv": 0.2,
+        "min": 1220,
+        "max": 1843,
+        "values": [
+          1843,
+          1220
+        ]
+      },
+      "  Archive parse": {
+        "p50": 3,
+        "p95": 3,
+        "p99": 3,
+        "mean": 3,
+        "stddev": 0,
+        "cv": 0,
+        "min": 3,
+        "max": 3,
+        "values": [
+          3,
+          3
+        ]
+      },
+      "Render": {
+        "p50": 10,
+        "p95": 11,
+        "p99": 11,
+        "mean": 10,
+        "stddev": 2,
+        "cv": 0.16,
+        "min": 8,
+        "max": 11,
+        "values": [
+          11,
+          8
+        ]
+      }
     },
     "browserMetrics": {
-      "domContentLoaded": 225,
-      "jsHeapUsed": 56800000
+      "domContentLoaded": {
+        "p50": 162,
+        "p95": 238,
+        "p99": 238,
+        "mean": 182,
+        "stddev": 40,
+        "cv": 0.22,
+        "min": 147,
+        "max": 238,
+        "values": [
+          238,
+          147,
+          162
+        ]
+      },
+      "jsHeapUsed": {
+        "p50": 53500000,
+        "p95": 81400000,
+        "p99": 81400000,
+        "mean": 61766667,
+        "stddev": 13940429,
+        "cv": 0.23,
+        "min": 50400000,
+        "max": 81400000,
+        "values": [
+          81400000,
+          50400000,
+          53500000
+        ]
+      }
     },
     "networkStats": {
-      "requestCount": 135,
-      "totalBytes": 25653566
-    },
-    "marks": [
-      {
-        "name": "dotli:main:start",
-        "startTime": 320.30000001192093
+      "requestCount": {
+        "p50": 135,
+        "p95": 136,
+        "p99": 136,
+        "mean": 121,
+        "stddev": 21,
+        "cv": 0.17,
+        "min": 91,
+        "max": 136,
+        "values": [
+          91,
+          136,
+          135
+        ]
       },
-      {
-        "name": "dotli:auth:start",
-        "startTime": 320.80000001192093
-      },
-      {
-        "name": "dotli:auth:end",
-        "startTime": 322.0999999642372
-      },
-      {
-        "name": "dotli:sw:start",
-        "startTime": 323
-      },
-      {
-        "name": "dotli:sw:end",
-        "startTime": 348.69999998807907
-      },
-      {
-        "name": "dotli:resolve:start",
-        "startTime": 348.69999998807907
-      },
-      {
-        "name": "dotli:smoldot:init:start",
-        "startTime": 348.80000001192093
-      },
-      {
-        "name": "dotli:smoldot:relay:start",
-        "startTime": 350.30000001192093
-      },
-      {
-        "name": "dotli:smoldot:relay:end",
-        "startTime": 539.3999999761581
-      },
-      {
-        "name": "dotli:smoldot:parachain:start",
-        "startTime": 539.3999999761581
-      },
-      {
-        "name": "dotli:smoldot:parachain:end",
-        "startTime": 541
-      },
-      {
-        "name": "dotli:smoldot:sync:start",
-        "startTime": 541
-      },
-      {
-        "name": "dotli:smoldot:sync:end",
-        "startTime": 12415.800000011921
-      },
-      {
-        "name": "dotli:smoldot:init:end",
-        "startTime": 12416.099999964237
-      },
-      {
-        "name": "dotli:resolve:end",
-        "startTime": 14502.199999988079
-      },
-      {
-        "name": "dotli:cache-check:start",
-        "startTime": 14502.300000011921
-      },
-      {
-        "name": "dotli:cache-check:end",
-        "startTime": 14505.800000011921
-      },
-      {
-        "name": "dotli:fetch:start",
-        "startTime": 14505.800000011921
-      },
-      {
-        "name": "dotli:fetch:p2p:start",
-        "startTime": 14505.800000011921
-      },
-      {
-        "name": "dotli:fetch:p2p:end",
-        "startTime": 20375.80000001192
-      },
-      {
-        "name": "dotli:fetch:gateway:start",
-        "startTime": 20375.80000001192
-      },
-      {
-        "name": "dotli:fetch:gateway:end",
-        "startTime": 22204.80000001192
-      },
-      {
-        "name": "dotli:fetch:parse:start",
-        "startTime": 22204.80000001192
-      },
-      {
-        "name": "dotli:fetch:parse:end",
-        "startTime": 22208.099999964237
-      },
-      {
-        "name": "dotli:fetch:end",
-        "startTime": 22208.19999998808
-      },
-      {
-        "name": "dotli:render:start",
-        "startTime": 22208.19999998808
-      },
-      {
-        "name": "dotli:render:end",
-        "startTime": 22220.099999964237
-      },
-      {
-        "name": "dotli:main:end",
-        "startTime": 22220.099999964237
+      "totalBytes": {
+        "p50": 25650182,
+        "p95": 25656939,
+        "p99": 25656939,
+        "mean": 25202786,
+        "stddev": 637497,
+        "cv": 0.03,
+        "min": 24301237,
+        "max": 25656939,
+        "values": [
+          24301237,
+          25656939,
+          25650182
+        ]
       }
-    ]
+    }
   },
   "warm": {
-    "timestamp": "2026-03-04T19:27:21.640Z",
+    "timestamp": "2026-03-04T20:03:18.880Z",
     "type": "warm",
+    "iterations": 3,
     "phases": {
-      "Total (main)": 19880,
-      "Auth init": 1,
-      "SW registration": 1,
-      "Name resolution": 14659,
-      "  Smoldot init": 12616,
-      "    Relay chain": 63,
-      "    Parachain": 1,
-      "    Chain sync": 12551,
-      "Cache check": 2,
-      "Content fetch": 5210,
-      "  P2P attempt": 5206,
-      "  Gateway fetch": 3,
-      "  Archive parse": 1,
-      "Render": 7
+      "Total (main)": {
+        "p50": 18114,
+        "p95": 23690,
+        "p99": 23690,
+        "mean": 19923,
+        "stddev": 2665,
+        "cv": 0.13,
+        "min": 17964,
+        "max": 23690,
+        "values": [
+          17964,
+          23690,
+          18114
+        ]
+      },
+      "Auth init": {
+        "p50": 1,
+        "p95": 1,
+        "p99": 1,
+        "mean": 1,
+        "stddev": 0,
+        "cv": 0,
+        "min": 1,
+        "max": 1,
+        "values": [
+          1,
+          1,
+          1
+        ]
+      },
+      "SW registration": {
+        "p50": 0,
+        "p95": 1,
+        "p99": 1,
+        "mean": 0,
+        "stddev": 0,
+        "cv": 1.41,
+        "min": 0,
+        "max": 1,
+        "values": [
+          0,
+          1,
+          0
+        ]
+      },
+      "Name resolution": {
+        "p50": 12856,
+        "p95": 18080,
+        "p99": 18080,
+        "mean": 14463,
+        "stddev": 2563,
+        "cv": 0.18,
+        "min": 12454,
+        "max": 18080,
+        "values": [
+          12454,
+          18080,
+          12856
+        ]
+      },
+      "  Smoldot init": {
+        "p50": 10717,
+        "p95": 16038,
+        "p99": 16038,
+        "mean": 12422,
+        "stddev": 2558,
+        "cv": 0.21,
+        "min": 10511,
+        "max": 16038,
+        "values": [
+          10511,
+          16038,
+          10717
+        ]
+      },
+      "    Relay chain": {
+        "p50": 62,
+        "p95": 62,
+        "p99": 62,
+        "mean": 61,
+        "stddev": 1,
+        "cv": 0.02,
+        "min": 60,
+        "max": 62,
+        "values": [
+          62,
+          60,
+          62
+        ]
+      },
+      "    Parachain": {
+        "p50": 1,
+        "p95": 1,
+        "p99": 1,
+        "mean": 1,
+        "stddev": 0,
+        "cv": 0,
+        "min": 1,
+        "max": 1,
+        "values": [
+          1,
+          1,
+          1
+        ]
+      },
+      "    Chain sync": {
+        "p50": 10654,
+        "p95": 15977,
+        "p99": 15977,
+        "mean": 12360,
+        "stddev": 2559,
+        "cv": 0.21,
+        "min": 10448,
+        "max": 15977,
+        "values": [
+          10448,
+          15977,
+          10654
+        ]
+      },
+      "Cache check": {
+        "p50": 3,
+        "p95": 3,
+        "p99": 3,
+        "mean": 2,
+        "stddev": 1,
+        "cv": 0.4,
+        "min": 1,
+        "max": 3,
+        "values": [
+          3,
+          3,
+          1
+        ]
+      },
+      "Content fetch": {
+        "p50": 5500,
+        "p95": 5599,
+        "p99": 5599,
+        "mean": 5449,
+        "stddev": 147,
+        "cv": 0.03,
+        "min": 5249,
+        "max": 5599,
+        "values": [
+          5500,
+          5599,
+          5249
+        ]
+      },
+      "  P2P attempt": {
+        "p50": 5497,
+        "p95": 5594,
+        "p99": 5594,
+        "mean": 5445,
+        "stddev": 147,
+        "cv": 0.03,
+        "min": 5245,
+        "max": 5594,
+        "values": [
+          5497,
+          5594,
+          5245
+        ]
+      },
+      "  Gateway fetch": {
+        "p50": 3,
+        "p95": 3,
+        "p99": 3,
+        "mean": 3,
+        "stddev": 0,
+        "cv": 0,
+        "min": 3,
+        "max": 3,
+        "values": [
+          3,
+          3,
+          3
+        ]
+      },
+      "  Archive parse": {
+        "p50": 1,
+        "p95": 1,
+        "p99": 1,
+        "mean": 1,
+        "stddev": 0,
+        "cv": 0.71,
+        "min": 0,
+        "max": 1,
+        "values": [
+          0,
+          1,
+          1
+        ]
+      },
+      "Render": {
+        "p50": 6,
+        "p95": 6,
+        "p99": 6,
+        "mean": 6,
+        "stddev": 0,
+        "cv": 0.08,
+        "min": 5,
+        "max": 6,
+        "values": [
+          5,
+          6,
+          6
+        ]
+      }
     },
     "browserMetrics": {
-      "domContentLoaded": 136,
-      "jsHeapUsed": 56800000
+      "domContentLoaded": {
+        "p50": 128,
+        "p95": 129,
+        "p99": 129,
+        "mean": 127,
+        "stddev": 3,
+        "cv": 0.02,
+        "min": 123,
+        "max": 129,
+        "values": [
+          129,
+          123,
+          128
+        ]
+      },
+      "jsHeapUsed": {
+        "p50": 56800000,
+        "p95": 56800000,
+        "p99": 56800000,
+        "mean": 56800000,
+        "stddev": 0,
+        "cv": 0,
+        "min": 56800000,
+        "max": 56800000,
+        "values": [
+          56800000,
+          56800000,
+          56800000
+        ]
+      }
     },
     "networkStats": {
-      "requestCount": 0,
-      "totalBytes": 0
-    },
-    "marks": [
-      {
-        "name": "dotli:main:start",
-        "startTime": 138.5
+      "requestCount": {
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "mean": 0,
+        "stddev": 0,
+        "cv": 0,
+        "min": 0,
+        "max": 0,
+        "values": [
+          0,
+          0,
+          0
+        ]
       },
-      {
-        "name": "dotli:auth:start",
-        "startTime": 138.5
-      },
-      {
-        "name": "dotli:auth:end",
-        "startTime": 139.80000001192093
-      },
-      {
-        "name": "dotli:sw:start",
-        "startTime": 139.9000000357628
-      },
-      {
-        "name": "dotli:sw:end",
-        "startTime": 140.60000002384186
-      },
-      {
-        "name": "dotli:resolve:start",
-        "startTime": 140.60000002384186
-      },
-      {
-        "name": "dotli:smoldot:init:start",
-        "startTime": 140.60000002384186
-      },
-      {
-        "name": "dotli:smoldot:relay:start",
-        "startTime": 140.9000000357628
-      },
-      {
-        "name": "dotli:smoldot:relay:end",
-        "startTime": 203.69999998807907
-      },
-      {
-        "name": "dotli:smoldot:parachain:start",
-        "startTime": 203.69999998807907
-      },
-      {
-        "name": "dotli:smoldot:parachain:end",
-        "startTime": 204.80000001192093
-      },
-      {
-        "name": "dotli:smoldot:sync:start",
-        "startTime": 204.80000001192093
-      },
-      {
-        "name": "dotli:smoldot:sync:end",
-        "startTime": 12756.100000023842
-      },
-      {
-        "name": "dotli:smoldot:init:end",
-        "startTime": 12756.5
-      },
-      {
-        "name": "dotli:resolve:end",
-        "startTime": 14799.199999988079
-      },
-      {
-        "name": "dotli:cache-check:start",
-        "startTime": 14799.199999988079
-      },
-      {
-        "name": "dotli:cache-check:end",
-        "startTime": 14800.800000011921
-      },
-      {
-        "name": "dotli:fetch:start",
-        "startTime": 14800.800000011921
-      },
-      {
-        "name": "dotli:fetch:p2p:start",
-        "startTime": 14800.800000011921
-      },
-      {
-        "name": "dotli:fetch:p2p:end",
-        "startTime": 20007.19999998808
-      },
-      {
-        "name": "dotli:fetch:gateway:start",
-        "startTime": 20007.19999998808
-      },
-      {
-        "name": "dotli:fetch:gateway:end",
-        "startTime": 20009.80000001192
-      },
-      {
-        "name": "dotli:fetch:parse:start",
-        "startTime": 20009.80000001192
-      },
-      {
-        "name": "dotli:fetch:parse:end",
-        "startTime": 20011.19999998808
-      },
-      {
-        "name": "dotli:fetch:end",
-        "startTime": 20011.19999998808
-      },
-      {
-        "name": "dotli:render:start",
-        "startTime": 20011.19999998808
-      },
-      {
-        "name": "dotli:render:end",
-        "startTime": 20018.100000023842
-      },
-      {
-        "name": "dotli:main:end",
-        "startTime": 20018.100000023842
+      "totalBytes": {
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "mean": 0,
+        "stddev": 0,
+        "cv": 0,
+        "min": 0,
+        "max": 0,
+        "values": [
+          0,
+          0,
+          0
+        ]
       }
-    ]
+    }
   }
 }

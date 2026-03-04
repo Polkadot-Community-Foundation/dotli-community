@@ -43,7 +43,9 @@ const MIME_TYPES: Record<string, string> = {
 
 export function getMimeType(path: string): string {
   const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1) return "application/octet-stream";
+  if (lastDot === -1) {
+    return "application/octet-stream";
+  }
   const ext = path.substring(lastDot + 1).toLowerCase();
   return MIME_TYPES[ext] || "application/octet-stream";
 }
@@ -51,22 +53,31 @@ export function getMimeType(path: string): string {
 // ── CAR detection ──────────────────────────────────────────
 
 export function isCarFile(buffer: Uint8Array): boolean {
-  if (buffer.length < 10) return false;
+  if (buffer.length < 10) {
+    return false;
+  }
 
   let offset = 0;
   let shift = 0;
   let headerLen = 0;
 
   while (offset < buffer.length && offset < 9) {
-    const byte = buffer[offset];
-    if (byte === undefined) return false;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- array access can be undefined at runtime
+    const byte = buffer[offset] as number | undefined;
+    if (byte === undefined) {
+      return false;
+    }
     headerLen |= (byte & 0x7f) << shift;
     offset++;
-    if ((byte & 0x80) === 0) break;
+    if ((byte & 0x80) === 0) {
+      break;
+    }
     shift += 7;
   }
 
-  if (buffer.length < offset + headerLen) return false;
+  if (buffer.length < offset + headerLen) {
+    return false;
+  }
 
   const headerStart = offset;
   // Check for CBOR map with "roots" key
@@ -98,13 +109,11 @@ function joinPath(base: string, name: string): string {
   return base ? `${base}/${name}` : name;
 }
 
-export async function parseCarFile(
-  buffer: Uint8Array,
-): Promise<ArchiveFiles> {
+export async function parseCarFile(buffer: Uint8Array): Promise<ArchiveFiles> {
   const reader = await CarReader.fromBytes(buffer);
   const [rootCid] = await reader.getRoots();
 
-  if (!rootCid) {
+  if (rootCid === undefined) {
     throw new Error("CAR file has no roots");
   }
 
@@ -112,7 +121,9 @@ export async function parseCarFile(
 
   async function getChunkData(cid: CID): Promise<Uint8Array> {
     const block = await reader.get(cid);
-    if (!block) return new Uint8Array(0);
+    if (!block) {
+      return new Uint8Array(0);
+    }
 
     try {
       const node = dagPb.decode(block.bytes);
@@ -126,7 +137,9 @@ export async function parseCarFile(
 
   async function processNode(cid: CID, path: string): Promise<void> {
     const block = await reader.get(cid);
-    if (!block) return;
+    if (!block) {
+      return;
+    }
 
     try {
       const node = dagPb.decode(block.bytes);
@@ -136,7 +149,7 @@ export async function parseCarFile(
 
       if (isDirectory || (!uf && node.Links.length > 0)) {
         for (const link of node.Links) {
-          if (link.Name) {
+          if (link.Name !== undefined && link.Name !== "") {
             await processNode(link.Hash, joinPath(path, link.Name));
           }
         }
@@ -171,7 +184,5 @@ export async function parseCarFile(
 export async function parseIpfsResponse(
   buffer: Uint8Array,
 ): Promise<ArchiveFiles> {
-  return isCarFile(buffer)
-    ? parseCarFile(buffer)
-    : { "index.html": buffer };
+  return isCarFile(buffer) ? parseCarFile(buffer) : { "index.html": buffer };
 }

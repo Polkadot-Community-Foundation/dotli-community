@@ -12,6 +12,7 @@ import { createIframeProvider } from "@novasamatech/host-container";
 import { createContainer } from "@novasamatech/host-container";
 import { fromPromise } from "neverthrow";
 
+import type { UserSession } from "@novasamatech/host-papp";
 import { getAuthState, onAuthStateChange, type AuthState } from "./auth";
 import { showSignPayloadModal, showSignRawModal } from "./signing";
 import { deriveProductPublicKey } from "./account";
@@ -34,7 +35,7 @@ export function setupContainer(
   const container = createContainer(provider);
 
   // Helper: get the current session or null
-  function getSession() {
+  function getSession(): UserSession | null {
     const state = getAuthState();
     return state.status === "authenticated" ? state.session : null;
   }
@@ -54,7 +55,7 @@ export function setupContainer(
   // ── Feature support ────────────────────────────────────
 
   container.handleFeatureSupported((params, { ok }) => {
-    switch (params.tag) {
+    switch (params.tag as string) {
       case "Chain":
         return ok(isChainSupported(params.value));
       default:
@@ -101,9 +102,9 @@ export function setupContainer(
   });
 
   container.handleAccountConnectionStatusSubscribe((_, send) => {
-    return subscribeSession((session) =>
-      send(session ? "connected" : "disconnected"),
-    );
+    return subscribeSession((session) => {
+      send(session ? "connected" : "disconnected");
+    });
   });
 
   // ── Signing ────────────────────────────────────────────
@@ -205,7 +206,7 @@ export function setupContainer(
   // ── Push notifications ─────────────────────────────────
 
   container.handlePushNotification((text, { ok }) => {
-    console.info(`[${label}] Notification:`, text);
+    console.warn(`[${label}] Notification:`, text);
     return ok(undefined);
   });
 

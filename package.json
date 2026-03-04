@@ -8,15 +8,26 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test:perf": "npx playwright test tests/cold-start.spec.ts",
-    "test:perf:base": "PERF_SAVE_BASE=1 npx playwright test tests/cold-start.spec.ts",
+    "test:perf:base": "PERF_RUNS=10 PERF_SAVE_BASE=1 npx playwright test tests/cold-start.spec.ts",
     "test:perf:headed": "npx playwright test tests/cold-start.spec.ts --headed",
-    "test:perf:compare": "npx tsx tests/compare.ts"
+    "test:perf:compare": "npx tsx tests/compare.ts",
+    "lint": "eslint src/ tests/",
+    "lint:fix": "eslint src/ tests/ --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\""
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.58.2",
     "@types/qrcode": "^1.5.6",
+    "eslint": "^10.0.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
+    "prettier": "^3.8.1",
+    "simple-statistics": "^7.8.8",
     "tsx": "^4.21.0",
     "typescript": "~5.9.3",
+    "typescript-eslint": "^8.56.1",
     "vite": "^7.3.1",
     "vite-plugin-wasm": "^3.5.0"
   },
