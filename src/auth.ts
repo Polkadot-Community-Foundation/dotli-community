@@ -29,12 +29,14 @@ type AuthListener = (state: AuthState) => void;
 
 let adapter: PappAdapter | null = null;
 let currentState: AuthState = { status: "idle" };
-const listeners: Set<AuthListener> = new Set();
+const listeners = new Set<AuthListener>();
 
 function setState(state: AuthState): void {
-  console.log("[dot.li auth]", state.status, state);
+  console.warn("[dot.li auth]", state.status, state);
   currentState = state;
-  for (const fn of listeners) fn(state);
+  for (const fn of listeners) {
+    fn(state);
+  }
 }
 
 export function getAuthState(): AuthState {
@@ -63,17 +65,17 @@ export function initAuth(): void {
   // Check for existing session
   const sessions = adapter.sessions.sessions.read();
   if (sessions.length > 0) {
-    resolveIdentityAndSetAuth(sessions[0]!);
+    void resolveIdentityAndSetAuth(sessions[0]);
   }
 
   // Subscribe to session changes (handles reconnects)
   adapter.sessions.sessions.subscribe((sessions: UserSession[]) => {
-    console.log(
+    console.warn(
       "[dot.li auth] sessions subscription fired, count:",
       sessions.length,
     );
     if (sessions.length > 0 && currentState.status !== "authenticated") {
-      resolveIdentityAndSetAuth(sessions[0]!);
+      void resolveIdentityAndSetAuth(sessions[0]);
     } else if (
       sessions.length === 0 &&
       currentState.status === "authenticated"
@@ -84,7 +86,9 @@ export function initAuth(): void {
 }
 
 async function resolveIdentityAndSetAuth(session: UserSession): Promise<void> {
-  if (!adapter) return;
+  if (!adapter) {
+    return;
+  }
 
   // Set authenticated immediately with null identity, then resolve identity in background
   setState({ status: "authenticated", session, identity: null });
@@ -109,12 +113,16 @@ async function resolveIdentityAndSetAuth(session: UserSession): Promise<void> {
  * Used as a fallback after pairing/attestation finishes.
  */
 function pickUpSession(): void {
-  if (!adapter) return;
-  if (currentState.status === "authenticated") return;
+  if (!adapter) {
+    return;
+  }
+  if (currentState.status === "authenticated") {
+    return;
+  }
 
   const sessions = adapter.sessions.sessions.read();
   if (sessions.length > 0) {
-    resolveIdentityAndSetAuth(sessions[0]!);
+    void resolveIdentityAndSetAuth(sessions[0]);
   }
 }
 
@@ -124,7 +132,9 @@ let unsubPairing: (() => void) | null = null;
 let unsubAttestation: (() => void) | null = null;
 
 export function startPairing(): void {
-  if (!adapter) return;
+  if (!adapter) {
+    return;
+  }
 
   // Show spinner immediately (don't wait for subscription callback)
   setState({ status: "pairing", payload: "" });
@@ -137,7 +147,7 @@ export function startPairing(): void {
 
   unsubPairing = adapter.sso.pairingStatus.subscribe(
     (status: PairingStatus) => {
-      console.log("[dot.li auth] pairingStatus:", status.step, status);
+      console.warn("[dot.li auth] pairingStatus:", status.step, status);
       switch (status.step) {
         case "initial":
           setState({ status: "pairing", payload: "" });
@@ -156,13 +166,16 @@ export function startPairing(): void {
             setState({ status: "attesting" });
           }
           break;
+        case "none":
+        case "attestation":
+          break;
       }
     },
   );
 
   unsubAttestation = adapter.sso.attestationStatus.subscribe(
     (status: AttestationStatus) => {
-      console.log("[dot.li auth] attestationStatus:", status.step, status);
+      console.warn("[dot.li auth] attestationStatus:", status.step, status);
       switch (status.step) {
         case "attestation":
           setState({ status: "attesting", username: status.username });
@@ -176,13 +189,15 @@ export function startPairing(): void {
           // but call pickUpSession() as a fallback.
           pickUpSession();
           break;
+        case "none":
+          break;
       }
     },
   );
 
   adapter.sso.authenticate().then(
     (result) => {
-      console.log("[dot.li auth] authenticate() resolved:", result);
+      console.warn("[dot.li auth] authenticate() resolved:", result);
       if (result.isOk() && result.value) {
         // authenticate() resolved successfully — session is now persisted.
         // Pick up via sessions subscription or fallback here.
@@ -211,7 +226,9 @@ export function abortPairing(): void {
   unsubPairing = null;
   unsubAttestation = null;
 
-  if (adapter) adapter.sso.abortAuthentication();
+  if (adapter) {
+    adapter.sso.abortAuthentication();
+  }
 
   // Reset to idle so the UI is clean
   if (currentState.status !== "authenticated") {
@@ -220,8 +237,12 @@ export function abortPairing(): void {
 }
 
 export async function disconnect(): Promise<void> {
-  if (!adapter) return;
-  if (currentState.status !== "authenticated") return;
+  if (!adapter) {
+    return;
+  }
+  if (currentState.status !== "authenticated") {
+    return;
+  }
 
   const session = currentState.session;
   await adapter.sessions.disconnect(session);
@@ -231,12 +252,12 @@ export async function disconnect(): Promise<void> {
 // ── Helpers ────────────────────────────────────────────────
 
 export function shortenName(identity: Identity): string {
-  if (identity.fullUsername) {
+  if (identity.fullUsername !== null && identity.fullUsername.length > 0) {
     const parts = identity.fullUsername.split(" ");
     if (parts.length === 1) {
       return identity.fullUsername.slice(0, 2);
     }
-    return parts[0]!.charAt(0) + parts[1]!.charAt(0);
+    return parts[0].charAt(0) + parts[1].charAt(0);
   }
   return identity.liteUsername.slice(0, 2);
 }

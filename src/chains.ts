@@ -12,13 +12,15 @@ import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 import { getSmoldot, getRelayChain } from "./resolve";
 
 // Well-known genesis hashes (Paseo testnet)
-const PASEO_RELAY = "0x77afd6190f1554ad45fd0d31aee62aacc33c6db0ea801129acb813f913e0764f";
-const ASSET_HUB_PASEO = "0x862c5c1eef2e2c2d7f98b3e71fbdb8ab03e62e7bea0b953bf1783f1e61b04471";
+const PASEO_RELAY =
+  "0x77afd6190f1554ad45fd0d31aee62aacc33c6db0ea801129acb813f913e0764f";
+const ASSET_HUB_PASEO =
+  "0x862c5c1eef2e2c2d7f98b3e71fbdb8ab03e62e7bea0b953bf1783f1e61b04471";
 
-type ChainEntry = {
+interface ChainEntry {
   chainSpec: string;
   isParachain: boolean;
-};
+}
 
 const SUPPORTED_CHAINS: Record<string, ChainEntry> = {
   [PASEO_RELAY]: { chainSpec: paseoChainSpec, isParachain: false },
@@ -40,13 +42,19 @@ export function isChainSupported(genesisHash: string): boolean {
  * Returns null if the chain is not supported.
  * Providers are cached — each chain is added to smoldot only once.
  */
-export function createChainProvider(genesisHash: string): JsonRpcProvider | null {
+export function createChainProvider(
+  genesisHash: string,
+): JsonRpcProvider | null {
   const key = genesisHash.toLowerCase();
-  const entry = SUPPORTED_CHAINS[key];
-  if (!entry) return null;
+  const entry = SUPPORTED_CHAINS[key] as ChainEntry | undefined;
+  if (entry === undefined) {
+    return null;
+  }
 
   const cached = providerCache.get(key);
-  if (cached) return cached;
+  if (cached !== undefined) {
+    return cached;
+  }
 
   const smoldot = getSmoldot();
 
@@ -60,9 +68,10 @@ export function createChainProvider(genesisHash: string): JsonRpcProvider | null
     );
   } else {
     // Relay chain — reuse getRelayChain() for Paseo since it's the same chain
-    chainPromise = key === PASEO_RELAY.toLowerCase()
-      ? getRelayChain()
-      : smoldot.addChain({ chainSpec: entry.chainSpec });
+    chainPromise =
+      key === PASEO_RELAY.toLowerCase()
+        ? getRelayChain()
+        : smoldot.addChain({ chainSpec: entry.chainSpec });
   }
 
   const provider = getSmProvider(chainPromise);

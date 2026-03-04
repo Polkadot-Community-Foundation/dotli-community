@@ -23,21 +23,31 @@ async function getCachedArchive(
   domain: string,
   cid: string,
 ): Promise<ArchiveFiles | null> {
-  const controller = navigator.serviceWorker?.controller;
-  if (!controller) return null;
+  const controller = navigator.serviceWorker.controller;
+  if (!controller) {
+    return null;
+  }
 
   return new Promise<ArchiveFiles | null>((resolve) => {
-    const timeout = setTimeout(() => resolve(null), 3_000);
+    const timeout = setTimeout(() => {
+      resolve(null);
+    }, 3_000);
     const channel = new MessageChannel();
 
-    channel.port1.onmessage = (event) => {
+    channel.port1.onmessage = (event: MessageEvent) => {
       clearTimeout(timeout);
-      if (event.data.found && event.data.cid === cid && event.data.files) {
+      const msg = event.data as {
+        found?: boolean;
+        cid?: string;
+        files?: Record<string, ArrayBuffer | Uint8Array>;
+      };
+      if (msg.found === true && msg.cid === cid && msg.files !== undefined) {
         // Normalize ArrayBuffers from IndexedDB to Uint8Arrays
-        const raw = event.data.files as Record<string, ArrayBuffer | Uint8Array>;
+        const raw = msg.files;
         const files: ArchiveFiles = {};
         for (const [path, data] of Object.entries(raw)) {
-          files[path] = data instanceof Uint8Array ? data : new Uint8Array(data);
+          files[path] =
+            data instanceof Uint8Array ? data : new Uint8Array(data);
         }
         resolve(files);
       } else {
@@ -45,10 +55,9 @@ async function getCachedArchive(
       }
     };
 
-    controller.postMessage(
-      { type: "SW_CACHE_LOOKUP_EVENT", domain },
-      [channel.port2],
-    );
+    controller.postMessage({ type: "SW_CACHE_LOOKUP_EVENT", domain }, [
+      channel.port2,
+    ]);
   });
 }
 
@@ -84,25 +93,28 @@ function parseDotLabel(): string | null {
  * The SW intercepts requests under /dotli-app/ and serves files from an in-memory archive.
  */
 async function registerServiceWorker(): Promise<void> {
-  if (!("serviceWorker" in navigator)) return;
+  if (!("serviceWorker" in navigator)) {
+    return;
+  }
 
   try {
     await navigator.serviceWorker.register("/sw.js");
 
     // Wait until the SW is controlling this page (needed by renderArchive)
-    if (navigator.serviceWorker.controller) return;
+    if (navigator.serviceWorker.controller) {
+      return;
+    }
 
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Service Worker not available after 10s")),
-        10_000,
-      );
+      const timeout = setTimeout(() => {
+        reject(new Error("Service Worker not available after 10s"));
+      }, 10_000);
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         clearTimeout(timeout);
         resolve();
       });
       // Nudge the SW to claim if it's active but hasn't claimed yet
-      navigator.serviceWorker.ready.then((registration) => {
+      void navigator.serviceWorker.ready.then((registration) => {
         if (navigator.serviceWorker.controller) {
           clearTimeout(timeout);
           resolve();
@@ -117,24 +129,36 @@ async function registerServiceWorker(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  performance.mark("dotli:main:start");
+
   // Initialize auth adapter and top bar UI
+  performance.mark("dotli:auth:start");
   initAuth();
+  performance.mark("dotli:auth:end");
+
   initTopBar();
 
   const label = parseDotLabel();
 
-  if (!label) {
+  if (label === null) {
     showLanding();
+    performance.mark("dotli:main:end");
     return;
   }
 
   // Show the .dot domain in the URL bar
-  const urlBar = document.getElementById("topbar-url")!;
+  const urlBar = document.getElementById("topbar-url");
+  if (urlBar === null) {
+    return;
+  }
   urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span><span class="dot-domain">${label}</span><span class="dot-tld">.dot</span></span></div>`;
 
   // Domain info popover toggle
-  const urlPill = document.getElementById("url-pill")!;
-  const domainPopover = document.getElementById("domain-popover")!;
+  const urlPill = document.getElementById("url-pill");
+  const domainPopover = document.getElementById("domain-popover");
+  if (urlPill === null || domainPopover === null) {
+    return;
+  }
   urlPill.addEventListener("click", (e) => {
     e.stopPropagation();
     domainPopover.classList.toggle("open");
@@ -153,12 +177,16 @@ async function main(): Promise<void> {
 
   try {
     // Step 0: Ensure service worker is ready (needed to serve archive files)
+    performance.mark("dotli:sw:start");
     await registerServiceWorker();
+    performance.mark("dotli:sw:end");
 
     // Step 1: Resolve the .dot name to a CID via smoldot + dotNS
+    performance.mark("dotli:resolve:start");
     const cid = await resolveDotName(label, showStatus);
+    performance.mark("dotli:resolve:end");
 
-    if (!cid) {
+    if (cid === null) {
       showError(
         `${label}.dot`,
         "This domain has no content set. The owner needs to publish content to the Bulletin Chain and set the content hash.",
@@ -170,53 +198,68 @@ async function main(): Promise<void> {
     // Fire-and-forget: populates the domain popover when ready
     void resolveOwner(label)
       .then((owner) => {
-        const el = document.getElementById("domain-popover-owner")!;
-        if (owner) {
+        const el = document.getElementById("domain-popover-owner");
+        if (el === null) {
+          return;
+        }
+        if (owner !== null) {
           const short = `${owner.slice(0, 6)}...${owner.slice(-4)}`;
           el.classList.remove("loading");
           el.innerHTML = `${short}<button class="domain-popover-copy" title="Copy address"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>`;
-          el.querySelector(".domain-popover-copy")!.addEventListener(
-            "click",
-            (e) => {
-              e.stopPropagation();
-              navigator.clipboard.writeText(owner);
-              const btn = e.currentTarget as HTMLElement;
-              btn.style.color = "#4ade80";
-              btn.style.borderColor = "#4ade80";
-              setTimeout(() => {
-                btn.style.color = "";
-                btn.style.borderColor = "";
-              }, 1000);
-            },
-          );
+          const copyBtn = el.querySelector(".domain-popover-copy");
+          copyBtn?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            void navigator.clipboard.writeText(owner);
+            const btn = e.currentTarget as HTMLElement;
+            btn.style.color = "#4ade80";
+            btn.style.borderColor = "#4ade80";
+            setTimeout(() => {
+              btn.style.color = "";
+              btn.style.borderColor = "";
+            }, 1000);
+          });
         } else {
           el.textContent = "Unknown";
           el.classList.remove("loading");
         }
       })
       .catch(() => {
-        const el = document.getElementById("domain-popover-owner")!;
+        const el = document.getElementById("domain-popover-owner");
+        if (el === null) {
+          return;
+        }
         el.textContent = "Unavailable";
         el.classList.remove("loading");
       });
 
     // Step 2b: Check SW cache before fetching
+    performance.mark("dotli:cache-check:start");
     const cachedFiles = await getCachedArchive(label, cid);
+    performance.mark("dotli:cache-check:end");
+
     if (cachedFiles) {
       showStatus("Rendering (cached)...");
+      performance.mark("dotli:render:start");
       await renderArchive(cachedFiles, label, cid);
+      performance.mark("dotli:render:end");
     } else {
+      performance.mark("dotli:fetch:start");
       const result = await fetchArchive(cid, showStatus);
+      performance.mark("dotli:fetch:end");
 
       // Step 3: Render in sandboxed iframe
       showStatus("Rendering...");
+      performance.mark("dotli:render:start");
       if (result.type === "archive") {
         await renderArchive(result.files, label, cid);
       } else {
         renderContent(result.content, label);
       }
+      performance.mark("dotli:render:end");
     }
+    performance.mark("dotli:main:end");
   } catch (err) {
+    performance.mark("dotli:main:end");
     const message = err instanceof Error ? err.message : String(err);
     showError("Resolution failed", message);
   }
@@ -225,7 +268,7 @@ async function main(): Promise<void> {
 // Cleanup on page unload
 window.addEventListener("beforeunload", () => {
   destroyClient();
-  destroyHelia();
+  void destroyHelia();
 });
 
-main();
+void main();

@@ -37,19 +37,17 @@ let relayChainPromise: Promise<
  * Get or create the shared smoldot instance.
  */
 export function getSmoldot(): ReturnType<typeof startFromWorker> {
-  if (!smoldotInstance) {
-    smoldotInstance = startFromWorker(new SmWorker());
-  }
+  smoldotInstance ??= startFromWorker(new SmWorker());
   return smoldotInstance;
 }
 
 /**
  * Get or create the Paseo relay chain (needed as potentialRelayChain for parachains).
  */
-export function getRelayChain() {
-  if (!relayChainPromise) {
-    relayChainPromise = getSmoldot().addChain({ chainSpec: paseoChainSpec });
-  }
+export function getRelayChain(): Promise<
+  Awaited<ReturnType<ReturnType<typeof startFromWorker>["addChain"]>>
+> {
+  relayChainPromise ??= getSmoldot().addChain({ chainSpec: paseoChainSpec });
   return relayChainPromise;
 }
 
@@ -63,15 +61,21 @@ let apiInstance: ReturnType<PolkadotClient["getUnsafeApi"]> | null = null;
 async function ensureClient(
   onStatus?: StatusCallback,
 ): Promise<ReturnType<PolkadotClient["getUnsafeApi"]>> {
-  if (apiInstance) return apiInstance;
+  if (apiInstance) {
+    return apiInstance;
+  }
 
+  performance.mark("dotli:smoldot:init:start");
   onStatus?.("Starting light client...");
   const smoldot = getSmoldot();
 
   onStatus?.("Adding Paseo relay chain...");
+  performance.mark("dotli:smoldot:relay:start");
   const relayChain = await getRelayChain();
+  performance.mark("dotli:smoldot:relay:end");
 
   onStatus?.("Adding Asset Hub Paseo...");
+  performance.mark("dotli:smoldot:parachain:start");
   const chain = smoldot.addChain({
     chainSpec: assetHubPaseoChainSpec,
     potentialRelayChains: [relayChain],
@@ -79,11 +83,15 @@ async function ensureClient(
 
   const provider = getSmProvider(chain);
   clientInstance = createClient(provider);
+  performance.mark("dotli:smoldot:parachain:end");
 
   onStatus?.("Syncing with Asset Hub Paseo...");
+  performance.mark("dotli:smoldot:sync:start");
   await clientInstance.getFinalizedBlock();
+  performance.mark("dotli:smoldot:sync:end");
 
   apiInstance = clientInstance.getUnsafeApi();
+  performance.mark("dotli:smoldot:init:end");
   onStatus?.("Connected to Asset Hub Paseo");
   return apiInstance;
 }
@@ -92,42 +100,79 @@ async function ensureClient(
  * Call a Revive EVM contract (read-only dry-run).
  * Mirrors the pattern from deploy-to-dotns ReviveClientWrapper.performDryRunCall().
  */
+interface ReviveExecResult {
+  value?: ReviveOkResult;
+  isOk?: boolean;
+  ok?: ReviveOkResult;
+  result?: ReviveExecResult;
+}
+
+interface ReviveOkResult {
+  flags?: { toString?: () => string } | number | string;
+  data?:
+    | string
+    | { asHex: () => string }
+    | { toHex: () => string }
+    | Uint8Array;
+}
+
 async function reviveCall(
   api: ReturnType<PolkadotClient["getUnsafeApi"]>,
   contractAddress: string,
   encodedData: `0x${string}`,
 ): Promise<`0x${string}`> {
-  const result = await api.apis.ReviveApi.call(
+  const result = (await api.apis.ReviveApi.call(
     DUMMY_ORIGIN,
     Binary.fromHex(contractAddress as `0x${string}`),
     0n,
     DRY_RUN_WEIGHT_LIMIT,
     DRY_RUN_STORAGE_LIMIT,
     Binary.fromHex(encodedData),
-  );
+  )) as { result: ReviveExecResult };
 
   // Unwrap the result — same normalization as ReviveClientWrapper
-  const execResult = (result as any).result;
-  const ok =
-    execResult?.value ??
-    (execResult?.isOk ? execResult : null) ??
-    execResult?.ok ??
+  const execResult: ReviveExecResult = result.result;
+  const ok: ReviveOkResult | null =
+    execResult.value ??
+    (execResult.isOk === true
+      ? (execResult as unknown as ReviveOkResult)
+      : null) ??
+    execResult.ok ??
     null;
 
-  if (!ok) {
+  if (ok === null) {
     throw new Error("Revive call failed: no result");
   }
 
-  const flags = BigInt(ok.flags?.toString?.() ?? ok.flags ?? 0);
+  const flagsRaw = ok.flags;
+  const flagsStr =
+    typeof flagsRaw === "object" && typeof flagsRaw.toString === "function"
+      ? flagsRaw.toString()
+      : String(flagsRaw ?? 0);
+  const flags = BigInt(flagsStr);
   if ((flags & 1n) === 1n) {
     throw new Error("Contract execution reverted");
   }
 
   // Extract return data
   const data = ok.data;
-  if (typeof data === "string") return data as `0x${string}`;
-  if (typeof data?.asHex === "function") return data.asHex() as `0x${string}`;
-  if (typeof data?.toHex === "function") return data.toHex() as `0x${string}`;
+  if (typeof data === "string") {
+    return data as `0x${string}`;
+  }
+  if (
+    data !== undefined &&
+    "asHex" in data &&
+    typeof data.asHex === "function"
+  ) {
+    return data.asHex() as `0x${string}`;
+  }
+  if (
+    data !== undefined &&
+    "toHex" in data &&
+    typeof data.toHex === "function"
+  ) {
+    return data.toHex() as `0x${string}`;
+  }
   if (data instanceof Uint8Array) {
     return ("0x" +
       Array.from(data)
@@ -145,11 +190,15 @@ function decodeIpfsContenthash(contenthashHex: string): string | null {
   const hex = contenthashHex.startsWith("0x")
     ? contenthashHex.slice(2)
     : contenthashHex;
-  if (!hex || hex === "0" || hex.length < 4) return null;
+  if (!hex || hex === "0" || hex.length < 4) {
+    return null;
+  }
 
   try {
     const codec = getCodec(hex);
-    if (codec !== "ipfs") return null;
+    if (codec !== "ipfs") {
+      return null;
+    }
     return decodeContentHash(hex);
   } catch {
     return null;
@@ -177,7 +226,7 @@ export async function resolveDotName(
   const existsCalldata = encodeFunctionData({
     abi: REGISTRY_ABI,
     functionName: "recordExists",
-    args: [node as `0x${string}`],
+    args: [node],
   });
 
   const existsResult = await reviveCall(
@@ -201,7 +250,7 @@ export async function resolveDotName(
   const contentCalldata = encodeFunctionData({
     abi: CONTENT_RESOLVER_ABI,
     functionName: "contenthash",
-    args: [node as `0x${string}`],
+    args: [node],
   });
 
   const contentResult = await reviveCall(
@@ -218,7 +267,7 @@ export async function resolveDotName(
 
   // Step 3: Decode the contenthash to a CID
   const cid = decodeIpfsContenthash(contenthashBytes);
-  if (!cid) {
+  if (cid === null || cid === "") {
     onStatus?.(`No content set for "${domain}"`);
     return null;
   }
@@ -242,7 +291,7 @@ export async function resolveOwner(label: string): Promise<string | null> {
   const calldata = encodeFunctionData({
     abi: REGISTRY_ABI,
     functionName: "owner",
-    args: [node as `0x${string}`],
+    args: [node],
   });
 
   try {
@@ -254,7 +303,10 @@ export async function resolveOwner(label: string): Promise<string | null> {
     }) as unknown as string;
 
     // Zero address means no owner
-    if (!owner || owner === "0x0000000000000000000000000000000000000000") {
+    if (
+      owner === "" ||
+      owner === "0x0000000000000000000000000000000000000000"
+    ) {
       return null;
     }
 

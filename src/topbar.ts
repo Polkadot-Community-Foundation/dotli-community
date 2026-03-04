@@ -17,15 +17,21 @@ import {
 
 // ── DOM refs ───────────────────────────────────────────────
 
-const authButton = document.getElementById("auth-button")!;
-const modalBackdrop = document.getElementById("auth-modal-backdrop")!;
-const modalQr = document.getElementById("auth-modal-qr")!;
-const modalClose = document.getElementById("auth-modal-close")!;
-const userPopover = document.getElementById("user-popover")!;
-const userPopoverUsername = document.getElementById("user-popover-username")!;
-const userPopoverDisconnect = document.getElementById(
-  "user-popover-disconnect",
-)!;
+function getElement(id: string): HTMLElement {
+  const el = document.getElementById(id);
+  if (el === null) {
+    throw new Error(`Element #${id} not found`);
+  }
+  return el;
+}
+
+const authButton = getElement("auth-button");
+const modalBackdrop = getElement("auth-modal-backdrop");
+const modalQr = getElement("auth-modal-qr");
+const modalClose = getElement("auth-modal-close");
+const userPopover = getElement("user-popover");
+const userPopoverUsername = getElement("user-popover-username");
+const userPopoverDisconnect = getElement("user-popover-disconnect");
 
 // Hexagon SVG for the logged-out state
 const HEXAGON_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
@@ -44,7 +50,9 @@ export function initTopBar(): void {
 
   // Clicking backdrop (outside modal) closes modal
   modalBackdrop.addEventListener("click", (e) => {
-    if (e.target === e.currentTarget) closeModal();
+    if (e.target === e.currentTarget) {
+      closeModal();
+    }
   });
 
   // Disconnect button
@@ -103,8 +111,13 @@ function renderLoggedIn(state: AuthState & { status: "authenticated" }): void {
 
   // Update popover with identity name or truncated account address
   let username: string;
-  if (state.identity?.fullUsername || state.identity?.liteUsername) {
-    username = state.identity.fullUsername ?? state.identity.liteUsername!;
+  const fullName = state.identity?.fullUsername;
+  const liteName = state.identity?.liteUsername;
+  if (
+    (fullName !== undefined && fullName !== "") ||
+    (liteName !== undefined && liteName !== "")
+  ) {
+    username = fullName ?? liteName ?? "";
   } else {
     // Fallback to truncated account address
     const id = Array.from(state.session.remoteAccount.accountId)
@@ -134,7 +147,9 @@ function renderPairing(payload: string): void {
   })
     .then(() => {
       // Only append if this payload is still current
-      if (currentQrPayload !== capturedPayload) return;
+      if (currentQrPayload !== capturedPayload) {
+        return;
+      }
       modalQr.innerHTML = "";
       modalQr.appendChild(canvas);
     })
@@ -164,7 +179,9 @@ function renderError(message: string): void {
   const retry = document.createElement("button");
   retry.className = "auth-modal-retry";
   retry.textContent = "Retry";
-  retry.addEventListener("click", () => startPairing());
+  retry.addEventListener("click", () => {
+    startPairing();
+  });
   container.appendChild(retry);
 
   modalQr.innerHTML = "";
@@ -191,7 +208,7 @@ function handleAuthButtonClick(): void {
 
 function handleDisconnect(): void {
   userPopover.classList.remove("open");
-  disconnect();
+  void disconnect();
 }
 
 function openModal(): void {

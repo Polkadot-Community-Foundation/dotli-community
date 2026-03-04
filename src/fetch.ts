@@ -30,25 +30,35 @@ let heliaInstance: Helia | null = null;
  * Whitelists only known Bulletin peers (same pattern as console-ui).
  */
 async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
-  if (heliaInstance) return heliaInstance;
+  if (heliaInstance) {
+    return heliaInstance;
+  }
 
   onStatus?.("Initializing P2P client...");
 
   // Extract peer IDs for whitelist
   const allowedPeerIds = new Set<string>();
   for (const addr of BULLETIN_PEERS) {
-    const match = addr.match(/\/p2p\/([^/]+)/);
-    if (match?.[1]) allowedPeerIds.add(match[1]);
+    const match = /\/p2p\/([^/]+)/.exec(addr);
+    if (match?.[1] !== undefined && match[1] !== "") {
+      allowedPeerIds.add(match[1]);
+    }
   }
 
   heliaInstance = await createHelia({
     hashers: [blake2b256, sha256, keccak256Hasher],
     libp2p: {
       connectionGater: {
-        denyDialMultiaddr: async (maAddr) => {
+        denyDialMultiaddr: (maAddr) => {
           const addr = maAddr.toString();
-          const match = addr.match(/\/p2p\/([^/]+)/);
-          if (match?.[1] && allowedPeerIds.has(match[1])) return false;
+          const match = /\/p2p\/([^/]+)/.exec(addr);
+          if (
+            match?.[1] !== undefined &&
+            match[1] !== "" &&
+            allowedPeerIds.has(match[1])
+          ) {
+            return false;
+          }
           return true;
         },
       },
@@ -66,7 +76,7 @@ async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
   }
 
   const connections = heliaInstance.libp2p.getConnections();
-  onStatus?.(`Connected to ${connections.length} Bulletin peer(s)`);
+  onStatus?.(`Connected to ${String(connections.length)} Bulletin peer(s)`);
 
   if (connections.length === 0) {
     throw new Error("Could not connect to any Bulletin Chain peers");
@@ -106,8 +116,10 @@ async function fetchViaP2P(
   }
 
   // For raw blocks, fetch directly from blockstore
-  const blockData = await helia.blockstore.get(cid);
-  if (blockData instanceof Uint8Array) return blockData;
+  const blockData = helia.blockstore.get(cid);
+  if (blockData instanceof Uint8Array) {
+    return blockData;
+  }
 
   throw new Error(`Unexpected block data type for CID ${cidString}`);
 }
@@ -124,7 +136,7 @@ async function fetchViaGateway(
 
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Gateway fetch failed: HTTP ${response.status}`);
+    throw new Error(`Gateway fetch failed: HTTP ${String(response.status)}`);
   }
 
   const buffer = await response.arrayBuffer();
@@ -174,7 +186,9 @@ async function fetchCarFromGateway(
   });
 
   if (!response.ok) {
-    throw new Error(`Gateway CAR fetch failed: HTTP ${response.status}`);
+    throw new Error(
+      `Gateway CAR fetch failed: HTTP ${String(response.status)}`,
+    );
   }
 
   return new Uint8Array(await response.arrayBuffer());
@@ -195,7 +209,9 @@ export async function fetchArchive(
 ): Promise<FetchResult> {
   // Try P2P first (fast for single files on Bulletin Chain)
   try {
+    performance.mark("dotli:fetch:p2p:start");
     const content = await fetchViaP2P(cidString, onStatus);
+    performance.mark("dotli:fetch:p2p:end");
     // Check if P2P returned a CAR file (unlikely but handle it)
     if (isCarFile(content)) {
       onStatus?.("Parsing archive...");
@@ -204,6 +220,7 @@ export async function fetchArchive(
     }
     return { type: "single", content };
   } catch (p2pError) {
+    performance.mark("dotli:fetch:p2p:end");
     onStatus?.(
       `P2P failed (${(p2pError as Error).message}), trying gateway...`,
     );
@@ -211,11 +228,16 @@ export async function fetchArchive(
 
   // Try gateway with CAR format (handles both directories and single files)
   try {
+    performance.mark("dotli:fetch:gateway:start");
     const carBuffer = await fetchCarFromGateway(cidString, onStatus);
+    performance.mark("dotli:fetch:gateway:end");
     onStatus?.("Parsing content...");
+    performance.mark("dotli:fetch:parse:start");
     const files = await parseIpfsResponse(carBuffer);
+    performance.mark("dotli:fetch:parse:end");
     return toFetchResult(files);
   } catch (carError) {
+    performance.mark("dotli:fetch:gateway:end");
     onStatus?.(
       `CAR fetch failed (${(carError as Error).message}), trying raw gateway...`,
     );
@@ -233,10 +255,13 @@ export async function fetchArchive(
 function toFetchResult(files: ArchiveFiles): FetchResult {
   const keys = Object.keys(files);
   if (keys.length === 1 && keys[0] === "index.html") {
-    return { type: "single", content: files["index.html"]! };
+    return { type: "single", content: files["index.html"] };
   }
   const fileCount = keys.length;
-  console.log(`[dot.li] Loaded archive with ${fileCount} file(s):`, keys);
+  console.warn(
+    `[dot.li] Loaded archive with ${String(fileCount)} file(s):`,
+    keys,
+  );
   return { type: "archive", files };
 }
 
