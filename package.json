@@ -20,7 +20,7 @@
     "@ensdomains/content-hash": "^3.0.0",
     "@helia/unixfs": "^7.0.4",
     "@ipld/car": "^5.4.2",
-    "@libp2p/websockets": "^10.1.4",
+    "@libp2p/websockets": "^10.1.5",
     "@multiformats/blake2": "^2.0.2",
     "@multiformats/multiaddr": "^13.0.1",
     "@noble/hashes": "^2.0.1",
@@ -34,5 +34,8 @@
     "polkadot-api": "^1.23.3",
     "qrcode": "^1.5.4",
     "viem": "^2.46.3"
-  }
+  },
+  "trustedDependencies": [
+    "node-datachannel"
+  ]
 }
