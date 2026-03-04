@@ -55,7 +55,7 @@ function createModalDOM(
 
     const value = document.createElement("div");
     value.className = "signing-field-value";
-    if (field.mono) {
+    if (field.mono === true) {
       value.classList.add("mono");
     }
     value.textContent = field.value;
@@ -114,7 +114,7 @@ export function showSignPayloadModal(
       signBtn.disabled = true;
       signBtn.textContent = "Signing...";
 
-      session
+      void session
         .signPayload({
           ...payload,
           method: payload.method,
@@ -156,7 +156,7 @@ export function showSignRawModal(
 
     const fields: { label: string; value: string; mono?: boolean }[] = [
       { label: "Signer", value: truncateAddress(payload.address) },
-      { label: "Message", value: String(message), mono: true },
+      { label: "Message", value: message, mono: true },
     ];
 
     const { backdrop, signBtn, cancelBtn } = createModalDOM(
@@ -173,7 +173,7 @@ export function showSignRawModal(
       signBtn.disabled = true;
       signBtn.textContent = "Signing...";
 
-      session.signRaw(payload).match(
+      void session.signRaw(payload).match(
         ({ signature, signedTransaction }) => {
           removeModal(backdrop);
           resolve({

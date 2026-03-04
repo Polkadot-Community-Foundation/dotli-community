@@ -474,7 +474,9 @@ test.describe("Cold Start Performance", () => {
     expect(runs.length).toBe(NUM_RUNS);
   });
 
-  test(`measure warm start (${String(NUM_RUNS)} iterations)`, async ({ browser }) => {
+  test(`measure warm start (${String(NUM_RUNS)} iterations)`, async ({
+    browser,
+  }) => {
     const runs: SingleRun[] = [];
     for (let i = 0; i < NUM_RUNS; i++) {
       runs.push(await runWarmIteration(browser, i, NUM_RUNS));

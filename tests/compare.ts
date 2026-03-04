@@ -262,7 +262,7 @@ function compareRuns(label: string, base: RunStats, last: RunStats): void {
 
   // Phase comparison table
   const allPhases = ORDERED_PHASES.filter(
-    (p) => base.phases[p] !== undefined || last.phases[p] !== undefined,
+    (p) => p in base.phases || p in last.phases,
   );
 
   console.log(
@@ -273,17 +273,19 @@ function compareRuns(label: string, base: RunStats, last: RunStats): void {
   );
 
   for (const phase of allPhases) {
-    const bStat = base.phases[phase];
-    const lStat = last.phases[phase];
+    const hasB = phase in base.phases;
+    const hasL = phase in last.phases;
 
-    if (bStat === undefined || lStat === undefined) {
-      const _val = bStat ?? lStat;
-      const side = bStat !== undefined ? "removed" : "new";
+    if (!hasB || !hasL) {
+      const side = hasB ? "removed" : "new";
       console.log(
-        `  ${phase.padEnd(22)} ${bStat !== undefined ? fmt(bStat.p50).padStart(9) : "—".padStart(9)} ${lStat !== undefined ? fmt(lStat.p50).padStart(9) : "—".padStart(9)} ${D}${side.padStart(24)}${R}`,
+        `  ${phase.padEnd(22)} ${hasB ? fmt(base.phases[phase].p50).padStart(9) : "—".padStart(9)} ${hasL ? fmt(last.phases[phase].p50).padStart(9) : "—".padStart(9)} ${D}${side.padStart(24)}${R}`,
       );
       continue;
     }
+
+    const bStat = base.phases[phase];
+    const lStat = last.phases[phase];
 
     const p50Delta = fmtDelta(lStat.p50, bStat.p50);
     const p95Delta = fmtDelta(lStat.p95, bStat.p95);
@@ -304,9 +306,9 @@ function compareRuns(label: string, base: RunStats, last: RunStats): void {
   }
 
   // Overall summary
-  const bTotal = base.phases["Total (main)"];
-  const lTotal = last.phases["Total (main)"];
-  if (bTotal !== undefined && lTotal !== undefined) {
+  if ("Total (main)" in base.phases && "Total (main)" in last.phases) {
+    const bTotal = base.phases["Total (main)"];
+    const lTotal = last.phases["Total (main)"];
     const p50Diff = lTotal.p50 - bTotal.p50;
     const p95Diff = lTotal.p95 - bTotal.p95;
     const verdict = getVerdict(bTotal, lTotal);

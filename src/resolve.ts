@@ -100,33 +100,58 @@ async function ensureClient(
  * Call a Revive EVM contract (read-only dry-run).
  * Mirrors the pattern from deploy-to-dotns ReviveClientWrapper.performDryRunCall().
  */
+interface ReviveExecResult {
+  value?: ReviveOkResult;
+  isOk?: boolean;
+  ok?: ReviveOkResult;
+  result?: ReviveExecResult;
+}
+
+interface ReviveOkResult {
+  flags?: { toString?: () => string } | number | string;
+  data?:
+    | string
+    | { asHex: () => string }
+    | { toHex: () => string }
+    | Uint8Array;
+}
+
 async function reviveCall(
   api: ReturnType<PolkadotClient["getUnsafeApi"]>,
   contractAddress: string,
   encodedData: `0x${string}`,
 ): Promise<`0x${string}`> {
-  const result = await api.apis.ReviveApi.call(
+  const result = (await api.apis.ReviveApi.call(
     DUMMY_ORIGIN,
     Binary.fromHex(contractAddress as `0x${string}`),
     0n,
     DRY_RUN_WEIGHT_LIMIT,
     DRY_RUN_STORAGE_LIMIT,
     Binary.fromHex(encodedData),
-  );
+  )) as { result: ReviveExecResult };
 
   // Unwrap the result — same normalization as ReviveClientWrapper
-  const execResult = result.result;
-  const ok =
-    execResult?.value ??
-    (execResult?.isOk ? execResult : null) ??
-    execResult?.ok ??
+  const execResult: ReviveExecResult = result.result;
+  const ok: ReviveOkResult | null =
+    execResult.value ??
+    (execResult.isOk === true
+      ? (execResult as unknown as ReviveOkResult)
+      : null) ??
+    execResult.ok ??
     null;
 
-  if (!ok) {
+  if (ok === null) {
     throw new Error("Revive call failed: no result");
   }
 
-  const flags = BigInt(ok.flags?.toString?.() ?? ok.flags ?? 0);
+  const flagsRaw = ok.flags;
+  const flagsStr =
+    typeof flagsRaw === "object" &&
+    flagsRaw !== null &&
+    typeof flagsRaw.toString === "function"
+      ? flagsRaw.toString()
+      : String(flagsRaw ?? 0);
+  const flags = BigInt(flagsStr);
   if ((flags & 1n) === 1n) {
     throw new Error("Contract execution reverted");
   }
@@ -136,10 +161,20 @@ async function reviveCall(
   if (typeof data === "string") {
     return data as `0x${string}`;
   }
-  if (typeof data?.asHex === "function") {
+  if (
+    data !== undefined &&
+    data !== null &&
+    "asHex" in data &&
+    typeof data.asHex === "function"
+  ) {
     return data.asHex() as `0x${string}`;
   }
-  if (typeof data?.toHex === "function") {
+  if (
+    data !== undefined &&
+    data !== null &&
+    "toHex" in data &&
+    typeof data.toHex === "function"
+  ) {
     return data.toHex() as `0x${string}`;
   }
   if (data instanceof Uint8Array) {
@@ -272,7 +307,10 @@ export async function resolveOwner(label: string): Promise<string | null> {
     }) as unknown as string;
 
     // Zero address means no owner
-    if (!owner || owner === "0x0000000000000000000000000000000000000000") {
+    if (
+      owner === "" ||
+      owner === "0x0000000000000000000000000000000000000000"
+    ) {
       return null;
     }
 
