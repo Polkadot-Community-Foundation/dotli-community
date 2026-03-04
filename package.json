@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test:perf": "npx playwright test tests/cold-start.spec.ts",
+    "test:perf": "PERF_RUNS=5 npx playwright test tests/cold-start.spec.ts",
     "test:perf:base": "PERF_RUNS=10 PERF_SAVE_BASE=1 npx playwright test tests/cold-start.spec.ts",
     "test:perf:headed": "npx playwright test tests/cold-start.spec.ts --headed",
     "test:perf:compare": "npx tsx tests/compare.ts",
