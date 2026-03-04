@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    assignees: [ "KarimJedda", "BigTava", "leonardocustodio" ]
+    reviewers: [ "KarimJedda", "BigTava", "leonardocustodio" ]
+    labels: [ "dependencies" ]
+    groups:
+      node:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: '/'
+    labels: [ "dependencies" ]
+    assignees: [ "KarimJedda", "BigTava", "leonardocustodio" ]
+    reviewers: [ "KarimJedda", "BigTava", "leonardocustodio" ]
+    schedule:
+      interval: weekly
+    groups:
+      gh-actions:
+        patterns:
+          - "*"

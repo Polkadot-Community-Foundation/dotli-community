@@ -2,16 +2,8 @@
 //
 // Flow: parse URL → resolve .dot name via smoldot → fetch content from Bulletin → render in iframe
 
-import { resolveDotName, resolveOwner, destroyClient } from "./resolve";
-import { fetchArchive, destroyHelia } from "./fetch";
 import type { ArchiveFiles } from "./archive";
-import {
-  renderContent,
-  renderArchive,
-  showStatus,
-  showError,
-  showLanding,
-} from "./render";
+import { showStatus, showError, showLanding } from "./ui";
 import { initAuth } from "./auth";
 import { initTopBar } from "./topbar";
 
@@ -128,6 +120,10 @@ async function registerServiceWorker(): Promise<void> {
   }
 }
 
+// Module-level references for cleanup handler
+let destroyClientFn: (() => void) | null = null;
+let destroyHeliaFn: (() => Promise<void>) | null = null;
+
 async function main(): Promise<void> {
   performance.mark("dotli:main:start");
 
@@ -181,8 +177,11 @@ async function main(): Promise<void> {
     await registerServiceWorker();
     performance.mark("dotli:sw:end");
 
-    // Step 1: Resolve the .dot name to a CID via smoldot + dotNS
+    // Step 1: Resolve the .dot name to a CID via smoldot + dotNS (lazy load)
     performance.mark("dotli:resolve:start");
+    const { resolveDotName, resolveOwner, destroyClient } =
+      await import("./resolve");
+    destroyClientFn = destroyClient;
     const cid = await resolveDotName(label, showStatus);
     performance.mark("dotli:resolve:end");
 
@@ -240,16 +239,20 @@ async function main(): Promise<void> {
     if (cachedFiles) {
       showStatus("Rendering (cached)...");
       performance.mark("dotli:render:start");
+      const { renderArchive } = await import("./render");
       await renderArchive(cachedFiles, label, cid);
       performance.mark("dotli:render:end");
     } else {
       performance.mark("dotli:fetch:start");
+      const { fetchArchive, destroyHelia } = await import("./fetch");
+      destroyHeliaFn = destroyHelia;
       const result = await fetchArchive(cid, showStatus);
       performance.mark("dotli:fetch:end");
 
       // Step 3: Render in sandboxed iframe
       showStatus("Rendering...");
       performance.mark("dotli:render:start");
+      const { renderArchive, renderContent } = await import("./render");
       if (result.type === "archive") {
         await renderArchive(result.files, label, cid);
       } else {
@@ -267,8 +270,10 @@ async function main(): Promise<void> {
 
 // Cleanup on page unload
 window.addEventListener("beforeunload", () => {
-  destroyClient();
-  void destroyHelia();
+  destroyClientFn?.();
+  if (destroyHeliaFn) {
+    void destroyHeliaFn();
+  }
 });
 
 void main();
