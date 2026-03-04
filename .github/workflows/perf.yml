@@ -1,0 +1,86 @@
+name: Performance Tests
+on:
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: perf-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf:
+    name: Cold Start Benchmark
+    runs-on: ubuntu-latest
+    if: ${{ github.event.sender.type != 'Bot' }}
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Install Playwright browsers
+        run: bunx playwright install chromium
+
+      - name: Build
+        run: bun run build
+
+      # Run baseline on main branch
+      - name: Checkout base branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Install base dependencies
+        run: cd base && bun install
+
+      - name: Build base
+        run: cd base && bun run build
+
+      - name: Run base perf tests
+        run: cd base && HEADLESS=1 PERF_RUNS=10 xvfb-run bunx playwright test tests/cold-start.spec.ts || true
+
+      - name: Copy base results
+        run: |
+          mkdir -p tests/results
+          cp base/tests/results/last.json tests/results/base.json
+
+      # Run PR branch tests
+      - name: Run PR perf tests
+        run: HEADLESS=1 PERF_RUNS=10 xvfb-run bunx playwright test tests/cold-start.spec.ts || true
+
+      - name: Generate comparison
+        id: compare
+        run: |
+          body=$(bunx tsx tests/compare.ts --markdown 2>&1) || true
+          # Write to file to avoid shell quoting issues
+          echo "$body" > /tmp/perf-comment.md
+
+      - name: Find existing comment
+        uses: peter-evans/find-comment@v3
+        id: find
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: "⚡ Performance Report"
+
+      - name: Post or update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.find.outputs.comment-id }}
+          edit-mode: replace
+          body-path: /tmp/perf-comment.md
