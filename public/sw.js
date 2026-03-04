@@ -58,8 +58,13 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// Receive archive from main thread
+// Handle messages from main thread
 self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SW_CLAIM_EVENT") {
+    self.clients.claim();
+    return;
+  }
+
   if (event.data && event.data.type === "SET_ARCHIVE") {
     archive = event.data.files; // { path: ArrayBuffer }
     // Notify sender that archive is loaded

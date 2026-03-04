@@ -49,14 +49,28 @@ async function registerServiceWorker(): Promise<void> {
   if (!("serviceWorker" in navigator)) return;
 
   try {
-    const reg = await navigator.serviceWorker.register("/sw.js");
-    // Wait for the SW to be active
-    if (reg.active) return;
-    await new Promise<void>((resolve) => {
-      const sw = reg.installing || reg.waiting;
-      if (!sw) return resolve();
-      sw.addEventListener("statechange", () => {
-        if (sw.state === "activated") resolve();
+    await navigator.serviceWorker.register("/sw.js");
+
+    // Wait until the SW is controlling this page (needed by renderArchive)
+    if (navigator.serviceWorker.controller) return;
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Service Worker not available after 10s")),
+        10_000,
+      );
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      // Nudge the SW to claim if it's active but hasn't claimed yet
+      navigator.serviceWorker.ready.then((registration) => {
+        if (navigator.serviceWorker.controller) {
+          clearTimeout(timeout);
+          resolve();
+        } else if (registration.active) {
+          registration.active.postMessage({ type: "SW_CLAIM_EVENT" });
+        }
       });
     });
   } catch (err) {
@@ -65,10 +79,9 @@ async function registerServiceWorker(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  // Initialize auth adapter, top bar UI, and service worker (non-blocking)
+  // Initialize auth adapter and top bar UI
   initAuth();
   initTopBar();
-  registerServiceWorker();
 
   const label = parseDotLabel();
 
@@ -101,6 +114,9 @@ async function main(): Promise<void> {
   showStatus(`Resolving ${label}.dot...`);
 
   try {
+    // Step 0: Ensure service worker is ready (needed to serve archive files)
+    await registerServiceWorker();
+
     // Step 1: Resolve the .dot name to a CID via smoldot + dotNS
     const cid = await resolveDotName(label, showStatus);
 
