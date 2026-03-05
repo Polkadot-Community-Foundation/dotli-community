@@ -4,8 +4,15 @@
 
 import type { ArchiveFiles } from "./archive";
 import { showStatus, showError, showLanding } from "./ui";
-import { initAuth } from "./auth";
 import { initTopBar } from "./topbar";
+
+const T0 = performance.now();
+function elapsed(): string {
+  return `+${((performance.now() - T0) / 1000).toFixed(3)}s`;
+}
+function dur(start: number): string {
+  return `${(performance.now() - start).toFixed(0)}ms`;
+}
 
 /**
  * Check if the Service Worker has a cached archive for this domain.
@@ -126,21 +133,28 @@ let destroyHeliaFn: (() => Promise<void>) | null = null;
 
 async function main(): Promise<void> {
   performance.mark("dotli:main:start");
+  console.warn(`[dot.li perf] main() started (${elapsed()})`);
 
-  // Initialize auth adapter and top bar UI
-  performance.mark("dotli:auth:start");
-  initAuth();
-  performance.mark("dotli:auth:end");
-
+  // Initialize top bar UI (auth is lazy-loaded inside topbar when needed)
+  const t0 = performance.now();
   initTopBar();
+  console.warn(`[dot.li perf] initTopBar() done (${dur(t0)})`);
 
   const label = parseDotLabel();
 
   if (label === null) {
+    console.warn(`[dot.li perf] Landing page — no subdomain (${elapsed()})`);
     showLanding();
     performance.mark("dotli:main:end");
     return;
   }
+
+  console.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed()})`);
+
+  // Start loading resolve chunk immediately — network request fires now,
+  // downloads in parallel with the synchronous DOM setup below
+  const resolveChunkStart = performance.now();
+  const resolveChunkPromise = import("./resolve");
 
   // Show the .dot domain in the URL bar
   const urlBar = document.getElementById("topbar-url");
@@ -172,17 +186,33 @@ async function main(): Promise<void> {
   showStatus(`Resolving ${label}.dot...`);
 
   try {
-    // Step 0: Ensure service worker is ready (needed to serve archive files)
+    // Start SW registration in parallel — SW is only needed before rendering,
+    // so it runs concurrently with chunk loading + smoldot resolution
     performance.mark("dotli:sw:start");
-    await registerServiceWorker();
-    performance.mark("dotli:sw:end");
+    const swStart = performance.now();
+    console.warn(`[dot.li perf] SW registration started (${elapsed()})`);
+    const swReady = registerServiceWorker().then(() => {
+      performance.mark("dotli:sw:end");
+      console.warn(
+        `[dot.li perf] SW registration done (${dur(swStart)}, ${elapsed()})`,
+      );
+    });
 
-    // Step 1: Resolve the .dot name to a CID via smoldot + dotNS (lazy load)
+    // Step 1: Resolve the .dot name to a CID via smoldot + dotNS
+    // The chunk was already requested above — await the in-flight download
     performance.mark("dotli:resolve:start");
+    console.warn(`[dot.li perf] Awaiting resolve chunk... (${elapsed()})`);
     const { resolveDotName, resolveOwner, destroyClient } =
-      await import("./resolve");
+      await resolveChunkPromise;
+    console.warn(
+      `[dot.li perf] Resolve chunk loaded (${dur(resolveChunkStart)}, ${elapsed()})`,
+    );
     destroyClientFn = destroyClient;
+    const resolveStart = performance.now();
     const cid = await resolveDotName(label, showStatus);
+    console.warn(
+      `[dot.li perf] resolveDotName() done (${dur(resolveStart)}, ${elapsed()}) → ${cid ?? "null"}`,
+    );
     performance.mark("dotli:resolve:end");
 
     if (cid === null) {
@@ -231,36 +261,64 @@ async function main(): Promise<void> {
         el.classList.remove("loading");
       });
 
+    // Ensure SW is ready before cache check / rendering
+    console.warn(`[dot.li perf] Awaiting SW ready... (${elapsed()})`);
+    await swReady;
+    console.warn(`[dot.li perf] SW ready (${elapsed()})`);
+
     // Step 2b: Check SW cache before fetching
     performance.mark("dotli:cache-check:start");
+    const cacheStart = performance.now();
     const cachedFiles = await getCachedArchive(label, cid);
     performance.mark("dotli:cache-check:end");
+    console.warn(
+      `[dot.li perf] Cache check done (${dur(cacheStart)}) → ${cachedFiles !== null ? "HIT" : "MISS"} (${elapsed()})`,
+    );
 
     if (cachedFiles) {
       showStatus("Rendering (cached)...");
       performance.mark("dotli:render:start");
+      const renderStart = performance.now();
+      console.warn(`[dot.li perf] Loading render chunk... (${elapsed()})`);
       const { renderArchive } = await import("./render");
+      console.warn(`[dot.li perf] Render chunk loaded (${elapsed()})`);
       await renderArchive(cachedFiles, label, cid);
       performance.mark("dotli:render:end");
+      console.warn(
+        `[dot.li perf] Render done — cached (${dur(renderStart)}, ${elapsed()})`,
+      );
     } else {
       performance.mark("dotli:fetch:start");
+      const fetchStart = performance.now();
+      console.warn(`[dot.li perf] Loading fetch chunk... (${elapsed()})`);
       const { fetchArchive, destroyHelia } = await import("./fetch");
+      console.warn(`[dot.li perf] Fetch chunk loaded (${elapsed()})`);
       destroyHeliaFn = destroyHelia;
       const result = await fetchArchive(cid, showStatus);
       performance.mark("dotli:fetch:end");
+      console.warn(
+        `[dot.li perf] Content fetched (${dur(fetchStart)}, ${elapsed()}) → ${result.type}`,
+      );
 
       // Step 3: Render in sandboxed iframe
       showStatus("Rendering...");
       performance.mark("dotli:render:start");
+      const renderStart = performance.now();
+      console.warn(`[dot.li perf] Loading render chunk... (${elapsed()})`);
       const { renderArchive, renderContent } = await import("./render");
+      console.warn(`[dot.li perf] Render chunk loaded (${elapsed()})`);
       if (result.type === "archive") {
         await renderArchive(result.files, label, cid);
       } else {
         renderContent(result.content, label);
       }
       performance.mark("dotli:render:end");
+      console.warn(
+        `[dot.li perf] Render done (${dur(renderStart)}, ${elapsed()})`,
+      );
     }
     performance.mark("dotli:main:end");
+    console.warn(`[dot.li perf] === TOTAL: ${dur(T0)} ===`);
   } catch (err) {
     performance.mark("dotli:main:end");
     const message = err instanceof Error ? err.message : String(err);

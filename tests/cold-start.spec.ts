@@ -73,7 +73,6 @@ const NUM_RUNS = parseInt(process.env.PERF_RUNS ?? "10", 10);
 
 const PHASE_PAIRS: [string, string, string][] = [
   ["Total (main)", "dotli:main:start", "dotli:main:end"],
-  ["Auth init", "dotli:auth:start", "dotli:auth:end"],
   ["SW registration", "dotli:sw:start", "dotli:sw:end"],
   ["Name resolution", "dotli:resolve:start", "dotli:resolve:end"],
   ["  Smoldot init", "dotli:smoldot:init:start", "dotli:smoldot:init:end"],
@@ -424,7 +423,7 @@ async function runColdIteration(
     }
   });
 
-  await page.goto("http://mytestapp.localhost:5173/", { waitUntil: "commit" });
+  await page.goto("http://hackme3.localhost:5173/", { waitUntil: "commit" });
   await waitForPipeline(page);
 
   const marks = await collectMarks(page);
@@ -459,7 +458,7 @@ async function runWarmIterations(
 
   // First load — populate caches (SW registration, IndexedDB archive, etc.)
   console.log(`  Warm: initial load (populating caches)...`);
-  await page.goto("http://mytestapp.localhost:5173/", { waitUntil: "commit" });
+  await page.goto("http://hackme3.localhost:5173/", { waitUntil: "commit" });
   await waitForPipeline(page);
 
   const runs: SingleRun[] = [];

@@ -25,6 +25,10 @@ import {
   DUMMY_ORIGIN,
 } from "./config";
 
+function dur(start: number): string {
+  return `${(performance.now() - start).toFixed(0)}ms`;
+}
+
 export type StatusCallback = (status: string) => void;
 
 // Shared smoldot instance and relay chain — reused by chain provider factory
@@ -66,16 +70,21 @@ async function ensureClient(
   }
 
   performance.mark("dotli:smoldot:init:start");
+  const initStart = performance.now();
   onStatus?.("Starting light client...");
   const smoldot = getSmoldot();
+  console.warn(`[dot.li resolve] Smoldot instance created (${dur(initStart)})`);
 
   onStatus?.("Adding Paseo relay chain...");
   performance.mark("dotli:smoldot:relay:start");
+  const relayStart = performance.now();
   const relayChain = await getRelayChain();
   performance.mark("dotli:smoldot:relay:end");
+  console.warn(`[dot.li resolve] Relay chain added (${dur(relayStart)})`);
 
   onStatus?.("Adding Asset Hub Paseo...");
   performance.mark("dotli:smoldot:parachain:start");
+  const paraStart = performance.now();
   const chain = smoldot.addChain({
     chainSpec: assetHubPaseoChainSpec,
     potentialRelayChains: [relayChain],
@@ -84,14 +93,22 @@ async function ensureClient(
   const provider = getSmProvider(chain);
   clientInstance = createClient(provider);
   performance.mark("dotli:smoldot:parachain:end");
+  console.warn(
+    `[dot.li resolve] Parachain added + client created (${dur(paraStart)})`,
+  );
 
   onStatus?.("Syncing with Asset Hub Paseo...");
   performance.mark("dotli:smoldot:sync:start");
+  const syncStart = performance.now();
   await clientInstance.getFinalizedBlock();
   performance.mark("dotli:smoldot:sync:end");
+  console.warn(
+    `[dot.li resolve] Synced to finalized block (${dur(syncStart)})`,
+  );
 
   apiInstance = clientInstance.getUnsafeApi();
   performance.mark("dotli:smoldot:init:end");
+  console.warn(`[dot.li resolve] ensureClient() total: ${dur(initStart)}`);
   onStatus?.("Connected to Asset Hub Paseo");
   return apiInstance;
 }
@@ -229,6 +246,7 @@ export async function resolveDotName(
     args: [node],
   });
 
+  const existsStart = performance.now();
   const existsResult = await reviveCall(
     api,
     CONTRACTS.DOTNS_REGISTRY,
@@ -239,6 +257,9 @@ export async function resolveDotName(
     functionName: "recordExists",
     data: existsResult,
   }) as unknown as boolean;
+  console.warn(
+    `[dot.li resolve] recordExists() dry-run: ${dur(existsStart)} → ${String(exists)}`,
+  );
 
   if (!exists) {
     onStatus?.(`Domain "${domain}" not found`);
@@ -253,6 +274,7 @@ export async function resolveDotName(
     args: [node],
   });
 
+  const contentStart = performance.now();
   const contentResult = await reviveCall(
     api,
     CONTRACTS.DOTNS_CONTENT_RESOLVER,
@@ -264,6 +286,7 @@ export async function resolveDotName(
     functionName: "contenthash",
     data: contentResult,
   }) as unknown as `0x${string}`;
+  console.warn(`[dot.li resolve] contenthash() dry-run: ${dur(contentStart)}`);
 
   // Step 3: Decode the contenthash to a CID
   const cid = decodeIpfsContenthash(contenthashBytes);

@@ -50,7 +50,14 @@ export function onAuthStateChange(fn: AuthListener): () => void {
 
 // ── Initialization ─────────────────────────────────────────
 
+let initialized = false;
+
 export function initAuth(): void {
+  if (initialized) {
+    return;
+  }
+  initialized = true;
+
   const storage = createLocalStorageAdapter("dot.li");
   const lazyClient = createLazyClient(
     getWsProvider([...SS_STABLE_STAGE_ENDPOINTS]),
