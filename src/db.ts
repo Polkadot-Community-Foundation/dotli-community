@@ -91,11 +91,13 @@ export function getDb(): Promise<IDBDatabase> {
   }
 
   // Reset on close so we re-open on next access
-  void dbPromise.then((db) => {
-    db.onclose = () => {
-      dbPromise = null;
-    };
-  });
+  void dbPromise
+    .then((db) => {
+      db.onclose = () => {
+        dbPromise = null;
+      };
+    })
+    .catch(Function.prototype as () => void);
 
   return dbPromise;
 }

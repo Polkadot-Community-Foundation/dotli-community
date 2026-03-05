@@ -10,7 +10,7 @@
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;
 
-import { handleConnect, handleStatus } from "./sw-smoldot";
+import { handleConnect, handleStatus, ensureSmoldot } from "./sw-smoldot";
 
 // ── Archive Serving (ported from public/sw.js) ───────────────
 
@@ -150,6 +150,15 @@ self.addEventListener("activate", (event) => {
   // Archives are loaded lazily on SW_CACHE_LOOKUP_EVENT (per-domain),
   // so activation stays fast regardless of how many domains are cached.
   event.waitUntil(self.clients.claim());
+  // Start smoldot in the background (non-blocking) — on subsequent visits
+  // to the same origin, smoldot will already be synced and ready.
+  // Skip in dev mode: dynamic imports are disallowed in SW scope;
+  // production builds inline everything so this works fine.
+  if (!import.meta.env.DEV) {
+    setTimeout(() => {
+      void ensureSmoldot().catch(Function.prototype as () => void);
+    }, 100);
+  }
 });
 
 // ── Message Handling ─────────────────────────────────────────

@@ -1,12 +1,7 @@
 .idea
 node_modules/
 dist/
-.claude
-.claude-flow
-test-results/
-tests/results.json
-.mcp.json
-CLAUDE.md
 docs/
-
-dist/
+test-results/
+.papi/descriptors/
+tests/results.json

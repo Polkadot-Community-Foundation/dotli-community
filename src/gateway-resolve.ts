@@ -1,191 +1,137 @@
-// dot.li — Fast CID resolution via public RPC endpoint
+// dot.li — Fast CID resolution via HTTP JSON-RPC state_call
 //
-// Resolves domain->CID by connecting directly to a public Asset Hub Paseo
-// RPC node via WebSocket. Skips smoldot chain sync (~14s) entirely.
-// Used as a fast path on cold start; smoldot verifies in the background.
+// Resolves domain->CID by making a single HTTP POST to a public
+// Asset Hub Paseo RPC node using the `state_call` JSON-RPC method.
+// Bypasses WebSocket + chainHead subscription overhead entirely.
+//
+// Uses metadata-derived SCALE codecs (from papi) for encoding/decoding.
+// The metadata is bundled as a Vite asset and parsed at module init.
+//
+// To refresh metadata: `npm run update-metadata`
 
-import { getWsProvider } from "polkadot-api/ws-provider/web";
-import { createClient, type PolkadotClient } from "polkadot-api";
-import { Binary } from "polkadot-api";
-import {
-  CONTRACTS,
-  DRY_RUN_WEIGHT_LIMIT,
-  DRY_RUN_STORAGE_LIMIT,
-  DUMMY_ORIGIN,
-  ASSET_HUB_PASEO_RPC,
-} from "./config";
+import { CONTRACTS, ASSET_HUB_PASEO_RPC, DUMMY_ORIGIN } from "./config";
 import { namehash, encodeFunctionCall, decodeBytes } from "./abi";
 import {
   decode as decodeContentHash,
   getCodec,
 } from "@ensdomains/content-hash";
+import {
+  encodeReviveApiCall,
+  decodeContractResult,
+} from "./codegen/revive-api";
 
 function dur(start: number): string {
   return `${(performance.now() - start).toFixed(0)}ms`;
 }
 
-const GATEWAY_TIMEOUT_MS = 8_000;
+const GATEWAY_TIMEOUT_MS = 6_000;
 
-// ── Revive dry-run call (same logic as resolve.ts) ───────────
-
-interface ReviveExecResult {
-  value?: ReviveOkResult;
-  isOk?: boolean;
-  ok?: ReviveOkResult;
-  result?: ReviveExecResult;
+/** Decode contenthash bytes into an IPFS CID string. */
+function decodeIpfsContenthash(raw: string): string | null {
+  const hex = raw.startsWith("0x") ? raw.slice(2) : raw;
+  if (!hex || hex === "0" || hex.length < 4) {
+    return null;
+  }
+  try {
+    if (getCodec(hex) !== "ipfs") {
+      return null;
+    }
+    return decodeContentHash(hex) || null;
+  } catch {
+    return null;
+  }
 }
 
-interface ReviveOkResult {
-  flags?: { toString?: () => string } | number | string;
-  data?:
-    | string
-    | { asHex: () => string }
-    | { toHex: () => string }
-    | Uint8Array;
-}
-
-async function reviveCall(
-  api: ReturnType<PolkadotClient["getUnsafeApi"]>,
-  contractAddress: string,
-  encodedData: `0x${string}`,
-): Promise<`0x${string}`> {
-  const result = (await api.apis.ReviveApi.call(
-    DUMMY_ORIGIN,
-    Binary.fromHex(contractAddress as `0x${string}`),
-    0n,
-    DRY_RUN_WEIGHT_LIMIT,
-    DRY_RUN_STORAGE_LIMIT,
-    Binary.fromHex(encodedData),
-  )) as { result: ReviveExecResult };
-
-  const execResult: ReviveExecResult = result.result;
-  const ok: ReviveOkResult | null =
-    execResult.value ??
-    (execResult.isOk === true
-      ? (execResult as unknown as ReviveOkResult)
-      : null) ??
-    execResult.ok ??
-    null;
-
-  if (ok === null) {
-    throw new Error("Revive call failed: no result");
-  }
-
-  const flagsRaw = ok.flags;
-  const flagsStr =
-    typeof flagsRaw === "object" && typeof flagsRaw.toString === "function"
-      ? flagsRaw.toString()
-      : String(flagsRaw ?? 0);
-  if ((BigInt(flagsStr) & 1n) === 1n) {
-    throw new Error("Contract execution reverted");
-  }
-
-  const data = ok.data;
-  if (typeof data === "string") {
-    return data as `0x${string}`;
-  }
-  if (
-    data !== undefined &&
-    "asHex" in data &&
-    typeof data.asHex === "function"
-  ) {
-    return data.asHex() as `0x${string}`;
-  }
-  if (
-    data !== undefined &&
-    "toHex" in data &&
-    typeof data.toHex === "function"
-  ) {
-    return data.toHex() as `0x${string}`;
-  }
-  if (data instanceof Uint8Array) {
-    return ("0x" +
-      Array.from(data)
-        .map((b: number) => b.toString(16).padStart(2, "0"))
-        .join("")) as `0x${string}`;
-  }
-  return "0x";
-}
-
-// ── Gateway resolution ───────────────────────────────────────
+// ── Gateway resolution via HTTP state_call ──────────────────
 
 /**
- * Resolve a .dot name to an IPFS CID via a public RPC endpoint.
- * Connects via WebSocket, makes a single dry-run call, and disconnects.
- * Has a built-in timeout to avoid blocking the critical path.
+ * Resolve a .dot name to an IPFS CID via HTTP JSON-RPC state_call.
+ *
+ * Makes a single HTTP POST per endpoint — no WebSocket, no chainHead
+ * subscription, no polkadot-api client overhead. Falls through to the
+ * next endpoint on failure; returns null if all fail (smoldot handles it).
  */
 export async function resolveViaGateway(label: string): Promise<string | null> {
   const start = performance.now();
 
-  return new Promise<string | null>((resolve) => {
-    const timeout = setTimeout(() => {
-      console.warn(
-        `[dot.li gateway] Timed out after ${String(GATEWAY_TIMEOUT_MS)}ms`,
-      );
-      cleanup();
-      resolve(null);
-    }, GATEWAY_TIMEOUT_MS);
+  const domain = `${label}.dot`;
+  const node = namehash(domain);
+  const calldata = encodeFunctionCall("contenthash", node);
 
-    let client: PolkadotClient | null = null;
+  // Encode params using metadata-derived SCALE codec
+  const params = await encodeReviveApiCall(
+    DUMMY_ORIGIN,
+    CONTRACTS.DOTNS_CONTENT_RESOLVER,
+    0n,
+    { ref_time: 18446744073709551615n, proof_size: 18446744073709551615n },
+    18446744073709551615n,
+    calldata,
+  );
+  console.warn(`[dot.li gateway] Params encoded (${dur(start)})`);
 
-    function cleanup(): void {
-      clearTimeout(timeout);
-      client?.destroy();
-      client = null;
-    }
+  for (const wsUrl of ASSET_HUB_PASEO_RPC) {
+    const httpUrl = wsUrl.replace("wss://", "https://");
+    try {
+      const fetchStart = performance.now();
+      const response = await fetch(httpUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "state_call",
+          params: ["ReviveApi_call", params],
+        }),
+        signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+      });
 
-    void (async () => {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-deprecated -- will migrate in PAPI v2
-        const provider = getWsProvider(ASSET_HUB_PASEO_RPC);
-        client = createClient(provider);
-
-        await client.getFinalizedBlock();
-        console.warn(`[dot.li gateway] Connected (${dur(start)})`);
-
-        const api = client.getUnsafeApi();
-        const domain = `${label}.dot`;
-        const node = namehash(domain);
-        const calldata = encodeFunctionCall("contenthash", node);
-
-        const callStart = performance.now();
-        const result = await reviveCall(
-          api,
-          CONTRACTS.DOTNS_CONTENT_RESOLVER,
-          calldata,
+      if (!response.ok) {
+        console.warn(
+          `[dot.li gateway] HTTP ${String(response.status)} from ${httpUrl} (${dur(fetchStart)})`,
         );
-        console.warn(`[dot.li gateway] contenthash() call: ${dur(callStart)}`);
-
-        const contenthashBytes = decodeBytes(result);
-        const hex = contenthashBytes.startsWith("0x")
-          ? contenthashBytes.slice(2)
-          : contenthashBytes;
-
-        if (!hex || hex === "0" || hex.length < 4) {
-          console.warn(
-            `[dot.li gateway] No content hash found (${dur(start)})`,
-          );
-          cleanup();
-          resolve(null);
-          return;
-        }
-
-        const codec = getCodec(hex);
-        if (codec !== "ipfs") {
-          cleanup();
-          resolve(null);
-          return;
-        }
-
-        const cid = decodeContentHash(hex);
-        console.warn(`[dot.li gateway] Resolved CID (${dur(start)}): ${cid}`);
-        cleanup();
-        resolve(cid || null);
-      } catch (err) {
-        console.warn(`[dot.li gateway] Failed (${dur(start)}):`, err);
-        cleanup();
-        resolve(null);
+        continue;
       }
-    })();
-  });
+
+      const json = (await response.json()) as {
+        result?: string;
+        error?: { message?: string; code?: number };
+      };
+      console.warn(
+        `[dot.li gateway] RPC response received (${dur(fetchStart)})`,
+      );
+
+      if (json.error) {
+        console.warn(
+          `[dot.li gateway] RPC error: ${json.error.message ?? "unknown"}`,
+        );
+        continue;
+      }
+
+      if (json.result === undefined || typeof json.result !== "string") {
+        console.warn(`[dot.li gateway] No result in RPC response`);
+        continue;
+      }
+
+      const returnData = await decodeContractResult(json.result);
+      if (returnData === null) {
+        console.warn(
+          `[dot.li gateway] Contract call failed or reverted (${dur(fetchStart)})`,
+        );
+        continue;
+      }
+
+      const contenthashBytes = decodeBytes(returnData);
+      const cid = decodeIpfsContenthash(contenthashBytes);
+      console.warn(
+        `[dot.li gateway] Resolved CID (${dur(start)}): ${cid ?? "null"}`,
+      );
+      return cid;
+    } catch (err) {
+      console.warn(`[dot.li gateway] Failed ${httpUrl} (${dur(start)}):`, err);
+      continue;
+    }
+  }
+
+  console.warn(`[dot.li gateway] All endpoints failed (${dur(start)})`);
+  return null;
 }

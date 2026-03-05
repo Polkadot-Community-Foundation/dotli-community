@@ -39,7 +39,4 @@ export const IPFS_GATEWAY = "https://paseo-ipfs.polkadot.io";
 
 // --- Asset Hub Paseo public RPC (for fast gateway CID resolution) ---
 
-export const ASSET_HUB_PASEO_RPC = [
-  "wss://asset-hub-paseo-rpc.polkadot.io",
-  "wss://sys.ibp.network/asset-hub-paseo",
-];
+export const ASSET_HUB_PASEO_RPC = ["wss://sys.ibp.network/asset-hub-paseo"];

@@ -101,7 +101,7 @@ jobs:
 
       - name: Generate comparison
         if: env.HAVE_BASE == 'true'
-        run: bun run test:perf:compare:md > /tmp/perf-comment.md 2>&1 || true
+        run: bun run test:perf:compare:md > /tmp/perf-comment.md || true
 
       - name: Generate standalone report
         if: env.HAVE_BASE != 'true'

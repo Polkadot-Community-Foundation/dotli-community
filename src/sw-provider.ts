@@ -51,7 +51,7 @@ export async function isSwSmoldotReady(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const timeout = setTimeout(() => {
       resolve(false);
-    }, 2_000);
+    }, 500);
 
     const channel = new MessageChannel();
     channel.port1.onmessage = (evt: MessageEvent): void => {

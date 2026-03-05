@@ -6,6 +6,11 @@
 
 import type { ArchiveFiles } from "./archive";
 
+// Eagerly load the container bridge chunk — starts downloading when
+// the render chunk is imported, so it's ready by the time we need it.
+const containerChunkPromise = import("./container");
+void containerChunkPromise.catch(Function.prototype as () => void);
+
 const app = document.getElementById("app") ?? document.body;
 
 let currentDispose: (() => void) | null = null;
@@ -75,12 +80,13 @@ export async function renderArchive(
     throw new Error("No service worker and no index.html in archive");
   }
 
-  // Transfer underlying ArrayBuffers directly (zero-copy when possible)
+  // Transfer underlying ArrayBuffers directly to the SW (zero-copy).
+  // Archive files from concatBytes() are fresh Uint8Arrays with byteOffset=0,
+  // so the fast path (no copy) applies to virtually all files.
   const transferableFiles: Record<string, ArrayBuffer> = {};
   const transferList: ArrayBuffer[] = [];
   for (const [filePath, data] of Object.entries(files)) {
     const buf = data.buffer as ArrayBuffer;
-    // If the Uint8Array is a view over a larger or shared buffer, copy it
     if (data.byteOffset !== 0 || data.byteLength !== buf.byteLength) {
       const copy = new ArrayBuffer(data.byteLength);
       new Uint8Array(copy).set(data);
@@ -121,20 +127,50 @@ export async function renderArchive(
   await renderIframe(swUrl, label);
 }
 
-async function renderIframe(url: string, label: string): Promise<void> {
-  app.innerHTML = "";
+// Pre-created iframe element — call prepareIframe() early to avoid
+// DOM creation overhead during the render-critical path.
+let preparedIframe: HTMLIFrameElement | null = null;
 
+/**
+ * Pre-create the iframe element and append it (hidden) to the DOM.
+ * Call this during the fetch/resolve phase so the iframe is ready instantly.
+ */
+export function prepareIframe(): void {
+  if (preparedIframe) {
+    return;
+  }
   const iframe = document.createElement("iframe");
   iframe.sandbox.add("allow-scripts", "allow-same-origin");
   iframe.style.cssText =
-    "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
-
+    "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;visibility:hidden;";
   document.body.style.margin = "0";
   document.body.style.overflow = "hidden";
   app.appendChild(iframe);
+  preparedIframe = iframe;
+}
 
-  // Lazy-load the container bridge — only needed after the iframe is created
-  const { setupContainer } = await import("./container");
+async function renderIframe(url: string, label: string): Promise<void> {
+  let iframe: HTMLIFrameElement;
+  if (preparedIframe) {
+    // Detach before clearing, then re-append
+    iframe = preparedIframe;
+    preparedIframe = null;
+    iframe.remove();
+    app.innerHTML = "";
+    iframe.style.visibility = "visible";
+    app.appendChild(iframe);
+  } else {
+    app.innerHTML = "";
+    iframe = document.createElement("iframe");
+    iframe.sandbox.add("allow-scripts", "allow-same-origin");
+    iframe.style.cssText =
+      "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
+    document.body.style.margin = "0";
+    document.body.style.overflow = "hidden";
+    app.appendChild(iframe);
+  }
+
+  const { setupContainer } = await containerChunkPromise;
   currentDispose = setupContainer(iframe, url, label);
 }
 
@@ -146,5 +182,9 @@ function cleanup(): void {
   if (currentBlobUrl !== null) {
     URL.revokeObjectURL(currentBlobUrl);
     currentBlobUrl = null;
+  }
+  if (preparedIframe) {
+    preparedIframe.remove();
+    preparedIframe = null;
   }
 }

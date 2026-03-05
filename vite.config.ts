@@ -76,16 +76,20 @@ function preloadCriticalAssets(): Plugin {
         const resolveChunk = findChunk(/^assets\/resolve-.*\.js$/);
         const fetchChunk = findChunk(/^assets\/fetch-.*\.js$/);
         const renderChunk = findChunk(/^assets\/render-.*\.js$/);
+        const gatewayChunk = findChunk(/^assets\/gateway-.*\.js$/);
         const wasmAsset = findChunk(/^assets\/.*\.wasm$/);
+        const metadataAsset = findChunk(/^assets\/ah-.*\.scale$/);
 
-        const chunks = [resolveChunk, fetchChunk, renderChunk].filter(Boolean);
+        const chunks = [resolveChunk, fetchChunk, renderChunk, gatewayChunk].filter(Boolean);
         if (chunks.length === 0) return [];
 
-        // Preload the WASM as a fetch (browser starts downloading during HTML parse,
-        // so it's ready when the smoldot worker requests it — saves ~0.5-4s)
-        const wasmPreload = wasmAsset
-          ? `l=document.createElement("link");l.rel="preload";l.as="fetch";l.crossOrigin="anonymous";l.href="/${wasmAsset}";document.head.appendChild(l);`
-          : "";
+        // Preload heavy assets as fetch (browser starts downloading during HTML parse)
+        const fetchPreloads = [wasmAsset, metadataAsset].filter(Boolean)
+          .map(
+            (a) =>
+              `l=document.createElement("link");l.rel="preload";l.as="fetch";l.crossOrigin="anonymous";l.href="/${a}";document.head.appendChild(l);`,
+          )
+          .join("");
 
         // Inline script that conditionally creates modulepreload links
         const preloadStatements = chunks
@@ -99,7 +103,7 @@ function preloadCriticalAssets(): Plugin {
           'var h=location.hostname,l;',
           'if(h==="dot.li"||h==="localhost")return;',
           'if(!h.endsWith(".dot.li")&&!h.endsWith(".localhost"))return;',
-          wasmPreload,
+          fetchPreloads,
           preloadStatements,
           "})()",
         ].join("");

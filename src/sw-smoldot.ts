@@ -117,7 +117,7 @@ async function initSmoldot(): Promise<void> {
 /**
  * Ensure smoldot is initialized (idempotent).
  */
-function ensureSmoldot(): Promise<void> {
+export function ensureSmoldot(): Promise<void> {
   initPromise ??= initSmoldot().catch((err: unknown) => {
     console.error("[dot.li SW] Failed to initialize smoldot:", err);
     initPromise = null;

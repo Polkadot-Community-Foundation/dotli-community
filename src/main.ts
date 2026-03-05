@@ -262,6 +262,12 @@ async function main(): Promise<void> {
 
   console.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed()})`);
 
+  // Pre-load gateway and render chunks (overlap with CID cache check + resolution)
+  const gatewayChunkPromise = import("./gateway-resolve");
+  void gatewayChunkPromise.catch(Function.prototype as () => void);
+  const renderChunkPromise = import("./render");
+  void renderChunkPromise.catch(Function.prototype as () => void);
+
   // Show the .dot domain in the URL bar
   const urlBar = document.getElementById("topbar-url");
   if (urlBar === null) {
@@ -304,6 +310,13 @@ async function main(): Promise<void> {
       );
     });
 
+    // Pre-create iframe element while we resolve + fetch (saves ~50ms later)
+    renderChunkPromise
+      .then(({ prepareIframe }) => {
+        prepareIframe();
+      })
+      .catch(Function.prototype as () => void);
+
     // ── Fast path: CID cache + SW archive cache ──
     // On repeat visits, render from the cached CID instantly (<500ms)
     // and validate via smoldot in the background.
@@ -318,7 +331,7 @@ async function main(): Promise<void> {
         setShieldState("validating");
         performance.mark("dotli:render:start");
         const renderStart = performance.now();
-        const { renderArchive } = await import("./render");
+        const { renderArchive } = await renderChunkPromise;
         await renderArchive(cachedFiles, label, cachedCid);
         performance.mark("dotli:render:end");
         console.warn(
@@ -372,14 +385,27 @@ async function main(): Promise<void> {
     );
     void heliaWarmup.catch(Function.prototype as () => void);
 
-    // Start gateway resolution immediately (fast path via public RPC, ~500ms)
+    // Check if SW smoldot is already synced (lukewarm same-origin revisit).
+    // If ready, skip the gateway entirely — SW smoldot resolves instantly.
+    const { isSwSmoldotReady } = await import("./sw-provider");
+    const swSmoldotReady = await isSwSmoldotReady();
+
+    // Start gateway resolution only if SW smoldot is not ready
     performance.mark("dotli:resolve:start");
-    console.warn(
-      `[dot.li perf] Starting gateway + smoldot resolve... (${elapsed()})`,
-    );
-    const gatewayPromise = import("./gateway-resolve")
-      .then(({ resolveViaGateway }) => resolveViaGateway(label))
-      .catch(() => null as string | null);
+    let gatewayPromise: Promise<string | null>;
+    if (swSmoldotReady) {
+      console.warn(
+        `[dot.li perf] SW smoldot ready — skipping gateway (${elapsed()})`,
+      );
+      gatewayPromise = Promise.resolve(null);
+    } else {
+      console.warn(
+        `[dot.li perf] Starting gateway + smoldot resolve... (${elapsed()})`,
+      );
+      gatewayPromise = gatewayChunkPromise
+        .then(({ resolveViaGateway }) => resolveViaGateway(label))
+        .catch(() => null as string | null);
+    }
 
     // Await resolve chunk for smoldot path (already loading since top of main)
     console.warn(`[dot.li perf] Awaiting resolve chunk... (${elapsed()})`);
@@ -500,9 +526,7 @@ async function main(): Promise<void> {
       showStatus("Rendering (cached)...");
       performance.mark("dotli:render:start");
       const renderStart = performance.now();
-      console.warn(`[dot.li perf] Loading render chunk... (${elapsed()})`);
-      const { renderArchive } = await import("./render");
-      console.warn(`[dot.li perf] Render chunk loaded (${elapsed()})`);
+      const { renderArchive } = await renderChunkPromise;
       await renderArchive(cachedFiles, label, cid);
       performance.mark("dotli:render:end");
       console.warn(
@@ -530,9 +554,7 @@ async function main(): Promise<void> {
       showStatus("Rendering...");
       performance.mark("dotli:render:start");
       const renderStart = performance.now();
-      console.warn(`[dot.li perf] Loading render chunk... (${elapsed()})`);
-      const { renderArchive, renderContent } = await import("./render");
-      console.warn(`[dot.li perf] Render chunk loaded (${elapsed()})`);
+      const { renderArchive, renderContent } = await renderChunkPromise;
       if (result.type === "archive") {
         await renderArchive(result.files, label, cid);
       } else {
