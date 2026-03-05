@@ -73,7 +73,6 @@ const NUM_RUNS = parseInt(process.env.PERF_RUNS ?? "10", 10);
 
 const PHASE_PAIRS: [string, string, string][] = [
   ["Total (main)", "dotli:main:start", "dotli:main:end"],
-  ["Auth init", "dotli:auth:start", "dotli:auth:end"],
   ["SW registration", "dotli:sw:start", "dotli:sw:end"],
   ["Name resolution", "dotli:resolve:start", "dotli:resolve:end"],
   ["  Smoldot init", "dotli:smoldot:init:start", "dotli:smoldot:init:end"],

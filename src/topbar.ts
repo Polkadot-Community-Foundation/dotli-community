@@ -2,18 +2,13 @@
 //
 // Manages the auth button, QR pairing modal, and user popover.
 // All plain DOM manipulation — no framework.
+//
+// Auth module is lazy-loaded — the heavy host-papp, statement-store, and
+// polkadot-api WS deps only load when a persisted session exists or the
+// user clicks the auth button.
 
+import type { AuthState } from "./auth";
 import QRCode from "qrcode";
-
-import {
-  type AuthState,
-  getAuthState,
-  onAuthStateChange,
-  startPairing,
-  abortPairing,
-  disconnect,
-  shortenName,
-} from "./auth";
 
 // ── DOM refs ───────────────────────────────────────────────
 
@@ -38,6 +33,38 @@ const HEXAGON_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none"
 
 // Track the current QR payload to prevent stale canvas appends
 let currentQrPayload: string | null = null;
+
+// ── Lazy Auth Loading ─────────────────────────────────────
+
+interface AuthModule {
+  initAuth: () => void;
+  getAuthState: () => AuthState;
+  onAuthStateChange: (fn: (state: AuthState) => void) => () => void;
+  startPairing: () => void;
+  abortPairing: () => void;
+  disconnect: () => Promise<void>;
+  shortenName: (identity: {
+    fullUsername: string | null;
+    liteUsername: string;
+  }) => string;
+}
+
+let authMod: AuthModule | null = null;
+
+/**
+ * Lazy-load and initialize the auth module. Subsequent calls return
+ * the cached module immediately (initAuth is idempotent).
+ */
+async function ensureAuth(): Promise<AuthModule> {
+  if (authMod) {
+    return authMod;
+  }
+  authMod = (await import("./auth")) as AuthModule;
+  authMod.initAuth();
+  authMod.onAuthStateChange(renderAuthState);
+  renderAuthState(authMod.getAuthState());
+  return authMod;
+}
 
 // ── Init ───────────────────────────────────────────────────
 
@@ -69,11 +96,13 @@ export function initTopBar(): void {
     }
   });
 
-  // Subscribe to auth state changes
-  onAuthStateChange(renderAuthState);
+  // Show default logged-out state
+  renderLoggedOut();
 
-  // Render initial state
-  renderAuthState(getAuthState());
+  // If there's a persisted session, lazy-load auth to restore it
+  if (localStorage.getItem("dot.li") !== null) {
+    void ensureAuth();
+  }
 }
 
 // ── Render ─────────────────────────────────────────────────
@@ -105,7 +134,8 @@ function renderLoggedOut(): void {
 }
 
 function renderLoggedIn(state: AuthState & { status: "authenticated" }): void {
-  const initials = state.identity ? shortenName(state.identity) : "??";
+  const initials =
+    state.identity && authMod ? authMod.shortenName(state.identity) : "??";
   authButton.innerHTML = `<div class="user-badge">${initials}</div>`;
   authButton.title = "Account";
 
@@ -180,7 +210,7 @@ function renderError(message: string): void {
   retry.className = "auth-modal-retry";
   retry.textContent = "Retry";
   retry.addEventListener("click", () => {
-    startPairing();
+    authMod?.startPairing();
   });
   container.appendChild(retry);
 
@@ -191,24 +221,34 @@ function renderError(message: string): void {
 // ── Handlers ───────────────────────────────────────────────
 
 function handleAuthButtonClick(): void {
-  const state = getAuthState();
+  if (authMod) {
+    const state = authMod.getAuthState();
 
-  if (state.status === "authenticated") {
-    // Toggle user popover
-    userPopover.classList.toggle("open");
-  } else if (state.status === "attesting") {
-    // Attestation still running in background — just reshow the modal
-    modalBackdrop.classList.add("open");
+    if (state.status === "authenticated") {
+      // Toggle user popover
+      userPopover.classList.toggle("open");
+    } else if (state.status === "attesting") {
+      // Attestation still running in background — just reshow the modal
+      modalBackdrop.classList.add("open");
+    } else {
+      // Open modal and start pairing
+      openModal();
+      authMod.startPairing();
+    }
   } else {
-    // Open modal and start pairing
+    // Auth not loaded yet — load it and start pairing
     openModal();
-    startPairing();
+    void ensureAuth().then(() => {
+      authMod?.startPairing();
+    });
   }
 }
 
 function handleDisconnect(): void {
   userPopover.classList.remove("open");
-  void disconnect();
+  if (authMod) {
+    void authMod.disconnect();
+  }
 }
 
 function openModal(): void {
@@ -219,9 +259,11 @@ function openModal(): void {
 function closeModal(): void {
   modalBackdrop.classList.remove("open");
 
-  const state = getAuthState();
-  // Only abort during pairing or error — let attestation continue in background
-  if (state.status === "pairing" || state.status === "error") {
-    abortPairing();
+  if (authMod) {
+    const state = authMod.getAuthState();
+    // Only abort during pairing or error — let attestation continue in background
+    if (state.status === "pairing" || state.status === "error") {
+      authMod.abortPairing();
+    }
   }
 }

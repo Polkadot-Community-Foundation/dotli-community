@@ -4,7 +4,6 @@
 
 import type { ArchiveFiles } from "./archive";
 import { showStatus, showError, showLanding } from "./ui";
-import { initAuth } from "./auth";
 import { initTopBar } from "./topbar";
 
 /**
@@ -127,11 +126,7 @@ let destroyHeliaFn: (() => Promise<void>) | null = null;
 async function main(): Promise<void> {
   performance.mark("dotli:main:start");
 
-  // Initialize auth adapter and top bar UI
-  performance.mark("dotli:auth:start");
-  initAuth();
-  performance.mark("dotli:auth:end");
-
+  // Initialize top bar UI (auth is lazy-loaded inside topbar when needed)
   initTopBar();
 
   const label = parseDotLabel();
