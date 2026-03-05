@@ -176,10 +176,12 @@ async function main(): Promise<void> {
   showStatus(`Resolving ${label}.dot...`);
 
   try {
-    // Step 0: Ensure service worker is ready (needed to serve archive files)
+    // Start SW registration in parallel — SW is only needed before rendering,
+    // so it runs concurrently with chunk loading + smoldot resolution
     performance.mark("dotli:sw:start");
-    await registerServiceWorker();
-    performance.mark("dotli:sw:end");
+    const swReady = registerServiceWorker().then(() => {
+      performance.mark("dotli:sw:end");
+    });
 
     // Step 1: Resolve the .dot name to a CID via smoldot + dotNS
     // The chunk was already requested above — await the in-flight download
@@ -235,6 +237,9 @@ async function main(): Promise<void> {
         el.textContent = "Unavailable";
         el.classList.remove("loading");
       });
+
+    // Ensure SW is ready before cache check / rendering
+    await swReady;
 
     // Step 2b: Check SW cache before fetching
     performance.mark("dotli:cache-check:start");
