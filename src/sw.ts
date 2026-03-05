@@ -58,7 +58,7 @@ function hasExtension(path: string): boolean {
   return lastDot > lastSlash;
 }
 
-// ── IndexedDB archive persistence ────────────────────────────
+// ── IndexedDB archive persistence (pooled connection) ─────────
 
 const ARCHIVE_DB_NAME = "dotli-sw";
 const ARCHIVE_DB_VERSION = 1;
@@ -71,14 +71,25 @@ interface ArchiveEntry {
   files?: Record<string, ArrayBuffer>;
 }
 
-function openArchiveDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+// Pooled IDB connection — reused across save/load calls
+let archiveDbPromise: Promise<IDBDatabase> | null = null;
+
+function getArchiveDB(): Promise<IDBDatabase> {
+  if (archiveDbPromise !== null) {
+    return archiveDbPromise;
+  }
+  archiveDbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(ARCHIVE_DB_NAME, ARCHIVE_DB_VERSION);
     request.onerror = () => {
+      archiveDbPromise = null;
       reject(new Error("Failed to open archive DB"));
     };
     request.onsuccess = () => {
-      resolve(request.result);
+      const db = request.result;
+      db.onclose = () => {
+        archiveDbPromise = null;
+      };
+      resolve(db);
     };
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -87,6 +98,7 @@ function openArchiveDB(): Promise<IDBDatabase> {
       }
     };
   });
+  return archiveDbPromise;
 }
 
 async function saveArchiveToDB(entry: {
@@ -95,7 +107,7 @@ async function saveArchiveToDB(entry: {
   files: Record<string, ArrayBuffer>;
 }): Promise<void> {
   try {
-    const db = await openArchiveDB();
+    const db = await getArchiveDB();
     const tx = db.transaction(ARCHIVE_STORE, "readwrite");
     tx.objectStore(ARCHIVE_STORE).put(entry);
     await new Promise<void>((resolve, reject) => {
@@ -106,7 +118,6 @@ async function saveArchiveToDB(entry: {
         reject(new Error("Failed to save archive"));
       };
     });
-    db.close();
   } catch (error) {
     console.error("Failed to save archive to IndexedDB:", error);
   }
@@ -116,10 +127,10 @@ async function loadArchiveFromDBByDomain(
   domain: string,
 ): Promise<ArchiveEntry | null> {
   try {
-    const db = await openArchiveDB();
+    const db = await getArchiveDB();
     const tx = db.transaction(ARCHIVE_STORE, "readonly");
     const request = tx.objectStore(ARCHIVE_STORE).get(domain);
-    const result = await new Promise<ArchiveEntry | null>((resolve, reject) => {
+    return await new Promise<ArchiveEntry | null>((resolve, reject) => {
       request.onsuccess = () => {
         resolve((request.result as ArchiveEntry | undefined) ?? null);
       };
@@ -127,18 +138,38 @@ async function loadArchiveFromDBByDomain(
         reject(new Error("Failed to load archive"));
       };
     });
-    db.close();
-    return result;
   } catch (error) {
     console.error("Failed to load archive from IndexedDB:", error);
     return null;
   }
 }
 
+// ── Archive storage ──────────────────────────────────────────
+// Two formats supported:
+// 1. Packed: single ArrayBuffer + index map (from SET_ARCHIVE, zero-copy serving)
+// 2. Legacy: Record<string, ArrayBuffer> (from IDB cache on SW_CACHE_LOOKUP_EVENT)
+
+let archivePacked: ArrayBuffer | null = null;
+let archiveFileIndex: Map<string, { o: number; l: number }> | null = null;
+let archiveLegacy: Record<string, ArrayBuffer | undefined> | null = null;
+
 // In-memory archive cache keyed by domain (populated lazily on lookup)
 const archiveCache = new Map<string, ArchiveEntry>();
-// Active archive for serving fetch requests
-let archive: Record<string, ArrayBuffer | undefined> | null = null;
+
+function hasArchive(): boolean {
+  return archivePacked !== null || archiveLegacy !== null;
+}
+
+function getFile(path: string): ArrayBuffer | Uint8Array | undefined {
+  if (archiveFileIndex !== null && archivePacked !== null) {
+    const entry = archiveFileIndex.get(path);
+    if (entry !== undefined) {
+      return new Uint8Array(archivePacked, entry.o, entry.l);
+    }
+    return undefined;
+  }
+  return archiveLegacy?.[path];
+}
 
 // ── SW Lifecycle ─────────────────────────────────────────────
 
@@ -175,7 +206,21 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
   }
 
   if (data.type === "SET_ARCHIVE") {
-    archive = data.files as Record<string, ArrayBuffer | undefined>;
+    const packed = data.packed as ArrayBuffer | undefined;
+    const idx = data.index as { p: string; o: number; l: number }[] | undefined;
+
+    if (packed !== undefined && idx !== undefined) {
+      // Packed format: single buffer + index (zero-copy serving via Uint8Array views)
+      archivePacked = packed;
+      archiveFileIndex = new Map(idx.map((e) => [e.p, { o: e.o, l: e.l }]));
+      archiveLegacy = null;
+    } else {
+      // Legacy format: individual files
+      archiveLegacy = data.files as Record<string, ArrayBuffer | undefined>;
+      archivePacked = null;
+      archiveFileIndex = null;
+    }
+
     const domain = data.domain as string | undefined;
     const cid = data.cid as string | undefined;
     if (
@@ -184,10 +229,27 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
       cid !== undefined &&
       cid !== ""
     ) {
-      const files = archive as Record<string, ArrayBuffer>;
-      const entry = { domain, cid, files };
-      archiveCache.set(domain, entry);
-      void saveArchiveToDB(entry);
+      if (packed !== undefined && idx !== undefined) {
+        // Unpack for IDB persistence in background (non-blocking)
+        const p = packed;
+        const i = idx;
+        const d = domain;
+        const c = cid;
+        setTimeout(() => {
+          const files: Record<string, ArrayBuffer> = {};
+          for (const entry of i) {
+            files[entry.p] = p.slice(entry.o, entry.o + entry.l);
+          }
+          const archiveEntry = { domain: d, cid: c, files };
+          archiveCache.set(d, archiveEntry);
+          void saveArchiveToDB(archiveEntry);
+        }, 0);
+      } else {
+        const files = (archiveLegacy ?? {}) as Record<string, ArrayBuffer>;
+        const entry = { domain, cid, files };
+        archiveCache.set(domain, entry);
+        void saveArchiveToDB(entry);
+      }
     }
     if (event.source) {
       (event.source as Client).postMessage({ type: "ARCHIVE_READY" });
@@ -247,7 +309,7 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
 // ── Fetch Interception (archive serving) ─────────────────────
 
 self.addEventListener("fetch", (event: FetchEvent) => {
-  if (archive === null) {
+  if (!hasArchive()) {
     return;
   }
 
@@ -273,33 +335,30 @@ self.addEventListener("fetch", (event: FetchEvent) => {
     return;
   }
 
-  const result = lookupArchive(url.pathname, archive);
+  const result = lookupArchive(url.pathname);
   if (result !== null) {
     event.respondWith(result);
   }
 });
 
-function lookupArchive(
-  pathname: string,
-  files: Record<string, ArrayBuffer | undefined>,
-): Response | null {
+function lookupArchive(pathname: string): Response | null {
   let filePath = pathname.startsWith("/dotli-app/")
     ? pathname.slice("/dotli-app/".length)
     : pathname.slice(1);
 
   filePath = decodeURIComponent(filePath);
 
-  let content: ArrayBuffer | undefined = files[filePath];
+  let content = getFile(filePath);
 
   if (content === undefined && !hasExtension(filePath)) {
     const withIndex = filePath !== "" ? filePath + "/index.html" : "index.html";
-    content = files[withIndex];
+    content = getFile(withIndex);
     if (content !== undefined) {
       filePath = withIndex;
     }
     if (content === undefined && filePath !== "") {
       const noSlash = filePath + "index.html";
-      content = files[noSlash];
+      content = getFile(noSlash);
       if (content !== undefined) {
         filePath = noSlash;
       }
@@ -307,7 +366,7 @@ function lookupArchive(
   }
 
   if (content === undefined && (filePath === "" || filePath === "/")) {
-    content = files["index.html"];
+    content = getFile("index.html");
     if (content !== undefined) {
       filePath = "index.html";
     }
@@ -322,7 +381,15 @@ function lookupArchive(
     ) {
       return makeHtmlResponse(content, mime);
     }
-    return new Response(content, {
+    // Normalize Uint8Array views to ArrayBuffer for Response constructor
+    const body =
+      content instanceof Uint8Array
+        ? (content.buffer.slice(
+            content.byteOffset,
+            content.byteOffset + content.byteLength,
+          ) as ArrayBuffer)
+        : content;
+    return new Response(body, {
       status: 200,
       headers: {
         "Content-Type": mime,
@@ -332,7 +399,7 @@ function lookupArchive(
   }
 
   // SPA fallback
-  const indexHtml = files["index.html"];
+  const indexHtml = getFile("index.html");
   if (!hasExtension(filePath) && indexHtml !== undefined) {
     return makeHtmlResponse(indexHtml, "text/html");
   }
@@ -340,7 +407,10 @@ function lookupArchive(
   return null;
 }
 
-function makeHtmlResponse(content: ArrayBuffer, mime: string): Response {
+function makeHtmlResponse(
+  content: ArrayBuffer | Uint8Array,
+  mime: string,
+): Response {
   const html = new TextDecoder().decode(content);
   const base = "/dotli-app/";
   const stripPrefix = `<script>if(location.pathname.startsWith('/dotli-app')){history.replaceState(null,'',(location.pathname.slice('/dotli-app'.length)||'/')+location.search+location.hash)}</script>`;

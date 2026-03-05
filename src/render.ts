@@ -80,22 +80,22 @@ export async function renderArchive(
     throw new Error("No service worker and no index.html in archive");
   }
 
-  // Transfer underlying ArrayBuffers directly to the SW (zero-copy).
-  // Archive files from concatBytes() are fresh Uint8Arrays with byteOffset=0,
-  // so the fast path (no copy) applies to virtually all files.
-  const transferableFiles: Record<string, ArrayBuffer> = {};
-  const transferList: ArrayBuffer[] = [];
-  for (const [filePath, data] of Object.entries(files)) {
-    const buf = data.buffer as ArrayBuffer;
-    if (data.byteOffset !== 0 || data.byteLength !== buf.byteLength) {
-      const copy = new ArrayBuffer(data.byteLength);
-      new Uint8Array(copy).set(data);
-      transferableFiles[filePath] = copy;
-      transferList.push(copy);
-    } else {
-      transferableFiles[filePath] = buf;
-      transferList.push(buf);
-    }
+  // Pack all files into a single buffer + offset index.
+  // Transfers 1 Transferable instead of N, reducing structured clone overhead
+  // from O(n_files) to O(1).
+  const entries = Object.entries(files);
+  const index: { p: string; o: number; l: number }[] = [];
+  let totalSize = 0;
+  for (const [, data] of entries) {
+    totalSize += data.byteLength;
+  }
+  const packed = new ArrayBuffer(totalSize);
+  const packedView = new Uint8Array(packed);
+  let offset = 0;
+  for (const [filePath, data] of entries) {
+    index.push({ p: filePath, o: offset, l: data.byteLength });
+    packedView.set(data, offset);
+    offset += data.byteLength;
   }
 
   // Wait for the SW to confirm it has received the archive
@@ -109,11 +109,10 @@ export async function renderArchive(
     navigator.serviceWorker.addEventListener("message", handler);
   });
 
-  // Send archive to the SW (include domain + cid for caching)
-  sw.postMessage(
-    { type: "SET_ARCHIVE", files: transferableFiles, domain: label, cid },
-    transferList,
-  );
+  // Send packed archive to the SW (single Transferable)
+  sw.postMessage({ type: "SET_ARCHIVE", packed, index, domain: label, cid }, [
+    packed,
+  ]);
 
   // Wait for the SW to process the message (replaces 50ms setTimeout)
   await archiveReady;

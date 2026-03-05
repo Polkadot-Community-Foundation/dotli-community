@@ -121,6 +121,18 @@ let clientInstance: PolkadotClient | null = null;
 let apiInstance: ReturnType<PolkadotClient["getUnsafeApi"]> | null = null;
 let usingSwSmoldot = false;
 
+// When true, skip trySwSmoldot() entirely — the SW was freshly registered
+// and can't have smoldot ready. Avoids 500ms isSwSmoldotReady() timeout.
+let freshSwRegistration = false;
+
+/**
+ * Mark the SW as freshly registered (cold start).
+ * Called from main.ts when no controller existed before registration.
+ */
+export function markFreshSwRegistration(): void {
+  freshSwRegistration = true;
+}
+
 /**
  * Try to connect via the Service Worker's smoldot instance.
  * Returns the API if the SW has smoldot ready, null otherwise.
@@ -130,6 +142,15 @@ async function trySwSmoldot(
 ): Promise<ReturnType<PolkadotClient["getUnsafeApi"]> | null> {
   try {
     if (!navigator.serviceWorker.controller) {
+      return null;
+    }
+
+    // On cold start the SW was just registered — smoldot can't be ready yet.
+    // Skip the isSwSmoldotReady() check to avoid the 500ms timeout.
+    if (freshSwRegistration) {
+      console.warn(
+        "[dot.li resolve] Fresh SW registration, skipping SW smoldot check",
+      );
       return null;
     }
 

@@ -303,6 +303,15 @@ async function main(): Promise<void> {
     performance.mark("dotli:sw:start");
     const swStart = performance.now();
     console.warn(`[dot.li perf] SW registration started (${elapsed()})`);
+
+    // Detect cold start: no controller means SW is being freshly registered.
+    // Tell resolve.ts to skip trySwSmoldot() (avoids 500ms timeout).
+    if (!navigator.serviceWorker.controller) {
+      void resolveChunkPromise.then(({ markFreshSwRegistration }) => {
+        markFreshSwRegistration();
+      });
+    }
+
     const swReady = registerServiceWorker().then(() => {
       performance.mark("dotli:sw:end");
       console.warn(
@@ -402,9 +411,11 @@ async function main(): Promise<void> {
       console.warn(
         `[dot.li perf] Starting gateway + smoldot resolve... (${elapsed()})`,
       );
-      gatewayPromise = gatewayChunkPromise
-        .then(({ resolveViaGateway }) => resolveViaGateway(label))
-        .catch(() => null as string | null);
+      // Gateway disabled for testing — smoldot-only resolution
+      // gatewayPromise = gatewayChunkPromise
+      //   .then(({ resolveViaGateway }) => resolveViaGateway(label))
+      //   .catch(() => null as string | null);
+      gatewayPromise = Promise.resolve(null);
     }
 
     // Await resolve chunk for smoldot path (already loading since top of main)

@@ -180,10 +180,15 @@ async function waitForPipeline(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
       const marks = performance.getEntriesByType("mark").map((m) => m.name);
+      // Check for a visible iframe — prepareIframe() creates a hidden one early,
+      // so we can't just check for existence.
+      const iframe = document.querySelector("iframe");
+      const iframeVisible =
+        iframe !== null && iframe.style.visibility !== "hidden";
       return (
         marks.includes("dotli:main:end") ||
         marks.includes("dotli:render:end") ||
-        document.querySelector("iframe") !== null
+        iframeVisible
       );
     },
     { timeout: 90_000, polling: 500 },
