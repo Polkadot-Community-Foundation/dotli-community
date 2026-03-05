@@ -5,6 +5,10 @@
 //
 // Pattern from: polkadot-bulletin-chain-main/console-ui/src/lib/helia.ts
 
+function dur(start: number): string {
+  return `${(performance.now() - start).toFixed(0)}ms`;
+}
+
 import { createHelia, type Helia } from "helia";
 import { unixfs } from "@helia/unixfs";
 import { CID } from "multiformats/cid";
@@ -35,6 +39,7 @@ async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
   }
 
   onStatus?.("Initializing P2P client...");
+  const heliaStart = performance.now();
 
   // Extract peer IDs for whitelist
   const allowedPeerIds = new Set<string>();
@@ -45,6 +50,7 @@ async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
     }
   }
 
+  const createStart = performance.now();
   heliaInstance = await createHelia({
     hashers: [blake2b256, sha256, keccak256Hasher],
     libp2p: {
@@ -64,24 +70,36 @@ async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
       },
     },
   });
+  console.warn(`[dot.li fetch] createHelia() done (${dur(createStart)})`);
 
   // Connect to Bulletin peers
   onStatus?.("Connecting to Bulletin Chain peers...");
+  const dialStart = performance.now();
   for (const addr of BULLETIN_PEERS) {
+    const peerStart = performance.now();
     try {
       await heliaInstance.libp2p.dial(multiaddr(addr));
+      console.warn(
+        `[dot.li fetch] Peer dialed (${dur(peerStart)}): ${addr.slice(-20)}`,
+      );
     } catch {
-      // Some peers may be unavailable, continue with others
+      console.warn(
+        `[dot.li fetch] Peer failed (${dur(peerStart)}): ${addr.slice(-20)}`,
+      );
     }
   }
 
   const connections = heliaInstance.libp2p.getConnections();
+  console.warn(
+    `[dot.li fetch] All peers dialed (${dur(dialStart)}), ${String(connections.length)} connected`,
+  );
   onStatus?.(`Connected to ${String(connections.length)} Bulletin peer(s)`);
 
   if (connections.length === 0) {
     throw new Error("Could not connect to any Bulletin Chain peers");
   }
 
+  console.warn(`[dot.li fetch] ensureHelia() total: ${dur(heliaStart)}`);
   return heliaInstance;
 }
 
@@ -97,9 +115,11 @@ async function fetchViaP2P(
   const cid = CID.parse(cidString);
 
   onStatus?.("Fetching content via P2P...");
+  const p2pStart = performance.now();
 
   // For dag-pb (UnixFS) content, use the unixfs accessor
   if (cid.code === 0x70) {
+    console.warn(`[dot.li fetch] P2P: fetching dag-pb (UnixFS) CID...`);
     const fs = unixfs(helia);
     const chunks: Uint8Array[] = [];
     for await (const chunk of fs.cat(cid)) {
@@ -112,12 +132,19 @@ async function fetchViaP2P(
       result.set(chunk, offset);
       offset += chunk.length;
     }
+    console.warn(
+      `[dot.li fetch] P2P: fetched ${String(Math.round(totalLength / 1024))} KB in ${dur(p2pStart)}`,
+    );
     return result;
   }
 
   // For raw blocks, fetch directly from blockstore
+  console.warn(`[dot.li fetch] P2P: fetching raw block...`);
   const blockData = helia.blockstore.get(cid);
   if (blockData instanceof Uint8Array) {
+    console.warn(
+      `[dot.li fetch] P2P: fetched ${String(Math.round(blockData.length / 1024))} KB in ${dur(p2pStart)}`,
+    );
     return blockData;
   }
 
@@ -133,6 +160,7 @@ async function fetchViaGateway(
 ): Promise<Uint8Array> {
   const url = `${IPFS_GATEWAY}/ipfs/${cidString}`;
   onStatus?.("Fetching content via IPFS gateway...");
+  const gwStart = performance.now();
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -140,6 +168,9 @@ async function fetchViaGateway(
   }
 
   const buffer = await response.arrayBuffer();
+  console.warn(
+    `[dot.li fetch] Gateway: fetched ${String(Math.round(buffer.byteLength / 1024))} KB in ${dur(gwStart)}`,
+  );
   return new Uint8Array(buffer);
 }
 
@@ -180,6 +211,7 @@ async function fetchCarFromGateway(
 ): Promise<Uint8Array> {
   const url = `${IPFS_GATEWAY}/ipfs/${cidString}?format=car`;
   onStatus?.("Fetching archive from IPFS gateway...");
+  const carStart = performance.now();
 
   const response = await fetch(url, {
     headers: { Accept: "application/vnd.ipld.car" },
@@ -191,7 +223,11 @@ async function fetchCarFromGateway(
     );
   }
 
-  return new Uint8Array(await response.arrayBuffer());
+  const buffer = await response.arrayBuffer();
+  console.warn(
+    `[dot.li fetch] Gateway CAR: fetched ${String(Math.round(buffer.byteLength / 1024))} KB in ${dur(carStart)}`,
+  );
+  return new Uint8Array(buffer);
 }
 
 /**
