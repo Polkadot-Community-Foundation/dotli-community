@@ -53,7 +53,7 @@
     "multiformats": "^13.4.2",
     "polkadot-api": "^1.23.3",
     "qrcode": "^1.5.4",
-    "viem": "^2.46.3"
+    "viem": "^2.47.0"
   },
   "trustedDependencies": [
     "node-datachannel"
