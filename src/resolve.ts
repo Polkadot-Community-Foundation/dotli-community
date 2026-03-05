@@ -33,6 +33,91 @@ function dur(start: number): string {
 
 export type StatusCallback = (status: string) => void;
 
+// ── Smoldot database persistence (IndexedDB) ────────────────
+// Persisting the relay chain DB lets smoldot resume from its last
+// known state instead of syncing from the bundled lightSyncState,
+// reducing sync time from ~10s to ~1-3s on revisits.
+
+const SM_DB_NAME = "dotli-smoldot";
+const SM_DB_STORE = "chains";
+
+function openSmDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SM_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(SM_DB_STORE, { keyPath: "chain" });
+    };
+    req.onsuccess = () => {
+      resolve(req.result);
+    };
+    req.onerror = () => {
+      reject(new Error("Failed to open smoldot DB"));
+    };
+  });
+}
+
+async function loadChainDb(chain: string): Promise<string | undefined> {
+  try {
+    const db = await openSmDb();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(SM_DB_STORE, "readonly");
+      const req = tx.objectStore(SM_DB_STORE).get(chain);
+      req.onsuccess = () => {
+        resolve((req.result as { content?: string } | undefined)?.content);
+      };
+      req.onerror = () => {
+        resolve(undefined);
+      };
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+async function saveChainDb(chain: string, content: string): Promise<void> {
+  try {
+    const db = await openSmDb();
+    const tx = db.transaction(SM_DB_STORE, "readwrite");
+    tx.objectStore(SM_DB_STORE).put({ chain, content, ts: Date.now() });
+  } catch {
+    // Non-critical
+  }
+}
+
+type SmoldotChain = Awaited<
+  ReturnType<ReturnType<typeof startFromWorker>["addChain"]>
+>;
+
+let dbSaveId = 0;
+
+/**
+ * Extract the relay chain database via JSON-RPC and save to IndexedDB.
+ * The relay chain's JSON-RPC is free (not consumed by any provider).
+ */
+async function extractAndSaveRelayDb(relayChain: SmoldotChain): Promise<void> {
+  const id = ++dbSaveId;
+  try {
+    relayChain.sendJsonRpc(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "chainHead_unstable_finalizedDatabase",
+        params: [1_000_000],
+      }),
+    );
+    const raw = await relayChain.nextJsonRpcResponse();
+    const resp = JSON.parse(raw) as { id?: number; result?: string };
+    if (resp.id === id && typeof resp.result === "string") {
+      await saveChainDb("paseo", resp.result);
+      console.warn(
+        `[dot.li resolve] Saved relay chain DB (${String(Math.round(resp.result.length / 1024))} KB)`,
+      );
+    }
+  } catch {
+    // Non-critical — DB persistence failure doesn't affect functionality
+  }
+}
+
 // Shared smoldot instance and relay chain — reused by chain provider factory
 let smoldotInstance: ReturnType<typeof startFromWorker> | null = null;
 let relayChainPromise: Promise<
@@ -51,11 +136,23 @@ export function getSmoldot(): ReturnType<typeof startFromWorker> {
 
 /**
  * Get or create the Paseo relay chain (needed as potentialRelayChain for parachains).
+ * Restores from IndexedDB-persisted database if available, dramatically
+ * reducing sync time on revisits (~10s → ~1-3s).
  */
 export function getRelayChain(): Promise<
   Awaited<ReturnType<ReturnType<typeof startFromWorker>["addChain"]>>
 > {
-  relayChainPromise ??= getSmoldot().addChain({ chainSpec: paseoChainSpec });
+  relayChainPromise ??= loadChainDb("paseo").then((dbContent) => {
+    if (dbContent !== undefined) {
+      console.warn(
+        `[dot.li resolve] Restored relay chain DB (${String(Math.round(dbContent.length / 1024))} KB)`,
+      );
+    }
+    return getSmoldot().addChain({
+      chainSpec: paseoChainSpec,
+      databaseContent: dbContent,
+    });
+  });
   return relayChainPromise;
 }
 
@@ -114,6 +211,10 @@ async function ensureClient(
   performance.mark("dotli:smoldot:init:end");
   console.warn(`[dot.li resolve] ensureClient() total: ${dur(initStart)}`);
   onStatus?.("Connected to Asset Hub Paseo");
+
+  // Persist relay chain DB for future fast syncs (fire-and-forget)
+  void extractAndSaveRelayDb(relayChain);
+
   return apiInstance;
 }
 

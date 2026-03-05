@@ -73,22 +73,42 @@ export async function renderArchive(
     throw new Error("No service worker and no index.html in archive");
   }
 
-  // Convert Uint8Arrays to ArrayBuffers for structured clone transfer
+  // Transfer underlying ArrayBuffers directly (zero-copy when possible)
   const transferableFiles: Record<string, ArrayBuffer> = {};
+  const transferList: ArrayBuffer[] = [];
   for (const [filePath, data] of Object.entries(files)) {
-    const copy = new ArrayBuffer(data.byteLength);
-    new Uint8Array(copy).set(data);
-    transferableFiles[filePath] = copy;
+    const buf = data.buffer as ArrayBuffer;
+    // If the Uint8Array is a view over a larger or shared buffer, copy it
+    if (data.byteOffset !== 0 || data.byteLength !== buf.byteLength) {
+      const copy = new ArrayBuffer(data.byteLength);
+      new Uint8Array(copy).set(data);
+      transferableFiles[filePath] = copy;
+      transferList.push(copy);
+    } else {
+      transferableFiles[filePath] = buf;
+      transferList.push(buf);
+    }
   }
+
+  // Wait for the SW to confirm it has received the archive
+  const archiveReady = new Promise<void>((resolve) => {
+    const handler = (evt: MessageEvent): void => {
+      if ((evt.data as { type?: string } | null)?.type === "ARCHIVE_READY") {
+        navigator.serviceWorker.removeEventListener("message", handler);
+        resolve();
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", handler);
+  });
 
   // Send archive to the SW (include domain + cid for caching)
   sw.postMessage(
     { type: "SET_ARCHIVE", files: transferableFiles, domain: label, cid },
-    Object.values(transferableFiles),
+    transferList,
   );
 
-  // Small delay to let the SW process the message
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // Wait for the SW to process the message (replaces 50ms setTimeout)
+  await archiveReady;
 
   // Load the iframe from the SW scope, forwarding the deep link path
   const deepPath = getDeepPath();

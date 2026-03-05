@@ -5,6 +5,7 @@
 import type { ArchiveFiles } from "./archive";
 import { showStatus, showError, showLanding } from "./ui";
 import { initTopBar } from "./topbar";
+import { getCachedCid, setCachedCid } from "./cid-cache";
 
 const T0 = performance.now();
 function elapsed(): string {
@@ -127,6 +128,69 @@ async function registerServiceWorker(): Promise<void> {
   }
 }
 
+/**
+ * Show a banner when the on-chain CID has changed since the cached version.
+ */
+function showUpdateBanner(): void {
+  if (document.getElementById("dotli-update-banner")) {
+    return;
+  }
+  const banner = document.createElement("div");
+  banner.id = "dotli-update-banner";
+  banner.style.cssText =
+    "position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);z-index:9999;background:#1a1a2e;color:#e0e0e0;border:1px solid #333;border-radius:8px;padding:0.6rem 1rem;font-family:system-ui,sans-serif;font-size:0.82rem;display:flex;align-items:center;gap:0.6rem;box-shadow:0 4px 12px rgba(0,0,0,0.5);";
+  banner.innerHTML =
+    '<span>Content has been updated on-chain.</span><button style="background:#4ade80;color:#000;border:none;border-radius:4px;padding:0.3rem 0.7rem;font-size:0.78rem;cursor:pointer;font-weight:600;">Refresh</button>';
+  banner.querySelector("button")?.addEventListener("click", () => {
+    window.location.reload();
+  });
+  document.body.appendChild(banner);
+}
+
+/**
+ * Fire-and-forget: populate the domain popover with owner info.
+ */
+function populateOwner(
+  resolveOwner: (label: string) => Promise<string | null>,
+  label: string,
+): void {
+  void resolveOwner(label)
+    .then((owner) => {
+      const el = document.getElementById("domain-popover-owner");
+      if (el === null) {
+        return;
+      }
+      if (owner !== null) {
+        const short = `${owner.slice(0, 6)}...${owner.slice(-4)}`;
+        el.classList.remove("loading");
+        el.innerHTML = `${short}<button class="domain-popover-copy" title="Copy address"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>`;
+        const copyBtn = el.querySelector(".domain-popover-copy");
+        copyBtn?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          void navigator.clipboard.writeText(owner);
+          const btn = e.currentTarget as HTMLElement;
+          btn.style.color = "#4ade80";
+          btn.style.borderColor = "#4ade80";
+          setTimeout(() => {
+            btn.style.color = "";
+            btn.style.borderColor = "";
+          }, 1000);
+        });
+      } else {
+        el.textContent = "Unknown";
+        el.classList.remove("loading");
+      }
+    })
+    .catch(() => {
+      const el = document.getElementById("domain-popover-owner");
+      if (el === null) {
+        return;
+      }
+      el.textContent = "Unavailable";
+      el.classList.remove("loading");
+    });
+}
+
 // Module-level references for cleanup handler
 let destroyClientFn: (() => void) | null = null;
 let destroyHeliaFn: (() => Promise<void>) | null = null;
@@ -203,6 +267,68 @@ async function main(): Promise<void> {
       );
     });
 
+    // ── Fast path: CID cache + SW archive cache ──
+    // On repeat visits, render from the cached CID instantly (<500ms)
+    // and validate via smoldot in the background.
+    const cachedCid = await getCachedCid(label);
+    if (cachedCid !== null) {
+      console.warn(`[dot.li perf] CID cache HIT: ${cachedCid} (${elapsed()})`);
+      await swReady;
+      const cachedFiles = await getCachedArchive(label, cachedCid);
+      if (cachedFiles) {
+        console.warn(`[dot.li perf] SW archive cache HIT (${elapsed()})`);
+        showStatus("Rendering (cached)...");
+        performance.mark("dotli:render:start");
+        const renderStart = performance.now();
+        const { renderArchive } = await import("./render");
+        await renderArchive(cachedFiles, label, cachedCid);
+        performance.mark("dotli:render:end");
+        console.warn(
+          `[dot.li perf] Render done — fast path (${dur(renderStart)}, ${elapsed()})`,
+        );
+        performance.mark("dotli:main:end");
+        console.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
+
+        // Background: validate CID is still current
+        resolveChunkPromise
+          .then(({ resolveDotName, resolveOwner, destroyClient }) => {
+            destroyClientFn = destroyClient;
+            populateOwner(resolveOwner, label);
+            resolveDotName(label).then((freshCid) => {
+              if (freshCid !== null && freshCid !== cachedCid) {
+                console.warn(
+                  `[dot.li] CID changed: ${cachedCid} → ${freshCid}`,
+                );
+                void setCachedCid(label, freshCid);
+                showUpdateBanner();
+              } else if (freshCid !== null) {
+                // Same CID — refresh timestamp
+                void setCachedCid(label, freshCid);
+              }
+            }, console.error);
+          })
+          .catch(console.error);
+        return;
+      }
+      console.warn(`[dot.li perf] SW archive cache MISS (${elapsed()})`);
+    } else {
+      console.warn(`[dot.li perf] CID cache MISS (${elapsed()})`);
+    }
+
+    // ── Full resolution path (first visit or cache miss) ──
+
+    // Pre-warm Helia P2P: start dialing Bulletin peers in parallel with
+    // smoldot chain sync. Peer connections (~2.3s) don't need the CID.
+    console.warn(`[dot.li perf] Pre-warming Helia P2P... (${elapsed()})`);
+    const heliaWarmup = import("./fetch").then(
+      ({ ensureHelia, destroyHelia }) => {
+        destroyHeliaFn = destroyHelia;
+        return ensureHelia();
+      },
+    );
+    // Suppress unhandled rejection if we end up taking the cached path
+    void heliaWarmup.catch(Function.prototype as () => void);
+
     // Step 1: Resolve the .dot name to a CID via smoldot + dotNS
     // The chunk was already requested above — await the in-flight download
     performance.mark("dotli:resolve:start");
@@ -228,43 +354,11 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Cache the resolved CID for future fast-path visits
+    void setCachedCid(label, cid);
+
     // Step 2: Fetch content + resolve owner in parallel
-    // Fire-and-forget: populates the domain popover when ready
-    void resolveOwner(label)
-      .then((owner) => {
-        const el = document.getElementById("domain-popover-owner");
-        if (el === null) {
-          return;
-        }
-        if (owner !== null) {
-          const short = `${owner.slice(0, 6)}...${owner.slice(-4)}`;
-          el.classList.remove("loading");
-          el.innerHTML = `${short}<button class="domain-popover-copy" title="Copy address"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>`;
-          const copyBtn = el.querySelector(".domain-popover-copy");
-          copyBtn?.addEventListener("click", (e) => {
-            e.stopPropagation();
-            void navigator.clipboard.writeText(owner);
-            const btn = e.currentTarget as HTMLElement;
-            btn.style.color = "#4ade80";
-            btn.style.borderColor = "#4ade80";
-            setTimeout(() => {
-              btn.style.color = "";
-              btn.style.borderColor = "";
-            }, 1000);
-          });
-        } else {
-          el.textContent = "Unknown";
-          el.classList.remove("loading");
-        }
-      })
-      .catch(() => {
-        const el = document.getElementById("domain-popover-owner");
-        if (el === null) {
-          return;
-        }
-        el.textContent = "Unavailable";
-        el.classList.remove("loading");
-      });
+    populateOwner(resolveOwner, label);
 
     // Ensure SW is ready before cache check / rendering
     console.warn(`[dot.li perf] Awaiting SW ready... (${elapsed()})`);
@@ -299,6 +393,11 @@ async function main(): Promise<void> {
       const { fetchArchive, destroyHelia } = await import("./fetch");
       console.warn(`[dot.li perf] Fetch chunk loaded (${elapsed()})`);
       destroyHeliaFn = destroyHelia;
+      const heliaWait = performance.now();
+      await heliaWarmup;
+      console.warn(
+        `[dot.li perf] Helia P2P ready (waited ${dur(heliaWait)}, ${elapsed()})`,
+      );
       const result = await fetchArchive(cid, showStatus);
       performance.mark("dotli:fetch:end");
       console.warn(
