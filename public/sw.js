@@ -1,4 +1,5 @@
 // dot.li — Service Worker for serving multi-file SPA archives
+// v6 — fix MIME type for directory-matched index.html + inject base/replaceState
 //
 // Receives an archive (file map) from the main thread via postMessage,
 // then intercepts fetch requests and serves files from the in-memory map.
@@ -211,14 +212,21 @@ self.addEventListener("message", (event) => {
 
 // Intercept fetch requests for archive files
 self.addEventListener("fetch", (event) => {
-  if (!archive) return; // No archive loaded, let request pass through
+  if (!archive) return;
 
   const url = new URL(event.request.url);
 
   // Only intercept same-origin requests
   if (url.origin !== self.location.origin) return;
 
-  // Never intercept these host app paths
+  // Never intercept top-level navigations outside /dotli-app/
+  if (
+    event.request.mode === "navigate" &&
+    !url.pathname.startsWith("/dotli-app/")
+  ) {
+    return;
+  }
+
   if (
     url.pathname === "/" ||
     url.pathname === "/sw.js" ||
@@ -253,22 +261,57 @@ function lookupArchive(pathname) {
     // Try path/index.html
     const withIndex = filePath ? filePath + "/index.html" : "index.html";
     content = archive[withIndex];
+    if (content) {
+      filePath = withIndex;
+    }
     // Try pathindex.html (no slash)
     if (!content && filePath) {
-      content = archive[filePath + "index.html"];
+      const noSlash = filePath + "index.html";
+      content = archive[noSlash];
+      if (content) {
+        filePath = noSlash;
+      }
     }
   }
 
   // Root request
   if (!content && (filePath === "" || filePath === "/")) {
     content = archive["index.html"];
+    if (content) {
+      filePath = "index.html";
+    }
   }
 
   if (content) {
+    const mime = getMimeType(filePath);
+
+    // For HTML files served at a non-root path, inject <base> + replaceState
+    // so relative assets resolve via /dotli-app/ and the dApp router sees clean paths
+    if (
+      mime === "text/html" &&
+      pathname !== "/dotli-app/index.html" &&
+      pathname !== "/dotli-app/"
+    ) {
+      const html = new TextDecoder().decode(content);
+      const base = "/dotli-app/";
+      const stripPrefix = `<script>if(location.pathname.startsWith('/dotli-app')){history.replaceState(null,'',(location.pathname.slice('/dotli-app'.length)||'/')+location.search+location.hash)}</script>`;
+      const injected = html.replace(
+        "<head>",
+        `<head><base href="${base}">${stripPrefix}`,
+      );
+      return new Response(new TextEncoder().encode(injected), {
+        status: 200,
+        headers: {
+          "Content-Type": mime,
+          "Cache-Control": "no-cache",
+        },
+      });
+    }
+
     return new Response(content, {
       status: 200,
       headers: {
-        "Content-Type": getMimeType(filePath || "index.html"),
+        "Content-Type": mime,
         "Cache-Control": "no-cache",
       },
     });
@@ -276,7 +319,14 @@ function lookupArchive(pathname) {
 
   // SPA fallback: serve index.html for non-asset paths (client-side routing)
   if (!hasExtension(filePath) && archive["index.html"]) {
-    return new Response(archive["index.html"], {
+    const html = new TextDecoder().decode(archive["index.html"]);
+    const base = "/dotli-app/";
+    const stripPrefix = `<script>if(location.pathname.startsWith('/dotli-app')){history.replaceState(null,'',(location.pathname.slice('/dotli-app'.length)||'/')+location.search+location.hash)}</script>`;
+    const injected = html.replace(
+      "<head>",
+      `<head><base href="${base}">${stripPrefix}`,
+    );
+    return new Response(new TextEncoder().encode(injected), {
       status: 200,
       headers: {
         "Content-Type": "text/html",

@@ -13,6 +13,14 @@ let currentDispose: (() => void) | null = null;
 let currentBlobUrl: string | null = null;
 
 /**
+ * Capture deep link path (pathname + search + hash) to forward into the iframe.
+ */
+function getDeepPath(): string {
+  const { pathname, search, hash } = window.location;
+  return pathname === "/" ? "" : pathname + search + hash;
+}
+
+/**
  * Render single-file HTML content in a sandboxed iframe with host-container bridge.
  *
  * Creates a blob URL from the content and passes it to createIframeProvider,
@@ -26,8 +34,17 @@ export function renderContent(content: Uint8Array, label: string): void {
 
   // Create a blob URL so the iframe has a proper origin for postMessage
   const blob = new Blob([html], { type: "text/html" });
-  const blobUrl = URL.createObjectURL(blob);
+  let blobUrl = URL.createObjectURL(blob);
   currentBlobUrl = blobUrl;
+
+  // Append hash fragment to blob URL so the dApp can read it
+  const deepPath = getDeepPath();
+  if (deepPath !== "") {
+    const hashIndex = deepPath.indexOf("#");
+    if (hashIndex !== -1) {
+      blobUrl += deepPath.slice(hashIndex);
+    }
+  }
 
   renderIframe(blobUrl, label);
 }
@@ -58,10 +75,10 @@ export async function renderArchive(
 
   // Convert Uint8Arrays to ArrayBuffers for structured clone transfer
   const transferableFiles: Record<string, ArrayBuffer> = {};
-  for (const [path, data] of Object.entries(files)) {
+  for (const [filePath, data] of Object.entries(files)) {
     const copy = new ArrayBuffer(data.byteLength);
     new Uint8Array(copy).set(data);
-    transferableFiles[path] = copy;
+    transferableFiles[filePath] = copy;
   }
 
   // Send archive to the SW (include domain + cid for caching)
@@ -73,8 +90,12 @@ export async function renderArchive(
   // Small delay to let the SW process the message
   await new Promise((resolve) => setTimeout(resolve, 50));
 
-  // Load the iframe from the SW scope
-  const swUrl = `${window.location.origin}/dotli-app/index.html`;
+  // Load the iframe from the SW scope, forwarding the deep link path
+  const deepPath = getDeepPath();
+  const swUrl =
+    deepPath !== ""
+      ? `${window.location.origin}/dotli-app${deepPath}`
+      : `${window.location.origin}/dotli-app/index.html`;
   renderIframe(swUrl, label);
 }
 
