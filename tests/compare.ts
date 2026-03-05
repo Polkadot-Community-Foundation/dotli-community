@@ -31,6 +31,7 @@ interface PhaseStats {
   min: number;
   max: number;
   values: number[];
+  discarded?: number;
 }
 
 interface RunStats {
@@ -247,7 +248,98 @@ function getVerdict(bStat: PhaseStats, lStat: PhaseStats): Verdict {
   return { label: "uncertain", color: Y, icon: "?" };
 }
 
-// ── Comparison ─────────────────────────────────────────────
+// ── Markdown output (for PR comments) ─────────────────────
+
+function verdictEmoji(v: Verdict): string {
+  switch (v.label) {
+    case "improved":
+      return "🟢";
+    case "regressed":
+      return "🔴";
+    case "mixed":
+      return "🟡";
+    case "unchanged":
+      return "⚪";
+    default:
+      return "🟠";
+  }
+}
+
+function fmtDeltaPlain(current: number, reference: number): string {
+  const diff = current - reference;
+  const sign = diff > 0 ? "+" : "";
+  return `${sign}${fmt(diff)} (${fmtPct(current, reference)})`;
+}
+
+function compareRunsMd(label: string, base: RunStats, last: RunStats): string {
+  const lines: string[] = [];
+
+  lines.push(`### ${label}`);
+  lines.push("");
+  lines.push(
+    `> Base: ${String(base.iterations)} runs &nbsp;|&nbsp; PR: ${String(last.iterations)} runs`,
+  );
+  lines.push("");
+
+  const allPhases = ORDERED_PHASES.filter(
+    (p) => p in base.phases || p in last.phases,
+  );
+
+  lines.push(
+    "| Phase | Base p50 | PR p50 | p50 Δ | Base p95 | PR p95 | p95 Δ | Verdict |",
+  );
+  lines.push(
+    "|-------|----------|--------|-------|----------|--------|-------|---------|",
+  );
+
+  for (const phase of allPhases) {
+    const hasB = phase in base.phases;
+    const hasL = phase in last.phases;
+    const name = phase.replace(/^\s+/, "").trim();
+
+    if (!hasB || !hasL) {
+      const tag = hasB ? "removed" : "new";
+      lines.push(
+        `| ${name} | ${hasB ? fmt(base.phases[phase].p50) : "—"} | ${hasL ? fmt(last.phases[phase].p50) : "—"} | ${tag} | — | — | — | — |`,
+      );
+      continue;
+    }
+
+    const bStat = base.phases[phase];
+    const lStat = last.phases[phase];
+    const verdict = getVerdict(bStat, lStat);
+
+    lines.push(
+      `| ${name} | ${fmt(bStat.p50)} | ${fmt(lStat.p50)} | ${fmtDeltaPlain(lStat.p50, bStat.p50)} | ${fmt(bStat.p95)} | ${fmt(lStat.p95)} | ${fmtDeltaPlain(lStat.p95, bStat.p95)} | ${verdictEmoji(verdict)} ${verdict.label} |`,
+    );
+  }
+
+  if ("Total (main)" in base.phases && "Total (main)" in last.phases) {
+    const bTotal = base.phases["Total (main)"];
+    const lTotal = last.phases["Total (main)"];
+    const verdict = getVerdict(bTotal, lTotal);
+    const mw = mannWhitneyU(bTotal.values, lTotal.values);
+
+    lines.push("");
+    lines.push(
+      `**Overall:** ${verdictEmoji(verdict)} **${verdict.label}** &nbsp;|&nbsp; ` +
+        `p50: ${fmt(bTotal.p50)} → ${fmt(lTotal.p50)} (${fmtPct(lTotal.p50, bTotal.p50)}) &nbsp;|&nbsp; ` +
+        `p95: ${fmt(bTotal.p95)} → ${fmt(lTotal.p95)} (${fmtPct(lTotal.p95, bTotal.p95)}) &nbsp;|&nbsp; ` +
+        `Mann-Whitney: z=${mw.z.toFixed(2)} ${mw.significant ? "✅ significant" : "not significant"}`,
+    );
+
+    if (bTotal.cv > 0.3 || lTotal.cv > 0.3) {
+      lines.push("");
+      lines.push(
+        `> ⚠️ High variance (CV > 0.3) — results may not be reliable.`,
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// ── Comparison (terminal) ─────────────────────────────────
 
 function compareRuns(label: string, base: RunStats, last: RunStats): void {
   const div = "═".repeat(140);
@@ -356,6 +448,8 @@ function compareRuns(label: string, base: RunStats, last: RunStats): void {
 
 // ── Main ──────────────────────────────────────────────────
 
+const markdown = process.argv.includes("--markdown");
+
 const base = loadJson(BASE_FILE);
 const last = loadJson(LAST_FILE);
 
@@ -369,10 +463,26 @@ if (!last) {
   process.exit(1);
 }
 
-console.log(`\n  ${B}dot.li Performance Comparison: Base vs Last${R}\n`);
+if (markdown) {
+  const sections: string[] = [];
+  sections.push("## ⚡ Performance Report");
+  sections.push("");
+  sections.push(compareRunsMd("Cold Start", base.cold, last.cold));
+  if (base.warm !== null && last.warm !== null) {
+    sections.push("");
+    sections.push(compareRunsMd("Warm Start", base.warm, last.warm));
+  }
+  sections.push("");
+  sections.push(
+    `<sub>Commit: ${process.env.GITHUB_SHA?.slice(0, 7) ?? "local"} &nbsp;|&nbsp; Outliers (>2x best) discarded before stats</sub>`,
+  );
+  console.log(sections.join("\n"));
+} else {
+  console.log(`\n  ${B}dot.li Performance Comparison: Base vs Last${R}\n`);
 
-compareRuns("COLD START", base.cold, last.cold);
+  compareRuns("COLD START", base.cold, last.cold);
 
-if (base.warm !== null && last.warm !== null) {
-  compareRuns("WARM START", base.warm, last.warm);
+  if (base.warm !== null && last.warm !== null) {
+    compareRuns("WARM START", base.warm, last.warm);
+  }
 }

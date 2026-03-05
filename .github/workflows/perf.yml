@@ -1,0 +1,135 @@
+name: Performance Tests
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: perf-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Main branch: compute and store baseline ────────────────
+  baseline:
+    name: Update Baseline
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Install Playwright browsers
+        run: bunx playwright install chromium
+
+      - name: Build
+        run: bun run build
+
+      - name: Run baseline perf tests (20 iterations)
+        run: HEADLESS=1 PERF_RUNS=20 xvfb-run bunx playwright test tests/cold-start.spec.ts || true
+
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-baseline
+          path: tests/results/last.json
+          retention-days: 90
+          overwrite: true
+
+  # ── PR: compare against main baseline ──────────────────────
+  compare:
+    name: PR Benchmark
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Install Playwright browsers
+        run: bunx playwright install chromium
+
+      - name: Build
+        run: bun run build
+
+      # Download baseline from the latest main push
+      - name: Download baseline from main
+        id: baseline
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: perf-baseline
+          workflow: perf.yml
+          branch: main
+          path: tests/results
+          if_no_artifact_found: warn
+
+      - name: Rename baseline
+        run: |
+          if [ -f tests/results/last.json ]; then
+            mv tests/results/last.json tests/results/base.json
+            echo "HAVE_BASE=true" >> "$GITHUB_ENV"
+          else
+            echo "HAVE_BASE=false" >> "$GITHUB_ENV"
+            echo "::warning::No baseline found — run will be recorded without comparison"
+          fi
+
+      # Run PR perf tests
+      - name: Run PR perf tests (10 iterations)
+        run: HEADLESS=1 PERF_RUNS=10 xvfb-run bunx playwright test tests/cold-start.spec.ts || true
+
+      - name: Generate comparison
+        if: env.HAVE_BASE == 'true'
+        run: bunx tsx tests/compare.ts --markdown > /tmp/perf-comment.md 2>&1 || true
+
+      - name: Generate standalone report
+        if: env.HAVE_BASE != 'true'
+        run: |
+          cat <<'EOF' > /tmp/perf-comment.md
+          ## ⚡ Performance Report
+
+          > ⚠️ No baseline found on `main`. This PR's results are recorded but cannot be compared.
+          > Merge to `main` to establish a baseline.
+          EOF
+
+      - name: Find existing comment
+        uses: peter-evans/find-comment@v3
+        id: find
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: "⚡ Performance Report"
+
+      - name: Post or update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.find.outputs.comment-id }}
+          edit-mode: replace
+          body-path: /tmp/perf-comment.md

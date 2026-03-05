@@ -2,12 +2,12 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests",
-  timeout: 120_000, // 2 min — smoldot sync can be slow
+  timeout: 600_000, // 10 min — smoldot sync can be slow
   retries: 0,
   use: {
     baseURL: "http://mytestapp.localhost:5173",
     browserName: "chromium",
-    headless: true,
+    headless: process.env.HEADLESS === "1",
     bypassCSP: true,
   },
   reporter: [["list"], ["json", { outputFile: "tests/results.json" }]],
