@@ -45,7 +45,7 @@ export interface PhaseStats {
 
 export interface RunStats {
   timestamp: string;
-  type: "cold" | "warm";
+  type: "cold" | "warm" | "lukewarm";
   iterations: number;
   phases: Record<string, PhaseStats>;
   browserMetrics: {
@@ -61,6 +61,7 @@ export interface RunStats {
 export interface SavedResults {
   cold: RunStats;
   warm: RunStats | null;
+  lukewarm: RunStats | null;
 }
 
 // ── Constants ──────────────────────────────────────────────
@@ -70,6 +71,9 @@ const BASE_FILE = path.join(RESULTS_DIR, "base.json");
 const LAST_FILE = path.join(RESULTS_DIR, "last.json");
 const SAVE_AS_BASE = process.env.PERF_SAVE_BASE === "1";
 const NUM_RUNS = parseInt(process.env.PERF_RUNS ?? "10", 10);
+const DOMAIN_A = process.env.PERF_DOMAIN_A ?? "hackme3";
+const DOMAIN_B = process.env.PERF_DOMAIN_B ?? "insync";
+const PORT = process.env.PERF_PORT ?? "5173";
 
 const PHASE_PAIRS: [string, string, string][] = [
   ["Total (main)", "dotli:main:start", "dotli:main:end"],
@@ -83,6 +87,7 @@ const PHASE_PAIRS: [string, string, string][] = [
     "dotli:smoldot:parachain:end",
   ],
   ["    Chain sync", "dotli:smoldot:sync:start", "dotli:smoldot:sync:end"],
+  ["  SW smoldot", "dotli:smoldot:sw:start", "dotli:smoldot:sw:end"],
   ["Cache check", "dotli:cache-check:start", "dotli:cache-check:end"],
   ["Content fetch", "dotli:fetch:start", "dotli:fetch:end"],
   ["  P2P attempt", "dotli:fetch:p2p:start", "dotli:fetch:p2p:end"],
@@ -243,7 +248,7 @@ interface SingleRun {
   totalBytes: number;
 }
 
-function aggregateRuns(type: "cold" | "warm", runs: SingleRun[]): RunStats {
+function aggregateRuns(type: RunStats["type"], runs: SingleRun[]): RunStats {
   const phaseNames = new Set<string>();
   for (const run of runs) {
     for (const p of run.phases) {
@@ -423,7 +428,9 @@ async function runColdIteration(
     }
   });
 
-  await page.goto("http://hackme3.localhost:5173/", { waitUntil: "commit" });
+  await page.goto(`http://${DOMAIN_A}.localhost:${PORT}/`, {
+    waitUntil: "commit",
+  });
   await waitForPipeline(page);
 
   const marks = await collectMarks(page);
@@ -458,7 +465,9 @@ async function runWarmIterations(
 
   // First load — populate caches (SW registration, IndexedDB archive, etc.)
   console.log(`  Warm: initial load (populating caches)...`);
-  await page.goto("http://hackme3.localhost:5173/", { waitUntil: "commit" });
+  await page.goto(`http://${DOMAIN_A}.localhost:${PORT}/`, {
+    waitUntil: "commit",
+  });
   await waitForPipeline(page);
 
   const runs: SingleRun[] = [];
@@ -490,13 +499,85 @@ async function runWarmIterations(
   return runs;
 }
 
+/**
+ * Run lukewarm iterations: prime with DOMAIN_A, then measure DOMAIN_B.
+ *
+ * "Lukewarm" = a different .dot site in the same browser session. The browser
+ * has already compiled WASM, cached JS chunks (HTTP cache), and warmed up
+ * network stacks — but DOMAIN_B has no CID cache, no SW archive, and a
+ * separate SW/IDB origin. This measures the benefit of infrastructure reuse
+ * across different .dot sites.
+ */
+async function runLukewarmIterations(
+  browser: Browser,
+  total: number,
+): Promise<SingleRun[]> {
+  const runs: SingleRun[] = [];
+
+  for (let i = 0; i < total; i++) {
+    console.log(`  Lukewarm iteration ${String(i + 1)}/${String(total)}...`);
+
+    // Fresh context per iteration for independent samples
+    const context = await browser.newContext({
+      storageState: undefined,
+      serviceWorkers: "allow",
+    });
+
+    // Step 1: Prime with DOMAIN_A (populates HTTP cache, WASM compilation cache)
+    console.log(`    Priming with ${DOMAIN_A}.dot...`);
+    const primePage = await context.newPage();
+    await primePage.goto(`http://${DOMAIN_A}.localhost:${PORT}/`, {
+      waitUntil: "commit",
+    });
+    await waitForPipeline(primePage);
+    // Keep the context — HTTP cache and WASM compilation cache carry over
+
+    // Step 2: Open DOMAIN_B in a new tab (different origin, shared HTTP cache)
+    console.log(`    Loading ${DOMAIN_B}.dot (lukewarm)...`);
+    const page = await context.newPage();
+
+    const requests: { size: number }[] = [];
+    page.on("response", async (response) => {
+      try {
+        const body = await response.body().catch(() => null);
+        requests.push({ size: body?.length ?? 0 });
+      } catch {
+        requests.push({ size: 0 });
+      }
+    });
+
+    await page.goto(`http://${DOMAIN_B}.localhost:${PORT}/`, {
+      waitUntil: "commit",
+    });
+    await waitForPipeline(page);
+
+    const marks = await collectMarks(page);
+    const phases = computePhases(marks);
+    const bm = await getBrowserMetrics(page);
+
+    await context.close();
+
+    runs.push({
+      phases,
+      domContentLoaded: bm.domContentLoaded,
+      jsHeapUsed: bm.jsHeapUsed,
+      requestCount: requests.length,
+      totalBytes: requests.reduce((s, r) => s + r.size, 0),
+    });
+  }
+
+  return runs;
+}
+
 // ── Tests ──────────────────────────────────────────────────
 
-test.setTimeout(NUM_RUNS * 150_000 + 30_000);
+// 3 tests × N iterations: cold (~15s each), warm (~5s each), lukewarm (~30s each = prime + measure)
+test.setTimeout(NUM_RUNS * 300_000 + 30_000);
 
 test.describe("Cold Start Performance", () => {
   let coldStats: RunStats | null = null;
   let warmStats: RunStats | null = null;
+  let lukewarmStats: RunStats | null = null;
 
   test(`measure cold start (${String(NUM_RUNS)} iterations)`, async ({
     browser,
@@ -529,12 +610,35 @@ test.describe("Cold Start Performance", () => {
     expect(runs.length).toBe(NUM_RUNS);
   });
 
+  test(`measure lukewarm start (${String(NUM_RUNS)} iterations, ${DOMAIN_A}→${DOMAIN_B})`, async ({
+    browser,
+  }) => {
+    const runs = await runLukewarmIterations(browser, NUM_RUNS);
+
+    lukewarmStats = aggregateRuns("lukewarm", runs);
+
+    const base = loadJson(BASE_FILE);
+    const last = loadJson(LAST_FILE);
+    printStatsTable(
+      `LUKEWARM START (${DOMAIN_A}→${DOMAIN_B})`,
+      lukewarmStats,
+      base?.lukewarm,
+      last?.lukewarm,
+    );
+
+    expect(runs.length).toBe(NUM_RUNS);
+  });
+
   test.afterAll(() => {
     if (!coldStats) {
       return;
     }
 
-    const results: SavedResults = { cold: coldStats, warm: warmStats };
+    const results: SavedResults = {
+      cold: coldStats,
+      warm: warmStats,
+      lukewarm: lukewarmStats,
+    };
 
     fs.mkdirSync(RESULTS_DIR, { recursive: true });
 

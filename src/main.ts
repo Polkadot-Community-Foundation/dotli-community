@@ -133,6 +133,36 @@ async function registerServiceWorker(): Promise<void> {
 }
 
 /**
+ * Set the verification shield state in the URL pill.
+ *   "validating" — yellow: loaded from cache, checking on-chain
+ *   "verified"   — green: on-chain CID matches cached version
+ *   "stale"      — red: on-chain CID differs (content outdated)
+ */
+function setShieldState(state: "validating" | "verified" | "stale"): void {
+  const shield = document.getElementById("verification-shield");
+  if (shield !== null) {
+    shield.classList.remove("validating", "verified", "stale");
+    shield.classList.add(state);
+  }
+
+  const labels: Record<string, string> = {
+    validating: "VALIDATING",
+    verified: "VERIFIED",
+    stale: "OUTDATED",
+  };
+  const el = document.getElementById("domain-popover-verification");
+  if (el !== null) {
+    el.textContent = labels[state];
+    el.style.color =
+      state === "verified"
+        ? "#4ade80"
+        : state === "stale"
+          ? "#f87171"
+          : "#eab308";
+  }
+}
+
+/**
  * Show a banner when the on-chain CID has changed since the cached version.
  */
 function showUpdateBanner(): void {
@@ -165,9 +195,8 @@ function populateOwner(
         return;
       }
       if (owner !== null) {
-        const short = `${owner.slice(0, 6)}...${owner.slice(-4)}`;
         el.classList.remove("loading");
-        el.innerHTML = `${short}<button class="domain-popover-copy" title="Copy address"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>`;
+        el.innerHTML = `${owner}<button class="domain-popover-copy" title="Copy address"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>`;
         const copyBtn = el.querySelector(".domain-popover-copy");
         copyBtn?.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -234,7 +263,7 @@ async function main(): Promise<void> {
   if (urlBar === null) {
     return;
   }
-  urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span><span class="dot-domain">${label}</span><span class="dot-tld">.dot</span></span></div>`;
+  urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><svg id="verification-shield" class="verification-shield" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm-1 14.59l-3.29-3.3 1.41-1.41L11 13.76l4.88-4.88 1.41 1.41L11 16.59z"/></svg><span><span class="dot-domain">${label}</span><span class="dot-tld">.dot</span></span></div>`;
 
   // Domain info popover toggle
   const urlPill = document.getElementById("url-pill");
@@ -282,6 +311,7 @@ async function main(): Promise<void> {
       if (cachedFiles) {
         console.warn(`[dot.li perf] SW archive cache HIT (${elapsed()})`);
         showStatus("Rendering (cached)...");
+        setShieldState("validating");
         performance.mark("dotli:render:start");
         const renderStart = performance.now();
         const { renderArchive } = await import("./render");
@@ -303,11 +333,17 @@ async function main(): Promise<void> {
                 console.warn(
                   `[dot.li] CID changed: ${cachedCid} → ${freshCid}`,
                 );
-                void setCachedCid(label, freshCid);
+                requestIdleCallback(() => {
+                  void setCachedCid(label, freshCid);
+                });
+                setShieldState("stale");
                 showUpdateBanner();
               } else if (freshCid !== null) {
                 // Same CID — refresh timestamp
-                void setCachedCid(label, freshCid);
+                requestIdleCallback(() => {
+                  void setCachedCid(label, freshCid);
+                });
+                setShieldState("verified");
               }
             }, console.error);
           })
@@ -358,8 +394,13 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Cache the resolved CID for future fast-path visits
-    void setCachedCid(label, cid);
+    // Cache the resolved CID for future fast-path visits (yield to rendering)
+    requestIdleCallback(() => {
+      void setCachedCid(label, cid);
+    });
+
+    // Resolved directly from chain — content is verified
+    setShieldState("verified");
 
     // Step 2: Fetch content + resolve owner in parallel
     populateOwner(resolveOwner, label);
@@ -418,7 +459,7 @@ async function main(): Promise<void> {
       if (result.type === "archive") {
         await renderArchive(result.files, label, cid);
       } else {
-        renderContent(result.content, label);
+        await renderContent(result.content, label);
       }
       performance.mark("dotli:render:end");
       console.warn(

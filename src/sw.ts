@@ -135,28 +135,7 @@ async function loadArchiveFromDBByDomain(
   }
 }
 
-async function loadArchivesFromDB(): Promise<ArchiveEntry[]> {
-  try {
-    const db = await openArchiveDB();
-    const tx = db.transaction(ARCHIVE_STORE, "readonly");
-    const request = tx.objectStore(ARCHIVE_STORE).getAll();
-    const result = await new Promise<ArchiveEntry[]>((resolve, reject) => {
-      request.onsuccess = () => {
-        resolve(request.result as ArchiveEntry[]);
-      };
-      request.onerror = () => {
-        reject(new Error("Failed to load archives"));
-      };
-    });
-    db.close();
-    return result;
-  } catch (error) {
-    console.error("Failed to load archives from IndexedDB:", error);
-    return [];
-  }
-}
-
-// In-memory archive cache keyed by domain
+// In-memory archive cache keyed by domain (populated lazily on lookup)
 const archiveCache = new Map<string, ArchiveEntry>();
 // Active archive for serving fetch requests
 let archive: Record<string, ArrayBuffer | undefined> | null = null;
@@ -168,30 +147,9 @@ self.addEventListener("install", () => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    (async () => {
-      try {
-        const archives = await loadArchivesFromDB();
-        for (const entry of archives) {
-          if (
-            entry.domain !== undefined &&
-            entry.domain !== "" &&
-            entry.cid !== undefined &&
-            entry.cid !== "" &&
-            entry.files !== undefined
-          ) {
-            archiveCache.set(entry.domain, entry);
-          }
-        }
-        console.warn(
-          `Restored ${String(archives.length)} archive(s) from IndexedDB`,
-        );
-      } catch (err) {
-        console.error("Failed to restore archives from IndexedDB:", err);
-      }
-      await self.clients.claim();
-    })(),
-  );
+  // Archives are loaded lazily on SW_CACHE_LOOKUP_EVENT (per-domain),
+  // so activation stays fast regardless of how many domains are cached.
+  event.waitUntil(self.clients.claim());
 });
 
 // ── Message Handling ─────────────────────────────────────────

@@ -4,7 +4,7 @@
 // JsonRpcProviders on demand. Used by the host container to serve
 // chain connections to SPAs via handleChainConnection.
 
-import { paseoChainSpec, assetHubPaseoChainSpec } from "./chain-specs";
+import { getPaseoChainSpec, getAssetHubPaseoChainSpec } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 
@@ -17,13 +17,16 @@ const ASSET_HUB_PASEO =
   "0x862c5c1eef2e2c2d7f98b3e71fbdb8ab03e62e7bea0b953bf1783f1e61b04471";
 
 interface ChainEntry {
-  chainSpec: string;
+  getChainSpec: () => Promise<string>;
   isParachain: boolean;
 }
 
 const SUPPORTED_CHAINS: Record<string, ChainEntry> = {
-  [PASEO_RELAY]: { chainSpec: paseoChainSpec, isParachain: false },
-  [ASSET_HUB_PASEO]: { chainSpec: assetHubPaseoChainSpec, isParachain: true },
+  [PASEO_RELAY]: { getChainSpec: getPaseoChainSpec, isParachain: false },
+  [ASSET_HUB_PASEO]: {
+    getChainSpec: getAssetHubPaseoChainSpec,
+    isParachain: true,
+  },
 };
 
 // Cache: genesis hash → provider (created once per chain)
@@ -59,18 +62,21 @@ export function createChainProvider(
 
   let chainPromise;
   if (entry.isParachain) {
-    chainPromise = getRelayChain().then((relayChain) =>
-      smoldot.addChain({
-        chainSpec: entry.chainSpec,
-        potentialRelayChains: [relayChain],
-      }),
+    chainPromise = Promise.all([getRelayChain(), entry.getChainSpec()]).then(
+      ([relayChain, chainSpec]) =>
+        smoldot.addChain({
+          chainSpec,
+          potentialRelayChains: [relayChain],
+        }),
     );
   } else {
     // Relay chain — reuse getRelayChain() for Paseo since it's the same chain
     chainPromise =
       key === PASEO_RELAY.toLowerCase()
         ? getRelayChain()
-        : smoldot.addChain({ chainSpec: entry.chainSpec });
+        : entry
+            .getChainSpec()
+            .then((chainSpec) => smoldot.addChain({ chainSpec }));
   }
 
   const provider = getSmProvider(chainPromise);

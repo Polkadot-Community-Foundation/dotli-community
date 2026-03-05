@@ -7,12 +7,12 @@ export default defineConfig({
   use: {
     baseURL: "http://mytestapp.localhost:5173",
     browserName: "chromium",
-    headless: process.env.HEADLESS === "1",
+    headless: process.env.HEADED !== "1",
     bypassCSP: true,
   },
   reporter: [["list"], ["json", { outputFile: "tests/results.json" }]],
   webServer: {
-    command: "npx vite --host",
+    command: "bunx --bun vite --host",
     url: "http://localhost:5173",
     reuseExistingServer: true,
     timeout: 15_000,

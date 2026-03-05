@@ -25,26 +25,30 @@ function extractBootnodeHosts(specPath: string): string[] {
 }
 
 /**
- * Vite plugin that injects <link rel="dns-prefetch"> for smoldot relay chain
+ * Vite plugin that injects <link rel="preconnect"> for smoldot relay chain
  * and Asset Hub bootnode hostnames. Reads them from the chain spec JSON files
  * at build time so they stay in sync with `npm run update-chain-specs`.
+ *
+ * `preconnect` establishes DNS + TCP + TLS during HTML parse, saving ~100-200ms
+ * per peer when smoldot starts dialing WebSocket connections.
  */
-function dnsPrefetchBootnodes(): Plugin {
+function preconnectBootnodes(): Plugin {
   return {
-    name: "dns-prefetch-bootnodes",
-    transformIndexHtml() {
+    name: "preconnect-bootnodes",
+    transformIndexHtml(html) {
       const specDir = resolve(__dirname, "src/chain-specs");
       const hosts = [
         ...extractBootnodeHosts(resolve(specDir, "paseo.json")),
         ...extractBootnodeHosts(resolve(specDir, "asset-hub-paseo.json")),
       ];
-      // Deduplicate
       const unique = [...new Set(hosts)];
-      return unique.map((host) => ({
-        tag: "link",
-        attrs: { rel: "dns-prefetch", href: `//${host}` },
-        injectTo: "head" as const,
-      }));
+      const links = unique
+        .map(
+          (host) =>
+            `<link rel="preconnect" href="https://${host}" crossorigin />`,
+        )
+        .join("\n    ");
+      return html.replace("</head>", `    ${links}\n  </head>`);
     },
   };
 }
@@ -72,9 +76,16 @@ function preloadCriticalAssets(): Plugin {
         const resolveChunk = findChunk(/^assets\/resolve-.*\.js$/);
         const fetchChunk = findChunk(/^assets\/fetch-.*\.js$/);
         const renderChunk = findChunk(/^assets\/render-.*\.js$/);
+        const wasmAsset = findChunk(/^assets\/.*\.wasm$/);
 
         const chunks = [resolveChunk, fetchChunk, renderChunk].filter(Boolean);
         if (chunks.length === 0) return [];
+
+        // Preload the WASM as a fetch (browser starts downloading during HTML parse,
+        // so it's ready when the smoldot worker requests it — saves ~0.5-4s)
+        const wasmPreload = wasmAsset
+          ? `l=document.createElement("link");l.rel="preload";l.as="fetch";l.crossOrigin="anonymous";l.href="/${wasmAsset}";document.head.appendChild(l);`
+          : "";
 
         // Inline script that conditionally creates modulepreload links
         const preloadStatements = chunks
@@ -88,6 +99,7 @@ function preloadCriticalAssets(): Plugin {
           'var h=location.hostname,l;',
           'if(h==="dot.li"||h==="localhost")return;',
           'if(!h.endsWith(".dot.li")&&!h.endsWith(".localhost"))return;',
+          wasmPreload,
           preloadStatements,
           "})()",
         ].join("");
@@ -149,7 +161,7 @@ function buildServiceWorker(): Plugin {
 export default defineConfig({
   plugins: [
     wasm(),
-    dnsPrefetchBootnodes(),
+    preconnectBootnodes(),
     preloadCriticalAssets(),
     buildServiceWorker(),
   ],

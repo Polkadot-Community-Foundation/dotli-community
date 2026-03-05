@@ -36,7 +36,7 @@ interface PhaseStats {
 
 interface RunStats {
   timestamp: string;
-  type: "cold" | "warm";
+  type: "cold" | "warm" | "lukewarm";
   iterations: number;
   phases: Record<string, PhaseStats>;
   browserMetrics: {
@@ -51,7 +51,8 @@ interface RunStats {
 
 interface SavedResults {
   cold: RunStats;
-  warm: RunStats | null;
+  warm?: RunStats | null;
+  lukewarm?: RunStats | null;
 }
 
 // ── Paths ──────────────────────────────────────────────────
@@ -204,6 +205,7 @@ const ORDERED_PHASES = [
   "    Relay chain",
   "    Parachain",
   "    Chain sync",
+  "  SW smoldot",
   "Cache check",
   "Content fetch",
   "  P2P attempt",
@@ -269,6 +271,38 @@ function fmtDeltaPlain(current: number, reference: number): string {
   const diff = current - reference;
   const sign = diff > 0 ? "+" : "";
   return `${sign}${fmt(diff)} (${fmtPct(current, reference)})`;
+}
+
+function standaloneRunMd(label: string, run: RunStats): string {
+  const lines: string[] = [];
+
+  lines.push(`### ${label}`);
+  lines.push("");
+  lines.push(`> ${String(run.iterations)} runs`);
+  lines.push("");
+
+  const allPhases = ORDERED_PHASES.filter((p) => p in run.phases);
+
+  lines.push("| Phase | p50 | p95 | p99 | cv |");
+  lines.push("|-------|-----|-----|-----|----|");
+
+  for (const phase of allPhases) {
+    const name = phase.replace(/^\s+/, "").trim();
+    const s = run.phases[phase];
+    lines.push(
+      `| ${name} | ${fmt(s.p50)} | ${fmt(s.p95)} | ${fmt(s.p99)} | ${s.cv.toFixed(2)} |`,
+    );
+  }
+
+  if ("Total (main)" in run.phases) {
+    const total = run.phases["Total (main)"];
+    lines.push("");
+    lines.push(
+      `**Overall:** p50: ${fmt(total.p50)} &nbsp;|&nbsp; p95: ${fmt(total.p95)} &nbsp;|&nbsp; cv: ${total.cv.toFixed(2)}`,
+    );
+  }
+
+  return lines.join("\n");
 }
 
 function compareRunsMd(label: string, base: RunStats, last: RunStats): string {
@@ -340,6 +374,44 @@ function compareRunsMd(label: string, base: RunStats, last: RunStats): string {
 }
 
 // ── Comparison (terminal) ─────────────────────────────────
+
+function standaloneRun(label: string, run: RunStats): void {
+  const div = "═".repeat(100);
+  const thin = "─".repeat(100);
+
+  console.log(`\n${div}`);
+  console.log(`  ${B}${label}${R}  ${D}(no baseline to compare)${R}`);
+  console.log(`  ${run.timestamp} (${String(run.iterations)} runs)`);
+  console.log(div);
+
+  const allPhases = ORDERED_PHASES.filter((p) => p in run.phases);
+
+  console.log(
+    `\n  ${"Phase".padEnd(22)} ${"p50".padStart(9)} ${"p95".padStart(9)} ${"p99".padStart(9)}  ${"cv".padStart(5)}`,
+  );
+  console.log(
+    `  ${"─".repeat(22)} ${"─".repeat(9)} ${"─".repeat(9)} ${"─".repeat(9)}  ${"─".repeat(5)}`,
+  );
+
+  for (const phase of allPhases) {
+    const s = run.phases[phase];
+    const cv = `${cvColor(s.cv)}${s.cv.toFixed(2)}${R}`;
+    console.log(
+      `  ${phase.padEnd(22)} ${fmt(s.p50).padStart(9)} ${fmt(s.p95).padStart(9)} ${fmt(s.p99).padStart(9)}  ${cv}`,
+    );
+  }
+
+  if ("Total (main)" in run.phases) {
+    const total = run.phases["Total (main)"];
+    console.log(`\n  ${B}Summary${R}`);
+    console.log(thin);
+    console.log(
+      `  p50: ${fmt(total.p50)}  p95: ${fmt(total.p95)}  cv: ${total.cv.toFixed(2)}`,
+    );
+  }
+
+  console.log(`\n${thin}\n`);
+}
 
 function compareRuns(label: string, base: RunStats, last: RunStats): void {
   const div = "═".repeat(140);
@@ -468,9 +540,40 @@ if (markdown) {
   sections.push("## ⚡ Performance Report");
   sections.push("");
   sections.push(compareRunsMd("Cold Start", base.cold, last.cold));
-  if (base.warm !== null && last.warm !== null) {
+  if (
+    base.warm !== null &&
+    base.warm !== undefined &&
+    last.warm !== null &&
+    last.warm !== undefined
+  ) {
     sections.push("");
     sections.push(compareRunsMd("Warm Start", base.warm, last.warm));
+  } else if (last.warm !== null && last.warm !== undefined) {
+    sections.push("");
+    sections.push(standaloneRunMd("Warm Start", last.warm));
+  }
+  if (
+    base.lukewarm !== null &&
+    base.lukewarm !== undefined &&
+    last.lukewarm !== null &&
+    last.lukewarm !== undefined
+  ) {
+    sections.push("");
+    sections.push(
+      compareRunsMd(
+        "Lukewarm Start (different site, same session)",
+        base.lukewarm,
+        last.lukewarm,
+      ),
+    );
+  } else if (last.lukewarm !== null && last.lukewarm !== undefined) {
+    sections.push("");
+    sections.push(
+      standaloneRunMd(
+        "Lukewarm Start (different site, same session)",
+        last.lukewarm,
+      ),
+    );
   }
   sections.push("");
   sections.push(
@@ -482,7 +585,32 @@ if (markdown) {
 
   compareRuns("COLD START", base.cold, last.cold);
 
-  if (base.warm !== null && last.warm !== null) {
+  if (
+    base.warm !== null &&
+    base.warm !== undefined &&
+    last.warm !== null &&
+    last.warm !== undefined
+  ) {
     compareRuns("WARM START", base.warm, last.warm);
+  } else if (last.warm !== null && last.warm !== undefined) {
+    standaloneRun("WARM START", last.warm);
+  }
+
+  if (
+    base.lukewarm !== null &&
+    base.lukewarm !== undefined &&
+    last.lukewarm !== null &&
+    last.lukewarm !== undefined
+  ) {
+    compareRuns(
+      "LUKEWARM START (different site, same session)",
+      base.lukewarm,
+      last.lukewarm,
+    );
+  } else if (last.lukewarm !== null && last.lukewarm !== undefined) {
+    standaloneRun(
+      "LUKEWARM START (different site, same session)",
+      last.lukewarm,
+    );
   }
 }

@@ -10,53 +10,9 @@
 
 import type { Client, Chain } from "smoldot";
 
-// ── IndexedDB persistence (same DB as resolve.ts) ────────────
+// ── IndexedDB persistence (shared with resolve.ts via db.ts) ──
 
-const SM_DB_NAME = "dotli-smoldot";
-const SM_DB_STORE = "chains";
-
-function openSmDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(SM_DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(SM_DB_STORE, { keyPath: "chain" });
-    };
-    req.onsuccess = () => {
-      resolve(req.result);
-    };
-    req.onerror = () => {
-      reject(new Error("Failed to open smoldot DB"));
-    };
-  });
-}
-
-async function loadChainDb(chain: string): Promise<string | undefined> {
-  try {
-    const db = await openSmDb();
-    return await new Promise((resolve) => {
-      const tx = db.transaction(SM_DB_STORE, "readonly");
-      const req = tx.objectStore(SM_DB_STORE).get(chain);
-      req.onsuccess = () => {
-        resolve((req.result as { content?: string } | undefined)?.content);
-      };
-      req.onerror = () => {
-        resolve(undefined);
-      };
-    });
-  } catch {
-    return undefined;
-  }
-}
-
-async function saveChainDb(chain: string, content: string): Promise<void> {
-  try {
-    const db = await openSmDb();
-    const tx = db.transaction(SM_DB_STORE, "readwrite");
-    tx.objectStore(SM_DB_STORE).put({ chain, content, ts: Date.now() });
-  } catch {
-    // Non-critical
-  }
-}
+import { loadChainDb, saveChainDb } from "./db";
 
 // ── Smoldot lifecycle ────────────────────────────────────────
 
@@ -106,8 +62,17 @@ async function initSmoldot(): Promise<void> {
 
   // Dynamic imports — smoldot (~3MB WASM) and chain specs (~150KB) are loaded
   // lazily so the SW can install/activate instantly without blocking on them.
-  const [{ start }, { paseoChainSpec, assetHubPaseoChainSpec }] =
-    await Promise.all([import("smoldot"), import("./chain-specs")]);
+  // Chain specs are imported as raw strings directly (bypassing the fetch()-based
+  // chain-specs module) since the SW build inlines all dynamic imports.
+  const [
+    { start },
+    { default: paseoChainSpec },
+    { default: assetHubPaseoChainSpec },
+  ] = await Promise.all([
+    import("smoldot"),
+    import("./chain-specs/paseo.json?raw"),
+    import("./chain-specs/asset-hub-paseo.json?raw"),
+  ]);
 
   smoldotClient = start({ maxLogLevel: 1 });
 

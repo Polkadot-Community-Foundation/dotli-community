@@ -8,7 +8,6 @@
 // user clicks the auth button.
 
 import type { AuthState } from "./auth";
-import QRCode from "qrcode";
 
 // ── DOM refs ───────────────────────────────────────────────
 
@@ -167,14 +166,17 @@ function renderPairing(payload: string): void {
     return;
   }
 
-  // Render QR code (toCanvas is async — guard against stale appends)
+  // Render QR code (lazy-load qrcode lib, guard against stale appends)
   const canvas = document.createElement("canvas");
   const capturedPayload = payload;
-  QRCode.toCanvas(canvas, payload, {
-    width: 200,
-    margin: 2,
-    color: { dark: "#000000", light: "#ffffff" },
-  })
+  void import("qrcode")
+    .then((QRCode) =>
+      QRCode.default.toCanvas(canvas, payload, {
+        width: 200,
+        margin: 2,
+        color: { dark: "#000000", light: "#ffffff" },
+      }),
+    )
     .then(() => {
       // Only append if this payload is still current
       if (currentQrPayload !== capturedPayload) {

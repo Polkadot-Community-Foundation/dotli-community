@@ -40,8 +40,8 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Run baseline perf tests (20 iterations)
-        run: HEADLESS=1 PERF_RUNS=20 xvfb-run bunx playwright test tests/cold-start.spec.ts || true
+      - name: Run baseline perf tests
+        run: bun run test:perf:base || true
 
       - name: Upload baseline artifact
         uses: actions/upload-artifact@v7
@@ -96,13 +96,12 @@ jobs:
             echo "::warning::No baseline found — run will be recorded without comparison"
           fi
 
-      # Run PR perf tests
-      - name: Run PR perf tests (10 iterations)
-        run: HEADLESS=1 PERF_RUNS=10 xvfb-run bunx playwright test tests/cold-start.spec.ts || true
+      - name: Run PR perf tests
+        run: bun run test:perf || true
 
       - name: Generate comparison
         if: env.HAVE_BASE == 'true'
-        run: bunx tsx tests/compare.ts --markdown > /tmp/perf-comment.md 2>&1 || true
+        run: bun run test:perf:compare:md > /tmp/perf-comment.md 2>&1 || true
 
       - name: Generate standalone report
         if: env.HAVE_BASE != 'true'

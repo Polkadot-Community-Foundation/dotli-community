@@ -4,7 +4,6 @@
 // The iframe isolates the resolved site from the viewer's origin.
 // Uses blob URLs so the container bridge can communicate via postMessage.
 
-import { setupContainer } from "./container";
 import type { ArchiveFiles } from "./archive";
 
 const app = document.getElementById("app") ?? document.body;
@@ -27,7 +26,10 @@ function getDeepPath(): string {
  * which sets iframe.src itself. The container bridge enables postMessage
  * communication between the SPA and dot.li.
  */
-export function renderContent(content: Uint8Array, label: string): void {
+export async function renderContent(
+  content: Uint8Array,
+  label: string,
+): Promise<void> {
   cleanup();
 
   const html = new TextDecoder().decode(content);
@@ -46,7 +48,7 @@ export function renderContent(content: Uint8Array, label: string): void {
     }
   }
 
-  renderIframe(blobUrl, label);
+  await renderIframe(blobUrl, label);
 }
 
 /**
@@ -67,7 +69,7 @@ export async function renderArchive(
     // SW not ready — fall back to rendering index.html as single file
     const indexHtml = files["index.html"] as Uint8Array | undefined;
     if (indexHtml !== undefined) {
-      renderContent(indexHtml, label);
+      await renderContent(indexHtml, label);
       return;
     }
     throw new Error("No service worker and no index.html in archive");
@@ -116,10 +118,10 @@ export async function renderArchive(
     deepPath !== ""
       ? `${window.location.origin}/dotli-app${deepPath}`
       : `${window.location.origin}/dotli-app/index.html`;
-  renderIframe(swUrl, label);
+  await renderIframe(swUrl, label);
 }
 
-function renderIframe(url: string, label: string): void {
+async function renderIframe(url: string, label: string): Promise<void> {
   app.innerHTML = "";
 
   const iframe = document.createElement("iframe");
@@ -131,7 +133,8 @@ function renderIframe(url: string, label: string): void {
   document.body.style.overflow = "hidden";
   app.appendChild(iframe);
 
-  // Wire up the host-container bridge (sets iframe.src)
+  // Lazy-load the container bridge — only needed after the iframe is created
+  const { setupContainer } = await import("./container");
   currentDispose = setupContainer(iframe, url, label);
 }
 

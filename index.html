@@ -4,6 +4,23 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>dot.li</title>
+        <script>
+            // Pre-open the shared IndexedDB during HTML parse so it's ready
+            // before main.ts executes. Overlaps IDB open (~10-50ms) with
+            // module loading. Picked up by src/db.ts via window.__dotliDb.
+            window.__dotliDb = new Promise(function(resolve, reject) {
+                var req = indexedDB.open("dotli", 1);
+                req.onupgradeneeded = function() {
+                    var db = req.result;
+                    if (!db.objectStoreNames.contains("cids"))
+                        db.createObjectStore("cids", { keyPath: "label" });
+                    if (!db.objectStoreNames.contains("chains"))
+                        db.createObjectStore("chains", { keyPath: "chain" });
+                };
+                req.onsuccess = function() { resolve(req.result); };
+                req.onerror = function() { reject(new Error("IDB open failed")); };
+            });
+        </script>
         <link rel="preconnect" href="https://paseo-bulletin-collator-node-0.parity-testnet.parity.io" />
         <link rel="preconnect" href="https://paseo-bulletin-collator-node-1.parity-testnet.parity.io" />
         <link rel="preconnect" href="https://paseo-bulletin-rpc-node-0.polkadot.io" />
@@ -95,9 +112,23 @@
             .topbar-url-pill:hover {
                 border-color: #444;
             }
-            .topbar-url-pill svg {
+            /* ── Verification Shield ───────────────── */
+            .verification-shield {
+                display: block;
                 flex-shrink: 0;
-                color: #444;
+                width: 14px;
+                height: 14px;
+                color: #555;
+                transition: color 0.3s;
+            }
+            .verification-shield.validating {
+                color: #eab308;
+            }
+            .verification-shield.verified {
+                color: #4ade80;
+            }
+            .verification-shield.stale {
+                color: #f87171;
             }
 
             /* ── Domain Info Popover ─────────────────── */
@@ -682,6 +713,10 @@
 
         <!-- Domain Info Popover -->
         <div class="domain-popover" id="domain-popover">
+            <div class="domain-popover-row">
+                <span class="domain-popover-label">Status</span>
+                <span class="domain-popover-value" id="domain-popover-verification">Pending</span>
+            </div>
             <div class="domain-popover-row">
                 <span class="domain-popover-label">Owner</span>
                 <span

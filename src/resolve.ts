@@ -6,7 +6,7 @@
 
 import { startFromWorker } from "polkadot-api/smoldot/from-worker";
 import SmWorker from "polkadot-api/smoldot/worker?worker";
-import { paseoChainSpec, assetHubPaseoChainSpec } from "./chain-specs";
+import { getPaseoChainSpec, getAssetHubPaseoChainSpec } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { isSwSmoldotReady, getSwSmoldotProvider } from "./sw-provider";
@@ -38,52 +38,9 @@ export type StatusCallback = (status: string) => void;
 // Persisting the relay chain DB lets smoldot resume from its last
 // known state instead of syncing from the bundled lightSyncState,
 // reducing sync time from ~10s to ~1-3s on revisits.
+// Uses the shared "dotli" database (src/db.ts).
 
-const SM_DB_NAME = "dotli-smoldot";
-const SM_DB_STORE = "chains";
-
-function openSmDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(SM_DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(SM_DB_STORE, { keyPath: "chain" });
-    };
-    req.onsuccess = () => {
-      resolve(req.result);
-    };
-    req.onerror = () => {
-      reject(new Error("Failed to open smoldot DB"));
-    };
-  });
-}
-
-async function loadChainDb(chain: string): Promise<string | undefined> {
-  try {
-    const db = await openSmDb();
-    return await new Promise((resolve) => {
-      const tx = db.transaction(SM_DB_STORE, "readonly");
-      const req = tx.objectStore(SM_DB_STORE).get(chain);
-      req.onsuccess = () => {
-        resolve((req.result as { content?: string } | undefined)?.content);
-      };
-      req.onerror = () => {
-        resolve(undefined);
-      };
-    });
-  } catch {
-    return undefined;
-  }
-}
-
-async function saveChainDb(chain: string, content: string): Promise<void> {
-  try {
-    const db = await openSmDb();
-    const tx = db.transaction(SM_DB_STORE, "readwrite");
-    tx.objectStore(SM_DB_STORE).put({ chain, content, ts: Date.now() });
-  } catch {
-    // Non-critical
-  }
-}
+import { loadChainDb, saveChainDb } from "./db";
 
 type SmoldotChain = Awaited<
   ReturnType<ReturnType<typeof startFromWorker>["addChain"]>
@@ -143,14 +100,17 @@ export function getSmoldot(): ReturnType<typeof startFromWorker> {
 export function getRelayChain(): Promise<
   Awaited<ReturnType<ReturnType<typeof startFromWorker>["addChain"]>>
 > {
-  relayChainPromise ??= loadChainDb("paseo").then((dbContent) => {
+  relayChainPromise ??= Promise.all([
+    loadChainDb("paseo"),
+    getPaseoChainSpec(),
+  ]).then(([dbContent, chainSpec]) => {
     if (dbContent !== undefined) {
       console.warn(
         `[dot.li resolve] Restored relay chain DB (${String(Math.round(dbContent.length / 1024))} KB)`,
       );
     }
     return getSmoldot().addChain({
-      chainSpec: paseoChainSpec,
+      chainSpec,
       databaseContent: dbContent,
     });
   });
@@ -242,8 +202,9 @@ async function ensureClient(
   onStatus?.("Adding Asset Hub Paseo...");
   performance.mark("dotli:smoldot:parachain:start");
   const paraStart = performance.now();
+  const assetHubSpec = await getAssetHubPaseoChainSpec();
   const chain = smoldot.addChain({
-    chainSpec: assetHubPaseoChainSpec,
+    chainSpec: assetHubSpec,
     potentialRelayChains: [relayChain],
   });
 
@@ -268,8 +229,14 @@ async function ensureClient(
   console.warn(`[dot.li resolve] ensureClient() total: ${dur(initStart)}`);
   onStatus?.("Connected to Asset Hub Paseo");
 
-  // Persist relay chain DB for future fast syncs (fire-and-forget)
-  void extractAndSaveRelayDb(relayChain);
+  // Persist relay chain DB for future fast syncs (yield to rendering first)
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(() => {
+      void extractAndSaveRelayDb(relayChain);
+    });
+  } else {
+    void extractAndSaveRelayDb(relayChain);
+  }
 
   return apiInstance;
 }
