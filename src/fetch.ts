@@ -72,24 +72,27 @@ async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
   });
   console.warn(`[dot.li fetch] createHelia() done (${dur(createStart)})`);
 
-  // Connect to Bulletin peers
+  // Connect to Bulletin peers in parallel
   onStatus?.("Connecting to Bulletin Chain peers...");
   const dialStart = performance.now();
-  for (const addr of BULLETIN_PEERS) {
-    const peerStart = performance.now();
-    try {
-      await heliaInstance.libp2p.dial(multiaddr(addr));
-      console.warn(
-        `[dot.li fetch] Peer dialed (${dur(peerStart)}): ${addr.slice(-20)}`,
-      );
-    } catch {
-      console.warn(
-        `[dot.li fetch] Peer failed (${dur(peerStart)}): ${addr.slice(-20)}`,
-      );
-    }
-  }
+  const helia = heliaInstance;
+  await Promise.allSettled(
+    BULLETIN_PEERS.map(async (addr) => {
+      const peerStart = performance.now();
+      try {
+        await helia.libp2p.dial(multiaddr(addr));
+        console.warn(
+          `[dot.li fetch] Peer dialed (${dur(peerStart)}): ${addr.slice(-20)}`,
+        );
+      } catch {
+        console.warn(
+          `[dot.li fetch] Peer failed (${dur(peerStart)}): ${addr.slice(-20)}`,
+        );
+      }
+    }),
+  );
 
-  const connections = heliaInstance.libp2p.getConnections();
+  const connections = helia.libp2p.getConnections();
   console.warn(
     `[dot.li fetch] All peers dialed (${dur(dialStart)}), ${String(connections.length)} connected`,
   );

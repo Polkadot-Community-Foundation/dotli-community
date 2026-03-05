@@ -4,8 +4,7 @@
 // JsonRpcProviders on demand. Used by the host container to serve
 // chain connections to SPAs via handleChainConnection.
 
-import { chainSpec as paseoChainSpec } from "polkadot-api/chains/paseo";
-import { chainSpec as assetHubPaseoChainSpec } from "polkadot-api/chains/paseo_asset_hub";
+import { paseoChainSpec, assetHubPaseoChainSpec } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 

@@ -12,35 +12,6 @@ export const CONTRACTS = {
 export const DOT_NODE =
   "0x3fce7d1364a893e213bc4212792b517ffc88f5b13b86c8ef9c8d390c3a1370ce" as const;
 
-// --- Minimal ABIs (only the view functions we need) ---
-
-export const CONTENT_RESOLVER_ABI = [
-  {
-    type: "function",
-    name: "contenthash",
-    inputs: [{ name: "node", type: "bytes32" }],
-    outputs: [{ name: "hash", type: "bytes" }],
-    stateMutability: "view",
-  },
-] as const;
-
-export const REGISTRY_ABI = [
-  {
-    type: "function",
-    name: "recordExists",
-    inputs: [{ name: "node", type: "bytes32" }],
-    outputs: [{ name: "", type: "bool" }],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
-    name: "owner",
-    inputs: [{ name: "node", type: "bytes32" }],
-    outputs: [{ name: "", type: "address" }],
-    stateMutability: "view",
-  },
-] as const;
-
 // --- Revive dry-run limits (max values for read-only calls) ---
 
 export const DRY_RUN_WEIGHT_LIMIT = {

@@ -135,6 +135,16 @@ async function main(): Promise<void> {
   performance.mark("dotli:main:start");
   console.warn(`[dot.li perf] main() started (${elapsed()})`);
 
+  // Pre-warm smoldot unconditionally — start downloading the resolve chunk
+  // and kick off relay chain sync immediately. 99.9% of traffic is subdomain
+  // requests, so the cost of loading this on the landing page is negligible.
+  const resolveChunkStart = performance.now();
+  const resolveChunkPromise = import("./resolve");
+  void resolveChunkPromise.then(({ getSmoldot, getRelayChain }) => {
+    getSmoldot();
+    void getRelayChain();
+  });
+
   // Initialize top bar UI (auth is lazy-loaded inside topbar when needed)
   const t0 = performance.now();
   initTopBar();
@@ -150,11 +160,6 @@ async function main(): Promise<void> {
   }
 
   console.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed()})`);
-
-  // Start loading resolve chunk immediately — network request fires now,
-  // downloads in parallel with the synchronous DOM setup below
-  const resolveChunkStart = performance.now();
-  const resolveChunkPromise = import("./resolve");
 
   // Show the .dot domain in the URL bar
   const urlBar = document.getElementById("topbar-url");

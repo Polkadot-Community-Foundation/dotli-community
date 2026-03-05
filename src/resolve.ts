@@ -6,24 +6,26 @@
 
 import { startFromWorker } from "polkadot-api/smoldot/from-worker";
 import SmWorker from "polkadot-api/smoldot/worker?worker";
-import { chainSpec as paseoChainSpec } from "polkadot-api/chains/paseo";
-import { chainSpec as assetHubPaseoChainSpec } from "polkadot-api/chains/paseo_asset_hub";
+import { paseoChainSpec, assetHubPaseoChainSpec } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { Binary } from "polkadot-api";
-import { namehash, encodeFunctionData, decodeFunctionResult } from "viem";
 import {
   decode as decodeContentHash,
   getCodec,
 } from "@ensdomains/content-hash";
 import {
   CONTRACTS,
-  CONTENT_RESOLVER_ABI,
-  REGISTRY_ABI,
   DRY_RUN_WEIGHT_LIMIT,
   DRY_RUN_STORAGE_LIMIT,
   DUMMY_ORIGIN,
 } from "./config";
+import {
+  namehash,
+  encodeFunctionCall,
+  decodeBytes,
+  decodeAddress,
+} from "./abi";
 
 function dur(start: number): string {
   return `${(performance.now() - start).toFixed(0)}ms`;
@@ -41,7 +43,9 @@ let relayChainPromise: Promise<
  * Get or create the shared smoldot instance.
  */
 export function getSmoldot(): ReturnType<typeof startFromWorker> {
-  smoldotInstance ??= startFromWorker(new SmWorker());
+  smoldotInstance ??= startFromWorker(new SmWorker(), {
+    maxLogLevel: import.meta.env.DEV ? 3 : 1,
+  });
   return smoldotInstance;
 }
 
@@ -238,41 +242,12 @@ export async function resolveDotName(
   const domain = `${label}.dot`;
   const node = namehash(domain);
 
-  // Step 1: Check if the domain exists in the registry
-  onStatus?.(`Checking if "${domain}" exists...`);
-  const existsCalldata = encodeFunctionData({
-    abi: REGISTRY_ABI,
-    functionName: "recordExists",
-    args: [node],
-  });
-
-  const existsStart = performance.now();
-  const existsResult = await reviveCall(
-    api,
-    CONTRACTS.DOTNS_REGISTRY,
-    existsCalldata,
-  );
-  const exists = decodeFunctionResult({
-    abi: REGISTRY_ABI,
-    functionName: "recordExists",
-    data: existsResult,
-  }) as unknown as boolean;
-  console.warn(
-    `[dot.li resolve] recordExists() dry-run: ${dur(existsStart)} → ${String(exists)}`,
-  );
-
-  if (!exists) {
-    onStatus?.(`Domain "${domain}" not found`);
-    return null;
-  }
-
-  // Step 2: Query the content hash from the ContentResolver
+  // Query the content hash directly from the ContentResolver.
+  // If the domain doesn't exist, contenthash() returns empty bytes
+  // which decodeIpfsContenthash() handles as null — no need for
+  // a separate recordExists() call (saves ~1.7s dry-run overhead).
   onStatus?.(`Resolving content for "${domain}"...`);
-  const contentCalldata = encodeFunctionData({
-    abi: CONTENT_RESOLVER_ABI,
-    functionName: "contenthash",
-    args: [node],
-  });
+  const contentCalldata = encodeFunctionCall("contenthash", node);
 
   const contentStart = performance.now();
   const contentResult = await reviveCall(
@@ -281,17 +256,13 @@ export async function resolveDotName(
     contentCalldata,
   );
 
-  const contenthashBytes = decodeFunctionResult({
-    abi: CONTENT_RESOLVER_ABI,
-    functionName: "contenthash",
-    data: contentResult,
-  }) as unknown as `0x${string}`;
+  const contenthashBytes = decodeBytes(contentResult);
   console.warn(`[dot.li resolve] contenthash() dry-run: ${dur(contentStart)}`);
 
-  // Step 3: Decode the contenthash to a CID
+  // Decode the contenthash to a CID
   const cid = decodeIpfsContenthash(contenthashBytes);
   if (cid === null || cid === "") {
-    onStatus?.(`No content set for "${domain}"`);
+    onStatus?.(`Domain "${domain}" not found or no content set`);
     return null;
   }
 
@@ -311,19 +282,11 @@ export async function resolveOwner(label: string): Promise<string | null> {
   const domain = `${label}.dot`;
   const node = namehash(domain);
 
-  const calldata = encodeFunctionData({
-    abi: REGISTRY_ABI,
-    functionName: "owner",
-    args: [node],
-  });
+  const calldata = encodeFunctionCall("owner", node);
 
   try {
     const result = await reviveCall(api, CONTRACTS.DOTNS_REGISTRY, calldata);
-    const owner = decodeFunctionResult({
-      abi: REGISTRY_ABI,
-      functionName: "owner",
-      data: result,
-    }) as unknown as string;
+    const owner = decodeAddress(result);
 
     // Zero address means no owner
     if (

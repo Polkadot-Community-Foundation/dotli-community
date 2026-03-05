@@ -16,7 +16,8 @@
     "lint:fix": "eslint src/ tests/ --fix",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\""
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "update-chain-specs": "bash scripts/update-chain-specs.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
