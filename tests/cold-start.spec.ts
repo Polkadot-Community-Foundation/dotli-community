@@ -423,7 +423,7 @@ async function runColdIteration(
     }
   });
 
-  await page.goto("http://mytestapp.localhost:5173/", { waitUntil: "commit" });
+  await page.goto("http://hackme3.localhost:5173/", { waitUntil: "commit" });
   await waitForPipeline(page);
 
   const marks = await collectMarks(page);
@@ -458,7 +458,7 @@ async function runWarmIterations(
 
   // First load — populate caches (SW registration, IndexedDB archive, etc.)
   console.log(`  Warm: initial load (populating caches)...`);
-  await page.goto("http://mytestapp.localhost:5173/", { waitUntil: "commit" });
+  await page.goto("http://hackme3.localhost:5173/", { waitUntil: "commit" });
   await waitForPipeline(page);
 
   const runs: SingleRun[] = [];

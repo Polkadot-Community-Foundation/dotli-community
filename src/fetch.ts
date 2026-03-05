@@ -205,7 +205,8 @@ export type FetchResult =
  * Fetch content as CAR archive from the IPFS gateway.
  * The gateway's ?format=car returns the entire directory tree in one response.
  */
-async function fetchCarFromGateway(
+// @ts-expect-error gateway disabled for now
+async function _fetchCarFromGateway(
   cidString: string,
   onStatus?: StatusCallback,
 ): Promise<Uint8Array> {
@@ -243,45 +244,40 @@ export async function fetchArchive(
   cidString: string,
   onStatus?: StatusCallback,
 ): Promise<FetchResult> {
-  // Try P2P first (fast for single files on Bulletin Chain)
-  try {
-    performance.mark("dotli:fetch:p2p:start");
-    const content = await fetchViaP2P(cidString, onStatus);
-    performance.mark("dotli:fetch:p2p:end");
-    // Check if P2P returned a CAR file (unlikely but handle it)
-    if (isCarFile(content)) {
-      onStatus?.("Parsing archive...");
-      const files = await parseIpfsResponse(content);
-      return toFetchResult(files);
-    }
-    return { type: "single", content };
-  } catch (p2pError) {
-    performance.mark("dotli:fetch:p2p:end");
-    onStatus?.(
-      `P2P failed (${(p2pError as Error).message}), trying gateway...`,
-    );
-  }
+  // P2P only — gateway fallback disabled for now
+  performance.mark("dotli:fetch:p2p:start");
+  const content = await fetchViaP2P(cidString, onStatus);
+  performance.mark("dotli:fetch:p2p:end");
 
-  // Try gateway with CAR format (handles both directories and single files)
-  try {
-    performance.mark("dotli:fetch:gateway:start");
-    const carBuffer = await fetchCarFromGateway(cidString, onStatus);
-    performance.mark("dotli:fetch:gateway:end");
-    onStatus?.("Parsing content...");
+  if (isCarFile(content)) {
+    onStatus?.("Parsing archive...");
     performance.mark("dotli:fetch:parse:start");
-    const files = await parseIpfsResponse(carBuffer);
+    const files = await parseIpfsResponse(content);
     performance.mark("dotli:fetch:parse:end");
     return toFetchResult(files);
-  } catch (carError) {
-    performance.mark("dotli:fetch:gateway:end");
-    onStatus?.(
-      `CAR fetch failed (${(carError as Error).message}), trying raw gateway...`,
-    );
   }
 
-  // Final fallback: plain gateway fetch (single file)
-  const content = await fetchViaGateway(cidString, onStatus);
   return { type: "single", content };
+
+  // --- Gateway fallback (disabled) ---
+  // try {
+  //   performance.mark("dotli:fetch:gateway:start");
+  //   const carBuffer = await fetchCarFromGateway(cidString, onStatus);
+  //   performance.mark("dotli:fetch:gateway:end");
+  //   onStatus?.("Parsing content...");
+  //   performance.mark("dotli:fetch:parse:start");
+  //   const files = await parseIpfsResponse(carBuffer);
+  //   performance.mark("dotli:fetch:parse:end");
+  //   return toFetchResult(files);
+  // } catch (carError) {
+  //   performance.mark("dotli:fetch:gateway:end");
+  //   onStatus?.(
+  //     `CAR fetch failed (${(carError as Error).message}), trying raw gateway...`,
+  //   );
+  // }
+  //
+  // const content = await fetchViaGateway(cidString, onStatus);
+  // return { type: "single", content };
 }
 
 /**
