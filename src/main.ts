@@ -138,10 +138,12 @@ async function registerServiceWorker(): Promise<void> {
  *   "verified"   — green: on-chain CID matches cached version
  *   "stale"      — red: on-chain CID differs (content outdated)
  */
-function setShieldState(state: "validating" | "verified" | "stale"): void {
+function setShieldState(
+  state: "validating" | "verified" | "stale" | "gateway",
+): void {
   const shield = document.getElementById("verification-shield");
   if (shield !== null) {
-    shield.classList.remove("validating", "verified", "stale");
+    shield.classList.remove("validating", "verified", "stale", "gateway");
     shield.classList.add(state);
   }
 
@@ -149,16 +151,18 @@ function setShieldState(state: "validating" | "verified" | "stale"): void {
     validating: "VALIDATING",
     verified: "VERIFIED",
     stale: "OUTDATED",
+    gateway: "GATEWAY",
+  };
+  const colors: Record<string, string> = {
+    verified: "#4ade80",
+    stale: "#f87171",
+    validating: "#eab308",
+    gateway: "#f97316",
   };
   const el = document.getElementById("domain-popover-verification");
   if (el !== null) {
     el.textContent = labels[state];
-    el.style.color =
-      state === "verified"
-        ? "#4ade80"
-        : state === "stale"
-          ? "#f87171"
-          : "#eab308";
+    el.style.color = colors[state];
   }
 }
 
@@ -358,7 +362,7 @@ async function main(): Promise<void> {
     // ── Full resolution path (first visit or cache miss) ──
 
     // Pre-warm Helia P2P: start dialing Bulletin peers in parallel with
-    // smoldot chain sync. Peer connections (~2.3s) don't need the CID.
+    // resolution. Peer connections (~2.3s) don't need the CID.
     console.warn(`[dot.li perf] Pre-warming Helia P2P... (${elapsed()})`);
     const heliaWarmup = import("./fetch").then(
       ({ ensureHelia, destroyHelia }) => {
@@ -366,12 +370,18 @@ async function main(): Promise<void> {
         return ensureHelia();
       },
     );
-    // Suppress unhandled rejection if we end up taking the cached path
     void heliaWarmup.catch(Function.prototype as () => void);
 
-    // Step 1: Resolve the .dot name to a CID via smoldot + dotNS
-    // The chunk was already requested above — await the in-flight download
+    // Start gateway resolution immediately (fast path via public RPC, ~500ms)
     performance.mark("dotli:resolve:start");
+    console.warn(
+      `[dot.li perf] Starting gateway + smoldot resolve... (${elapsed()})`,
+    );
+    const gatewayPromise = import("./gateway-resolve")
+      .then(({ resolveViaGateway }) => resolveViaGateway(label))
+      .catch(() => null as string | null);
+
+    // Await resolve chunk for smoldot path (already loading since top of main)
     console.warn(`[dot.li perf] Awaiting resolve chunk... (${elapsed()})`);
     const { resolveDotName, resolveOwner, destroyClient } =
       await resolveChunkPromise;
@@ -379,14 +389,57 @@ async function main(): Promise<void> {
       `[dot.li perf] Resolve chunk loaded (${dur(resolveChunkStart)}, ${elapsed()})`,
     );
     destroyClientFn = destroyClient;
-    const resolveStart = performance.now();
-    const cid = await resolveDotName(label, showStatus);
-    console.warn(
-      `[dot.li perf] resolveDotName() done (${dur(resolveStart)}, ${elapsed()}) → ${cid ?? "null"}`,
-    );
-    performance.mark("dotli:resolve:end");
+    populateOwner(resolveOwner, label);
 
-    if (cid === null) {
+    // Start smoldot resolution in parallel with gateway
+    let showSmoldotStatus = true;
+    const smoldotPromise = resolveDotName(label, (msg: string) => {
+      if (showSmoldotStatus) {
+        showStatus(msg);
+      }
+    });
+
+    // Race: first non-null CID wins
+    const resolveStart = performance.now();
+    interface ResolveWinner {
+      cid: string;
+      source: "gateway" | "chain";
+    }
+    const winner = await new Promise<ResolveWinner | null>((resolve) => {
+      let done = false;
+      const tryResolve = (
+        cid: string | null,
+        source: "gateway" | "chain",
+      ): void => {
+        if (!done && cid !== null) {
+          done = true;
+          resolve({ cid, source });
+        }
+      };
+
+      gatewayPromise
+        .then((cid) => {
+          tryResolve(cid, "gateway");
+        })
+        .catch(Function.prototype as () => void);
+      smoldotPromise
+        .then((cid) => {
+          tryResolve(cid, "chain");
+        })
+        .catch(Function.prototype as () => void);
+
+      void Promise.allSettled([gatewayPromise, smoldotPromise]).then(() => {
+        if (!done) {
+          resolve(null);
+        }
+      });
+    });
+    performance.mark("dotli:resolve:end");
+    console.warn(
+      `[dot.li perf] Resolution done (${dur(resolveStart)}, ${elapsed()}) → ${winner?.source ?? "none"}: ${winner?.cid ?? "null"}`,
+    );
+
+    if (winner === null) {
       showError(
         `${label}.dot`,
         "This domain has no content set. The owner needs to publish content to the Bulletin Chain and set the content hash.",
@@ -394,16 +447,40 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Cache the resolved CID for future fast-path visits (yield to rendering)
+    const cid = winner.cid;
+
+    // Cache the resolved CID for future fast-path visits
     requestIdleCallback(() => {
       void setCachedCid(label, cid);
     });
 
-    // Resolved directly from chain — content is verified
-    setShieldState("verified");
+    if (winner.source === "gateway") {
+      // Gateway resolved first — show content with orange "gateway" shield
+      setShieldState("gateway");
+      showSmoldotStatus = false;
 
-    // Step 2: Fetch content + resolve owner in parallel
-    populateOwner(resolveOwner, label);
+      // Background: verify via smoldot when it catches up
+      void smoldotPromise
+        .then((chainCid) => {
+          if (chainCid !== null && chainCid !== cid) {
+            console.warn(
+              `[dot.li] CID mismatch: gateway=${cid}, chain=${chainCid}`,
+            );
+            requestIdleCallback(() => {
+              void setCachedCid(label, chainCid);
+            });
+            setShieldState("stale");
+            showUpdateBanner();
+          } else if (chainCid !== null) {
+            console.warn("[dot.li] Gateway CID verified by chain");
+            setShieldState("verified");
+          }
+        })
+        .catch(Function.prototype as () => void);
+    } else {
+      // Smoldot resolved — content is verified
+      setShieldState("verified");
+    }
 
     // Ensure SW is ready before cache check / rendering
     console.warn(`[dot.li perf] Awaiting SW ready... (${elapsed()})`);
