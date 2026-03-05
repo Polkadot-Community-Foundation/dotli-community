@@ -142,6 +142,10 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Start loading resolve chunk immediately — network request fires now,
+  // downloads in parallel with the synchronous DOM setup below
+  const resolveChunkPromise = import("./resolve");
+
   // Show the .dot domain in the URL bar
   const urlBar = document.getElementById("topbar-url");
   if (urlBar === null) {
@@ -177,10 +181,11 @@ async function main(): Promise<void> {
     await registerServiceWorker();
     performance.mark("dotli:sw:end");
 
-    // Step 1: Resolve the .dot name to a CID via smoldot + dotNS (lazy load)
+    // Step 1: Resolve the .dot name to a CID via smoldot + dotNS
+    // The chunk was already requested above — await the in-flight download
     performance.mark("dotli:resolve:start");
     const { resolveDotName, resolveOwner, destroyClient } =
-      await import("./resolve");
+      await resolveChunkPromise;
     destroyClientFn = destroyClient;
     const cid = await resolveDotName(label, showStatus);
     performance.mark("dotli:resolve:end");
