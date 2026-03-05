@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, build as viteBuild, type Plugin } from "vite";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
@@ -104,6 +104,59 @@ function preloadCriticalAssets(): Plugin {
   };
 }
 
+/**
+ * Vite plugin that builds the Service Worker (src/sw.ts) as a self-contained
+ * ES module bundle after the main build completes.
+ *
+ * The SW runs smoldot + archive serving and is registered with { type: 'module' }.
+ * It's built separately to ensure all dependencies are inlined (no shared chunks
+ * with the main app, avoiding version mismatch on SW updates).
+ */
+function buildServiceWorker(): Plugin {
+  return {
+    name: "build-service-worker",
+    apply: "build",
+    async closeBundle() {
+      console.log("\nBuilding Service Worker...");
+      await viteBuild({
+        configFile: false,
+        plugins: [wasm()],
+        build: {
+          emptyOutDir: false,
+          outDir: "dist",
+          lib: {
+            entry: resolve(__dirname, "src/sw.ts"),
+            formats: ["es"],
+            fileName: () => "sw.js",
+          },
+          rollupOptions: {
+            output: {
+              inlineDynamicImports: true,
+            },
+          },
+          // SW doesn't need source maps in production
+          sourcemap: false,
+          minify: true,
+        },
+        // Suppress most output
+        logLevel: "warn",
+      });
+      console.log("Service Worker built → dist/sw.js\n");
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [wasm(), dnsPrefetchBootnodes(), preloadCriticalAssets()],
+  plugins: [
+    wasm(),
+    dnsPrefetchBootnodes(),
+    preloadCriticalAssets(),
+    buildServiceWorker(),
+  ],
+  server: {
+    headers: {
+      // Allow the SW at /src/sw.ts to control scope "/" in dev mode
+      "Service-Worker-Allowed": "/",
+    },
+  },
 });

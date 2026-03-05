@@ -2,7 +2,7 @@ name: Refresh Chain Spec Checkpoints
 
 on:
   schedule:
-    - cron: '0 4 * * 1' # Weekly, Monday 4am UTC
+    - cron: '0 */6 * * *' # Every 6 hours — keeps smoldot sync gap ≤ ~14,400 blocks (~1-3s)
   workflow_dispatch:
 
 permissions:
@@ -21,15 +21,33 @@ jobs:
       - name: Fetch fresh chain specs
         run: bash scripts/update-chain-specs.sh
 
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet src/chain-specs/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create Pull Request
+        if: steps.diff.outputs.changed == 'true'
+        id: pr
         uses: peter-evans/create-pull-request@v7
         with:
           title: 'chore: refresh chain spec checkpoints'
           body: |
-            Automated weekly update of Paseo relay chain spec checkpoint.
+            Automated 6-hourly update of Paseo relay chain spec checkpoint.
 
             This keeps the smoldot light client sync gap small (~14,400 blocks / ~1-3s)
             instead of falling further behind on cold loads.
           branch: auto/chain-spec-update
           commit-message: 'chore: refresh chain spec checkpoints'
           delete-branch: true
+          labels: dependencies
+
+      - name: Enable auto-merge
+        if: steps.pr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr merge ${{ steps.pr.outputs.pull-request-number }} --auto --squash

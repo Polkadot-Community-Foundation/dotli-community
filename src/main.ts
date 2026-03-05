@@ -98,7 +98,11 @@ async function registerServiceWorker(): Promise<void> {
   }
 
   try {
-    await navigator.serviceWorker.register("/sw.js");
+    const swUrl = import.meta.env.DEV ? "/src/sw.ts" : "/sw.js";
+    await navigator.serviceWorker.register(swUrl, {
+      type: "module",
+      scope: "/",
+    });
 
     // Wait until the SW is controlling this page (needed by renderArchive)
     if (navigator.serviceWorker.controller) {

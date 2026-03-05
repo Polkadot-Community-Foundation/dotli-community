@@ -9,6 +9,7 @@ import SmWorker from "polkadot-api/smoldot/worker?worker";
 import { paseoChainSpec, assetHubPaseoChainSpec } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import { createClient, type PolkadotClient } from "polkadot-api";
+import { isSwSmoldotReady, getSwSmoldotProvider } from "./sw-provider";
 import { Binary } from "polkadot-api";
 import {
   decode as decodeContentHash,
@@ -158,10 +159,58 @@ export function getRelayChain(): Promise<
 
 let clientInstance: PolkadotClient | null = null;
 let apiInstance: ReturnType<PolkadotClient["getUnsafeApi"]> | null = null;
+let usingSwSmoldot = false;
+
+/**
+ * Try to connect via the Service Worker's smoldot instance.
+ * Returns the API if the SW has smoldot ready, null otherwise.
+ */
+async function trySwSmoldot(
+  onStatus?: StatusCallback,
+): Promise<ReturnType<PolkadotClient["getUnsafeApi"]> | null> {
+  try {
+    if (!navigator.serviceWorker.controller) {
+      return null;
+    }
+
+    const ready = await isSwSmoldotReady();
+    if (!ready) {
+      console.warn(
+        "[dot.li resolve] SW smoldot not ready, using direct smoldot",
+      );
+      return null;
+    }
+
+    performance.mark("dotli:smoldot:sw:start");
+    const swStart = performance.now();
+    onStatus?.("Connecting to light client (Service Worker)...");
+
+    const provider = getSwSmoldotProvider();
+    clientInstance = createClient(provider);
+
+    onStatus?.("Syncing with Asset Hub Paseo...");
+    await clientInstance.getFinalizedBlock();
+    performance.mark("dotli:smoldot:sw:end");
+    console.warn(
+      `[dot.li resolve] SW smoldot: synced to finalized block (${dur(swStart)})`,
+    );
+
+    apiInstance = clientInstance.getUnsafeApi();
+    usingSwSmoldot = true;
+    onStatus?.("Connected to Asset Hub Paseo (via Service Worker)");
+    return apiInstance;
+  } catch (err) {
+    console.warn("[dot.li resolve] SW smoldot failed, falling back:", err);
+    clientInstance?.destroy();
+    clientInstance = null;
+    return null;
+  }
+}
 
 /**
  * Initialize the smoldot light client and connect to Asset Hub Paseo.
- * Returns when the chain is synced and ready for queries.
+ * Tries the Service Worker's persistent smoldot first, falls back to
+ * starting a new smoldot instance in the main thread.
  */
 async function ensureClient(
   onStatus?: StatusCallback,
@@ -170,6 +219,13 @@ async function ensureClient(
     return apiInstance;
   }
 
+  // Try SW smoldot first (persistent across navigations)
+  const swApi = await trySwSmoldot(onStatus);
+  if (swApi) {
+    return swApi;
+  }
+
+  // Fall back to direct smoldot (main thread Web Worker)
   performance.mark("dotli:smoldot:init:start");
   const initStart = performance.now();
   onStatus?.("Starting light client...");
@@ -407,6 +463,14 @@ export async function resolveOwner(label: string): Promise<string | null> {
  * Destroy the light client (cleanup).
  */
 export function destroyClient(): void {
+  // When using SW smoldot, don't destroy — the SW keeps smoldot alive
+  // for future page loads. Just release the main-thread references.
+  if (usingSwSmoldot) {
+    clientInstance?.destroy();
+    clientInstance = null;
+    apiInstance = null;
+    return;
+  }
   clientInstance?.destroy();
   clientInstance = null;
   apiInstance = null;
