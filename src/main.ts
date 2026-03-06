@@ -556,20 +556,20 @@ async function main(): Promise<void> {
 
   // ── TEMPORARY: external URL overrides (remove when domains are on-chain) ──
   const TEMP_OVERRIDES: Partial<Record<string, string>> = {
-    polka: "https://polkadot.com",
+    polka: "https://polkadotcom-spektr-sdk-demo.teleport.parity.io/",
   };
   const overrideUrl = TEMP_OVERRIDES[label];
   if (overrideUrl !== undefined) {
-    const urlBar = document.getElementById("topbar-url");
-    if (urlBar !== null) {
-      urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><svg id="verification-shield" class="verification-shield gateway" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm-1 14.59l-3.29-3.3 1.41-1.41L11 13.76l4.88-4.88 1.41 1.41L11 16.59z"/></svg><span><span class="dot-domain">${label}</span><span class="dot-tld">.dot</span></span></div>`;
+    const topbar = document.getElementById("topbar");
+    if (topbar !== null) {
+      topbar.style.display = "none";
     }
     const app = document.getElementById("app") ?? document.body;
     app.innerHTML = "";
     const iframe = document.createElement("iframe");
     iframe.src = overrideUrl;
     iframe.style.cssText =
-      "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
+      "position:fixed;top:0;left:0;width:100%;height:100vh;border:none;margin:0;padding:0;";
     document.body.style.margin = "0";
     document.body.style.overflow = "hidden";
     app.appendChild(iframe);

@@ -1,7 +1,7 @@
 {
   "name": "dotli",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "A decentralized web browser that runs in your browser.",
   "author": "Parity Technologies <admin@parity.io> (https://parity.io)",
