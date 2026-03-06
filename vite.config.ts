@@ -1,5 +1,5 @@
 import { defineConfig, build as viteBuild, type Plugin } from "vite";
-import { readFileSync } from "node:fs";
+import { readFileSync, copyFileSync } from "node:fs";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
 
@@ -134,6 +134,22 @@ function preloadCriticalAssets(): Plugin {
  * It's built separately to ensure all dependencies are inlined (no shared chunks
  * with the main app, avoiding version mismatch on SW updates).
  */
+/**
+ * GitHub Pages SPA fallback: copy index.html → 404.html so that
+ * paths like /dotli/hackme3.dot load the SPA instead of a real 404.
+ */
+function githubPages404(): Plugin {
+  return {
+    name: "github-pages-404",
+    apply: "build",
+    closeBundle() {
+      const dist = resolve(__dirname, "dist");
+      copyFileSync(resolve(dist, "index.html"), resolve(dist, "404.html"));
+      console.log("Copied index.html → 404.html (GitHub Pages SPA fallback)\n");
+    },
+  };
+}
+
 function buildServiceWorker(): Plugin {
   return {
     name: "build-service-worker",
@@ -169,12 +185,15 @@ function buildServiceWorker(): Plugin {
 }
 
 export default defineConfig({
-  base: process.env.VITE_BASE_PATH || "/",
+  base: process.env.VITE_APP_URL
+    ? new URL(process.env.VITE_APP_URL).pathname
+    : "/",
   plugins: [
     wasm(),
     preconnectBootnodes(),
     preloadCriticalAssets(),
     buildServiceWorker(),
+    githubPages404(),
   ],
   build: {
     target: "esnext",

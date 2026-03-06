@@ -105,6 +105,14 @@ export function initTopBar(): void {
     }
   });
 
+  // Set logo home link from VITE_APP_URL (defaults to /)
+  const homeLink = document.getElementById(
+    "topbar-home",
+  ) as HTMLAnchorElement | null;
+  if (homeLink !== null) {
+    homeLink.href = (import.meta.env.VITE_APP_URL as string | undefined) ?? "/";
+  }
+
   // Show default logged-out state
   renderLoggedOut();
 
