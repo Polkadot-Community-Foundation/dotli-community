@@ -10,6 +10,13 @@ function dur(start: number): string {
 }
 
 import { createHelia, type Helia } from "helia";
+import { bitswap, trustlessGateway } from "@helia/block-brokers";
+import { httpGatewayRouting } from "@helia/routers";
+import { noise } from "@chainsafe/libp2p-noise";
+import { yamux } from "@chainsafe/libp2p-yamux";
+import { identify, identifyPush } from "@libp2p/identify";
+import { ping } from "@libp2p/ping";
+import { webSockets } from "@libp2p/websockets";
 import { unixfs } from "@helia/unixfs";
 import { CID } from "multiformats/cid";
 import { multiaddr } from "@multiformats/multiaddr";
@@ -53,7 +60,23 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
   const createStart = performance.now();
   heliaInstance = await createHelia({
     hashers: [blake2b256, sha256, keccak256Hasher],
+    // Race bitswap (P2P) vs trustless gateway (HTTP) internally.
+    // Both are hash-verified — the gateway is trustless, not trusted.
+    blockBrokers: [bitswap(), trustlessGateway()],
+    routers: [httpGatewayRouting({ gateways: [IPFS_GATEWAY] })],
     libp2p: {
+      // Minimal libp2p config — we only dial known Bulletin peers via WebSocket.
+      // Strips DHT, delegated routing, autoNAT, circuit relay, webRTC, bootstrap.
+      addresses: { listen: [] },
+      transports: [webSockets()],
+      connectionEncrypters: [noise()],
+      streamMuxers: [yamux()],
+      peerDiscovery: [],
+      services: {
+        identify: identify(),
+        identifyPush: identifyPush(),
+        ping: ping(),
+      },
       connectionGater: {
         denyDialMultiaddr: (maAddr) => {
           const addr = maAddr.toString();
@@ -118,11 +141,14 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
 
 /**
  * Fetch content via Helia P2P from Bulletin Chain.
- * Handles both raw blocks and UnixFS (dag-pb) content.
+ * Helia internally races bitswap (P2P) vs trustless gateway (HTTP) — both
+ * are hash-verified. The trustless gateway provides fast fallback when
+ * Bulletin peers don't have content in their bitswap cache.
  */
 async function fetchViaP2P(
   cidString: string,
   onStatus?: StatusCallback,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
   const helia = await ensureHelia(onStatus);
   const cid = CID.parse(cidString);
@@ -135,7 +161,7 @@ async function fetchViaP2P(
     console.warn(`[dot.li fetch] P2P: fetching dag-pb (UnixFS) CID...`);
     const fs = unixfs(helia);
     const chunks: Uint8Array[] = [];
-    for await (const chunk of fs.cat(cid)) {
+    for await (const chunk of fs.cat(cid, { signal })) {
       chunks.push(chunk);
     }
     const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
@@ -153,7 +179,7 @@ async function fetchViaP2P(
 
   // For raw blocks, fetch directly from blockstore
   console.warn(`[dot.li fetch] P2P: fetching raw block...`);
-  const blockData = helia.blockstore.get(cid);
+  const blockData = helia.blockstore.get(cid, { signal });
   if (blockData instanceof Uint8Array) {
     console.warn(
       `[dot.li fetch] P2P: fetched ${String(Math.round(blockData.length / 1024))} KB in ${dur(p2pStart)}`,
@@ -256,10 +282,29 @@ export async function fetchArchive(
   cidString: string,
   onStatus?: StatusCallback,
 ): Promise<FetchResult> {
-  // Try P2P first
+  // Try P2P with 15s timeout, then retry once without timeout
   try {
     performance.mark("dotli:fetch:p2p:start");
-    const content = await fetchViaP2P(cidString, onStatus);
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, 15_000);
+    let content: Uint8Array;
+    try {
+      content = await fetchViaP2P(cidString, onStatus, controller.signal);
+      clearTimeout(timer);
+    } catch (firstErr) {
+      clearTimeout(timer);
+      if (controller.signal.aborted) {
+        console.warn(
+          "[dot.li fetch] P2P: first attempt timed out (15s), retrying...",
+        );
+        onStatus?.("P2P timeout, retrying with more peers...");
+        content = await fetchViaP2P(cidString, onStatus);
+      } else {
+        throw firstErr;
+      }
+    }
     performance.mark("dotli:fetch:p2p:end");
 
     if (isCarFile(content)) {
