@@ -117,10 +117,13 @@ async function registerServiceWorker(): Promise<void> {
   }
 
   try {
-    const swUrl = import.meta.env.DEV ? "/src/sw.ts" : "/sw.js";
+    const swUrl = import.meta.env.DEV
+      ? "/src/sw.ts"
+      : `${import.meta.env.BASE_URL}sw.js`;
+    const swScope = import.meta.env.DEV ? "/" : import.meta.env.BASE_URL;
     await navigator.serviceWorker.register(swUrl, {
       type: "module",
-      scope: "/",
+      scope: swScope,
     });
 
     // Wait until the SW is controlling this page (needed by renderArchive)
@@ -159,6 +162,11 @@ async function registerServiceWorker(): Promise<void> {
  */
 let topbarHideTimer: ReturnType<typeof setTimeout> | null = null;
 let topbarHoverBound = false;
+let shieldVerified = false;
+
+function isLoggedIn(): boolean {
+  return document.querySelector(".user-badge") !== null;
+}
 
 function setTopbarVisible(visible: boolean): void {
   const topbar = document.getElementById("topbar");
@@ -173,6 +181,18 @@ function setTopbarVisible(visible: boolean): void {
   }
 }
 
+function scheduleTopbarHide(): void {
+  if (topbarHideTimer !== null) {
+    clearTimeout(topbarHideTimer);
+  }
+  if (!isLoggedIn()) {
+    return;
+  }
+  topbarHideTimer = setTimeout(() => {
+    setTopbarVisible(false);
+  }, 5000);
+}
+
 function setupTopbarAutoHide(): void {
   const topbar = document.getElementById("topbar");
   if (!topbar) {
@@ -185,12 +205,7 @@ function setupTopbarAutoHide(): void {
     iframe.style.transition = "top 0.3s ease, height 0.3s ease";
   }
 
-  if (topbarHideTimer !== null) {
-    clearTimeout(topbarHideTimer);
-  }
-  topbarHideTimer = setTimeout(() => {
-    setTopbarVisible(false);
-  }, 5000);
+  scheduleTopbarHide();
 
   if (!topbarHoverBound) {
     topbarHoverBound = true;
@@ -202,13 +217,21 @@ function setupTopbarAutoHide(): void {
     document.body.appendChild(trigger);
 
     trigger.addEventListener("mouseenter", () => {
+      if (topbarHideTimer !== null) {
+        clearTimeout(topbarHideTimer);
+        topbarHideTimer = null;
+      }
+      setTopbarVisible(true);
+    });
+    topbar.addEventListener("mouseenter", () => {
+      if (topbarHideTimer !== null) {
+        clearTimeout(topbarHideTimer);
+        topbarHideTimer = null;
+      }
       setTopbarVisible(true);
     });
     topbar.addEventListener("mouseleave", () => {
-      setTopbarVisible(false);
-    });
-    topbar.addEventListener("mouseenter", () => {
-      setTopbarVisible(true);
+      scheduleTopbarHide();
     });
   }
 }
@@ -241,6 +264,7 @@ function setShieldState(
   }
 
   if (state === "verified") {
+    shieldVerified = true;
     setupTopbarAutoHide();
   }
 }
@@ -487,6 +511,13 @@ let destroyClientFn: (() => void) | null = null;
 let destroyHeliaFn: (() => Promise<void>) | null = null;
 
 async function main(): Promise<void> {
+  // Guard: if running inside an iframe (e.g. SW lost its archive and the
+  // main page HTML was served as fallback), bail out to avoid a nested
+  // dot.li instance with a duplicate topbar.
+  if (window.self !== window.top) {
+    return;
+  }
+
   performance.mark("dotli:main:start");
   console.warn(`[dot.li perf] main() started (${elapsed()})`);
 
@@ -514,7 +545,39 @@ async function main(): Promise<void> {
     return;
   }
 
+  // If the user logs in after the shield is already verified, start auto-hide
+  window.addEventListener("dotli:authenticated", () => {
+    if (shieldVerified) {
+      setupTopbarAutoHide();
+    }
+  });
+
   console.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed()})`);
+
+  // ── TEMPORARY: external URL overrides (remove when domains are on-chain) ──
+  const TEMP_OVERRIDES: Partial<Record<string, string>> = {
+    polka: "https://polkadot.com",
+  };
+  const overrideUrl = TEMP_OVERRIDES[label];
+  if (overrideUrl !== undefined) {
+    const urlBar = document.getElementById("topbar-url");
+    if (urlBar !== null) {
+      urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><svg id="verification-shield" class="verification-shield gateway" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm-1 14.59l-3.29-3.3 1.41-1.41L11 13.76l4.88-4.88 1.41 1.41L11 16.59z"/></svg><span><span class="dot-domain">${label}</span><span class="dot-tld">.dot</span></span></div>`;
+    }
+    const app = document.getElementById("app") ?? document.body;
+    app.innerHTML = "";
+    const iframe = document.createElement("iframe");
+    iframe.src = overrideUrl;
+    iframe.style.cssText =
+      "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
+    document.body.style.margin = "0";
+    document.body.style.overflow = "hidden";
+    app.appendChild(iframe);
+    document.title = `${label}.dot`;
+    performance.mark("dotli:main:end");
+    return;
+  }
+  // ── END TEMPORARY ──
 
   // Pre-load chunks in parallel (overlap with CID cache check + resolution)
   const gatewayChunkPromise = import("./gateway-resolve");

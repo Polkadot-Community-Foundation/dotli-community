@@ -14,6 +14,12 @@ import { handleConnect, handleStatus, ensureSmoldot } from "./sw-smoldot";
 import { getMimeType } from "./mime";
 import { SW_ARCHIVE_CACHE_MAX, TIMEOUTS } from "./config";
 
+// ── Base path (derived at runtime from SW script location) ────
+// On dot.li: SW at /sw.js → BASE = "/"
+// On GH Pages: SW at /dotli/sw.js → BASE = "/dotli/"
+const BASE = self.location.pathname.replace(/sw\.js$/, "");
+const DOTLI_APP_PREFIX = `${BASE}dotli-app/`;
+
 // ── Archive Serving (ported from public/sw.js) ───────────────
 
 function hasExtension(path: string): boolean {
@@ -310,17 +316,18 @@ self.addEventListener("fetch", (event: FetchEvent) => {
 
   if (
     event.request.mode === "navigate" &&
-    !url.pathname.startsWith("/dotli-app/")
+    !url.pathname.startsWith(DOTLI_APP_PREFIX)
   ) {
     return;
   }
 
   if (
-    url.pathname === "/" ||
-    url.pathname === "/sw.js" ||
-    url.pathname.startsWith("/src/") ||
-    url.pathname.startsWith("/node_modules/") ||
-    url.pathname.startsWith("/@")
+    url.pathname === BASE ||
+    url.pathname === BASE.slice(0, -1) ||
+    url.pathname === `${BASE}sw.js` ||
+    url.pathname.startsWith(`${BASE}src/`) ||
+    url.pathname.startsWith(`${BASE}node_modules/`) ||
+    url.pathname.startsWith(`${BASE}@`)
   ) {
     return;
   }
@@ -332,9 +339,11 @@ self.addEventListener("fetch", (event: FetchEvent) => {
 });
 
 function lookupArchive(pathname: string): Response | null {
-  let filePath = pathname.startsWith("/dotli-app/")
-    ? pathname.slice("/dotli-app/".length)
-    : pathname.slice(1);
+  let filePath = pathname.startsWith(DOTLI_APP_PREFIX)
+    ? pathname.slice(DOTLI_APP_PREFIX.length)
+    : pathname.startsWith(BASE)
+      ? pathname.slice(BASE.length)
+      : pathname.slice(1);
 
   filePath = decodeURIComponent(filePath);
 
@@ -366,8 +375,8 @@ function lookupArchive(pathname: string): Response | null {
     const mime = getMimeType(filePath);
     if (
       mime === "text/html" &&
-      pathname !== "/dotli-app/index.html" &&
-      pathname !== "/dotli-app/"
+      pathname !== `${DOTLI_APP_PREFIX}index.html` &&
+      pathname !== DOTLI_APP_PREFIX
     ) {
       return makeHtmlResponse(content, mime);
     }
@@ -402,11 +411,12 @@ function makeHtmlResponse(
   mime: string,
 ): Response {
   const html = new TextDecoder().decode(content);
-  const base = "/dotli-app/";
-  const stripPrefix = `<script>if(location.pathname.startsWith('/dotli-app')){history.replaceState(null,'',(location.pathname.slice('/dotli-app'.length)||'/')+location.search+location.hash)}</script>`;
+  const prefixNoSlash = DOTLI_APP_PREFIX.slice(0, -1);
+  const prefixLen = String(prefixNoSlash.length);
+  const stripPrefix = `<script>if(location.pathname.startsWith('${prefixNoSlash}')){history.replaceState(null,'',(location.pathname.slice(${prefixLen})||'/')+location.search+location.hash)}</script>`;
   const injected = html.replace(
     "<head>",
-    `<head><base href="${base}">${stripPrefix}`,
+    `<head><base href="${DOTLI_APP_PREFIX}">${stripPrefix}`,
   );
   return new Response(new TextEncoder().encode(injected), {
     status: 200,

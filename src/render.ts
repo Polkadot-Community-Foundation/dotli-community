@@ -23,9 +23,14 @@ let currentBlobUrl: string | null = null;
  */
 function getDeepPath(): string {
   const { pathname, search, hash } = window.location;
-  // Strip the .dot label segment from path-based URLs
+  // Strip the base path and .dot label segment from path-based URLs
   // e.g. /name.dot/foo/bar → /foo/bar, /dotli/name.dot/foo → /foo
-  const stripped = pathname.replace(/^(?:\/dotli)?\/[^/]+\.dot/, "");
+  let p = pathname;
+  const base = import.meta.env.BASE_URL;
+  if (base !== "/" && p.startsWith(base)) {
+    p = "/" + p.slice(base.length);
+  }
+  const stripped = p.replace(/^\/[^/]+\.dot/, "");
   return stripped === "" || stripped === "/" ? "" : stripped + search + hash;
 }
 
@@ -124,10 +129,11 @@ export async function renderArchive(
 
   // Load the iframe from the SW scope, forwarding the deep link path
   const deepPath = getDeepPath();
+  const appBase = `${import.meta.env.BASE_URL}dotli-app`;
   const swUrl =
     deepPath !== ""
-      ? `${window.location.origin}/dotli-app${deepPath}`
-      : `${window.location.origin}/dotli-app/index.html`;
+      ? `${window.location.origin}${appBase}${deepPath}`
+      : `${window.location.origin}${appBase}/index.html`;
   await renderIframe(swUrl, label);
 }
 

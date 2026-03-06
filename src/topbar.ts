@@ -150,6 +150,7 @@ function renderLoggedIn(state: AuthState & { status: "authenticated" }): void {
     state.identity && authMod ? authMod.shortenName(state.identity) : "??";
   authButton.innerHTML = `<div class="user-badge">${initials}</div>`;
   authButton.title = "Account";
+  window.dispatchEvent(new Event("dotli:authenticated"));
 
   // Update popover with identity name or truncated account address
   let username: string;

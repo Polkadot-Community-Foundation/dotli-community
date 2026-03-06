@@ -61,8 +61,12 @@ function preconnectBootnodes(): Plugin {
  * On the landing page (dot.li / localhost) nothing is injected.
  */
 function preloadCriticalAssets(): Plugin {
+  let resolvedBase = "/";
   return {
     name: "preload-critical-assets",
+    configResolved(config) {
+      resolvedBase = config.base;
+    },
     transformIndexHtml: {
       order: "post",
       handler(_html, ctx) {
@@ -83,11 +87,13 @@ function preloadCriticalAssets(): Plugin {
         const chunks = [resolveChunk, fetchChunk, renderChunk, gatewayChunk].filter(Boolean);
         if (chunks.length === 0) return [];
 
+        const b = resolvedBase;
+
         // Preload heavy assets as fetch (browser starts downloading during HTML parse)
         const fetchPreloads = [wasmAsset, metadataAsset].filter(Boolean)
           .map(
             (a) =>
-              `l=document.createElement("link");l.rel="preload";l.as="fetch";l.crossOrigin="anonymous";l.href="/${a}";document.head.appendChild(l);`,
+              `l=document.createElement("link");l.rel="preload";l.as="fetch";l.crossOrigin="anonymous";l.href="${b}${a}";document.head.appendChild(l);`,
           )
           .join("");
 
@@ -95,14 +101,14 @@ function preloadCriticalAssets(): Plugin {
         const preloadStatements = chunks
           .map(
             (c) =>
-              `l=document.createElement("link");l.rel="modulepreload";l.href="/${c}";document.head.appendChild(l);`,
+              `l=document.createElement("link");l.rel="modulepreload";l.href="${b}${c}";document.head.appendChild(l);`,
           )
           .join("");
         const script = [
           "(function(){",
-          'var h=location.hostname,l;',
+          'var h=location.hostname,p=location.pathname,l;',
           'if(h==="dot.li"||h==="localhost")return;',
-          'if(!h.endsWith(".dot.li")&&!h.endsWith(".localhost"))return;',
+          'if(!h.endsWith(".dot.li")&&!h.endsWith(".localhost")&&!/\\/[^/]+\\.dot(?:\\/|$)/.test(p))return;',
           fetchPreloads,
           preloadStatements,
           "})()",
@@ -163,6 +169,7 @@ function buildServiceWorker(): Plugin {
 }
 
 export default defineConfig({
+  base: process.env.VITE_BASE_PATH || "/",
   plugins: [
     wasm(),
     preconnectBootnodes(),
