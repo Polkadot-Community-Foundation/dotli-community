@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "postinstall": "papi",
     "dev": "bunx --bun vite",
     "build": "tsc && bunx --bun vite build && bun scripts/compress-dist.ts",
     "preview": "bunx --bun vite preview",

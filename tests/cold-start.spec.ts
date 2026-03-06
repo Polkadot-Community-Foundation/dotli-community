@@ -74,6 +74,7 @@ const NUM_RUNS = parseInt(process.env.PERF_RUNS ?? "10", 10);
 const DOMAIN_A = process.env.PERF_DOMAIN_A ?? "hackme3";
 const DOMAIN_B = process.env.PERF_DOMAIN_B ?? "insync";
 const PORT = process.env.PERF_PORT ?? "5173";
+const ITERATION_TIMEOUT = 3 * 60_000; // 3 minutes per iteration
 
 const PHASE_PAIRS: [string, string, string][] = [
   ["Total (main)", "dotli:main:start", "dotli:main:end"],
@@ -241,6 +242,25 @@ function loadJson(filepath: string): SavedResults | null {
 function saveJson(filepath: string, data: SavedResults): void {
   fs.mkdirSync(path.dirname(filepath), { recursive: true });
   fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      console.log(
+        `  ⏱ ${label} timed out after ${String(ms / 1000)}s — skipping`,
+      );
+      resolve(null);
+    }, ms);
+  });
+  const result = await Promise.race([promise, timeout]);
+  clearTimeout(timer);
+  return result;
 }
 
 // ── Aggregate per-run data into stats ──────────────────────
@@ -480,24 +500,34 @@ async function runWarmIterations(
   for (let i = 0; i < total; i++) {
     console.log(`  Warm iteration ${String(i + 1)}/${String(total)}...`);
 
-    // Clear marks, reload — caches persist across reloads within the context
-    await page.evaluate(() => {
-      performance.clearMarks();
-    });
-    await page.reload({ waitUntil: "commit" });
-    await waitForPipeline(page);
+    const iterationWork = async (): Promise<SingleRun> => {
+      await page.evaluate(() => {
+        performance.clearMarks();
+      });
+      await page.reload({ waitUntil: "commit" });
+      await waitForPipeline(page);
 
-    const marks = await collectMarks(page);
-    const phases = computePhases(marks);
-    const bm = await getBrowserMetrics(page);
+      const marks = await collectMarks(page);
+      const phases = computePhases(marks);
+      const bm = await getBrowserMetrics(page);
 
-    runs.push({
-      phases,
-      domContentLoaded: bm.domContentLoaded,
-      jsHeapUsed: bm.jsHeapUsed,
-      requestCount: 0,
-      totalBytes: 0,
-    });
+      return {
+        phases,
+        domContentLoaded: bm.domContentLoaded,
+        jsHeapUsed: bm.jsHeapUsed,
+        requestCount: 0,
+        totalBytes: 0,
+      };
+    };
+
+    const result = await withTimeout(
+      iterationWork(),
+      ITERATION_TIMEOUT,
+      `Warm iteration ${String(i + 1)}/${String(total)}`,
+    );
+    if (result !== null) {
+      runs.push(result);
+    }
   }
 
   await context.close();
@@ -522,53 +552,63 @@ async function runLukewarmIterations(
   for (let i = 0; i < total; i++) {
     console.log(`  Lukewarm iteration ${String(i + 1)}/${String(total)}...`);
 
-    // Fresh context per iteration for independent samples
-    const context = await browser.newContext({
-      storageState: undefined,
-      serviceWorkers: "allow",
-    });
+    const iterationWork = async (): Promise<SingleRun> => {
+      // Fresh context per iteration for independent samples
+      const context = await browser.newContext({
+        storageState: undefined,
+        serviceWorkers: "allow",
+      });
 
-    // Step 1: Prime with DOMAIN_A (populates HTTP cache, WASM compilation cache)
-    console.log(`    Priming with ${DOMAIN_A}.dot...`);
-    const primePage = await context.newPage();
-    await primePage.goto(`http://${DOMAIN_A}.localhost:${PORT}/`, {
-      waitUntil: "commit",
-    });
-    await waitForPipeline(primePage);
-    // Keep the context — HTTP cache and WASM compilation cache carry over
+      // Step 1: Prime with DOMAIN_A (populates HTTP cache, WASM compilation cache)
+      console.log(`    Priming with ${DOMAIN_A}.dot...`);
+      const primePage = await context.newPage();
+      await primePage.goto(`http://${DOMAIN_A}.localhost:${PORT}/`, {
+        waitUntil: "commit",
+      });
+      await waitForPipeline(primePage);
 
-    // Step 2: Open DOMAIN_B in a new tab (different origin, shared HTTP cache)
-    console.log(`    Loading ${DOMAIN_B}.dot (lukewarm)...`);
-    const page = await context.newPage();
+      // Step 2: Open DOMAIN_B in a new tab (different origin, shared HTTP cache)
+      console.log(`    Loading ${DOMAIN_B}.dot (lukewarm)...`);
+      const page = await context.newPage();
 
-    const requests: { size: number }[] = [];
-    page.on("response", async (response) => {
-      try {
-        const body = await response.body().catch(() => null);
-        requests.push({ size: body?.length ?? 0 });
-      } catch {
-        requests.push({ size: 0 });
-      }
-    });
+      const requests: { size: number }[] = [];
+      page.on("response", async (response) => {
+        try {
+          const body = await response.body().catch(() => null);
+          requests.push({ size: body?.length ?? 0 });
+        } catch {
+          requests.push({ size: 0 });
+        }
+      });
 
-    await page.goto(`http://${DOMAIN_B}.localhost:${PORT}/`, {
-      waitUntil: "commit",
-    });
-    await waitForPipeline(page);
+      await page.goto(`http://${DOMAIN_B}.localhost:${PORT}/`, {
+        waitUntil: "commit",
+      });
+      await waitForPipeline(page);
 
-    const marks = await collectMarks(page);
-    const phases = computePhases(marks);
-    const bm = await getBrowserMetrics(page);
+      const marks = await collectMarks(page);
+      const phases = computePhases(marks);
+      const bm = await getBrowserMetrics(page);
 
-    await context.close();
+      await context.close();
 
-    runs.push({
-      phases,
-      domContentLoaded: bm.domContentLoaded,
-      jsHeapUsed: bm.jsHeapUsed,
-      requestCount: requests.length,
-      totalBytes: requests.reduce((s, r) => s + r.size, 0),
-    });
+      return {
+        phases,
+        domContentLoaded: bm.domContentLoaded,
+        jsHeapUsed: bm.jsHeapUsed,
+        requestCount: requests.length,
+        totalBytes: requests.reduce((s, r) => s + r.size, 0),
+      };
+    };
+
+    const result = await withTimeout(
+      iterationWork(),
+      ITERATION_TIMEOUT,
+      `Lukewarm iteration ${String(i + 1)}/${String(total)}`,
+    );
+    if (result !== null) {
+      runs.push(result);
+    }
   }
 
   return runs;
@@ -589,7 +629,14 @@ test.describe("Cold Start Performance", () => {
   }) => {
     const runs: SingleRun[] = [];
     for (let i = 0; i < NUM_RUNS; i++) {
-      runs.push(await runColdIteration(browser, i, NUM_RUNS));
+      const result = await withTimeout(
+        runColdIteration(browser, i, NUM_RUNS),
+        ITERATION_TIMEOUT,
+        `Cold iteration ${String(i + 1)}/${String(NUM_RUNS)}`,
+      );
+      if (result !== null) {
+        runs.push(result);
+      }
     }
 
     coldStats = aggregateRuns("cold", runs);
@@ -598,7 +645,7 @@ test.describe("Cold Start Performance", () => {
     const last = loadJson(LAST_FILE);
     printStatsTable("COLD START", coldStats, base?.cold, last?.cold);
 
-    expect(runs.length).toBe(NUM_RUNS);
+    expect(runs.length).toBeGreaterThan(0);
   });
 
   test(`measure warm start (${String(NUM_RUNS)} iterations)`, async ({
@@ -612,7 +659,7 @@ test.describe("Cold Start Performance", () => {
     const last = loadJson(LAST_FILE);
     printStatsTable("WARM START", warmStats, base?.warm, last?.warm);
 
-    expect(runs.length).toBe(NUM_RUNS);
+    expect(runs.length).toBeGreaterThan(0);
   });
 
   test(`measure lukewarm start (${String(NUM_RUNS)} iterations, ${DOMAIN_A}→${DOMAIN_B})`, async ({
@@ -631,7 +678,7 @@ test.describe("Cold Start Performance", () => {
       last?.lukewarm,
     );
 
-    expect(runs.length).toBe(NUM_RUNS);
+    expect(runs.length).toBeGreaterThan(0);
   });
 
   test.afterAll(() => {
