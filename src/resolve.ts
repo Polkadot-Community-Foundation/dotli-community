@@ -113,6 +113,10 @@ async function trySwSmoldot(
  * Tries the Service Worker's persistent smoldot first, falls back to
  * starting a new smoldot instance in the main thread.
  */
+let ensureClientPromise: Promise<
+  ReturnType<PolkadotClient["getUnsafeApi"]>
+> | null = null;
+
 async function ensureClient(
   onStatus?: StatusCallback,
 ): Promise<ReturnType<PolkadotClient["getUnsafeApi"]>> {
@@ -120,6 +124,20 @@ async function ensureClient(
     return apiInstance;
   }
 
+  // Deduplicate concurrent calls — only one connection attempt at a time
+  if (ensureClientPromise) {
+    return ensureClientPromise;
+  }
+
+  ensureClientPromise = doEnsureClient(onStatus).finally(() => {
+    ensureClientPromise = null;
+  });
+  return ensureClientPromise;
+}
+
+async function doEnsureClient(
+  onStatus?: StatusCallback,
+): Promise<ReturnType<PolkadotClient["getUnsafeApi"]>> {
   // Try SW smoldot first (persistent across navigations)
   const swApi = await trySwSmoldot(onStatus);
   if (swApi) {

@@ -1,8 +1,32 @@
 {
   "name": "dotli",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
+  "description": "A decentralized web browser that runs in your browser.",
+  "author": "Parity Technologies <admin@parity.io> (https://parity.io)",
+  "homepage": "https://dot.li",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paritytech/dotli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/paritytech/dotli/issues"
+  },
+  "keywords": [
+    "polkadot",
+    "decentralized-web",
+    "light-client",
+    "smoldot",
+    "ipfs",
+    "dotns",
+    "blockchain",
+    "typescript",
+    "vite"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "postinstall": "papi",
     "dev": "bunx --bun vite",
@@ -24,7 +48,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.58.2",
-    "@types/node": "^25.3.3",
+    "@types/node": "^25.3.5",
     "@types/qrcode": "^1.5.6",
     "eslint": "^10.0.2",
     "eslint-config-prettier": "^10.1.8",
@@ -45,8 +69,8 @@
     "@helia/unixfs": "^7.0.4",
     "@ipld/car": "^5.4.2",
     "@ipld/dag-pb": "^4.1.5",
-    "@libp2p/identify": "^4.0.11",
-    "@libp2p/ping": "^3.0.11",
+    "@libp2p/identify": "^4.0.12",
+    "@libp2p/ping": "^3.0.12",
     "@libp2p/websockets": "^10.1.5",
     "@multiformats/blake2": "^2.0.2",
     "@multiformats/multiaddr": "^13.0.1",
@@ -71,6 +95,7 @@
     "scale-ts": "^1.6.1",
     "smoldot": "^2.0.40"
   },
+  "packageManager": "bun@1.3.6",
   "trustedDependencies": [
     "node-datachannel"
   ]

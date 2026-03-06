@@ -1,6 +1,38 @@
+<div align="center">
+
 # dot.li
 
-A decentralized web browser that runs in your browser. Type `name.dot.li` and get a fully trustless, client-side resolved Polkadot application — no servers in the loop.
+[![Website](https://img.shields.io/badge/dot.li-online-blue?style=flat-square)](https://dot.li)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](./LICENSE)
+[![TypeScript](https://img.shields.io/badge/typescript-strict-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org)
+[![Polkadot](https://img.shields.io/badge/polkadot-ecosystem-E6007A?style=flat-square&logo=polkadot)](https://polkadot.com)
+
+A decentralized web browser that runs in your browser. Visit any Polkadot application with fully trustless, client-side resolution — no servers in the loop.
+
+[Website](https://dot.li) | [Report an Issue](https://github.com/paritytech/dotli/issues)
+
+</div>
+
+---
+
+## How to access apps
+
+dot.li supports two URL formats:
+
+| Format | Example |
+|--------|---------|
+| **Subdomain** | `https://myapp.dot.li` |
+| **Path** | `https://dot.li/myapp.dot` |
+
+### Landing page
+
+When visiting the root (`dot.li`, or `paritytech.github.io/dotli/`), a landing page is shown with:
+
+- A **search bar** where users type an app name (`.dot` suffix is pre-filled) and navigate
+- **Recently visited** apps shown as pill-shaped shortcuts (persisted in localStorage)
+- A **Polkadot App login** button in the top-right corner
+
+The topbar is hidden on the landing page and only appears when viewing an app.
 
 ## What it does
 
@@ -9,7 +41,7 @@ A decentralized web browser that runs in your browser. Type `name.dot.li` and ge
 3. **Renders** the content in a sandboxed iframe with a full host-container bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage — all through postMessage.
 
 ```
-name.dot.li
+myapp.dot.li  (or  dot.li/myapp.dot)
     → smoldot resolves dotNS → IPFS CID
     → Helia fetches content (P2P or gateway)
     → iframe renders with host-container bridge
@@ -17,30 +49,10 @@ name.dot.li
 
 Single-file apps are served as blob URLs. Multi-file SPAs (directories) are fetched as CAR archives, parsed, and served through a Service Worker that acts as a virtual file system.
 
-## Architecture
-
-```
-src/
-├── main.ts          Entry point — URL parsing, orchestration
-├── resolve.ts       dotNS name resolution via smoldot light client
-├── fetch.ts         Content fetching (Helia P2P → gateway CAR → raw fallback)
-├── render.ts        Iframe rendering (blob URL or Service Worker)
-├── archive.ts       CAR file parsing (@ipld/car + dag-pb + unixfs)
-├── container.ts     Host-container bridge (accounts, signing, storage, chains)
-├── chains.ts        Chain provider factory (smoldot → JsonRpcProvider)
-├── account.ts       HDKD product key derivation (@scure/sr25519)
-├── auth.ts          QR-code auth via @novasamatech/host-papp
-├── signing.ts       Signing approval modals (signPayload, signRaw)
-├── topbar.ts        Top bar UI (brand, URL pill, auth button)
-├── config.ts        Contracts, ABIs, peer addresses, gateway URL
-public/
-├── sw.js            Service Worker for multi-file SPA serving
-```
-
 ## How resolution works
 
-1. Parse subdomain from URL (`myapp.dot.li` → `myapp`)
-2. Compute ENS-style namehash of `myapp.dot`
+1. Parse label from URL — subdomain (`mytestapp.dot.li` → `mytestapp`) or path (`/mytestapp.dot` → `mytestapp`)
+2. Compute ENS-style namehash of `mytestapp.dot`
 3. Call `recordExists(node)` on the dotNS Registry contract via Revive dry-run
 4. Call `contenthash(node)` on the dotNS ContentResolver contract
 5. Decode the contenthash bytes to an IPFS CID (using `@ensdomains/content-hash`)
@@ -58,6 +70,22 @@ When a CID points to an IPFS directory (not a single file):
 4. The iframe loads from `/dotli-app/index.html` — the SW intercepts all requests and serves files from the in-memory archive
 5. Relative imports (`<script src="main.js">`, `<link href="styles.css">`) just work
 
+## Caching and verification
+
+dot.li uses a two-layer cache for fast repeat visits:
+
+1. **CID cache** (IndexedDB) — maps `.dot` labels to their last-known CID
+2. **Archive cache** (Service Worker) — stores fetched file maps keyed by domain + CID
+
+On repeat visits, content renders instantly from cache while smoldot validates the CID in the background. The topbar shield indicates the verification state:
+
+| Shield | Meaning |
+|--------|---------|
+| Yellow | Validating — rendering from cache, checking on-chain |
+| Green | Verified — on-chain CID matches cached version |
+| Orange | Gateway — resolved via gateway, awaiting chain confirmation |
+| Red | Outdated — on-chain CID differs; an update banner appears |
+
 ## Host-container bridge
 
 Loaded SPAs communicate with dot.li through `@novasamatech/host-container`, a postMessage-based protocol. The bridge exposes:
@@ -72,8 +100,6 @@ Loaded SPAs communicate with dot.li through `@novasamatech/host-container`, a po
 | `featureSupported` | Reports supported chain genesis hashes |
 | `connectionStatus` | Streams auth state changes to the SPA |
 
-Currently supported chains: Paseo relay, Asset Hub Paseo.
-
 ## Development
 
 ```bash
@@ -81,28 +107,7 @@ npm install
 npm run dev
 ```
 
-Local dev uses wildcard subdomains: `myapp.localhost:5173` resolves `myapp.dot`.
-
-### Build
-
-```bash
-npm run build
-```
-
-Output goes to `dist/`. The Service Worker (`sw.js`) is copied from `public/` as-is (not bundled by Vite).
-
-## Key dependencies
-
-| Package | Purpose |
-|---------|---------|
-| `polkadot-api` + smoldot | Light client for dotNS resolution + chain connections |
-| `helia` + `@helia/unixfs` | P2P content fetching from Bulletin Chain |
-| `@ipld/car` | CAR archive parsing for multi-file SPAs |
-| `@novasamatech/host-container` | postMessage bridge protocol |
-| `@novasamatech/host-papp` | QR-code auth with Polkadot mobile app |
-| `@scure/sr25519` | HDKD key derivation for per-app accounts |
-| `viem` | ABI encoding for Revive contract calls |
-| `@ensdomains/content-hash` | Contenthash decoding (IPFS CID extraction) |
+Local dev uses wildcard subdomains: `mytestapp.localhost:5173` resolves `mytestapp.dot`.
 
 ## Network configuration
 
