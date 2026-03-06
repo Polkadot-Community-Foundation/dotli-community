@@ -10,9 +10,14 @@ if (typeof globalThis.requestIdleCallback !== "function") {
     }, 1) as unknown as number;
 }
 
+import * as Sentry from "@sentry/browser";
 import type { ArchiveFiles } from "./archive";
 import { showStatus, showError, showLanding } from "./ui";
 import { initTopBar } from "./topbar";
+
+Sentry.init({
+  dsn: import.meta.env.VITE_SENTRY_DSN as string,
+});
 import { getCachedCid, setCachedCid } from "./cid-cache";
 import { dur } from "./perf";
 import { TIMEOUTS } from "./config";

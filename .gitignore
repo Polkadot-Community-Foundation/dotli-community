@@ -37,3 +37,7 @@ tests/results.json
 
 # PAPI
 .papi/descriptors
+
+# Env
+.env
+
