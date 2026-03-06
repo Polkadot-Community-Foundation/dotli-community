@@ -6,6 +6,10 @@
 // one of: bytes (dynamic), bool, or address.
 
 import { keccak_256 } from "@noble/hashes/sha3.js";
+import {
+  decode as decodeContentHash,
+  getCodec,
+} from "@ensdomains/content-hash";
 
 function toHex(bytes: Uint8Array): `0x${string}` {
   return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
@@ -71,6 +75,26 @@ export function decodeAddress(data: `0x${string}`): string {
     return "0x0000000000000000000000000000000000000000";
   }
   return `0x${hex.slice(24, 64)}`;
+}
+
+// ── Contenthash decoding ──────────────────────────────────
+
+/** Decode contenthash bytes (ENS-style) into an IPFS CID string. */
+export function decodeIpfsContenthash(contenthashHex: string): string | null {
+  const hex = contenthashHex.startsWith("0x")
+    ? contenthashHex.slice(2)
+    : contenthashHex;
+  if (!hex || hex === "0" || hex.length < 4) {
+    return null;
+  }
+  try {
+    if (getCodec(hex) !== "ipfs") {
+      return null;
+    }
+    return decodeContentHash(hex) || null;
+  } catch {
+    return null;
+  }
 }
 
 // Verify selectors at module load (development safety net, tree-shaken in prod)

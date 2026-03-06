@@ -2,17 +2,24 @@
 //
 // Flow: parse URL → resolve .dot name via smoldot → fetch content from Bulletin → render in iframe
 
+// Polyfill for Safari < 18.4 which lacks requestIdleCallback
+if (typeof globalThis.requestIdleCallback !== "function") {
+  globalThis.requestIdleCallback = (cb: IdleRequestCallback): number =>
+    setTimeout(() => {
+      cb({ didTimeout: false, timeRemaining: () => 50 } as IdleDeadline);
+    }, 1) as unknown as number;
+}
+
 import type { ArchiveFiles } from "./archive";
 import { showStatus, showError, showLanding } from "./ui";
 import { initTopBar } from "./topbar";
 import { getCachedCid, setCachedCid } from "./cid-cache";
+import { dur } from "./perf";
+import { TIMEOUTS } from "./config";
 
 const T0 = performance.now();
 function elapsed(): string {
   return `+${((performance.now() - T0) / 1000).toFixed(3)}s`;
-}
-function dur(start: number): string {
-  return `${(performance.now() - start).toFixed(0)}ms`;
 }
 
 /**
@@ -31,7 +38,7 @@ async function getCachedArchive(
   return new Promise<ArchiveFiles | null>((resolve) => {
     const timeout = setTimeout(() => {
       resolve(null);
-    }, 3_000);
+    }, TIMEOUTS.SW_CACHE_LOOKUP);
     const channel = new MessageChannel();
 
     channel.port1.onmessage = (event: MessageEvent) => {
@@ -112,7 +119,7 @@ async function registerServiceWorker(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error("Service Worker not available after 10s"));
-      }, 10_000);
+      }, TIMEOUTS.SW_READY);
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         clearTimeout(timeout);
         resolve();
@@ -248,6 +255,161 @@ function populateOwner(
     });
 }
 
+// ── Extracted helpers for main() ─────────────────────────────
+
+interface ResolveWinner {
+  cid: string;
+  source: "gateway" | "chain";
+}
+
+/**
+ * Race gateway and smoldot resolution — first non-null CID wins.
+ */
+function raceResolvers(
+  gatewayPromise: Promise<string | null>,
+  smoldotPromise: Promise<string | null>,
+): Promise<ResolveWinner | null> {
+  return new Promise<ResolveWinner | null>((resolve) => {
+    let done = false;
+    const tryResolve = (
+      cid: string | null,
+      source: "gateway" | "chain",
+    ): void => {
+      if (!done && cid !== null) {
+        done = true;
+        resolve({ cid, source });
+      }
+    };
+
+    gatewayPromise
+      .then((cid) => {
+        tryResolve(cid, "gateway");
+      })
+      .catch(() => {
+        /* fire-and-forget */
+      });
+    smoldotPromise
+      .then((cid) => {
+        tryResolve(cid, "chain");
+      })
+      .catch(() => {
+        /* fire-and-forget */
+      });
+
+    void Promise.allSettled([gatewayPromise, smoldotPromise]).then(() => {
+      if (!done) {
+        resolve(null);
+      }
+    });
+  });
+}
+
+/**
+ * When gateway resolved first, verify the CID against smoldot in the background.
+ */
+function handleGatewayWinner(
+  label: string,
+  gatewayCid: string,
+  smoldotPromise: Promise<string | null>,
+): void {
+  void smoldotPromise
+    .then((chainCid) => {
+      if (chainCid !== null && chainCid !== gatewayCid) {
+        console.warn(
+          `[dot.li] CID mismatch: gateway=${gatewayCid}, chain=${chainCid}`,
+        );
+        requestIdleCallback(() => {
+          void setCachedCid(label, chainCid);
+        });
+        setShieldState("stale");
+        showUpdateBanner();
+      } else if (chainCid !== null) {
+        console.warn("[dot.li] Gateway CID verified by chain");
+        setShieldState("verified");
+      }
+    })
+    .catch(() => {
+      /* fire-and-forget */
+    });
+}
+
+import type * as RenderModule from "./render";
+import type * as FetchModule from "./fetch";
+type RenderChunk = typeof RenderModule;
+type FetchChunk = typeof FetchModule;
+
+/**
+ * Fetch content (from SW cache or P2P) and render it.
+ */
+async function fetchAndRender(
+  label: string,
+  cid: string,
+  swReady: Promise<void>,
+  heliaWarmup: Promise<unknown>,
+  renderChunkPromise: Promise<RenderChunk>,
+  fetchChunkPromise: Promise<FetchChunk>,
+): Promise<void> {
+  // Ensure SW is ready before cache check / rendering
+  console.warn(`[dot.li perf] Awaiting SW ready... (${elapsed()})`);
+  await swReady;
+  console.warn(`[dot.li perf] SW ready (${elapsed()})`);
+
+  // Check SW cache before fetching
+  performance.mark("dotli:cache-check:start");
+  const cacheStart = performance.now();
+  const cachedFiles = await getCachedArchive(label, cid);
+  performance.mark("dotli:cache-check:end");
+  console.warn(
+    `[dot.li perf] Cache check done (${dur(cacheStart)}) → ${cachedFiles !== null ? "HIT" : "MISS"} (${elapsed()})`,
+  );
+
+  if (cachedFiles) {
+    showStatus("Rendering (cached)...");
+    performance.mark("dotli:render:start");
+    const renderStart = performance.now();
+    const { renderArchive } = await renderChunkPromise;
+    await renderArchive(cachedFiles, label, cid);
+    performance.mark("dotli:render:end");
+    console.warn(
+      `[dot.li perf] Render done — cached (${dur(renderStart)}, ${elapsed()})`,
+    );
+    return;
+  }
+
+  // Fetch via P2P
+  performance.mark("dotli:fetch:start");
+  const fetchStart = performance.now();
+  console.warn(`[dot.li perf] Loading fetch chunk... (${elapsed()})`);
+  const { fetchArchive, destroyHelia } = await fetchChunkPromise;
+  console.warn(`[dot.li perf] Fetch chunk loaded (${elapsed()})`);
+  destroyHeliaFn = destroyHelia;
+  const heliaWait = performance.now();
+  await heliaWarmup;
+  console.warn(
+    `[dot.li perf] Helia P2P ready (waited ${dur(heliaWait)}, ${elapsed()})`,
+  );
+  const result = await fetchArchive(cid, showStatus);
+  performance.mark("dotli:fetch:end");
+  console.warn(
+    `[dot.li perf] Content fetched (${dur(fetchStart)}, ${elapsed()}) → ${result.type}`,
+  );
+
+  // Render in sandboxed iframe
+  showStatus("Rendering...");
+  performance.mark("dotli:render:start");
+  const renderStart = performance.now();
+  const { renderArchive, renderContent } = await renderChunkPromise;
+  if (result.type === "archive") {
+    await renderArchive(result.files, label, cid);
+  } else {
+    await renderContent(result.content, label);
+  }
+  performance.mark("dotli:render:end");
+  console.warn(`[dot.li perf] Render done (${dur(renderStart)}, ${elapsed()})`);
+}
+
+// ── Main ─────────────────────────────────────────────────────
+
 // Module-level references for cleanup handler
 let destroyClientFn: (() => void) | null = null;
 let destroyHeliaFn: (() => Promise<void>) | null = null;
@@ -282,11 +444,23 @@ async function main(): Promise<void> {
 
   console.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed()})`);
 
-  // Pre-load gateway and render chunks (overlap with CID cache check + resolution)
+  // Pre-load chunks in parallel (overlap with CID cache check + resolution)
   const gatewayChunkPromise = import("./gateway-resolve");
-  void gatewayChunkPromise.catch(Function.prototype as () => void);
+  void gatewayChunkPromise.catch(() => {
+    /* fire-and-forget */
+  });
   const renderChunkPromise = import("./render");
-  void renderChunkPromise.catch(Function.prototype as () => void);
+  void renderChunkPromise.catch(() => {
+    /* fire-and-forget */
+  });
+  const swProviderChunkPromise = import("./sw-provider");
+  void swProviderChunkPromise.catch(() => {
+    /* fire-and-forget */
+  });
+  const fetchChunkPromise = import("./fetch");
+  void fetchChunkPromise.catch(() => {
+    /* fire-and-forget */
+  });
 
   // Show the .dot domain in the URL bar
   const urlBar = document.getElementById("topbar-url");
@@ -344,7 +518,9 @@ async function main(): Promise<void> {
       .then(({ prepareIframe }) => {
         prepareIframe();
       })
-      .catch(Function.prototype as () => void);
+      .catch(() => {
+        /* fire-and-forget */
+      });
 
     // ── Fast path: CID cache + SW archive cache ──
     // On repeat visits, render from the cached CID instantly (<500ms)
@@ -406,17 +582,19 @@ async function main(): Promise<void> {
     // Pre-warm Helia P2P: start dialing Bulletin peers in parallel with
     // resolution. Peer connections (~2.3s) don't need the CID.
     console.warn(`[dot.li perf] Pre-warming Helia P2P... (${elapsed()})`);
-    const heliaWarmup = import("./fetch").then(
+    const heliaWarmup = fetchChunkPromise.then(
       ({ ensureHelia, destroyHelia }) => {
         destroyHeliaFn = destroyHelia;
         return ensureHelia();
       },
     );
-    void heliaWarmup.catch(Function.prototype as () => void);
+    void heliaWarmup.catch(() => {
+      /* fire-and-forget */
+    });
 
     // Check if SW smoldot is already synced (lukewarm same-origin revisit).
     // If ready, skip the gateway entirely — SW smoldot resolves instantly.
-    const { isSwSmoldotReady } = await import("./sw-provider");
+    const { isSwSmoldotReady } = await swProviderChunkPromise;
     const swSmoldotReady = await isSwSmoldotReady();
 
     // Start gateway resolution only if SW smoldot is not ready
@@ -431,11 +609,9 @@ async function main(): Promise<void> {
       console.warn(
         `[dot.li perf] Starting gateway + smoldot resolve... (${elapsed()})`,
       );
-      // Gateway disabled for testing — smoldot-only resolution
-      // gatewayPromise = gatewayChunkPromise
-      //   .then(({ resolveViaGateway }) => resolveViaGateway(label))
-      //   .catch(() => null as string | null);
-      gatewayPromise = Promise.resolve(null);
+      gatewayPromise = gatewayChunkPromise
+        .then(({ resolveViaGateway }) => resolveViaGateway(label))
+        .catch(() => null as string | null);
     }
 
     // Await resolve chunk for smoldot path (already loading since top of main)
@@ -458,39 +634,7 @@ async function main(): Promise<void> {
 
     // Race: first non-null CID wins
     const resolveStart = performance.now();
-    interface ResolveWinner {
-      cid: string;
-      source: "gateway" | "chain";
-    }
-    const winner = await new Promise<ResolveWinner | null>((resolve) => {
-      let done = false;
-      const tryResolve = (
-        cid: string | null,
-        source: "gateway" | "chain",
-      ): void => {
-        if (!done && cid !== null) {
-          done = true;
-          resolve({ cid, source });
-        }
-      };
-
-      gatewayPromise
-        .then((cid) => {
-          tryResolve(cid, "gateway");
-        })
-        .catch(Function.prototype as () => void);
-      smoldotPromise
-        .then((cid) => {
-          tryResolve(cid, "chain");
-        })
-        .catch(Function.prototype as () => void);
-
-      void Promise.allSettled([gatewayPromise, smoldotPromise]).then(() => {
-        if (!done) {
-          resolve(null);
-        }
-      });
-    });
+    const winner = await raceResolvers(gatewayPromise, smoldotPromise);
     performance.mark("dotli:resolve:end");
     console.warn(
       `[dot.li perf] Resolution done (${dur(resolveStart)}, ${elapsed()}) → ${winner?.source ?? "none"}: ${winner?.cid ?? "null"}`,
@@ -512,90 +656,21 @@ async function main(): Promise<void> {
     });
 
     if (winner.source === "gateway") {
-      // Gateway resolved first — show content with orange "gateway" shield
       setShieldState("gateway");
       showSmoldotStatus = false;
-
-      // Background: verify via smoldot when it catches up
-      void smoldotPromise
-        .then((chainCid) => {
-          if (chainCid !== null && chainCid !== cid) {
-            console.warn(
-              `[dot.li] CID mismatch: gateway=${cid}, chain=${chainCid}`,
-            );
-            requestIdleCallback(() => {
-              void setCachedCid(label, chainCid);
-            });
-            setShieldState("stale");
-            showUpdateBanner();
-          } else if (chainCid !== null) {
-            console.warn("[dot.li] Gateway CID verified by chain");
-            setShieldState("verified");
-          }
-        })
-        .catch(Function.prototype as () => void);
+      handleGatewayWinner(label, cid, smoldotPromise);
     } else {
-      // Smoldot resolved — content is verified
       setShieldState("verified");
     }
 
-    // Ensure SW is ready before cache check / rendering
-    console.warn(`[dot.li perf] Awaiting SW ready... (${elapsed()})`);
-    await swReady;
-    console.warn(`[dot.li perf] SW ready (${elapsed()})`);
-
-    // Step 2b: Check SW cache before fetching
-    performance.mark("dotli:cache-check:start");
-    const cacheStart = performance.now();
-    const cachedFiles = await getCachedArchive(label, cid);
-    performance.mark("dotli:cache-check:end");
-    console.warn(
-      `[dot.li perf] Cache check done (${dur(cacheStart)}) → ${cachedFiles !== null ? "HIT" : "MISS"} (${elapsed()})`,
+    await fetchAndRender(
+      label,
+      cid,
+      swReady,
+      heliaWarmup,
+      renderChunkPromise,
+      fetchChunkPromise,
     );
-
-    if (cachedFiles) {
-      showStatus("Rendering (cached)...");
-      performance.mark("dotli:render:start");
-      const renderStart = performance.now();
-      const { renderArchive } = await renderChunkPromise;
-      await renderArchive(cachedFiles, label, cid);
-      performance.mark("dotli:render:end");
-      console.warn(
-        `[dot.li perf] Render done — cached (${dur(renderStart)}, ${elapsed()})`,
-      );
-    } else {
-      performance.mark("dotli:fetch:start");
-      const fetchStart = performance.now();
-      console.warn(`[dot.li perf] Loading fetch chunk... (${elapsed()})`);
-      const { fetchArchive, destroyHelia } = await import("./fetch");
-      console.warn(`[dot.li perf] Fetch chunk loaded (${elapsed()})`);
-      destroyHeliaFn = destroyHelia;
-      const heliaWait = performance.now();
-      await heliaWarmup;
-      console.warn(
-        `[dot.li perf] Helia P2P ready (waited ${dur(heliaWait)}, ${elapsed()})`,
-      );
-      const result = await fetchArchive(cid, showStatus);
-      performance.mark("dotli:fetch:end");
-      console.warn(
-        `[dot.li perf] Content fetched (${dur(fetchStart)}, ${elapsed()}) → ${result.type}`,
-      );
-
-      // Step 3: Render in sandboxed iframe
-      showStatus("Rendering...");
-      performance.mark("dotli:render:start");
-      const renderStart = performance.now();
-      const { renderArchive, renderContent } = await renderChunkPromise;
-      if (result.type === "archive") {
-        await renderArchive(result.files, label, cid);
-      } else {
-        await renderContent(result.content, label);
-      }
-      performance.mark("dotli:render:end");
-      console.warn(
-        `[dot.li perf] Render done (${dur(renderStart)}, ${elapsed()})`,
-      );
-    }
     performance.mark("dotli:main:end");
     console.warn(`[dot.li perf] === TOTAL: ${dur(T0)} ===`);
   } catch (err) {

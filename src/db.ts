@@ -97,7 +97,9 @@ export function getDb(): Promise<IDBDatabase> {
         dbPromise = null;
       };
     })
-    .catch(Function.prototype as () => void);
+    .catch(() => {
+      /* fire-and-forget */
+    });
 
   return dbPromise;
 }

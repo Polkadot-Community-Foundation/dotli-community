@@ -8,7 +8,7 @@ import { getPaseoChainSpec, getAssetHubPaseoChainSpec } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 
-import { getSmoldot, getRelayChain } from "./resolve";
+import { getSmoldot, getRelayChain } from "./smoldot";
 
 // Well-known genesis hashes (Paseo testnet)
 const PASEO_RELAY =

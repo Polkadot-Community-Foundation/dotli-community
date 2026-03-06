@@ -20,7 +20,7 @@ export function showStatus(message: string): void {
  */
 export function showError(title: string, detail: string): void {
   app.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 40px);font-family:system-ui,sans-serif;background:#0a0a0a;color:#e0e0e0;">
+    <div style="display:flex;align-items:center;justify-content:center;min-height:calc(100dvh - 40px);font-family:system-ui,sans-serif;background:#0a0a0a;color:#e0e0e0;">
       <div style="max-width:480px;padding:2rem;text-align:center;">
         <h1 style="font-size:1.5rem;color:#fff;margin-bottom:0.75rem;">${title}</h1>
         <p style="color:#888;line-height:1.6;">${detail}</p>
@@ -39,7 +39,7 @@ export function showError(title: string, detail: string): void {
  */
 export function showLanding(): void {
   app.innerHTML = `
-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 40px);font-family:system-ui,sans-serif;background:#0a0a0a;color:#e0e0e0;padding:2rem;">
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100dvh - 40px);font-family:system-ui,sans-serif;background:#0a0a0a;color:#e0e0e0;padding:2rem;">
       <div style="text-align:center;max-width:520px;">
         <h1 style="font-size:2.8rem;font-weight:700;color:#fff;letter-spacing:-0.03em;margin-bottom:0.5rem;">
           dot<span style="color:#555;">.li</span>

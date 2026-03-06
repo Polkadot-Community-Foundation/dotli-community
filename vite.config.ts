@@ -169,6 +169,10 @@ export default defineConfig({
     preloadCriticalAssets(),
     buildServiceWorker(),
   ],
+  build: {
+    target: "esnext",
+    modulePreload: { polyfill: false },
+  },
   server: {
     headers: {
       // Allow the SW at /src/sw.ts to control scope "/" in dev mode

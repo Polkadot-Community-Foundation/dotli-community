@@ -13,13 +13,26 @@
 import paseoUrl from "./paseo.json?url";
 import assetHubPaseoUrl from "./asset-hub-paseo.json?url";
 
-const paseoPromise = fetch(paseoUrl).then((r) => r.text());
-const assetHubPromise = fetch(assetHubPaseoUrl).then((r) => r.text());
+// Lazy getters that retry on failure instead of caching a rejected promise.
+let paseoPromise: Promise<string> | null = null;
+let assetHubPromise: Promise<string> | null = null;
 
 export function getPaseoChainSpec(): Promise<string> {
+  if (paseoPromise === null) {
+    paseoPromise = fetch(paseoUrl).then((r) => r.text());
+    paseoPromise.catch(() => {
+      paseoPromise = null;
+    });
+  }
   return paseoPromise;
 }
 
 export function getAssetHubPaseoChainSpec(): Promise<string> {
+  if (assetHubPromise === null) {
+    assetHubPromise = fetch(assetHubPaseoUrl).then((r) => r.text());
+    assetHubPromise.catch(() => {
+      assetHubPromise = null;
+    });
+  }
   return assetHubPromise;
 }

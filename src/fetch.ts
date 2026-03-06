@@ -9,13 +9,13 @@ function dur(start: number): string {
   return `${(performance.now() - start).toFixed(0)}ms`;
 }
 
+import { TIMEOUTS } from "./config";
 import { createHelia, type Helia } from "helia";
 import { bitswap, trustlessGateway } from "@helia/block-brokers";
 import { httpGatewayRouting } from "@helia/routers";
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
-import { identify, identifyPush } from "@libp2p/identify";
-import { ping } from "@libp2p/ping";
+import { identify } from "@libp2p/identify";
 import { webSockets } from "@libp2p/websockets";
 import { unixfs } from "@helia/unixfs";
 import { CID } from "multiformats/cid";
@@ -74,8 +74,6 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
       peerDiscovery: [],
       services: {
         identify: identify(),
-        identifyPush: identifyPush(),
-        ping: ping(),
       },
       connectionGater: {
         denyDialMultiaddr: (maAddr) => {
@@ -207,21 +205,44 @@ async function fetchViaP2P(
     onStatus?.("Fetching directory via P2P...");
     const files: ArchiveFiles = {};
 
-    async function walkDir(dirCid: CID, prefix: string): Promise<void> {
+    // Collect all entries first, then fetch in parallel with concurrency limit
+    const CONCURRENCY = 6;
+    interface DirEntry {
+      cid: CID;
+      path: string;
+    }
+
+    async function collectEntries(
+      dirCid: CID,
+      prefix: string,
+    ): Promise<DirEntry[]> {
+      const entries: DirEntry[] = [];
       for await (const entry of fs.ls(dirCid, { signal })) {
         const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-        try {
-          files[path] = await collectCat(fs, entry.cid, signal);
-        } catch (catErr) {
-          // If cat fails with "not a file", it's a subdirectory — recurse
-          if (
-            catErr instanceof Error &&
-            catErr.message.includes("not a file")
-          ) {
-            await walkDir(entry.cid, path);
+        entries.push({ cid: entry.cid, path });
+      }
+      return entries;
+    }
+
+    async function walkDir(dirCid: CID, prefix: string): Promise<void> {
+      const entries = await collectEntries(dirCid, prefix);
+      let i = 0;
+      async function next(): Promise<void> {
+        while (i < entries.length) {
+          const entry = entries[i++];
+          try {
+            files[entry.path] = await collectCat(fs, entry.cid, signal);
+          } catch (catErr) {
+            if (
+              catErr instanceof Error &&
+              catErr.message.includes("not a file")
+            ) {
+              await walkDir(entry.cid, entry.path);
+            }
           }
         }
       }
+      await Promise.all(Array.from({ length: CONCURRENCY }, () => next()));
     }
 
     await walkDir(cid, "");
@@ -293,7 +314,7 @@ export async function fetchArchive(
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
-    }, 60_000);
+    }, TIMEOUTS.P2P_FETCH);
     try {
       const result = await fetchViaP2P(cidString, onStatus, controller.signal);
       clearTimeout(timer);

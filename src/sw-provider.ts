@@ -6,6 +6,7 @@
 
 import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 import { getSyncProvider } from "@polkadot-api/json-rpc-provider-proxy";
+import { TIMEOUTS } from "./config";
 
 /**
  * Message types for main thread ↔ SW smoldot communication.
@@ -51,7 +52,7 @@ export async function isSwSmoldotReady(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const timeout = setTimeout(() => {
       resolve(false);
-    }, 500);
+    }, TIMEOUTS.SW_SMOLDOT_READY);
 
     const channel = new MessageChannel();
     channel.port1.onmessage = (evt: MessageEvent): void => {
@@ -88,7 +89,7 @@ export function getSwSmoldotProvider(): JsonRpcProvider {
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error("SW smoldot connection timeout"));
-      }, 30_000);
+      }, TIMEOUTS.SW_SMOLDOT_CONNECT);
 
       channel.port1.onmessage = (evt: MessageEvent): void => {
         const data = evt.data as { type: string } | null;

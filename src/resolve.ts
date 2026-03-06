@@ -4,118 +4,31 @@
 // calls the dotNS contracts through the Revive runtime API,
 // and returns the IPFS CID associated with a .dot name.
 
-import { startFromWorker } from "polkadot-api/smoldot/from-worker";
-import SmWorker from "polkadot-api/smoldot/worker?worker";
-import { getPaseoChainSpec, getAssetHubPaseoChainSpec } from "./chain-specs";
+import { getAssetHubPaseoChainSpec } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { isSwSmoldotReady, getSwSmoldotProvider } from "./sw-provider";
 import { Binary } from "polkadot-api";
 import {
-  decode as decodeContentHash,
-  getCodec,
-} from "@ensdomains/content-hash";
-import {
   CONTRACTS,
   DRY_RUN_WEIGHT_LIMIT,
   DRY_RUN_STORAGE_LIMIT,
   DUMMY_ORIGIN,
+  TIMEOUTS,
 } from "./config";
 import {
   namehash,
   encodeFunctionCall,
   decodeBytes,
   decodeAddress,
+  decodeIpfsContenthash,
 } from "./abi";
+import { dur } from "./perf";
+import { getSmoldot, getRelayChain, extractAndSaveRelayDb } from "./smoldot";
 
-function dur(start: number): string {
-  return `${(performance.now() - start).toFixed(0)}ms`;
-}
+export { getSmoldot, getRelayChain } from "./smoldot";
 
 export type StatusCallback = (status: string) => void;
-
-// ── Smoldot database persistence (IndexedDB) ────────────────
-// Persisting the relay chain DB lets smoldot resume from its last
-// known state instead of syncing from the bundled lightSyncState,
-// reducing sync time from ~10s to ~1-3s on revisits.
-// Uses the shared "dotli" database (src/db.ts).
-
-import { loadChainDb, saveChainDb } from "./db";
-
-type SmoldotChain = Awaited<
-  ReturnType<ReturnType<typeof startFromWorker>["addChain"]>
->;
-
-let dbSaveId = 0;
-
-/**
- * Extract the relay chain database via JSON-RPC and save to IndexedDB.
- * The relay chain's JSON-RPC is free (not consumed by any provider).
- */
-async function extractAndSaveRelayDb(relayChain: SmoldotChain): Promise<void> {
-  const id = ++dbSaveId;
-  try {
-    relayChain.sendJsonRpc(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id,
-        method: "chainHead_unstable_finalizedDatabase",
-        params: [1_000_000],
-      }),
-    );
-    const raw = await relayChain.nextJsonRpcResponse();
-    const resp = JSON.parse(raw) as { id?: number; result?: string };
-    if (resp.id === id && typeof resp.result === "string") {
-      await saveChainDb("paseo", resp.result);
-      console.warn(
-        `[dot.li resolve] Saved relay chain DB (${String(Math.round(resp.result.length / 1024))} KB)`,
-      );
-    }
-  } catch {
-    // Non-critical — DB persistence failure doesn't affect functionality
-  }
-}
-
-// Shared smoldot instance and relay chain — reused by chain provider factory
-let smoldotInstance: ReturnType<typeof startFromWorker> | null = null;
-let relayChainPromise: Promise<
-  Awaited<ReturnType<ReturnType<typeof startFromWorker>["addChain"]>>
-> | null = null;
-
-/**
- * Get or create the shared smoldot instance.
- */
-export function getSmoldot(): ReturnType<typeof startFromWorker> {
-  smoldotInstance ??= startFromWorker(new SmWorker(), {
-    maxLogLevel: import.meta.env.DEV ? 3 : 1,
-  });
-  return smoldotInstance;
-}
-
-/**
- * Get or create the Paseo relay chain (needed as potentialRelayChain for parachains).
- * Restores from IndexedDB-persisted database if available, dramatically
- * reducing sync time on revisits (~10s → ~1-3s).
- */
-export function getRelayChain(): Promise<
-  Awaited<ReturnType<ReturnType<typeof startFromWorker>["addChain"]>>
-> {
-  relayChainPromise ??= Promise.all([
-    loadChainDb("paseo"),
-    getPaseoChainSpec(),
-  ]).then(([dbContent, chainSpec]) => {
-    if (dbContent !== undefined) {
-      console.warn(
-        `[dot.li resolve] Restored relay chain DB (${String(Math.round(dbContent.length / 1024))} KB)`,
-      );
-    }
-    return getSmoldot().addChain({
-      chainSpec,
-      databaseContent: dbContent,
-    });
-  });
-  return relayChainPromise;
-}
 
 let clientInstance: PolkadotClient | null = null;
 let apiInstance: ReturnType<PolkadotClient["getUnsafeApi"]> | null = null;
@@ -170,7 +83,14 @@ async function trySwSmoldot(
     clientInstance = createClient(provider);
 
     onStatus?.("Syncing with Asset Hub Paseo...");
-    await clientInstance.getFinalizedBlock();
+    await Promise.race([
+      clientInstance.getFinalizedBlock(),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => {
+          reject(new Error("SW smoldot sync timeout"));
+        }, TIMEOUTS.SW_SMOLDOT_SYNC),
+      ),
+    ]);
     performance.mark("dotli:smoldot:sw:end");
     console.warn(
       `[dot.li resolve] SW smoldot: synced to finalized block (${dur(swStart)})`,
@@ -251,13 +171,9 @@ async function ensureClient(
   onStatus?.("Connected to Asset Hub Paseo");
 
   // Persist relay chain DB for future fast syncs (yield to rendering first)
-  if (typeof requestIdleCallback === "function") {
-    requestIdleCallback(() => {
-      void extractAndSaveRelayDb(relayChain);
-    });
-  } else {
+  requestIdleCallback(() => {
     void extractAndSaveRelayDb(relayChain);
-  }
+  });
 
   return apiInstance;
 }
@@ -349,29 +265,6 @@ async function reviveCall(
 }
 
 /**
- * Decode contenthash bytes (from the DotnsContentResolver) into an IPFS CID string.
- * Uses @ensdomains/content-hash (same as deploy-to-dotns CLI).
- */
-function decodeIpfsContenthash(contenthashHex: string): string | null {
-  const hex = contenthashHex.startsWith("0x")
-    ? contenthashHex.slice(2)
-    : contenthashHex;
-  if (!hex || hex === "0" || hex.length < 4) {
-    return null;
-  }
-
-  try {
-    const codec = getCodec(hex);
-    if (codec !== "ipfs") {
-      return null;
-    }
-    return decodeContentHash(hex);
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Resolve a .dot name to an IPFS CID.
  *
  * @param label - The domain label (e.g., "myapp" for "myapp.dot")
@@ -395,11 +288,16 @@ export async function resolveDotName(
   const contentCalldata = encodeFunctionCall("contenthash", node);
 
   const contentStart = performance.now();
-  const contentResult = await reviveCall(
-    api,
-    CONTRACTS.DOTNS_CONTENT_RESOLVER,
-    contentCalldata,
-  );
+  let contentResult: `0x${string}`;
+  try {
+    contentResult = await reviveCall(
+      api,
+      CONTRACTS.DOTNS_CONTENT_RESOLVER,
+      contentCalldata,
+    );
+  } catch {
+    return null;
+  }
 
   const contenthashBytes = decodeBytes(contentResult);
   console.warn(`[dot.li resolve] contenthash() dry-run: ${dur(contentStart)}`);

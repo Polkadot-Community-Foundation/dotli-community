@@ -19,13 +19,15 @@ function getElement(id: string): HTMLElement {
   return el;
 }
 
-const authButton = getElement("auth-button");
-const modalBackdrop = getElement("auth-modal-backdrop");
-const modalQr = getElement("auth-modal-qr");
-const modalClose = getElement("auth-modal-close");
-const userPopover = getElement("user-popover");
-const userPopoverUsername = getElement("user-popover-username");
-const userPopoverDisconnect = getElement("user-popover-disconnect");
+// DOM refs are resolved lazily inside initTopBar() to avoid throwing
+// at module scope if the HTML IDs change or the script loads early.
+let authButton: HTMLElement;
+let modalBackdrop: HTMLElement;
+let modalQr: HTMLElement;
+let modalClose: HTMLElement;
+let userPopover: HTMLElement;
+let userPopoverUsername: HTMLElement;
+let userPopoverDisconnect: HTMLElement;
 
 // Hexagon SVG for the logged-out state
 const HEXAGON_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
@@ -68,6 +70,14 @@ async function ensureAuth(): Promise<AuthModule> {
 // ── Init ───────────────────────────────────────────────────
 
 export function initTopBar(): void {
+  authButton = getElement("auth-button");
+  modalBackdrop = getElement("auth-modal-backdrop");
+  modalQr = getElement("auth-modal-qr");
+  modalClose = getElement("auth-modal-close");
+  userPopover = getElement("user-popover");
+  userPopoverUsername = getElement("user-popover-username");
+  userPopoverDisconnect = getElement("user-popover-disconnect");
+
   // Auth button: opens modal (logged out) or popover (logged in)
   authButton.addEventListener("click", handleAuthButtonClick);
 
@@ -98,9 +108,12 @@ export function initTopBar(): void {
   // Show default logged-out state
   renderLoggedOut();
 
-  // If there's a persisted session, lazy-load auth to restore it
+  // If there's a persisted session, lazy-load auth to restore it.
+  // Deferred to idle to avoid competing with critical-path bandwidth.
   if (localStorage.getItem("dot.li") !== null) {
-    void ensureAuth();
+    requestIdleCallback(() => {
+      void ensureAuth();
+    });
   }
 }
 

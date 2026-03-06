@@ -9,6 +9,7 @@
 // cold-start sync on subsequent page loads.
 
 import type { Client, Chain } from "smoldot";
+import { TIMEOUTS, FINALIZED_DB_MAX_SIZE } from "./config";
 
 // ── IndexedDB persistence (shared with resolve.ts via db.ts) ──
 
@@ -36,7 +37,7 @@ async function extractAndSaveRelayDb(): Promise<void> {
         jsonrpc: "2.0",
         id,
         method: "chainHead_unstable_finalizedDatabase",
-        params: [1_000_000],
+        params: [FINALIZED_DB_MAX_SIZE],
       }),
     );
     const raw = await relayChain.nextJsonRpcResponse();
@@ -106,12 +107,12 @@ async function initSmoldot(): Promise<void> {
   // Wait a bit for the chain to sync before extracting
   setTimeout(() => {
     void extractAndSaveRelayDb();
-  }, 5_000);
+  }, TIMEOUTS.RELAY_DB_FIRST_SAVE);
 
   // Also save periodically while the SW is alive
   setInterval(() => {
     void extractAndSaveRelayDb();
-  }, 60_000);
+  }, TIMEOUTS.RELAY_DB_SAVE_INTERVAL);
 }
 
 /**

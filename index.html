@@ -3,7 +3,8 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>dot.li</title>
+        <title>dot.li - The decentralized web, in your browser</title>
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <script>
             // Pre-open the shared IndexedDB during HTML parse so it's ready
             // before main.ts executes. Overlaps IDB open (~10-50ms) with
@@ -541,6 +542,18 @@
                     opacity 0.3s ease,
                     transform 0.3s ease;
             }
+            @media (max-width: 480px) {
+                .toast-card {
+                    right: auto;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    width: calc(100% - 32px);
+                    max-width: none;
+                }
+                .toast-card.hidden {
+                    transform: translateX(-50%) translateY(12px);
+                }
+            }
             .toast-card.hidden {
                 opacity: 0;
                 transform: translateY(12px);
@@ -630,7 +643,7 @@
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                min-height: calc(100vh - 40px);
+                min-height: calc(100dvh - 40px);
                 margin-top: 40px;
                 text-align: center;
             }
@@ -794,7 +807,8 @@
         <script>
             (function () {
                 var banner = document.getElementById("desktop-banner");
-                if (localStorage.getItem("desktop-banner-dismissed")) {
+                var dismissed = localStorage.getItem("desktop-banner-dismissed");
+                if (dismissed && Math.random() > 0.05) {
                     banner.remove();
                 } else {
                     document

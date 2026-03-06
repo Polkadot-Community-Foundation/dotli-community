@@ -9,7 +9,9 @@ import type { ArchiveFiles } from "./archive";
 // Eagerly load the container bridge chunk — starts downloading when
 // the render chunk is imported, so it's ready by the time we need it.
 const containerChunkPromise = import("./container");
-void containerChunkPromise.catch(Function.prototype as () => void);
+void containerChunkPromise.catch(() => {
+  /* fire-and-forget */
+});
 
 const app = document.getElementById("app") ?? document.body;
 
@@ -139,6 +141,11 @@ export function prepareIframe(): void {
     return;
   }
   const iframe = document.createElement("iframe");
+  // TODO(security): allow-scripts + allow-same-origin together allows sandbox
+  // escape. This is intentional — the container bridge (container.ts) needs
+  // same-origin access to communicate with the parent frame via postMessage
+  // and to access SW-served resources. Without allow-same-origin the SW cannot
+  // intercept iframe fetches, breaking archive serving entirely.
   iframe.sandbox.add("allow-scripts", "allow-same-origin");
   iframe.style.cssText =
     "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;visibility:hidden;";
@@ -171,6 +178,32 @@ async function renderIframe(url: string, label: string): Promise<void> {
 
   const { setupContainer } = await containerChunkPromise;
   currentDispose = setupContainer(iframe, url, label);
+
+  // Mirror the iframe's document.title to the parent page.
+  // SPAs change titles dynamically, so we observe <title> mutations.
+  const fallbackTitle = `${label}.dot`;
+  iframe.addEventListener("load", () => {
+    try {
+      const doc = iframe.contentDocument;
+      if (!doc) {
+        return;
+      }
+      const applyTitle = (): void => {
+        document.title = doc.title || fallbackTitle;
+      };
+      applyTitle();
+      const titleEl = doc.querySelector("title");
+      if (titleEl) {
+        new MutationObserver(applyTitle).observe(titleEl, {
+          childList: true,
+          characterData: true,
+          subtree: true,
+        });
+      }
+    } catch {
+      document.title = fallbackTitle;
+    }
+  });
 }
 
 function cleanup(): void {

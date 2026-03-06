@@ -38,3 +38,36 @@ export const IPFS_GATEWAY = "https://ipfs.dotspark.app";
 // --- Asset Hub Paseo public RPC (for fast gateway CID resolution) ---
 
 export const ASSET_HUB_PASEO_RPC = ["wss://sys.ibp.network/asset-hub-paseo"];
+
+// --- SW archive cache ---
+
+/** Max number of domain archives kept in the SW in-memory LRU cache. */
+export const SW_ARCHIVE_CACHE_MAX = 8;
+
+// --- Timeouts (ms) ---
+
+export const TIMEOUTS = {
+  /** SW cache lookup before falling through */
+  SW_CACHE_LOOKUP: 3_000,
+  /** Waiting for SW controllerchange after registration */
+  SW_READY: 10_000,
+  /** SW smoldot ready check */
+  SW_SMOLDOT_READY: 500,
+  /** SW smoldot connect handshake */
+  SW_SMOLDOT_CONNECT: 30_000,
+  /** P2P fetch abort */
+  P2P_FETCH: 60_000,
+  /** Gateway CID resolution */
+  GATEWAY_RESOLVE: 6_000,
+  /** Initial relay DB save after smoldot starts */
+  RELAY_DB_FIRST_SAVE: 5_000,
+  /** Periodic relay DB save interval */
+  RELAY_DB_SAVE_INTERVAL: 60_000,
+  /** Timeout for SW smoldot getFinalizedBlock before falling back */
+  SW_SMOLDOT_SYNC: 5_000,
+  /** Delay before starting smoldot in SW activate */
+  SW_SMOLDOT_INIT_DELAY: 100,
+} as const;
+
+/** Max bytes for `chainHead_unstable_finalizedDatabase` RPC param. */
+export const FINALIZED_DB_MAX_SIZE = 1_000_000;

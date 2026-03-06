@@ -11,46 +11,10 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { handleConnect, handleStatus, ensureSmoldot } from "./sw-smoldot";
+import { getMimeType } from "./mime";
+import { SW_ARCHIVE_CACHE_MAX, TIMEOUTS } from "./config";
 
 // ── Archive Serving (ported from public/sw.js) ───────────────
-
-const MIME_TYPES: Record<string, string> = {
-  html: "text/html",
-  htm: "text/html",
-  css: "text/css",
-  js: "application/javascript",
-  mjs: "application/javascript",
-  json: "application/json",
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  svg: "image/svg+xml",
-  ico: "image/x-icon",
-  webp: "image/webp",
-  woff: "font/woff",
-  woff2: "font/woff2",
-  ttf: "font/ttf",
-  otf: "font/otf",
-  wasm: "application/wasm",
-  mp4: "video/mp4",
-  webm: "video/webm",
-  mp3: "audio/mpeg",
-  wav: "audio/wav",
-  ogg: "audio/ogg",
-  xml: "application/xml",
-  txt: "text/plain",
-  pdf: "application/pdf",
-};
-
-function getMimeType(path: string): string {
-  const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1) {
-    return "application/octet-stream";
-  }
-  const ext = path.substring(lastDot + 1).toLowerCase();
-  return MIME_TYPES[ext] ?? "application/octet-stream";
-}
 
 function hasExtension(path: string): boolean {
   const lastSlash = path.lastIndexOf("/");
@@ -153,8 +117,32 @@ let archivePacked: ArrayBuffer | null = null;
 let archiveFileIndex: Map<string, { o: number; l: number }> | null = null;
 let archiveLegacy: Record<string, ArrayBuffer | undefined> | null = null;
 
-// In-memory archive cache keyed by domain (populated lazily on lookup)
+// In-memory archive cache keyed by domain (populated lazily on lookup).
+// LRU eviction: Map iteration order tracks insertion; re-inserting on access
+// moves the entry to the end, so the first key is always the least-recently-used.
 const archiveCache = new Map<string, ArchiveEntry>();
+
+function archiveCacheSet(key: string, value: ArchiveEntry): void {
+  archiveCache.delete(key);
+  archiveCache.set(key, value);
+  if (archiveCache.size > SW_ARCHIVE_CACHE_MAX) {
+    const oldest = archiveCache.keys().next().value;
+    if (oldest !== undefined) {
+      archiveCache.delete(oldest);
+    }
+  }
+}
+
+function archiveCacheGet(key: string): ArchiveEntry | undefined {
+  const entry = archiveCache.get(key);
+  if (entry === undefined) {
+    return undefined;
+  }
+  // Move to end (most-recently-used)
+  archiveCache.delete(key);
+  archiveCache.set(key, entry);
+  return entry;
+}
 
 function hasArchive(): boolean {
   return archivePacked !== null || archiveLegacy !== null;
@@ -187,8 +175,10 @@ self.addEventListener("activate", (event) => {
   // production builds inline everything so this works fine.
   if (!import.meta.env.DEV) {
     setTimeout(() => {
-      void ensureSmoldot().catch(Function.prototype as () => void);
-    }, 100);
+      void ensureSmoldot().catch(() => {
+        /* fire-and-forget */
+      });
+    }, TIMEOUTS.SW_SMOLDOT_INIT_DELAY);
   }
 });
 
@@ -241,13 +231,13 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
             files[entry.p] = p.slice(entry.o, entry.o + entry.l);
           }
           const archiveEntry = { domain: d, cid: c, files };
-          archiveCache.set(d, archiveEntry);
+          archiveCacheSet(d, archiveEntry);
           void saveArchiveToDB(archiveEntry);
         }, 0);
       } else {
         const files = (archiveLegacy ?? {}) as Record<string, ArrayBuffer>;
         const entry = { domain, cid, files };
-        archiveCache.set(domain, entry);
+        archiveCacheSet(domain, entry);
         void saveArchiveToDB(entry);
       }
     }
@@ -259,7 +249,7 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
 
   if (data.type === "SW_CACHE_LOOKUP_EVENT") {
     const domain = data.domain as string;
-    const cached = archiveCache.get(domain);
+    const cached = archiveCacheGet(domain);
     if (cached !== undefined) {
       for (const port of event.ports) {
         port.postMessage({
@@ -273,7 +263,7 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
     void loadArchiveFromDBByDomain(domain)
       .then((entry) => {
         if (entry !== null && entry.cid !== "" && entry.files !== undefined) {
-          archiveCache.set(domain, entry);
+          archiveCacheSet(domain, entry);
         }
         for (const port of event.ports) {
           port.postMessage({

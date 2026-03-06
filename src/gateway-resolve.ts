@@ -9,38 +9,23 @@
 //
 // To refresh metadata: `npm run update-metadata`
 
-import { CONTRACTS, ASSET_HUB_PASEO_RPC, DUMMY_ORIGIN } from "./config";
-import { namehash, encodeFunctionCall, decodeBytes } from "./abi";
 import {
-  decode as decodeContentHash,
-  getCodec,
-} from "@ensdomains/content-hash";
+  CONTRACTS,
+  ASSET_HUB_PASEO_RPC,
+  DUMMY_ORIGIN,
+  TIMEOUTS,
+} from "./config";
+import {
+  namehash,
+  encodeFunctionCall,
+  decodeBytes,
+  decodeIpfsContenthash,
+} from "./abi";
 import {
   encodeReviveApiCall,
   decodeContractResult,
 } from "./codegen/revive-api";
-
-function dur(start: number): string {
-  return `${(performance.now() - start).toFixed(0)}ms`;
-}
-
-const GATEWAY_TIMEOUT_MS = 6_000;
-
-/** Decode contenthash bytes into an IPFS CID string. */
-function decodeIpfsContenthash(raw: string): string | null {
-  const hex = raw.startsWith("0x") ? raw.slice(2) : raw;
-  if (!hex || hex === "0" || hex.length < 4) {
-    return null;
-  }
-  try {
-    if (getCodec(hex) !== "ipfs") {
-      return null;
-    }
-    return decodeContentHash(hex) || null;
-  } catch {
-    return null;
-  }
-}
+import { dur } from "./perf";
 
 // ── Gateway resolution via HTTP state_call ──────────────────
 
@@ -82,7 +67,7 @@ export async function resolveViaGateway(label: string): Promise<string | null> {
           method: "state_call",
           params: ["ReviveApi_call", params],
         }),
-        signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+        signal: AbortSignal.timeout(TIMEOUTS.GATEWAY_RESOLVE),
       });
 
       if (!response.ok) {
