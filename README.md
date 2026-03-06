@@ -36,8 +36,8 @@ The topbar is hidden on the landing page and only appears when viewing an app.
 
 ## What it does
 
-1. **Resolves** `.dot` names via an in-browser [smoldot](https://github.com/nickelc/smoldot) light client connected to Asset Hub Paseo, querying dotNS contracts through the Revive EVM pallet.
-2. **Fetches** content from the [Bulletin Chain](https://github.com/nickelc/polkadot-bulletin-chain) via [Helia](https://github.com/ipfs/helia) P2P (bitswap), with IPFS gateway fallback.
+1. **Resolves** `.dot` names via an in-browser [smoldot](https://github.com/smol-dot/smoldot) light client connected to Asset Hub Paseo, querying dotNS contracts through the Revive EVM pallet.
+2. **Fetches** content from the [Bulletin Chain](https://github.com/paritytech/polkadot-bulletin-chain) via [Helia](https://github.com/ipfs/helia) P2P (bitswap), with IPFS gateway fallback.
 3. **Renders** the content in a sandboxed iframe with a full host-container bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage — all through postMessage.
 
 ```
