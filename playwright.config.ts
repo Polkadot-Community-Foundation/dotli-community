@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests",
-  timeout: 600_000, // 10 min — smoldot sync can be slow
+  timeout: 900_000, // 15 min — smoldot sync can be slow
   retries: 0,
   use: {
     baseURL: "http://mytestapp.localhost:5173",
