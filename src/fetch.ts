@@ -140,6 +140,28 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
 }
 
 /**
+ * Concatenate chunks from a UnixFS cat stream into a single Uint8Array.
+ */
+async function collectCat(
+  fs: ReturnType<typeof unixfs>,
+  cid: CID,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of fs.cat(cid, { signal })) {
+    chunks.push(chunk);
+  }
+  const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
+}
+
+/**
  * Fetch content via Helia P2P from Bulletin Chain.
  * Helia internally races bitswap (P2P) vs trustless gateway (HTTP) — both
  * are hash-verified. The trustless gateway provides fast fallback when
@@ -149,32 +171,64 @@ async function fetchViaP2P(
   cidString: string,
   onStatus?: StatusCallback,
   signal?: AbortSignal,
-): Promise<Uint8Array> {
+): Promise<FetchResult> {
   const helia = await ensureHelia(onStatus);
   const cid = CID.parse(cidString);
 
   onStatus?.("Fetching content via P2P...");
   const p2pStart = performance.now();
 
-  // For dag-pb (UnixFS) content, use the unixfs accessor
+  // For dag-pb (UnixFS) content — could be a file or directory
   if (cid.code === 0x70) {
     console.warn(`[dot.li fetch] P2P: fetching dag-pb (UnixFS) CID...`);
     const fs = unixfs(helia);
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of fs.cat(cid, { signal })) {
-      chunks.push(chunk);
+
+    // Try as file first
+    try {
+      const content = await collectCat(fs, cid, signal);
+      console.warn(
+        `[dot.li fetch] P2P: fetched file ${String(Math.round(content.length / 1024))} KB in ${dur(p2pStart)}`,
+      );
+      // Content may be a CAR archive (e.g. deployed via web-hosting tooling)
+      if (isCarFile(content)) {
+        console.warn(`[dot.li fetch] P2P: content is a CAR file, parsing...`);
+        const files = await parseIpfsResponse(content);
+        return toFetchResult(files);
+      }
+      return { type: "single", content };
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.includes("not a file")) {
+        throw err;
+      }
     }
-    const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      result.set(chunk, offset);
-      offset += chunk.length;
+
+    // It's a directory — walk it recursively with ls + cat
+    console.warn(`[dot.li fetch] P2P: CID is a directory, walking entries...`);
+    onStatus?.("Fetching directory via P2P...");
+    const files: ArchiveFiles = {};
+
+    async function walkDir(dirCid: CID, prefix: string): Promise<void> {
+      for await (const entry of fs.ls(dirCid, { signal })) {
+        const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+        try {
+          files[path] = await collectCat(fs, entry.cid, signal);
+        } catch (catErr) {
+          // If cat fails with "not a file", it's a subdirectory — recurse
+          if (
+            catErr instanceof Error &&
+            catErr.message.includes("not a file")
+          ) {
+            await walkDir(entry.cid, path);
+          }
+        }
+      }
     }
+
+    await walkDir(cid, "");
     console.warn(
-      `[dot.li fetch] P2P: fetched ${String(Math.round(totalLength / 1024))} KB in ${dur(p2pStart)}`,
+      `[dot.li fetch] P2P: fetched directory (${String(Object.keys(files).length)} files) in ${dur(p2pStart)}`,
     );
-    return result;
+    return toFetchResult(files);
   }
 
   // For raw blocks, fetch directly from blockstore
@@ -184,54 +238,10 @@ async function fetchViaP2P(
     console.warn(
       `[dot.li fetch] P2P: fetched ${String(Math.round(blockData.length / 1024))} KB in ${dur(p2pStart)}`,
     );
-    return blockData;
+    return { type: "single", content: blockData };
   }
 
   throw new Error(`Unexpected block data type for CID ${cidString}`);
-}
-
-/**
- * Fetch content via IPFS gateway (HTTP fallback).
- */
-async function fetchViaGateway(
-  cidString: string,
-  onStatus?: StatusCallback,
-): Promise<Uint8Array> {
-  const url = `${IPFS_GATEWAY}/ipfs/${cidString}`;
-  onStatus?.("Fetching content via IPFS gateway...");
-  const gwStart = performance.now();
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Gateway fetch failed: HTTP ${String(response.status)}`);
-  }
-
-  const buffer = await response.arrayBuffer();
-  console.warn(
-    `[dot.li fetch] Gateway: fetched ${String(Math.round(buffer.byteLength / 1024))} KB in ${dur(gwStart)}`,
-  );
-  return new Uint8Array(buffer);
-}
-
-/**
- * Fetch content by CID from Bulletin Chain.
- * Tries P2P first, falls back to IPFS gateway on failure.
- */
-export async function fetchContent(
-  cidString: string,
-  onStatus?: StatusCallback,
-): Promise<Uint8Array> {
-  // Try P2P first
-  try {
-    return await fetchViaP2P(cidString, onStatus);
-  } catch (p2pError) {
-    onStatus?.(
-      `P2P failed (${(p2pError as Error).message}), trying gateway...`,
-    );
-  }
-
-  // Fallback to gateway
-  return await fetchViaGateway(cidString, onStatus);
 }
 
 // ── Multi-file archive support ─────────────────────────────
@@ -270,79 +280,52 @@ async function fetchCarFromGateway(
 }
 
 /**
- * Fetch content by CID, supporting both single files and multi-file directories.
- *
- * Strategy:
- * 1. Fetch via P2P first (works for single files on Bulletin Chain)
- * 2. If the fetched content is a CAR file (directory), parse it into an archive
- * 3. If P2P fails, try gateway with ?format=car (returns directory as CAR)
- * 4. Parse whatever we get — parseIpfsResponse handles both CAR and raw content
+ * Fetch content by CID via P2P, with gateway fallback after 60s.
+ * Supports both single files and multi-file directories.
  */
 export async function fetchArchive(
   cidString: string,
   onStatus?: StatusCallback,
 ): Promise<FetchResult> {
-  // Try P2P with 15s timeout, then retry once without timeout
+  // Try P2P with 60s timeout
   try {
     performance.mark("dotli:fetch:p2p:start");
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
-    }, 15_000);
-    let content: Uint8Array;
+    }, 60_000);
     try {
-      content = await fetchViaP2P(cidString, onStatus, controller.signal);
+      const result = await fetchViaP2P(cidString, onStatus, controller.signal);
       clearTimeout(timer);
-    } catch (firstErr) {
+      performance.mark("dotli:fetch:p2p:end");
+      return result;
+    } catch (err) {
       clearTimeout(timer);
-      if (controller.signal.aborted) {
-        console.warn(
-          "[dot.li fetch] P2P: first attempt timed out (15s), retrying...",
-        );
-        onStatus?.("P2P timeout, retrying with more peers...");
-        content = await fetchViaP2P(cidString, onStatus);
-      } else {
-        throw firstErr;
+      performance.mark("dotli:fetch:p2p:end");
+      if (!controller.signal.aborted) {
+        throw err;
       }
+      console.warn(
+        "[dot.li fetch] P2P timed out (60s), falling back to gateway...",
+      );
+      onStatus?.("P2P timeout, trying gateway...");
     }
-    performance.mark("dotli:fetch:p2p:end");
-
-    if (isCarFile(content)) {
-      onStatus?.("Parsing archive...");
-      performance.mark("dotli:fetch:parse:start");
-      const files = await parseIpfsResponse(content);
-      performance.mark("dotli:fetch:parse:end");
-      return toFetchResult(files);
-    }
-
-    return { type: "single", content };
   } catch (p2pError) {
     performance.mark("dotli:fetch:p2p:end");
     onStatus?.(
-      `P2P fetch failed (${(p2pError as Error).message}), trying gateway...`,
+      `P2P failed (${(p2pError as Error).message}), trying gateway...`,
     );
   }
 
   // Gateway fallback — fetch as CAR archive
-  try {
-    performance.mark("dotli:fetch:gateway:start");
-    const carBuffer = await fetchCarFromGateway(cidString, onStatus);
-    performance.mark("dotli:fetch:gateway:end");
-    onStatus?.("Parsing content...");
-    performance.mark("dotli:fetch:parse:start");
-    const files = await parseIpfsResponse(carBuffer);
-    performance.mark("dotli:fetch:parse:end");
-    return toFetchResult(files);
-  } catch (carError) {
-    performance.mark("dotli:fetch:gateway:end");
-    onStatus?.(
-      `CAR fetch failed (${(carError as Error).message}), trying raw gateway...`,
-    );
-  }
-
-  // Last resort — raw gateway fetch
-  const content = await fetchViaGateway(cidString, onStatus);
-  return { type: "single", content };
+  performance.mark("dotli:fetch:gateway:start");
+  const carBuffer = await fetchCarFromGateway(cidString, onStatus);
+  performance.mark("dotli:fetch:gateway:end");
+  onStatus?.("Parsing content...");
+  performance.mark("dotli:fetch:parse:start");
+  const files = await parseIpfsResponse(carBuffer);
+  performance.mark("dotli:fetch:parse:end");
+  return toFetchResult(files);
 }
 
 /**
