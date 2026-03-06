@@ -167,7 +167,7 @@ function setShieldState(
 }
 
 /**
- * Show a banner when the on-chain CID has changed since the cached version.
+ * Show a toast when the on-chain CID has changed since the cached version.
  */
 function showUpdateBanner(): void {
   if (document.getElementById("dotli-update-banner")) {
@@ -175,12 +175,32 @@ function showUpdateBanner(): void {
   }
   const banner = document.createElement("div");
   banner.id = "dotli-update-banner";
-  banner.style.cssText =
-    "position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);z-index:9999;background:#1a1a2e;color:#e0e0e0;border:1px solid #333;border-radius:8px;padding:0.6rem 1rem;font-family:system-ui,sans-serif;font-size:0.82rem;display:flex;align-items:center;gap:0.6rem;box-shadow:0 4px 12px rgba(0,0,0,0.5);";
-  banner.innerHTML =
-    '<span>Content has been updated on-chain.</span><button style="background:#4ade80;color:#000;border:none;border-radius:4px;padding:0.3rem 0.7rem;font-size:0.78rem;cursor:pointer;font-weight:600;">Refresh</button>';
-  banner.querySelector("button")?.addEventListener("click", () => {
-    window.location.reload();
+  banner.className = "toast-card update-banner";
+  banner.innerHTML = `
+    <div class="toast-card-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10" />
+        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+      </svg>
+    </div>
+    <div class="toast-card-text">
+      <span class="toast-card-title">A new version is available</span>
+      <span class="toast-card-subtitle">Refresh to load the latest version</span>
+    </div>
+    <button class="update-banner-action">Refresh</button>
+    <button class="toast-card-close" aria-label="Dismiss">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18" />
+        <line x1="6" y1="6" x2="18" y2="18" />
+      </svg>
+    </button>`;
+  banner
+    .querySelector(".update-banner-action")
+    ?.addEventListener("click", () => {
+      window.location.reload();
+    });
+  banner.querySelector(".toast-card-close")?.addEventListener("click", () => {
+    banner.classList.add("hidden");
   });
   document.body.appendChild(banner);
 }

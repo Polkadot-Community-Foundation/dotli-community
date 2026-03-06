@@ -521,7 +521,7 @@
             }
 
             /* ── Desktop Banner ───────────────────────── */
-            .desktop-banner {
+            .toast-card {
                 position: fixed;
                 bottom: 20px;
                 right: 20px;
@@ -533,37 +533,38 @@
                 background: #fff;
                 border-radius: 10px;
                 box-shadow: 0 2px 20px rgba(0, 0, 0, 0.4);
-                max-width: 320px;
+                max-width: 380px;
+                font-family: system-ui, sans-serif;
                 opacity: 1;
                 transform: translateY(0);
                 transition:
                     opacity 0.3s ease,
                     transform 0.3s ease;
             }
-            .desktop-banner.hidden {
+            .toast-card.hidden {
                 opacity: 0;
                 transform: translateY(12px);
                 pointer-events: none;
             }
-            .desktop-banner-icon {
+            .toast-card-icon {
                 flex-shrink: 0;
                 width: 32px;
                 height: 32px;
-                background: #000;
                 border-radius: 8px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
             }
-            .desktop-banner-icon svg {
+            .toast-card-icon svg {
                 width: 16px;
                 height: 16px;
             }
-            .desktop-banner-text {
+            .toast-card-text {
                 flex: 1;
                 min-width: 0;
             }
-            .desktop-banner-text a {
+            .toast-card-title,
+            .toast-card-text a {
                 display: block;
                 font-size: 0.78rem;
                 font-weight: 500;
@@ -571,16 +572,17 @@
                 text-decoration: none;
                 line-height: 1.35;
             }
-            .desktop-banner-text a:hover {
+            .toast-card-text a:hover {
                 text-decoration: underline;
             }
-            .desktop-banner-text .subtitle {
+            .toast-card-subtitle {
+                display: block;
                 font-size: 0.68rem;
                 font-weight: 400;
                 color: #666;
                 margin-top: 1px;
             }
-            .desktop-banner-close {
+            .toast-card-close {
                 flex-shrink: 0;
                 width: 20px;
                 height: 20px;
@@ -597,9 +599,30 @@
                     background 0.15s;
                 padding: 0;
             }
-            .desktop-banner-close:hover {
+            .toast-card-close:hover {
                 color: #000;
                 background: #eee;
+            }
+            .desktop-banner .toast-card-icon {
+                background: #000;
+            }
+            .update-banner .toast-card-icon {
+                background: #000;
+            }
+            .update-banner-action {
+                flex-shrink: 0;
+                background: #000;
+                color: #fff;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 0.72rem;
+                font-weight: 600;
+                cursor: pointer;
+                transition: background 0.15s;
+            }
+            .update-banner-action:hover {
+                background: #222;
             }
 
             /* ── App Content ─────────────────────────── */
@@ -747,48 +770,22 @@
             </div>
         </div>
         <!-- Desktop Download Banner -->
-        <div class="desktop-banner" id="desktop-banner">
-            <div class="desktop-banner-icon">
-                <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#fff"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
+        <div class="toast-card desktop-banner" id="desktop-banner">
+            <div class="toast-card-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
                     <line x1="8" y1="21" x2="16" y2="21" />
                     <line x1="12" y1="17" x2="12" y2="21" />
                 </svg>
             </div>
-            <div class="desktop-banner-text">
-                <a
-                    href="https://polkadot.com/get-started/polkadot-for-desktop"
-                    target="_blank"
-                    rel="noopener"
-                >
+            <div class="toast-card-text">
+                <a href="https://polkadot.com/get-started/polkadot-for-desktop" target="_blank" rel="noopener">
                     Get Polkadot Desktop
-                    <span class="subtitle"
-                        >Full experience with native performance</span
-                    >
+                    <span class="toast-card-subtitle">Full experience with native performance</span>
                 </a>
             </div>
-            <button
-                class="desktop-banner-close"
-                id="desktop-banner-close"
-                aria-label="Dismiss"
-            >
-                <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
+            <button class="toast-card-close" id="desktop-banner-close" aria-label="Dismiss">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="18" y1="6" x2="6" y2="18" />
                     <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
