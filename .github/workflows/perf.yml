@@ -1,14 +1,11 @@
 name: Performance Tests
 on:
   push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
+    branches:
+      - main
   pull_request:
     paths-ignore:
       - '**.md'
-      - 'docs/**'
 
 permissions:
   contents: read

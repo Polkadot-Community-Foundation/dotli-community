@@ -1,0 +1,299 @@
+name: Bundle Size
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths-ignore:
+      - "**.md"
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+jobs:
+  # ── Main branch: build and store baseline sizes ─────────────
+  baseline:
+    name: Update Baseline
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build
+        run: bun run build
+
+      - name: Generate baseline sizes
+        run: |
+          # Strip content hashes from filenames: "fetch-CMRV9u5T.js" → "fetch.js"
+          strip_hash() {
+            echo "$1" | sed -E 's/-[A-Za-z0-9_-]{8}\./\./'
+          }
+
+          echo "{" > /tmp/bundle-baseline.json
+          first=true
+          while IFS= read -r file; do
+            rel="${file#dist/}"
+            name=$(strip_hash "$rel")
+            raw=$(stat --format=%s "$file")
+
+            br=$raw
+            [[ -f "${file}.br" ]] && br=$(stat --format=%s "${file}.br")
+
+            gz=$raw
+            [[ -f "${file}.gz" ]] && gz=$(stat --format=%s "${file}.gz")
+
+            $first || echo "," >> /tmp/bundle-baseline.json
+            first=false
+            printf '  "%s": {"raw": %d, "br": %d, "gz": %d}' "$name" "$raw" "$br" "$gz" >> /tmp/bundle-baseline.json
+          done < <(find dist -type f ! -name '*.br' ! -name '*.gz' | sort)
+          echo "" >> /tmp/bundle-baseline.json
+          echo "}" >> /tmp/bundle-baseline.json
+
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: bundle-size-baseline
+          path: /tmp/bundle-baseline.json
+          retention-days: 90
+          overwrite: true
+
+  # ── PR: build, compare against main, and comment ───────────
+  compare:
+    name: PR Bundle Size
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.sender.type != 'Bot'
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build
+        run: bun run build
+
+      - name: Download baseline from main
+        id: baseline
+        uses: dawidd6/action-download-artifact@v16
+        with:
+          name: bundle-size-baseline
+          workflow: bundle-size.yml
+          branch: main
+          path: /tmp/baseline
+          if_no_artifact_found: warn
+
+      - name: Generate bundle size report
+        run: |
+          SIZE_THRESHOLD=512000  # 500 KB
+
+          BASELINE_FILE="/tmp/baseline/bundle-baseline.json"
+          if [[ -f "$BASELINE_FILE" ]]; then
+            HAS_BASELINE=true
+          else
+            HAS_BASELINE=false
+            echo "::warning::No baseline found — sizes shown without comparison"
+          fi
+
+          # Strip content hashes: "fetch-CMRV9u5T.js" → "fetch.js"
+          strip_hash() {
+            echo "$1" | sed -E 's/-[A-Za-z0-9_-]{8}\./\./'
+          }
+
+          fmt() {
+            local bytes=$1
+            if (( bytes >= 1048576 )); then
+              awk "BEGIN {printf \"%.2f MB\", $bytes/1048576}"
+            elif (( bytes >= 1024 )); then
+              awk "BEGIN {printf \"%.1f KB\", $bytes/1024}"
+            else
+              echo "${bytes} B"
+            fi
+          }
+
+          # Format a diff: returns "" if no baseline or unchanged, else " (+1.2 KB)" / " (-3.4 KB)"
+          fmt_diff() {
+            local current=$1 base=$2
+            if [[ -z "$base" ]] || (( base == 0 )); then
+              echo ""
+              return
+            fi
+            local diff=$((current - base))
+            if (( diff == 0 )); then
+              echo ""
+              return
+            fi
+
+            local abs_diff=$diff
+            (( abs_diff < 0 )) && abs_diff=$((-diff))
+            local formatted
+            formatted=$(fmt $abs_diff)
+
+            if (( diff > 0 )); then
+              echo " (+${formatted})"
+            else
+              echo " (-${formatted})"
+            fi
+          }
+
+          # Read a value from the baseline JSON
+          baseline_val() {
+            local name=$1 field=$2
+            if $HAS_BASELINE; then
+              python3 -c "
+          import json, sys
+          d = json.load(open('$BASELINE_FILE'))
+          e = d.get('$name', {})
+          print(e.get('$field', ''))" 2>/dev/null
+            fi
+          }
+
+          rows=""
+          large_rows=""
+          total_raw=0
+          total_br=0
+          total_gz=0
+          base_total_raw=0
+          base_total_br=0
+          base_total_gz=0
+
+          while IFS= read -r file; do
+            rel="${file#dist/}"
+            name=$(strip_hash "$rel")
+            raw=$(stat --format=%s "$file")
+            total_raw=$((total_raw + raw))
+
+            if [[ -f "${file}.br" ]]; then
+              br=$(stat --format=%s "${file}.br")
+            else
+              br=$raw
+            fi
+            total_br=$((total_br + br))
+
+            if [[ -f "${file}.gz" ]]; then
+              gz=$(stat --format=%s "${file}.gz")
+            else
+              gz=$raw
+            fi
+            total_gz=$((total_gz + gz))
+
+            # Look up baseline
+            base_raw=$(baseline_val "$name" "raw")
+            base_br=$(baseline_val "$name" "br")
+            base_gz=$(baseline_val "$name" "gz")
+
+            if [[ -n "$base_raw" ]]; then
+              base_total_raw=$((base_total_raw + base_raw))
+              base_total_br=$((base_total_br + base_br))
+              base_total_gz=$((base_total_gz + base_gz))
+            fi
+
+            raw_diff=$(fmt_diff $raw "$base_raw")
+            br_diff=$(fmt_diff $br "$base_br")
+            gz_diff=$(fmt_diff $gz "$base_gz")
+
+            raw_fmt="$(fmt $raw)${raw_diff}"
+            br_fmt="$(fmt $br)${br_diff}"
+            gz_fmt="$(fmt $gz)${gz_diff}"
+
+            row="| \`${name}\` | ${raw_fmt} | ${br_fmt} | ${gz_fmt} |"
+            rows="${rows}${row}"$'\n'
+
+            if (( raw >= SIZE_THRESHOLD )); then
+              large_rows="${large_rows}${row}"$'\n'
+            fi
+          done < <(find dist -type f ! -name '*.br' ! -name '*.gz' | sort)
+
+          # Format totals with diffs
+          total_raw_diff=""
+          total_br_diff=""
+          total_gz_diff=""
+          if $HAS_BASELINE && (( base_total_raw > 0 )); then
+            total_raw_diff=$(fmt_diff $total_raw $base_total_raw)
+            total_br_diff=$(fmt_diff $total_br $base_total_br)
+            total_gz_diff=$(fmt_diff $total_gz $base_total_gz)
+          fi
+
+          total_raw_fmt="$(fmt $total_raw)${total_raw_diff}"
+          total_br_fmt="$(fmt $total_br)${total_br_diff}"
+          total_gz_fmt="$(fmt $total_gz)${total_gz_diff}"
+          br_pct=$(awk "BEGIN {printf \"%.0f\", (1 - $total_br/$total_raw) * 100}")
+
+          {
+            echo "## Bundle Size Report"
+            echo ""
+            if ! $HAS_BASELINE; then
+              echo "> No baseline found on \`main\`. Merge to \`main\` to establish a baseline."
+              echo ""
+            fi
+            echo "| File | Raw | Brotli | Gzip |"
+            echo "|------|----:|-------:|-----:|"
+            echo -n "$rows"
+            echo "| **Total** | **${total_raw_fmt}** | **${total_br_fmt}** (-${br_pct}%) | **${total_gz_fmt}** |"
+
+            if [[ -n "$large_rows" ]]; then
+              echo ""
+              echo "<details>"
+              echo "<summary>Chunks over 500 KB (candidates for optimization)</summary>"
+              echo ""
+              echo "| File | Raw | Brotli | Gzip |"
+              echo "|------|----:|-------:|-----:|"
+              echo -n "$large_rows"
+              echo ""
+              echo "Consider:"
+              echo "- Lazy-loading with dynamic \`import()\` to code-split"
+              echo "- \`build.rollupOptions.output.manualChunks\` to improve chunking"
+              echo "- Replacing heavy dependencies with lighter alternatives"
+              echo "</details>"
+            fi
+          } > /tmp/comment-body.md
+
+      - name: Post or update PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/comment-body.md', 'utf8');
+            const marker = '## Bundle Size Report';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body?.startsWith(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
