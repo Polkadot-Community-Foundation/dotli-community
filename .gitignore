@@ -1,7 +1,39 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+.DS_Store
+dist
+coverage
+*.local
+docs
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yyaml
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
 .idea
-node_modules/
-dist/
-docs/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tests
+*.tsbuildinfo
 test-results/
-.papi/descriptors/
+playwright-report/
 tests/results.json
+
+# PAPI
+.papi/descriptors
