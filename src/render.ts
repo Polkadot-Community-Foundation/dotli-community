@@ -23,7 +23,10 @@ let currentBlobUrl: string | null = null;
  */
 function getDeepPath(): string {
   const { pathname, search, hash } = window.location;
-  return pathname === "/" ? "" : pathname + search + hash;
+  // Strip the .dot label segment from path-based URLs
+  // e.g. /name.dot/foo/bar → /foo/bar, /dotli/name.dot/foo → /foo
+  const stripped = pathname.replace(/^(?:\/dotli)?\/[^/]+\.dot/, "");
+  return stripped === "" || stripped === "/" ? "" : stripped + search + hash;
 }
 
 /**

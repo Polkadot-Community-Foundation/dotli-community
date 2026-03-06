@@ -46,9 +46,14 @@ async function getCachedArchive(
       const msg = event.data as {
         found?: boolean;
         cid?: string;
-        files?: Record<string, ArrayBuffer | Uint8Array>;
+        files?: Record<string, ArrayBuffer | Uint8Array> | null;
       };
-      if (msg.found === true && msg.cid === cid && msg.files !== undefined) {
+      if (
+        msg.found === true &&
+        msg.cid === cid &&
+        msg.files !== undefined &&
+        msg.files !== null
+      ) {
         // Normalize ArrayBuffers from IndexedDB to Uint8Arrays
         const raw = msg.files;
         const files: ArchiveFiles = {};
@@ -90,6 +95,13 @@ function parseDotLabel(): string | null {
   if (hostname.endsWith(".localhost")) {
     const label = hostname.slice(0, -".localhost".length);
     return label || null;
+  }
+
+  // Path-based: /name.dot or /dotli/name.dot (GitHub Pages)
+  const path = window.location.pathname;
+  const match = /\/([^/]+)\.dot(?:\/|$)/.exec(path);
+  if (match !== null) {
+    return match[1] || null;
   }
 
   return null;
@@ -145,6 +157,62 @@ async function registerServiceWorker(): Promise<void> {
  *   "verified"   — green: on-chain CID matches cached version
  *   "stale"      — red: on-chain CID differs (content outdated)
  */
+let topbarHideTimer: ReturnType<typeof setTimeout> | null = null;
+let topbarHoverBound = false;
+
+function setTopbarVisible(visible: boolean): void {
+  const topbar = document.getElementById("topbar");
+  if (!topbar) {
+    return;
+  }
+  const iframe = document.querySelector("iframe");
+  topbar.style.transform = visible ? "translateY(0)" : "translateY(-100%)";
+  if (iframe) {
+    iframe.style.top = visible ? "40px" : "0";
+    iframe.style.height = visible ? "calc(100vh - 40px)" : "100vh";
+  }
+}
+
+function setupTopbarAutoHide(): void {
+  const topbar = document.getElementById("topbar");
+  if (!topbar) {
+    return;
+  }
+
+  topbar.style.transition = "transform 0.3s ease";
+  const iframe = document.querySelector("iframe");
+  if (iframe) {
+    iframe.style.transition = "top 0.3s ease, height 0.3s ease";
+  }
+
+  if (topbarHideTimer !== null) {
+    clearTimeout(topbarHideTimer);
+  }
+  topbarHideTimer = setTimeout(() => {
+    setTopbarVisible(false);
+  }, 5000);
+
+  if (!topbarHoverBound) {
+    topbarHoverBound = true;
+
+    // Invisible trigger zone at the very top — catches hover even over the iframe
+    const trigger = document.createElement("div");
+    trigger.style.cssText =
+      "position:fixed;top:0;left:0;right:0;height:6px;z-index:999;";
+    document.body.appendChild(trigger);
+
+    trigger.addEventListener("mouseenter", () => {
+      setTopbarVisible(true);
+    });
+    topbar.addEventListener("mouseleave", () => {
+      setTopbarVisible(false);
+    });
+    topbar.addEventListener("mouseenter", () => {
+      setTopbarVisible(true);
+    });
+  }
+}
+
 function setShieldState(
   state: "validating" | "verified" | "stale" | "gateway",
 ): void {
@@ -170,6 +238,10 @@ function setShieldState(
   if (el !== null) {
     el.textContent = labels[state];
     el.style.color = colors[state];
+  }
+
+  if (state === "verified") {
+    setupTopbarAutoHide();
   }
 }
 

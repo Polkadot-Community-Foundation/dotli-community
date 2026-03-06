@@ -32,6 +32,36 @@ export async function getCachedCid(label: string): Promise<string | null> {
   }
 }
 
+const RECENT_KEY = "dotli_recent";
+const MAX_RECENT = 8;
+
+export function getRecentLabels(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (raw === null || raw === "") {
+      return [];
+    }
+    const labels = JSON.parse(raw) as string[];
+    return Array.isArray(labels) ? labels.slice(0, MAX_RECENT) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addRecentLabel(label: string): Promise<void> {
+  try {
+    const recent = getRecentLabels().filter((l) => l !== label);
+    recent.unshift(label);
+    localStorage.setItem(
+      RECENT_KEY,
+      JSON.stringify(recent.slice(0, MAX_RECENT)),
+    );
+  } catch {
+    // Non-critical
+  }
+  return Promise.resolve();
+}
+
 export async function setCachedCid(label: string, cid: string): Promise<void> {
   try {
     const db = await getDb();

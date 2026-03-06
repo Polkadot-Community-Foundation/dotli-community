@@ -553,6 +553,9 @@
                 .toast-card.hidden {
                     transform: translateX(-50%) translateY(12px);
                 }
+                .desktop-banner {
+                    display: none !important;
+                }
             }
             .toast-card.hidden {
                 opacity: 0;
@@ -669,7 +672,7 @@
     <body>
         <!-- Top Bar -->
         <div id="topbar">
-            <div class="topbar-left">
+            <a class="topbar-left" href="https://dot.li" style="text-decoration:none;">
                 <div class="topbar-logo">
                     <svg
                         width="16"
@@ -684,8 +687,8 @@
                         />
                     </svg>
                 </div>
-                <span class="topbar-brand">dot.li</span>
-            </div>
+                <span class="topbar-brand">dot<span style="color:#777;">.li</span></span>
+            </a>
             <div class="topbar-url" id="topbar-url"></div>
             <div class="topbar-right">
                 <button
@@ -807,6 +810,11 @@
         <script>
             (function () {
                 var banner = document.getElementById("desktop-banner");
+                // Hide on mobile/tablet — this is a desktop-only feature
+                if (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                    banner.remove();
+                    return;
+                }
                 var dismissed = localStorage.getItem("desktop-banner-dismissed");
                 if (dismissed && Math.random() > 0.05) {
                     banner.remove();
