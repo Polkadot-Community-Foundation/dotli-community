@@ -21,8 +21,8 @@ dot.li supports two URL formats:
 
 | Format | Example |
 |--------|---------|
-| **Subdomain** | `https://myapp.dot.li` |
-| **Path** | `https://dot.li/myapp.dot` |
+| **Subdomain** | `https://mytestapp.dot.li` |
+| **Path** | `https://dot.li/mytestapp.dot` |
 
 ### Landing page
 
@@ -41,7 +41,7 @@ The topbar is hidden on the landing page and only appears when viewing an app.
 3. **Renders** the content in a sandboxed iframe with a full host-container bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage — all through postMessage.
 
 ```
-myapp.dot.li  (or  dot.li/myapp.dot)
+mytestapp.dot.li  (or  dot.li/mytestapp.dot)
     → smoldot resolves dotNS → IPFS CID
     → Helia fetches content (P2P or gateway)
     → iframe renders with host-container bridge
