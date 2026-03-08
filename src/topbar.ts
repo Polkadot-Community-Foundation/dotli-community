@@ -118,7 +118,12 @@ export function initTopBar(): void {
 
   // If there's a persisted session, lazy-load auth to restore it.
   // Deferred to idle to avoid competing with critical-path bandwidth.
-  if (localStorage.getItem("dot.li") !== null) {
+  // The storage adapter prefixes keys with "PAPP_dot.li_", so check
+  // for any key with that prefix to detect a persisted session.
+  const hasPersistedSession = Object.keys(localStorage).some((k) =>
+    k.startsWith("PAPP_dot.li_"),
+  );
+  if (hasPersistedSession) {
     requestIdleCallback(() => {
       void ensureAuth();
     });

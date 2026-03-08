@@ -123,8 +123,8 @@ async function registerServiceWorker(): Promise<void> {
 
   try {
     const swUrl = import.meta.env.DEV
-      ? "/src/sw.ts"
-      : `${import.meta.env.BASE_URL}sw.js`;
+      ? "/src/dotli-sw.ts"
+      : `${import.meta.env.BASE_URL}dotli-sw.js`;
     const swScope = import.meta.env.DEV ? "/" : import.meta.env.BASE_URL;
     await navigator.serviceWorker.register(swUrl, {
       type: "module",

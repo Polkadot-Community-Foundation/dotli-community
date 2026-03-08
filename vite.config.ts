@@ -127,7 +127,7 @@ function preloadCriticalAssets(): Plugin {
 }
 
 /**
- * Vite plugin that builds the Service Worker (src/sw.ts) as a self-contained
+ * Vite plugin that builds the Service Worker (src/dotli-sw.ts) as a self-contained
  * ES module bundle after the main build completes.
  *
  * The SW runs smoldot + archive serving and is registered with { type: 'module' }.
@@ -163,9 +163,9 @@ function buildServiceWorker(): Plugin {
           emptyOutDir: false,
           outDir: "dist",
           lib: {
-            entry: resolve(__dirname, "src/sw.ts"),
+            entry: resolve(__dirname, "src/dotli-sw.ts"),
             formats: ["es"],
-            fileName: () => "sw.js",
+            fileName: () => "dotli-sw.js",
           },
           rollupOptions: {
             output: {
@@ -179,7 +179,7 @@ function buildServiceWorker(): Plugin {
         // Suppress most output
         logLevel: "warn",
       });
-      console.log("Service Worker built → dist/sw.js\n");
+      console.log("Service Worker built → dist/dotli-sw.js\n");
     },
   };
 }
@@ -201,7 +201,7 @@ export default defineConfig({
   },
   server: {
     headers: {
-      // Allow the SW at /src/sw.ts to control scope "/" in dev mode
+      // Allow the SW at /src/dotli-sw.ts to control scope "/" in dev mode
       "Service-Worker-Allowed": "/",
     },
   },

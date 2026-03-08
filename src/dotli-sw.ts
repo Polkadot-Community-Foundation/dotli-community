@@ -15,9 +15,10 @@ import { getMimeType } from "./mime";
 import { SW_ARCHIVE_CACHE_MAX, TIMEOUTS } from "./config";
 
 // ── Base path (derived at runtime from SW script location) ────
-// On dot.li: SW at /sw.js → BASE = "/"
-// On GH Pages: SW at /dotli/sw.js → BASE = "/dotli/"
-const BASE = self.location.pathname.replace(/sw\.js$/, "");
+// On dot.li: SW at /dotli-sw.js → BASE = "/"
+// On GH Pages: SW at /dotli/dotli-sw.js → BASE = "/dotli/"
+// Dev mode: SW at /src/dotli-sw.ts → BASE = "/"
+const BASE = self.location.pathname.replace(/(?:src\/)?dotli-sw\.[jt]s$/, "");
 const DOTLI_APP_PREFIX = `${BASE}dotli-app/`;
 
 // ── Archive Serving (ported from public/sw.js) ───────────────
@@ -324,7 +325,7 @@ self.addEventListener("fetch", (event: FetchEvent) => {
   if (
     url.pathname === BASE ||
     url.pathname === BASE.slice(0, -1) ||
-    url.pathname === `${BASE}sw.js` ||
+    url.pathname === `${BASE}dotli-sw.js` ||
     url.pathname.startsWith(`${BASE}src/`) ||
     url.pathname.startsWith(`${BASE}node_modules/`) ||
     url.pathname.startsWith(`${BASE}@`)
