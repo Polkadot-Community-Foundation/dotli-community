@@ -189,7 +189,7 @@ export function prepareIframe(): void {
   preparedIframe = iframe;
 }
 
-async function renderIframe(url: string, label: string): Promise<void> {
+export async function renderIframe(url: string, label: string): Promise<void> {
   let iframe: HTMLIFrameElement;
   if (preparedIframe) {
     // Detach before clearing, then re-append
@@ -213,81 +213,99 @@ async function renderIframe(url: string, label: string): Promise<void> {
   const { setupContainer } = await containerChunkPromise;
   currentDispose = setupContainer(iframe, url, label);
 
-  // Mirror the iframe's document.title to the parent page.
-  // SPAs change titles dynamically, so we observe <title> mutations.
+  // Mirror the iframe's document.title and <meta name="theme-color"> to the
+  // parent page. SPAs change these dynamically, so we observe mutations.
   const fallbackTitle = `${label}.dot`;
   iframe.addEventListener("load", () => {
+    let doc: Document | null = null;
     try {
-      const doc = iframe.contentDocument;
-      if (!doc) {
-        return;
-      }
-      const applyTitle = (): void => {
-        document.title = doc.title || fallbackTitle;
-      };
-      applyTitle();
-      const titleEl = doc.querySelector("title");
-      if (titleEl) {
-        new MutationObserver(applyTitle).observe(titleEl, {
-          childList: true,
-          characterData: true,
-          subtree: true,
-        });
-      }
-
-      // Mirror the iframe's <meta name="theme-color"> to the topbar background
-      // and derive a darker variant for the URL pill.
-      // Supports media="(prefers-color-scheme: light|dark)" variants —
-      // matched against the current dotli theme, with a generic fallback.
-      const topbar = document.getElementById("topbar");
-      const urlPill = document.getElementById("url-pill");
-      if (topbar) {
-        const resolveThemeColor = (): string | null => {
-          const scheme =
-            document.documentElement.getAttribute("data-theme") ?? "dark";
-          // Try scheme-specific meta first
-          const specific = doc.querySelector<HTMLMetaElement>(
-            `meta[name="theme-color"][media*="${scheme}"]`,
-          );
-          if (specific !== null && specific.content !== "") {
-            return specific.content;
-          }
-          // Fall back to a generic (no media) meta
-          const metas = doc.querySelectorAll<HTMLMetaElement>(
-            'meta[name="theme-color"]',
-          );
-          for (const m of metas) {
-            if (!m.hasAttribute("media") && m.content !== "") {
-              return m.content;
-            }
-          }
-          return null;
-        };
-
-        const applyThemeColor = (): void => {
-          const color = resolveThemeColor();
-          if (color !== null) {
-            topbar.style.backgroundColor = color;
-            if (urlPill) {
-              urlPill.style.backgroundColor = darkenColor(color, 0.35);
-              urlPill.style.borderColor = darkenColor(color, 0.2);
-            }
-          }
-        };
-        applyThemeColor();
-        new MutationObserver(applyThemeColor).observe(doc.head, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ["content", "media"],
-        });
-        // Re-resolve when the user toggles the dotli light/dark theme
-        window.addEventListener("dotli:theme-changed", applyThemeColor);
-      }
+      doc = iframe.contentDocument;
     } catch {
-      document.title = fallbackTitle;
+      // Cross-origin: some browsers throw instead of returning null
     }
+
+    if (!doc) {
+      return;
+    }
+
+    const applyTitle = (): void => {
+      document.title = doc.title || fallbackTitle;
+    };
+    applyTitle();
+    const titleEl = doc.querySelector("title");
+    if (titleEl) {
+      new MutationObserver(applyTitle).observe(titleEl, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    }
+
+    mirrorThemeColor(doc);
   });
+}
+
+/**
+ * Extract and apply theme-color from a same-origin document, with a
+ * MutationObserver for SPA-injected meta tags.
+ */
+function mirrorThemeColor(doc: Document): void {
+  const topbar = document.getElementById("topbar");
+  const urlPill = document.getElementById("url-pill");
+  if (!topbar) {
+    return;
+  }
+
+  const applyThemeColor = (): void => {
+    const color = resolveThemeColor(doc);
+    if (color !== null) {
+      applyTopbarColor(topbar, urlPill, color);
+    }
+  };
+  applyThemeColor();
+  new MutationObserver(applyThemeColor).observe(doc.head, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["content", "media"],
+  });
+  window.addEventListener("dotli:theme-changed", applyThemeColor);
+}
+
+/**
+ * Resolve the best theme-color from a document, respecting
+ * media="(prefers-color-scheme: light|dark)" variants.
+ */
+function resolveThemeColor(doc: Document): string | null {
+  const scheme = document.documentElement.getAttribute("data-theme") ?? "dark";
+  const specific = doc.querySelector<HTMLMetaElement>(
+    `meta[name="theme-color"][media*="${scheme}"]`,
+  );
+  if (specific !== null && specific.content !== "") {
+    return specific.content;
+  }
+  const metas = doc.querySelectorAll<HTMLMetaElement>(
+    'meta[name="theme-color"]',
+  );
+  for (const m of metas) {
+    if (!m.hasAttribute("media") && m.content !== "") {
+      return m.content;
+    }
+  }
+  return null;
+}
+
+/** Apply a theme color to the topbar and URL pill. */
+function applyTopbarColor(
+  topbar: HTMLElement,
+  urlPill: HTMLElement | null,
+  color: string,
+): void {
+  topbar.style.backgroundColor = color;
+  if (urlPill) {
+    urlPill.style.backgroundColor = darkenColor(color, 0.35);
+    urlPill.style.borderColor = darkenColor(color, 0.2);
+  }
 }
 
 function cleanup(): void {

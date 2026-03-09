@@ -95,6 +95,14 @@ body {
   color: #555;
   font-weight: 500;
 }
+.localhost-pill .dot-domain {
+  font-family: monospace;
+  font-size: 0.7rem;
+}
+.localhost-icon {
+  color: #a78bfa;
+  flex-shrink: 0;
+}
 .topbar-right {
   display: flex;
   align-items: center;
@@ -896,6 +904,9 @@ body {
 }
 [data-theme="light"] .topbar-url-pill .dot-tld {
   color: #999;
+}
+[data-theme="light"] .localhost-icon {
+  color: #7c3aed;
 }
 [data-theme="light"] .topbar-btn {
   border-color: #ddd;

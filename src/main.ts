@@ -80,6 +80,26 @@ async function getCachedArchive(
 }
 
 /**
+ * Parse a localhost proxy URL from the path.
+ *
+ * Examples:
+ *   "/localhost:5000"          → "http://localhost:5000"
+ *   "/localhost:5000/foo/bar"  → "http://localhost:5000/foo/bar"
+ *   "/localhost"               → "http://localhost"
+ *   "/starter-template.dot"    → null (not a localhost URL)
+ */
+function parseLocalhostUrl(): string | null {
+  const path = window.location.pathname;
+  const match = /^\/(localhost(?::\d+)?)(.*)$/.exec(path);
+  if (match === null) {
+    return null;
+  }
+  const host = match[1];
+  const rest = match[2] || "";
+  return `http://${host}${rest}${window.location.search}${window.location.hash}`;
+}
+
+/**
  * Extract the .dot label from the current hostname.
  *
  * Examples:
@@ -543,6 +563,27 @@ async function main(): Promise<void> {
   console.warn(`[dot.li perf] initTopBar() done (${dur(t0)})`);
 
   const label = parseDotLabel();
+
+  // ── Localhost proxy: render local dev server directly in iframe ──
+  // Uses the same container bridge as .dot sites so the host-papp SDK works.
+  const localhostUrl = parseLocalhostUrl();
+  if (label === null && localhostUrl !== null) {
+    const host = new URL(localhostUrl).host;
+    console.warn(`[dot.li perf] Localhost proxy: ${host} (${elapsed()})`);
+
+    // Show localhost address in URL pill (no verification shield)
+    const urlBar = document.getElementById("topbar-url");
+    if (urlBar !== null) {
+      urlBar.innerHTML = `<div class="topbar-url-pill localhost-pill" id="url-pill"><svg class="localhost-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="dot-domain">${host}</span></div>`;
+    }
+
+    // Render through the standard iframe pipeline (includes container bridge)
+    const { renderIframe } = await import("./render");
+    await renderIframe(localhostUrl, host);
+    document.title = `${host} — dot.li`;
+    performance.mark("dotli:main:end");
+    return;
+  }
 
   if (label === null) {
     console.warn(`[dot.li perf] Landing page — no subdomain (${elapsed()})`);
