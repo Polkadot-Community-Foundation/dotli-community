@@ -10,6 +10,7 @@ if (typeof globalThis.requestIdleCallback !== "function") {
     }, 1) as unknown as number;
 }
 
+import "./styles.css";
 import * as Sentry from "@sentry/browser";
 import type { ArchiveFiles } from "./archive";
 import { showStatus, showError, showLanding } from "./ui";

@@ -67,6 +67,43 @@ async function ensureAuth(): Promise<AuthModule> {
   return authMod;
 }
 
+// ── Theme Toggle ──────────────────────────────────────────
+
+function getStoredTheme(): "light" | "dark" {
+  const stored = localStorage.getItem("dotli-theme");
+  if (stored === "light" || stored === "dark") {
+    return stored;
+  }
+  return "dark";
+}
+
+function applyTheme(theme: "light" | "dark"): void {
+  document.documentElement.setAttribute("data-theme", theme);
+  const sunIcon = document.getElementById("theme-icon-sun");
+  const moonIcon = document.getElementById("theme-icon-moon");
+  if (sunIcon !== null && moonIcon !== null) {
+    // In dark mode show moon (click to go light), in light mode show sun (click to go dark)
+    sunIcon.style.display = theme === "light" ? "block" : "none";
+    moonIcon.style.display = theme === "dark" ? "block" : "none";
+  }
+  // Notify render.ts to re-resolve scheme-specific theme-color
+  window.dispatchEvent(new Event("dotli:theme-changed"));
+}
+
+function initThemeToggle(): void {
+  applyTheme(getStoredTheme());
+
+  const btn = document.getElementById("theme-toggle");
+  if (btn === null) {
+    return;
+  }
+  btn.addEventListener("click", () => {
+    const next = getStoredTheme() === "dark" ? "light" : "dark";
+    localStorage.setItem("dotli-theme", next);
+    applyTheme(next);
+  });
+}
+
 // ── Init ───────────────────────────────────────────────────
 
 export function initTopBar(): void {
@@ -112,6 +149,9 @@ export function initTopBar(): void {
   if (homeLink !== null) {
     homeLink.href = (import.meta.env.VITE_APP_URL as string | undefined) ?? "/";
   }
+
+  // Theme toggle
+  initThemeToggle();
 
   // Show default logged-out state
   renderLoggedOut();
@@ -219,9 +259,9 @@ function renderPairing(payload: string): void {
 
 function renderAttesting(): void {
   modalQr.innerHTML = `
-    <div style="text-align:center;">
+    <div class="attesting">
       <div class="spinner"></div>
-      <p style="color:#888;font-size:0.8rem;margin-top:8px;">Logging in...</p>
+      <p>Logging in...</p>
     </div>
   `;
 }

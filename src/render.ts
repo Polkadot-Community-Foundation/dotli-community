@@ -6,6 +6,31 @@
 
 import type { ArchiveFiles } from "./archive";
 
+/**
+ * Darken a CSS hex color by a given factor (0 = unchanged, 1 = black).
+ * Falls back to the original value for non-hex colors.
+ */
+function darkenColor(color: string, amount: number): string {
+  const match = /^#([0-9a-f]{3,8})$/i.exec(color.trim());
+  if (!match) {
+    return color;
+  }
+  let hex = match[1];
+  // Expand shorthand (#abc → #aabbcc)
+  if (hex.length === 3 || hex.length === 4) {
+    hex = hex
+      .split("")
+      .map((c) => c + c)
+      .join("");
+  }
+  const r = Math.round(parseInt(hex.slice(0, 2), 16) * (1 - amount));
+  const g = Math.round(parseInt(hex.slice(2, 4), 16) * (1 - amount));
+  const b = Math.round(parseInt(hex.slice(4, 6), 16) * (1 - amount));
+  const toHex = (n: number): string =>
+    Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
 // Eagerly load the container bridge chunk — starts downloading when
 // the render chunk is imported, so it's ready by the time we need it.
 const containerChunkPromise = import("./container");
@@ -208,6 +233,56 @@ async function renderIframe(url: string, label: string): Promise<void> {
           characterData: true,
           subtree: true,
         });
+      }
+
+      // Mirror the iframe's <meta name="theme-color"> to the topbar background
+      // and derive a darker variant for the URL pill.
+      // Supports media="(prefers-color-scheme: light|dark)" variants —
+      // matched against the current dotli theme, with a generic fallback.
+      const topbar = document.getElementById("topbar");
+      const urlPill = document.getElementById("url-pill");
+      if (topbar) {
+        const resolveThemeColor = (): string | null => {
+          const scheme =
+            document.documentElement.getAttribute("data-theme") ?? "dark";
+          // Try scheme-specific meta first
+          const specific = doc.querySelector<HTMLMetaElement>(
+            `meta[name="theme-color"][media*="${scheme}"]`,
+          );
+          if (specific !== null && specific.content !== "") {
+            return specific.content;
+          }
+          // Fall back to a generic (no media) meta
+          const metas = doc.querySelectorAll<HTMLMetaElement>(
+            'meta[name="theme-color"]',
+          );
+          for (const m of metas) {
+            if (!m.hasAttribute("media") && m.content !== "") {
+              return m.content;
+            }
+          }
+          return null;
+        };
+
+        const applyThemeColor = (): void => {
+          const color = resolveThemeColor();
+          if (color !== null) {
+            topbar.style.backgroundColor = color;
+            if (urlPill) {
+              urlPill.style.backgroundColor = darkenColor(color, 0.35);
+              urlPill.style.borderColor = darkenColor(color, 0.2);
+            }
+          }
+        };
+        applyThemeColor();
+        new MutationObserver(applyThemeColor).observe(doc.head, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["content", "media"],
+        });
+        // Re-resolve when the user toggles the dotli light/dark theme
+        window.addEventListener("dotli:theme-changed", applyThemeColor);
       }
     } catch {
       document.title = fallbackTitle;
