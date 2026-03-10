@@ -34,29 +34,51 @@ When visiting the root (`dot.li`, or `paritytech.github.io/dotli/`), a landing p
 
 The topbar is hidden on the landing page and only appears when viewing an app.
 
-## What it does
+## Architecture
+
+dot.li uses a **two-build, CID-subdomain architecture** that separates concerns between the host shell and the app content layer:
+
+```
+name.dot.li              Host build (topbar, dotns resolution, smoldot, bridge)
+                          Resolves name -> CID, then iframes cid.app.dot.li
+
+cid.app.dot.li           App build (CID from subdomain, P2P fetch, render)
+                          Parses CID from URL, fetches via P2P/gateway, renders
+```
+
+| URL | Role | What happens |
+|-----|------|--------------|
+| `myapp.dot.li` | Host shell | Resolves `myapp` via dotns, iframes `bafyrei....app.dot.li` |
+| `bafyrei....app.dot.li` | App content | Parses CID from subdomain, fetches content, renders |
+| `dot.li` | Landing page | Search bar, recent apps |
+| Direct `bafyrei....app.dot.li` | Standalone | Works without a host — fetches and renders directly |
+
+Each `cid.app.dot.li` is a distinct origin, preventing SW/storage/security conflicts between apps.
+
+### What it does
 
 1. **Resolves** `.dot` names via an in-browser [smoldot](https://github.com/smol-dot/smoldot) light client connected to Asset Hub Paseo, querying dotNS contracts through the Revive EVM pallet.
 2. **Fetches** content from the [Bulletin Chain](https://github.com/paritytech/polkadot-bulletin-chain) via [Helia](https://github.com/ipfs/helia) P2P (bitswap), with IPFS gateway fallback.
 3. **Renders** the content in a sandboxed iframe with a full host-container bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage — all through postMessage.
 
 ```
-mytestapp.dot.li  (or  dot.li/mytestapp.dot)
-    → smoldot resolves dotNS → IPFS CID
-    → Helia fetches content (P2P or gateway)
-    → iframe renders with host-container bridge
+mytestapp.dot.li
+    -> Host: smoldot resolves dotNS -> IPFS CID
+    -> Host: iframes cid.app.dot.li
+    -> App:  Helia fetches content (P2P or gateway)
+    -> App:  renders dApp in sandboxed iframe with container bridge
 ```
 
 Single-file apps are served as blob URLs. Multi-file SPAs (directories) are fetched as CAR archives, parsed, and served through a Service Worker that acts as a virtual file system.
 
 ## How resolution works
 
-1. Parse label from URL — subdomain (`mytestapp.dot.li` → `mytestapp`) or path (`/mytestapp.dot` → `mytestapp`)
+1. Parse label from URL — subdomain (`mytestapp.dot.li` -> `mytestapp`) or path (`/mytestapp.dot` -> `mytestapp`)
 2. Compute ENS-style namehash of `mytestapp.dot`
 3. Call `recordExists(node)` on the dotNS Registry contract via Revive dry-run
 4. Call `contenthash(node)` on the dotNS ContentResolver contract
 5. Decode the contenthash bytes to an IPFS CID (using `@ensdomains/content-hash`)
-6. Fetch the CID content and render it
+6. Create an iframe to `cid.app.dot.li` which fetches and renders the content
 
 All contract calls are read-only dry-runs executed through the smoldot light client — no RPC server needed.
 
@@ -66,7 +88,7 @@ When a CID points to an IPFS directory (not a single file):
 
 1. The gateway returns a CAR (Content Addressable aRchive) containing all files
 2. `archive.ts` parses the CAR using `@ipld/car` + `@ipld/dag-pb` + `ipfs-unixfs` to extract a file map
-3. The file map is sent to the Service Worker via `postMessage`
+3. The file map is sent to the app Service Worker via `postMessage`
 4. The iframe loads from `/dotli-app/index.html` — the SW intercepts all requests and serves files from the in-memory archive
 5. Relative imports (`<script src="main.js">`, `<link href="styles.css">`) just work
 
@@ -93,6 +115,7 @@ Loaded SPAs communicate with dot.li through `@novasamatech/host-container`, a po
 | Handler | What it does |
 |---------|-------------|
 | `accountGet` | Derives a per-app public key via HDKD soft derivation |
+| `getNonProductAccounts` | Returns the connected Polkadot App account |
 | `signPayload` / `signRaw` | Shows signing modals, delegates to host-papp session |
 | `chainConnection` | Returns a smoldot-backed JsonRpcProvider for supported chains |
 | `localStorageRead/Write/Clear` | Scoped `localStorage` per `.dot` domain |
@@ -100,14 +123,31 @@ Loaded SPAs communicate with dot.li through `@novasamatech/host-container`, a po
 | `featureSupported` | Reports supported chain genesis hashes |
 | `connectionStatus` | Streams auth state changes to the SPA |
 
+### Nested dApp support
+
+dApps can embed other dApps via iframes (e.g. a marketplace app embedding a payments app). The host automatically detects nested dApps and creates separate bridges for each one, regardless of nesting depth.
+
+When the host receives a protocol message from an unknown iframe window, it dynamically creates a new container bridge targeting that window. The dApp SDK always sends to `window.top`, so all nested dApps communicate directly with the host — no relay needed.
+
+The app context uses `document.write()` to eliminate extra iframe nesting: when loaded inside a host iframe, the app replaces its own document with the dApp content so the dApp occupies the iframe directly.
+
 ## Development
 
 ```bash
-npm install
-npm run dev
+bun install
+
+# Host shell (port 5173) — topbar, dotns, smoldot
+bun run dev
+
+# App content (port 5174) — CID fetch, render
+bun run dev:app
 ```
 
-Local dev uses wildcard subdomains: `mytestapp.localhost:5173` resolves `mytestapp.dot`.
+Local dev uses wildcard subdomains:
+- `mytestapp.localhost:5173` — resolves `mytestapp.dot` via the host
+- `bafyrei....app.localhost:5174` — fetches and renders CID content directly
+
+Both servers should run simultaneously for full functionality.
 
 ## Network configuration
 
