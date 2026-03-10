@@ -14,7 +14,7 @@ import { getSmoldot, getRelayChain } from "./smoldot";
 const PASEO_RELAY =
   "0x77afd6190f1554ad45fd0d31aee62aacc33c6db0ea801129acb813f913e0764f";
 const ASSET_HUB_PASEO =
-  "0x862c5c1eef2e2c2d7f98b3e71fbdb8ab03e62e7bea0b953bf1783f1e61b04471";
+  "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2";
 
 interface ChainEntry {
   getChainSpec: () => Promise<string>;
