@@ -139,6 +139,51 @@ async function registerAppServiceWorker(): Promise<void> {
   }
 }
 
+/**
+ * Store archive files in the Service Worker so it can serve sub-resources.
+ * Must be called before document.write() for multi-file archives in relay mode,
+ * otherwise CSS/JS requests fall through to nginx which returns the HTML fallback.
+ */
+async function storeArchiveInSW(
+  files: ArchiveFiles,
+  domain: string,
+  cid: string,
+): Promise<void> {
+  const sw = navigator.serviceWorker.controller;
+  if (!sw) {
+    return;
+  }
+
+  const entries = Object.entries(files);
+  const index: { p: string; o: number; l: number }[] = [];
+  let totalSize = 0;
+  for (const [, data] of entries) {
+    totalSize += data.byteLength;
+  }
+  const packed = new ArrayBuffer(totalSize);
+  const packedView = new Uint8Array(packed);
+  let offset = 0;
+  for (const [filePath, data] of entries) {
+    index.push({ p: filePath, o: offset, l: data.byteLength });
+    packedView.set(data, offset);
+    offset += data.byteLength;
+  }
+
+  const archiveReady = new Promise<void>((resolve) => {
+    const handler = (evt: MessageEvent): void => {
+      if ((evt.data as { type?: string } | null)?.type === "ARCHIVE_READY") {
+        navigator.serviceWorker.removeEventListener("message", handler);
+        resolve();
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", handler);
+  });
+
+  sw.postMessage({ type: "SET_ARCHIVE", packed, index, domain, cid }, [packed]);
+
+  await archiveReady;
+}
+
 // Module-level reference for cleanup
 let destroyHeliaFn: (() => Promise<void>) | null = null;
 
@@ -184,6 +229,14 @@ async function main(): Promise<void> {
       // Extract index.html and write it directly into this window
       const indexHtml = cachedFiles["index.html"] as Uint8Array | undefined;
       if (indexHtml) {
+        // For multi-file archives, store files in the SW so it can serve
+        // sub-resources (CSS, JS, fonts) when the browser loads them.
+        if (Object.keys(cachedFiles).length > 1) {
+          await storeArchiveInSW(cachedFiles, cid, cid);
+          console.warn(
+            `[dot.li app] Relay mode: archive stored in SW (${elapsed()})`,
+          );
+        }
         const html = new TextDecoder().decode(indexHtml);
         console.warn(
           `[dot.li app] Relay mode: writing cached content into window (${elapsed()})`,
@@ -224,6 +277,12 @@ async function main(): Promise<void> {
     if (result.type === "single") {
       html = new TextDecoder().decode(result.content);
     } else {
+      // For multi-file archives, store files in the SW so it can serve
+      // sub-resources (CSS, JS, fonts) when the browser loads them.
+      await storeArchiveInSW(result.files, cid, cid);
+      console.warn(
+        `[dot.li app] Relay mode: archive stored in SW (${elapsed()})`,
+      );
       const indexHtml = result.files["index.html"] as Uint8Array | undefined;
       if (indexHtml) {
         html = new TextDecoder().decode(indexHtml);
