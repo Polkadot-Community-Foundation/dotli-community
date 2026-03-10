@@ -27,13 +27,15 @@ export const DUMMY_ORIGIN = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 // --- Bulletin Chain Paseo — Peer multiaddrs for Helia P2P ---
 
 export const BULLETIN_PEERS = [
-  "/dns/node1.dotspark.app/tcp/443/wss/p2p/12D3KooWQCkBm1BYtkHpocxCwMgR8yjitEeHGx8spzcDLGt2gkBm",
-  "/dns/node2.dotspark.app/tcp/443/wss/p2p/12D3KooWRkZhiRhsqmrQ28rt73K7V3aCBpqKrLGSXmZ99PTcTZby",
+  "/dns4/paseo-bulletin-collator-node-0.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWRuKisocQ2Z5hBZagV5YGxJMYuW13xT42sUiUCWf5bRtu",
+  "/dns4/paseo-bulletin-collator-node-1.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWSgdX2egCUiXtDUNV6hGh6JrtTb9vQ6iRfFMdnTemQDDp",
+  "/dns4/paseo-bulletin-rpc-node-0.polkadot.io/tcp/443/wss/p2p/12D3KooWG7dt8yAMBaNrWh5juvHMGvJtPKTCaS87kkadWZKpV7ox",
+  "/dns4/paseo-bulletin-rpc-node-1.polkadot.io/tcp/443/wss/p2p/12D3KooWSS9QNRiLGBoZrDrtXvPyBV7QrV7F3A1V8f6xAXECSnj5",
 ];
 
 // --- IPFS Gateway fallback ---
 
-export const IPFS_GATEWAY = "https://ipfs.dotspark.app";
+export const IPFS_GATEWAY = "https://paseo-ipfs.polkadot.io";
 
 // --- Asset Hub Paseo public RPC (for fast gateway CID resolution) ---
 
