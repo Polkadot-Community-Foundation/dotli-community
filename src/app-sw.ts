@@ -1,27 +1,19 @@
-// dot.li — Service Worker
+// dot.li — App Service Worker
 //
-// Combines two responsibilities:
-// 1. Archive serving: serves multi-file SPA archives from in-memory/IndexedDB cache
-// 2. Smoldot management: runs smoldot light client for chain resolution persistence
-//
-// This SW is built as a module (type: 'module') by Vite and registered
-// with { type: 'module' } in main.ts.
+// Archive serving only — no smoldot, no chain sync.
+// Runs on cid.app.dot.li to serve multi-file SPA archives from in-memory/IndexedDB cache.
 
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;
 
-import { handleConnect, handleStatus, ensureSmoldot } from "./sw-smoldot";
 import { getMimeType } from "./mime";
-import { SW_ARCHIVE_CACHE_MAX, TIMEOUTS } from "./config";
+import { SW_ARCHIVE_CACHE_MAX } from "./config";
 
 // ── Base path (derived at runtime from SW script location) ────
-// On dot.li: SW at /dotli-sw.js → BASE = "/"
-// On GH Pages: SW at /dotli/dotli-sw.js → BASE = "/dotli/"
-// Dev mode: SW at /src/dotli-sw.ts → BASE = "/"
-const BASE = self.location.pathname.replace(/(?:src\/)?dotli-sw\.[jt]s$/, "");
+const BASE = self.location.pathname.replace(/(?:src\/)?app-sw\.[jt]s$/, "");
 const DOTLI_APP_PREFIX = `${BASE}dotli-app/`;
 
-// ── Archive Serving (ported from public/sw.js) ───────────────
+// ── Archive Serving ──────────────────────────────────────────
 
 function hasExtension(path: string): boolean {
   const lastSlash = path.lastIndexOf("/");
@@ -35,14 +27,12 @@ const ARCHIVE_DB_NAME = "dotli-sw";
 const ARCHIVE_DB_VERSION = 1;
 const ARCHIVE_STORE = "archives";
 
-// Fields are optional because IndexedDB data may be incomplete/corrupt
 interface ArchiveEntry {
   domain?: string;
   cid?: string;
   files?: Record<string, ArrayBuffer>;
 }
 
-// Pooled IDB connection — reused across save/load calls
 let archiveDbPromise: Promise<IDBDatabase> | null = null;
 
 function getArchiveDB(): Promise<IDBDatabase> {
@@ -116,17 +106,11 @@ async function loadArchiveFromDBByDomain(
 }
 
 // ── Archive storage ──────────────────────────────────────────
-// Two formats supported:
-// 1. Packed: single ArrayBuffer + index map (from SET_ARCHIVE, zero-copy serving)
-// 2. Legacy: Record<string, ArrayBuffer> (from IDB cache on SW_CACHE_LOOKUP_EVENT)
 
 let archivePacked: ArrayBuffer | null = null;
 let archiveFileIndex: Map<string, { o: number; l: number }> | null = null;
 let archiveLegacy: Record<string, ArrayBuffer | undefined> | null = null;
 
-// In-memory archive cache keyed by domain (populated lazily on lookup).
-// LRU eviction: Map iteration order tracks insertion; re-inserting on access
-// moves the entry to the end, so the first key is always the least-recently-used.
 const archiveCache = new Map<string, ArchiveEntry>();
 
 function archiveCacheSet(key: string, value: ArchiveEntry): void {
@@ -145,7 +129,6 @@ function archiveCacheGet(key: string): ArchiveEntry | undefined {
   if (entry === undefined) {
     return undefined;
   }
-  // Move to end (most-recently-used)
   archiveCache.delete(key);
   archiveCache.set(key, entry);
   return entry;
@@ -173,20 +156,7 @@ self.addEventListener("install", () => {
 });
 
 self.addEventListener("activate", (event) => {
-  // Archives are loaded lazily on SW_CACHE_LOOKUP_EVENT (per-domain),
-  // so activation stays fast regardless of how many domains are cached.
   event.waitUntil(self.clients.claim());
-  // Start smoldot in the background (non-blocking) — on subsequent visits
-  // to the same origin, smoldot will already be synced and ready.
-  // Skip in dev mode: dynamic imports are disallowed in SW scope;
-  // production builds inline everything so this works fine.
-  if (!import.meta.env.DEV) {
-    setTimeout(() => {
-      void ensureSmoldot().catch(() => {
-        /* fire-and-forget */
-      });
-    }, TIMEOUTS.SW_SMOLDOT_INIT_DELAY);
-  }
 });
 
 // ── Message Handling ─────────────────────────────────────────
@@ -207,12 +177,10 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
     const idx = data.index as { p: string; o: number; l: number }[] | undefined;
 
     if (packed !== undefined && idx !== undefined) {
-      // Packed format: single buffer + index (zero-copy serving via Uint8Array views)
       archivePacked = packed;
       archiveFileIndex = new Map(idx.map((e) => [e.p, { o: e.o, l: e.l }]));
       archiveLegacy = null;
     } else {
-      // Legacy format: individual files
       archiveLegacy = data.files as Record<string, ArrayBuffer | undefined>;
       archivePacked = null;
       archiveFileIndex = null;
@@ -227,7 +195,6 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
       cid !== ""
     ) {
       if (packed !== undefined && idx !== undefined) {
-        // Unpack for IDB persistence in background (non-blocking)
         const p = packed;
         const i = idx;
         const d = domain;
@@ -287,20 +254,6 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
       });
     return;
   }
-
-  if (data.type === "SMOLDOT_STATUS") {
-    if (event.ports.length > 0) {
-      handleStatus(event.ports[0]);
-    }
-    return;
-  }
-
-  if (data.type === "SMOLDOT_CONNECT") {
-    if (event.ports.length > 0) {
-      void handleConnect(event.ports[0]);
-    }
-    return;
-  }
 });
 
 // ── Fetch Interception (archive serving) ─────────────────────
@@ -325,7 +278,7 @@ self.addEventListener("fetch", (event: FetchEvent) => {
   if (
     url.pathname === BASE ||
     url.pathname === BASE.slice(0, -1) ||
-    url.pathname === `${BASE}dotli-sw.js` ||
+    url.pathname === `${BASE}app-sw.js` ||
     url.pathname.startsWith(`${BASE}src/`) ||
     url.pathname.startsWith(`${BASE}node_modules/`) ||
     url.pathname.startsWith(`${BASE}@`)
@@ -381,7 +334,6 @@ function lookupArchive(pathname: string): Response | null {
     ) {
       return makeHtmlResponse(content, mime);
     }
-    // Normalize Uint8Array views to ArrayBuffer for Response constructor
     const body =
       content instanceof Uint8Array
         ? (content.buffer.slice(

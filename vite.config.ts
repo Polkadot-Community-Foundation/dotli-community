@@ -3,6 +3,24 @@ import { readFileSync, copyFileSync } from "node:fs";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
 
+// ── Build target configuration ──────────────────────────────
+// BUILD_TARGET determines which entry point, SW, and output dir to use.
+// "host" = name.dot.li (topbar, dotns resolution, smoldot)
+// "app"  = cid.app.dot.li (CID fetch + render, no smoldot)
+
+const BUILD_TARGET = (process.env.BUILD_TARGET ?? "host") as "host" | "app";
+const IS_APP = BUILD_TARGET === "app";
+const OUT_DIR = `dist/${BUILD_TARGET}`;
+
+const SW_ENTRY: Record<string, string> = {
+  host: "src/host-sw.ts",
+  app: "src/app-sw.ts",
+};
+const SW_NAME: Record<string, string> = {
+  host: "host-sw",
+  app: "app-sw",
+};
+
 /**
  * Extract unique WSS bootnode hostnames from a chain spec JSON file.
  */
@@ -26,11 +44,8 @@ function extractBootnodeHosts(specPath: string): string[] {
 
 /**
  * Vite plugin that injects <link rel="preconnect"> for smoldot relay chain
- * and Asset Hub bootnode hostnames. Reads them from the chain spec JSON files
- * at build time so they stay in sync with `npm run update-chain-specs`.
- *
- * `preconnect` establishes DNS + TCP + TLS during HTML parse, saving ~100-200ms
- * per peer when smoldot starts dialing WebSocket connections.
+ * and Asset Hub bootnode hostnames.
+ * Host build only — app build doesn't use smoldot.
  */
 function preconnectBootnodes(): Plugin {
   return {
@@ -54,11 +69,9 @@ function preconnectBootnodes(): Plugin {
 }
 
 /**
- * Vite plugin that injects a conditional <link rel="modulepreload"> for the
- * resolve chunk on subdomain pages. This lets the browser start downloading
- * the resolve chunk during HTML parse — before the main JS even executes.
- *
- * On the landing page (dot.li / localhost) nothing is injected.
+ * Vite plugin that injects conditional <link rel="modulepreload"> for
+ * critical chunks on subdomain pages.
+ * Host build only — app build has different chunk structure.
  */
 function preloadCriticalAssets(): Plugin {
   let resolvedBase = "/";
@@ -72,7 +85,6 @@ function preloadCriticalAssets(): Plugin {
       handler(_html, ctx) {
         if (!ctx.bundle) return [];
 
-        // Find critical chunk filenames from the bundle
         const bundleKeys = Object.keys(ctx.bundle);
         const findChunk = (pattern: RegExp) =>
           bundleKeys.find((name) => pattern.test(name));
@@ -89,7 +101,6 @@ function preloadCriticalAssets(): Plugin {
 
         const b = resolvedBase;
 
-        // Preload heavy assets as fetch (browser starts downloading during HTML parse)
         const fetchPreloads = [wasmAsset, metadataAsset].filter(Boolean)
           .map(
             (a) =>
@@ -97,7 +108,6 @@ function preloadCriticalAssets(): Plugin {
           )
           .join("");
 
-        // Inline script that conditionally creates modulepreload links
         const preloadStatements = chunks
           .map(
             (c) =>
@@ -127,59 +137,72 @@ function preloadCriticalAssets(): Plugin {
 }
 
 /**
- * Vite plugin that builds the Service Worker (src/dotli-sw.ts) as a self-contained
- * ES module bundle after the main build completes.
- *
- * The SW runs smoldot + archive serving and is registered with { type: 'module' }.
- * It's built separately to ensure all dependencies are inlined (no shared chunks
- * with the main app, avoiding version mismatch on SW updates).
- */
-/**
- * GitHub Pages SPA fallback: copy index.html → 404.html so that
- * paths like /dotli/hackme3.dot load the SPA instead of a real 404.
+ * GitHub Pages SPA fallback: copy index.html → 404.html.
+ * Host build only.
  */
 function githubPages404(): Plugin {
   return {
     name: "github-pages-404",
     apply: "build",
     closeBundle() {
-      const dist = resolve(__dirname, "dist");
+      const dist = resolve(__dirname, OUT_DIR);
       copyFileSync(resolve(dist, "index.html"), resolve(dist, "404.html"));
       console.log("Copied index.html → 404.html (GitHub Pages SPA fallback)\n");
     },
   };
 }
 
+/**
+ * Build the Service Worker as a self-contained ES module bundle.
+ * Uses the target-specific SW entry point and output directory.
+ */
 function buildServiceWorker(): Plugin {
   return {
     name: "build-service-worker",
     apply: "build",
     async closeBundle() {
-      console.log("\nBuilding Service Worker...");
+      const swEntry = SW_ENTRY[BUILD_TARGET];
+      const swName = SW_NAME[BUILD_TARGET];
+      console.log(`\nBuilding Service Worker (${swName})...`);
       await viteBuild({
         configFile: false,
         plugins: [wasm()],
         build: {
           emptyOutDir: false,
-          outDir: "dist",
+          outDir: OUT_DIR,
           lib: {
-            entry: resolve(__dirname, "src/dotli-sw.ts"),
+            entry: resolve(__dirname, swEntry),
             formats: ["es"],
-            fileName: () => "dotli-sw.js",
+            fileName: () => `${swName}.js`,
           },
           rollupOptions: {
             output: {
               inlineDynamicImports: true,
             },
           },
-          // SW doesn't need source maps in production
           sourcemap: false,
           minify: true,
         },
-        // Suppress most output
         logLevel: "warn",
       });
-      console.log("Service Worker built → dist/dotli-sw.js\n");
+      console.log(`Service Worker built → ${OUT_DIR}/${swName}.js\n`);
+    },
+  };
+}
+
+/**
+ * Dev server plugin: rewrite "/" → "/app.html" when BUILD_TARGET=app.
+ */
+function appDevEntry(): Plugin {
+  return {
+    name: "app-dev-entry",
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.url === "/" || req.url === "/index.html") {
+          req.url = "/app.html";
+        }
+        next();
+      });
     },
   };
 }
@@ -190,18 +213,27 @@ export default defineConfig({
     : "/",
   plugins: [
     wasm(),
-    preconnectBootnodes(),
-    preloadCriticalAssets(),
+    !IS_APP && preconnectBootnodes(),
+    !IS_APP && preloadCriticalAssets(),
     buildServiceWorker(),
-    githubPages404(),
-  ],
+    !IS_APP && githubPages404(),
+    IS_APP && appDevEntry(),
+  ].filter(Boolean) as Plugin[],
+  define: {
+    __BUILD_TARGET__: JSON.stringify(BUILD_TARGET),
+  },
   build: {
     target: "esnext",
     modulePreload: { polyfill: false },
+    outDir: OUT_DIR,
+    ...(IS_APP && {
+      rollupOptions: {
+        input: resolve(__dirname, "app.html"),
+      },
+    }),
   },
   server: {
     headers: {
-      // Allow the SW at /src/dotli-sw.ts to control scope "/" in dev mode
       "Service-Worker-Allowed": "/",
     },
   },

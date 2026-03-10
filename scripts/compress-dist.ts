@@ -9,7 +9,7 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { createWriteStream } from "node:fs";
 
-const DIST = "dist";
+const DIST = process.env.DIST ?? "dist";
 const COMPRESS_EXTENSIONS = new Set([".js", ".wasm", ".json", ".css", ".html", ".scale"]);
 const MIN_SIZE = 1024; // Skip files smaller than 1KB
 

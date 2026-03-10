@@ -1,6 +1,6 @@
-// dot.li — Universal Viewer entry point
+// dot.li — Host entry point
 //
-// Flow: parse URL → resolve .dot name via smoldot → fetch content from Bulletin → render in iframe
+// Flow: parse URL → resolve .dot name via smoldot → iframe to cid.app.dot.li
 
 // Polyfill for Safari < 18.4 which lacks requestIdleCallback
 if (typeof globalThis.requestIdleCallback !== "function") {
@@ -12,7 +12,6 @@ if (typeof globalThis.requestIdleCallback !== "function") {
 
 import "./styles.css";
 import * as Sentry from "@sentry/browser";
-import type { ArchiveFiles } from "./archive";
 import { showStatus, showError, showLanding } from "./ui";
 import { initTopBar } from "./topbar";
 
@@ -26,57 +25,6 @@ import { TIMEOUTS } from "./config";
 const T0 = performance.now();
 function elapsed(): string {
   return `+${((performance.now() - T0) / 1000).toFixed(3)}s`;
-}
-
-/**
- * Check if the Service Worker has a cached archive for this domain.
- * Returns the cached files if the CID matches, null otherwise.
- */
-async function getCachedArchive(
-  domain: string,
-  cid: string,
-): Promise<ArchiveFiles | null> {
-  const controller = navigator.serviceWorker.controller;
-  if (!controller) {
-    return null;
-  }
-
-  return new Promise<ArchiveFiles | null>((resolve) => {
-    const timeout = setTimeout(() => {
-      resolve(null);
-    }, TIMEOUTS.SW_CACHE_LOOKUP);
-    const channel = new MessageChannel();
-
-    channel.port1.onmessage = (event: MessageEvent) => {
-      clearTimeout(timeout);
-      const msg = event.data as {
-        found?: boolean;
-        cid?: string;
-        files?: Record<string, ArrayBuffer | Uint8Array> | null;
-      };
-      if (
-        msg.found === true &&
-        msg.cid === cid &&
-        msg.files !== undefined &&
-        msg.files !== null
-      ) {
-        // Normalize ArrayBuffers from IndexedDB to Uint8Arrays
-        const raw = msg.files;
-        const files: ArchiveFiles = {};
-        for (const [path, data] of Object.entries(raw)) {
-          files[path] =
-            data instanceof Uint8Array ? data : new Uint8Array(data);
-        }
-        resolve(files);
-      } else {
-        resolve(null);
-      }
-    };
-
-    controller.postMessage({ type: "SW_CACHE_LOOKUP_EVENT", domain }, [
-      channel.port2,
-    ]);
-  });
 }
 
 /**
@@ -103,22 +51,30 @@ function parseLocalhostUrl(): string | null {
  * Extract the .dot label from the current hostname.
  *
  * Examples:
- *   "myapp.dot.li"        → "myapp"
- *   "myapp.localhost"      → "myapp"    (local dev)
- *   "dot.li"              → null        (landing page)
- *   "localhost"            → null        (landing page)
+ *   "myapp.dot.li"            → "myapp"
+ *   "myapp.localhost"          → "myapp"    (local dev)
+ *   "dot.li"                  → null        (landing page)
+ *   "localhost"                → null        (landing page)
+ *   "cid.app.dot.li"          → null        (handled by app-main.ts)
+ *   "cid.app.localhost"       → null        (handled by app-main.ts)
  */
 function parseDotLabel(): string | null {
   const hostname = window.location.hostname;
 
-  // Production: name.dot.li
+  // Production: name.dot.li (but NOT cid.app.dot.li)
   if (hostname.endsWith(".dot.li")) {
+    if (hostname.endsWith(".app.dot.li")) {
+      return null;
+    }
     const label = hostname.slice(0, -".dot.li".length);
     return label || null;
   }
 
-  // Local dev: name.localhost
+  // Local dev: name.localhost (but NOT cid.app.localhost)
   if (hostname.endsWith(".localhost")) {
+    if (hostname.endsWith(".app.localhost")) {
+      return null;
+    }
     const label = hostname.slice(0, -".localhost".length);
     return label || null;
   }
@@ -134,8 +90,7 @@ function parseDotLabel(): string | null {
 }
 
 /**
- * Register the Service Worker for multi-file SPA support.
- * The SW intercepts requests under /dotli-app/ and serves files from an in-memory archive.
+ * Register the host Service Worker for smoldot persistence.
  */
 async function registerServiceWorker(): Promise<void> {
   if (!("serviceWorker" in navigator)) {
@@ -144,15 +99,15 @@ async function registerServiceWorker(): Promise<void> {
 
   try {
     const swUrl = import.meta.env.DEV
-      ? "/src/dotli-sw.ts"
-      : `${import.meta.env.BASE_URL}dotli-sw.js`;
+      ? "/src/host-sw.ts"
+      : `${import.meta.env.BASE_URL}host-sw.js`;
     const swScope = import.meta.env.DEV ? "/" : import.meta.env.BASE_URL;
     await navigator.serviceWorker.register(swUrl, {
       type: "module",
       scope: swScope,
     });
 
-    // Wait until the SW is controlling this page (needed by renderArchive)
+    // Wait until the SW is controlling this page
     if (navigator.serviceWorker.controller) {
       return;
     }
@@ -165,7 +120,6 @@ async function registerServiceWorker(): Promise<void> {
         clearTimeout(timeout);
         resolve();
       });
-      // Nudge the SW to claim if it's active but hasn't claimed yet
       void navigator.serviceWorker.ready.then((registration) => {
         if (navigator.serviceWorker.controller) {
           clearTimeout(timeout);
@@ -456,89 +410,14 @@ function handleGatewayWinner(
 }
 
 import type * as RenderModule from "./render";
-import type * as FetchModule from "./fetch";
 type RenderChunk = typeof RenderModule;
-type FetchChunk = typeof FetchModule;
-
-/**
- * Fetch content (from SW cache or P2P) and render it.
- */
-async function fetchAndRender(
-  label: string,
-  cid: string,
-  swReady: Promise<void>,
-  heliaWarmup: Promise<unknown>,
-  renderChunkPromise: Promise<RenderChunk>,
-  fetchChunkPromise: Promise<FetchChunk>,
-): Promise<void> {
-  // Ensure SW is ready before cache check / rendering
-  console.warn(`[dot.li perf] Awaiting SW ready... (${elapsed()})`);
-  await swReady;
-  console.warn(`[dot.li perf] SW ready (${elapsed()})`);
-
-  // Check SW cache before fetching
-  performance.mark("dotli:cache-check:start");
-  const cacheStart = performance.now();
-  const cachedFiles = await getCachedArchive(label, cid);
-  performance.mark("dotli:cache-check:end");
-  console.warn(
-    `[dot.li perf] Cache check done (${dur(cacheStart)}) → ${cachedFiles !== null ? "HIT" : "MISS"} (${elapsed()})`,
-  );
-
-  if (cachedFiles) {
-    showStatus("Rendering (cached)...");
-    performance.mark("dotli:render:start");
-    const renderStart = performance.now();
-    const { renderArchive } = await renderChunkPromise;
-    await renderArchive(cachedFiles, label, cid);
-    performance.mark("dotli:render:end");
-    console.warn(
-      `[dot.li perf] Render done — cached (${dur(renderStart)}, ${elapsed()})`,
-    );
-    return;
-  }
-
-  // Fetch via P2P
-  performance.mark("dotli:fetch:start");
-  const fetchStart = performance.now();
-  console.warn(`[dot.li perf] Loading fetch chunk... (${elapsed()})`);
-  const { fetchArchive, destroyHelia } = await fetchChunkPromise;
-  console.warn(`[dot.li perf] Fetch chunk loaded (${elapsed()})`);
-  destroyHeliaFn = destroyHelia;
-  const heliaWait = performance.now();
-  await heliaWarmup;
-  console.warn(
-    `[dot.li perf] Helia P2P ready (waited ${dur(heliaWait)}, ${elapsed()})`,
-  );
-  const result = await fetchArchive(cid, showStatus);
-  performance.mark("dotli:fetch:end");
-  console.warn(
-    `[dot.li perf] Content fetched (${dur(fetchStart)}, ${elapsed()}) → ${result.type}`,
-  );
-
-  // Render in sandboxed iframe
-  showStatus("Rendering...");
-  performance.mark("dotli:render:start");
-  const renderStart = performance.now();
-  const { renderArchive, renderContent } = await renderChunkPromise;
-  if (result.type === "archive") {
-    await renderArchive(result.files, label, cid);
-  } else {
-    await renderContent(result.content, label);
-  }
-  performance.mark("dotli:render:end");
-  console.warn(`[dot.li perf] Render done (${dur(renderStart)}, ${elapsed()})`);
-}
 
 // ── Main ─────────────────────────────────────────────────────
 
-// Module-level references for cleanup handler
 let destroyClientFn: (() => void) | null = null;
-let destroyHeliaFn: (() => Promise<void>) | null = null;
 
 async function main(): Promise<void> {
-  // Guard: if running inside an iframe (e.g. SW lost its archive and the
-  // main page HTML was served as fallback), bail out to avoid a nested
+  // Guard: if running inside an iframe, bail out to avoid a nested
   // dot.li instance with a duplicate topbar.
   if (window.self !== window.top) {
     return;
@@ -548,8 +427,7 @@ async function main(): Promise<void> {
   console.warn(`[dot.li perf] main() started (${elapsed()})`);
 
   // Pre-warm smoldot unconditionally — start downloading the resolve chunk
-  // and kick off relay chain sync immediately. 99.9% of traffic is subdomain
-  // requests, so the cost of loading this on the landing page is negligible.
+  // and kick off relay chain sync immediately.
   const resolveChunkStart = performance.now();
   const resolveChunkPromise = import("./resolve");
   void resolveChunkPromise.then(({ getSmoldot, getRelayChain }) => {
@@ -565,19 +443,16 @@ async function main(): Promise<void> {
   const label = parseDotLabel();
 
   // ── Localhost proxy: render local dev server directly in iframe ──
-  // Uses the same container bridge as .dot sites so the host-papp SDK works.
   const localhostUrl = parseLocalhostUrl();
   if (label === null && localhostUrl !== null) {
     const host = new URL(localhostUrl).host;
     console.warn(`[dot.li perf] Localhost proxy: ${host} (${elapsed()})`);
 
-    // Show localhost address in URL pill (no verification shield)
     const urlBar = document.getElementById("topbar-url");
     if (urlBar !== null) {
       urlBar.innerHTML = `<div class="topbar-url-pill localhost-pill" id="url-pill"><svg class="localhost-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="dot-domain">${host}</span></div>`;
     }
 
-    // Render through the standard iframe pipeline (includes container bridge)
     const { renderIframe } = await import("./render");
     await renderIframe(localhostUrl, host);
     document.title = `${host} — dot.li`;
@@ -626,21 +501,17 @@ async function main(): Promise<void> {
   }
   // ── END TEMPORARY ──
 
-  // Pre-load chunks in parallel (overlap with CID cache check + resolution)
+  // Pre-load chunks in parallel (overlap with CID resolution)
   const gatewayChunkPromise = import("./gateway-resolve");
   void gatewayChunkPromise.catch(() => {
     /* fire-and-forget */
   });
-  const renderChunkPromise = import("./render");
+  const renderChunkPromise: Promise<RenderChunk> = import("./render");
   void renderChunkPromise.catch(() => {
     /* fire-and-forget */
   });
   const swProviderChunkPromise = import("./sw-provider");
   void swProviderChunkPromise.catch(() => {
-    /* fire-and-forget */
-  });
-  const fetchChunkPromise = import("./fetch");
-  void fetchChunkPromise.catch(() => {
     /* fire-and-forget */
   });
 
@@ -666,7 +537,6 @@ async function main(): Promise<void> {
       domainPopover.classList.remove("open");
     }
   });
-  // Close popover when iframe gets focus (clicking into the app content)
   window.addEventListener("blur", () => {
     domainPopover.classList.remove("open");
   });
@@ -674,14 +544,11 @@ async function main(): Promise<void> {
   showStatus(`Resolving ${label}.dot...`);
 
   try {
-    // Start SW registration in parallel — SW is only needed before rendering,
-    // so it runs concurrently with chunk loading + smoldot resolution
+    // Start SW registration in parallel (for smoldot persistence)
     performance.mark("dotli:sw:start");
     const swStart = performance.now();
     console.warn(`[dot.li perf] SW registration started (${elapsed()})`);
 
-    // Detect cold start: no controller means SW is being freshly registered.
-    // Tell resolve.ts to skip trySwSmoldot() (avoids 500ms timeout).
     if (!navigator.serviceWorker.controller) {
       void resolveChunkPromise.then(({ markFreshSwRegistration }) => {
         markFreshSwRegistration();
@@ -694,92 +561,52 @@ async function main(): Promise<void> {
         `[dot.li perf] SW registration done (${dur(swStart)}, ${elapsed()})`,
       );
     });
-
-    // Pre-create iframe element while we resolve + fetch (saves ~50ms later)
-    renderChunkPromise
-      .then(({ prepareIframe }) => {
-        prepareIframe();
-      })
-      .catch(() => {
-        /* fire-and-forget */
-      });
-
-    // ── Fast path: CID cache + SW archive cache ──
-    // On repeat visits, render from the cached CID instantly (<500ms)
-    // and validate via smoldot in the background.
-    const cachedCid = await getCachedCid(label);
-    if (cachedCid !== null) {
-      console.warn(`[dot.li perf] CID cache HIT: ${cachedCid} (${elapsed()})`);
-      await swReady;
-      const cachedFiles = await getCachedArchive(label, cachedCid);
-      if (cachedFiles) {
-        console.warn(`[dot.li perf] SW archive cache HIT (${elapsed()})`);
-        showStatus("Rendering (cached)...");
-        setShieldState("validating");
-        performance.mark("dotli:render:start");
-        const renderStart = performance.now();
-        const { renderArchive } = await renderChunkPromise;
-        await renderArchive(cachedFiles, label, cachedCid);
-        performance.mark("dotli:render:end");
-        console.warn(
-          `[dot.li perf] Render done — fast path (${dur(renderStart)}, ${elapsed()})`,
-        );
-        performance.mark("dotli:main:end");
-        console.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
-
-        // Background: validate CID is still current
-        resolveChunkPromise
-          .then(({ resolveDotName, resolveOwner, destroyClient }) => {
-            destroyClientFn = destroyClient;
-            populateOwner(resolveOwner, label);
-            resolveDotName(label).then((freshCid) => {
-              if (freshCid !== null && freshCid !== cachedCid) {
-                console.warn(
-                  `[dot.li] CID changed: ${cachedCid} → ${freshCid}`,
-                );
-                requestIdleCallback(() => {
-                  void setCachedCid(label, freshCid);
-                });
-                setShieldState("stale");
-                showUpdateBanner();
-              } else if (freshCid !== null) {
-                // Same CID — refresh timestamp
-                requestIdleCallback(() => {
-                  void setCachedCid(label, freshCid);
-                });
-                setShieldState("verified");
-              }
-            }, console.error);
-          })
-          .catch(console.error);
-        return;
-      }
-      console.warn(`[dot.li perf] SW archive cache MISS (${elapsed()})`);
-    } else {
-      console.warn(`[dot.li perf] CID cache MISS (${elapsed()})`);
-    }
-
-    // ── Full resolution path (first visit or cache miss) ──
-
-    // Pre-warm Helia P2P: start dialing Bulletin peers in parallel with
-    // resolution. Peer connections (~2.3s) don't need the CID.
-    console.warn(`[dot.li perf] Pre-warming Helia P2P... (${elapsed()})`);
-    const heliaWarmup = fetchChunkPromise.then(
-      ({ ensureHelia, destroyHelia }) => {
-        destroyHeliaFn = destroyHelia;
-        return ensureHelia();
-      },
-    );
-    void heliaWarmup.catch(() => {
+    void swReady.catch(() => {
       /* fire-and-forget */
     });
 
-    // Check if SW smoldot is already synced (lukewarm same-origin revisit).
-    // If ready, skip the gateway entirely — SW smoldot resolves instantly.
+    // ── Fast path: CID cache hit → iframe to cid.app.dot.li ──
+    const cachedCid = await getCachedCid(label);
+    if (cachedCid !== null) {
+      console.warn(`[dot.li perf] CID cache HIT: ${cachedCid} (${elapsed()})`);
+      setShieldState("validating");
+      const { renderAppSubdomain } = await renderChunkPromise;
+      await renderAppSubdomain(cachedCid, label);
+      performance.mark("dotli:main:end");
+      console.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
+
+      // Background: validate CID is still current
+      resolveChunkPromise
+        .then(({ resolveDotName, resolveOwner, destroyClient }) => {
+          destroyClientFn = destroyClient;
+          populateOwner(resolveOwner, label);
+          resolveDotName(label).then((freshCid) => {
+            if (freshCid !== null && freshCid !== cachedCid) {
+              console.warn(`[dot.li] CID changed: ${cachedCid} → ${freshCid}`);
+              requestIdleCallback(() => {
+                void setCachedCid(label, freshCid);
+              });
+              setShieldState("stale");
+              showUpdateBanner();
+            } else if (freshCid !== null) {
+              requestIdleCallback(() => {
+                void setCachedCid(label, freshCid);
+              });
+              setShieldState("verified");
+            }
+          }, console.error);
+        })
+        .catch(console.error);
+      return;
+    }
+    console.warn(`[dot.li perf] CID cache MISS (${elapsed()})`);
+
+    // ── Full resolution path ──
+
+    // Check if SW smoldot is already synced
     const { isSwSmoldotReady } = await swProviderChunkPromise;
     const swSmoldotReady = await isSwSmoldotReady();
 
-    // Start gateway resolution only if SW smoldot is not ready
     performance.mark("dotli:resolve:start");
     let gatewayPromise: Promise<string | null>;
     if (swSmoldotReady) {
@@ -796,7 +623,6 @@ async function main(): Promise<void> {
         .catch(() => null as string | null);
     }
 
-    // Await resolve chunk for smoldot path (already loading since top of main)
     console.warn(`[dot.li perf] Awaiting resolve chunk... (${elapsed()})`);
     const { resolveDotName, resolveOwner, destroyClient } =
       await resolveChunkPromise;
@@ -806,7 +632,6 @@ async function main(): Promise<void> {
     destroyClientFn = destroyClient;
     populateOwner(resolveOwner, label);
 
-    // Start smoldot resolution in parallel with gateway
     let showSmoldotStatus = true;
     const smoldotPromise = resolveDotName(label, (msg: string) => {
       if (showSmoldotStatus) {
@@ -814,7 +639,6 @@ async function main(): Promise<void> {
       }
     });
 
-    // Race: first non-null CID wins
     const resolveStart = performance.now();
     const winner = await raceResolvers(gatewayPromise, smoldotPromise);
     performance.mark("dotli:resolve:end");
@@ -832,7 +656,6 @@ async function main(): Promise<void> {
 
     const cid = winner.cid;
 
-    // Cache the resolved CID for future fast-path visits
     requestIdleCallback(() => {
       void setCachedCid(label, cid);
     });
@@ -845,14 +668,9 @@ async function main(): Promise<void> {
       setShieldState("verified");
     }
 
-    await fetchAndRender(
-      label,
-      cid,
-      swReady,
-      heliaWarmup,
-      renderChunkPromise,
-      fetchChunkPromise,
-    );
+    // Render: iframe to cid.app.dot.li
+    const { renderAppSubdomain } = await renderChunkPromise;
+    await renderAppSubdomain(cid, label);
     performance.mark("dotli:main:end");
     console.warn(`[dot.li perf] === TOTAL: ${dur(T0)} ===`);
   } catch (err) {
@@ -865,9 +683,6 @@ async function main(): Promise<void> {
 // Cleanup on page unload
 window.addEventListener("beforeunload", () => {
   destroyClientFn?.();
-  if (destroyHeliaFn) {
-    void destroyHeliaFn();
-  }
 });
 
 void main();

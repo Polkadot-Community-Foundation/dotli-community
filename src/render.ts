@@ -174,6 +174,7 @@ export function prepareIframe(): void {
   if (preparedIframe) {
     return;
   }
+  const hasTopbar = document.getElementById("topbar") !== null;
   const iframe = document.createElement("iframe");
   // TODO(security): allow-scripts + allow-same-origin together allows sandbox
   // escape. This is intentional — the container bridge (container.ts) needs
@@ -181,8 +182,9 @@ export function prepareIframe(): void {
   // and to access SW-served resources. Without allow-same-origin the SW cannot
   // intercept iframe fetches, breaking archive serving entirely.
   iframe.sandbox.add("allow-scripts", "allow-same-origin");
-  iframe.style.cssText =
-    "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;visibility:hidden;";
+  iframe.style.cssText = hasTopbar
+    ? "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;visibility:hidden;"
+    : "position:fixed;top:0;left:0;width:100%;height:100vh;border:none;margin:0;padding:0;visibility:hidden;";
   document.body.style.margin = "0";
   document.body.style.overflow = "hidden";
   app.appendChild(iframe);
@@ -190,6 +192,11 @@ export function prepareIframe(): void {
 }
 
 export async function renderIframe(url: string, label: string): Promise<void> {
+  const hasTopbar = document.getElementById("topbar") !== null;
+  const iframeStyle = hasTopbar
+    ? "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;"
+    : "position:fixed;top:0;left:0;width:100%;height:100vh;border:none;margin:0;padding:0;";
+
   let iframe: HTMLIFrameElement;
   if (preparedIframe) {
     // Detach before clearing, then re-append
@@ -197,21 +204,27 @@ export async function renderIframe(url: string, label: string): Promise<void> {
     preparedIframe = null;
     iframe.remove();
     app.innerHTML = "";
+    iframe.style.cssText = iframeStyle;
     iframe.style.visibility = "visible";
     app.appendChild(iframe);
   } else {
     app.innerHTML = "";
     iframe = document.createElement("iframe");
     iframe.sandbox.add("allow-scripts", "allow-same-origin");
-    iframe.style.cssText =
-      "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
+    iframe.style.cssText = iframeStyle;
     document.body.style.margin = "0";
     document.body.style.overflow = "hidden";
     app.appendChild(iframe);
   }
 
-  const { setupContainer } = await containerChunkPromise;
-  currentDispose = setupContainer(iframe, url, label);
+  const { setupContainer, setupNestedBridgeDetector } =
+    await containerChunkPromise;
+  const disposePrimary = setupContainer(iframe, url, label);
+  const disposeNested = setupNestedBridgeDetector(iframe, label);
+  currentDispose = () => {
+    disposePrimary();
+    disposeNested();
+  };
 
   // Mirror the iframe's document.title and <meta name="theme-color"> to the
   // parent page. SPAs change these dynamically, so we observe mutations.
@@ -306,6 +319,56 @@ function applyTopbarColor(
     urlPill.style.backgroundColor = darkenColor(color, 0.35);
     urlPill.style.borderColor = darkenColor(color, 0.2);
   }
+}
+
+/**
+ * Render content in a cross-origin app subdomain iframe (cid.app.dot.li).
+ * Used by the host build to delegate content fetching+rendering to the app context.
+ *
+ * Sets up the container bridge targeting the app iframe. The app context
+ * acts as a transparent postMessage relay between the host and the dApp iframe.
+ */
+export async function renderAppSubdomain(
+  cid: string,
+  label: string,
+): Promise<void> {
+  cleanup();
+
+  const appOrigin = getAppOrigin(cid);
+  const deepPath = getDeepPath();
+  const url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
+
+  const iframe = document.createElement("iframe");
+  iframe.sandbox.add("allow-scripts", "allow-same-origin");
+  iframe.style.cssText =
+    "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
+  document.body.style.margin = "0";
+  document.body.style.overflow = "hidden";
+  app.innerHTML = "";
+  app.appendChild(iframe);
+
+  // Set up container bridge targeting the app iframe.
+  // createIframeProvider sets iframe.src = url internally.
+  // The nested bridge detector handles dApps embedded within the primary dApp.
+  const { setupContainer, setupNestedBridgeDetector } =
+    await containerChunkPromise;
+  const disposePrimary = setupContainer(iframe, url, label);
+  const disposeNested = setupNestedBridgeDetector(iframe, label);
+  currentDispose = () => {
+    disposePrimary();
+    disposeNested();
+  };
+
+  document.title = `${label}.dot`;
+}
+
+function getAppOrigin(cid: string): string {
+  const hostname = window.location.hostname;
+  if (hostname.endsWith(".localhost") || hostname === "localhost") {
+    const port = import.meta.env.DEV ? "5174" : window.location.port;
+    return `http://${cid}.app.localhost:${port}`;
+  }
+  return `https://${cid}.app.dot.li`;
 }
 
 function cleanup(): void {

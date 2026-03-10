@@ -2,14 +2,21 @@
 //
 // Bridges the host (dot.li) and the SPA loaded in the iframe using
 // @novasamatech/host-container's postMessage-based protocol.
+//
+// Supports nested dApps: when a dApp embeds another dApp via iframe,
+// the nested bridge detector dynamically creates additional bridges
+// for each descendant dApp that sends protocol messages to window.top.
 
 import {
+  createDefaultLogger,
   RequestCredentialsErr,
   SigningErr,
   StorageErr,
 } from "@novasamatech/host-api";
+import type { Provider } from "@novasamatech/host-api";
 import { createIframeProvider } from "@novasamatech/host-container";
 import { createContainer } from "@novasamatech/host-container";
+import type { Container } from "@novasamatech/host-container";
 import { fromPromise } from "neverthrow";
 
 import type { UserSession } from "@novasamatech/host-papp";
@@ -18,40 +25,29 @@ import { showSignPayloadModal, showSignRawModal } from "./signing";
 import { deriveProductPublicKey } from "./account";
 import { createChainProvider, isChainSupported } from "./chains";
 
-/**
- * Set up the host container for an iframe displaying a .dot SPA.
- *
- * Creates a postMessage-based provider, wires up all handlers
- * (accounts, signing, localStorage, etc.) and loads the URL in the iframe.
- *
- * Returns a dispose function to tear down the container.
- */
-export function setupContainer(
-  iframe: HTMLIFrameElement,
-  blobUrl: string,
-  label: string,
+// ── Session helpers (shared by all bridges) ────────────────
+
+function getSession(): UserSession | null {
+  const state = getAuthState();
+  return state.status === "authenticated" ? state.session : null;
+}
+
+function subscribeSession(
+  callback: (session: ReturnType<typeof getSession>) => void,
 ): () => void {
-  const provider = createIframeProvider({ iframe, url: blobUrl });
-  const container = createContainer(provider);
+  callback(getSession());
+  return onAuthStateChange((state: AuthState) => {
+    callback(state.status === "authenticated" ? state.session : null);
+  });
+}
 
-  // Helper: get the current session or null
-  function getSession(): UserSession | null {
-    const state = getAuthState();
-    return state.status === "authenticated" ? state.session : null;
-  }
+// ── Wire all container handlers ────────────────────────────
 
-  // Helper: subscribe to session changes (for connection status)
-  function subscribeSession(
-    callback: (session: ReturnType<typeof getSession>) => void,
-  ): () => void {
-    // Send initial state
-    callback(getSession());
-    // Subscribe to future changes
-    return onAuthStateChange((state: AuthState) => {
-      callback(state.status === "authenticated" ? state.session : null);
-    });
-  }
-
+function wireContainerHandlers(
+  container: Container,
+  label: string,
+  storagePrefix: string,
+): void {
   // ── Feature support ────────────────────────────────────
 
   container.handleFeatureSupported((params, { ok }) => {
@@ -144,9 +140,7 @@ export function setupContainer(
       .orElse((e) => err(e));
   });
 
-  // ── Local Storage (scoped to domain) ───────────────────
-
-  const storagePrefix = `dotli:${label}:`;
+  // ── Local Storage (scoped per dApp) ────────────────────
 
   container.handleLocalStorageRead((key, { ok, err }) => {
     try {
@@ -154,7 +148,6 @@ export function setupContainer(
       if (raw === null) {
         return ok(undefined);
       }
-      // Stored as base64-encoded bytes
       const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
       return ok(bytes);
     } catch {
@@ -166,7 +159,6 @@ export function setupContainer(
 
   container.handleLocalStorageWrite(([key, value], { ok, err }) => {
     try {
-      // Store as base64
       const b64 = btoa(String.fromCharCode(...value));
       localStorage.setItem(storagePrefix + key, b64);
       return ok(undefined);
@@ -209,8 +201,162 @@ export function setupContainer(
     console.warn(`[${label}] Notification:`, text);
     return ok(undefined);
   });
+}
 
-  // ── Dispose ────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────
+
+/** Check if a value is a Uint8Array (or cross-realm equivalent). */
+function isUint8ArrayLike(data: unknown): data is Uint8Array {
+  if (data instanceof Uint8Array) {
+    return true;
+  }
+  if (typeof data !== "object" || data === null) {
+    return false;
+  }
+  return (
+    (data as { constructor: { name: string } }).constructor.name ===
+    "Uint8Array"
+  );
+}
+
+// ── Window-based provider for nested dApps ─────────────────
+//
+// Implements the same Provider interface as createIframeProvider
+// but targets a captured Window reference (from event.source)
+// instead of an HTMLIFrameElement.
+
+function createWindowProvider(sourceWindow: Window): Provider {
+  let disposed = false;
+  const subscribers = new Set<(message: Uint8Array) => void>();
+
+  const messageHandler = (event: MessageEvent): void => {
+    if (disposed) {
+      return;
+    }
+    if (event.source !== sourceWindow) {
+      return;
+    }
+    if (!isUint8ArrayLike(event.data)) {
+      return;
+    }
+
+    for (const subscriber of subscribers) {
+      subscriber(event.data);
+    }
+  };
+
+  window.addEventListener("message", messageHandler);
+
+  return {
+    logger: createDefaultLogger(),
+
+    isCorrectEnvironment() {
+      return true;
+    },
+    postMessage(message) {
+      if (disposed) {
+        return;
+      }
+      sourceWindow.postMessage(message, "*", [message.buffer]);
+    },
+    subscribe(callback) {
+      subscribers.add(callback);
+      return () => {
+        subscribers.delete(callback);
+      };
+    },
+    dispose() {
+      disposed = true;
+      subscribers.clear();
+      window.removeEventListener("message", messageHandler);
+    },
+  };
+}
+
+// ── Nested bridge detector ─────────────────────────────────
+//
+// Listens for Uint8Array postMessage events from windows other
+// than the primary iframe. When a new source is detected, creates
+// a full bridge (Provider + Container + handlers) for that window.
+//
+// This enables nested dApps (dApp-in-dApp) to communicate with
+// the HOST, since all dApps send to window.top regardless of depth.
+
+export function setupNestedBridgeDetector(
+  primaryIframe: HTMLIFrameElement,
+  label: string,
+): () => void {
+  const knownWindows = new Set<MessageEventSource>();
+  const disposers: (() => void)[] = [];
+
+  function messageHandler(event: MessageEvent): void {
+    // Only handle protocol messages (Uint8Array)
+    if (!isUint8ArrayLike(event.data)) {
+      return;
+    }
+    // Skip messages from the primary iframe (handled by its own bridge)
+    if (event.source === primaryIframe.contentWindow) {
+      return;
+    }
+    // Skip messages from ourselves
+    if (event.source === window) {
+      return;
+    }
+    // Must have a source
+    if (event.source === null) {
+      return;
+    }
+    // Skip already-known nested windows
+    if (knownWindows.has(event.source)) {
+      return;
+    }
+
+    // New nested dApp detected
+    knownWindows.add(event.source);
+    const nestedId = String(knownWindows.size);
+    console.warn(`[dot.li] Nested dApp #${nestedId} detected, creating bridge`);
+
+    const provider = createWindowProvider(event.source as Window);
+    const container = createContainer(provider);
+    const nestedPrefix = `dotli:${label}:nested-${nestedId}:`;
+    wireContainerHandlers(container, label, nestedPrefix);
+
+    disposers.push(() => {
+      container.dispose();
+    });
+  }
+
+  window.addEventListener("message", messageHandler);
+
+  return () => {
+    window.removeEventListener("message", messageHandler);
+    for (const dispose of disposers) {
+      dispose();
+    }
+    knownWindows.clear();
+    disposers.length = 0;
+  };
+}
+
+// ── Main setup (primary bridge) ────────────────────────────
+
+/**
+ * Set up the host container for an iframe displaying a .dot SPA.
+ *
+ * Creates a postMessage-based provider, wires up all handlers
+ * (accounts, signing, localStorage, etc.) and loads the URL in the iframe.
+ *
+ * Returns a dispose function to tear down the container.
+ */
+export function setupContainer(
+  iframe: HTMLIFrameElement,
+  blobUrl: string,
+  label: string,
+): () => void {
+  const provider = createIframeProvider({ iframe, url: blobUrl });
+  const container = createContainer(provider);
+  const storagePrefix = `dotli:${label}:`;
+  wireContainerHandlers(container, label, storagePrefix);
 
   return () => {
     container.dispose();

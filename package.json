@@ -28,8 +28,11 @@
   },
   "scripts": {
     "postinstall": "papi",
-    "dev": "bunx --bun vite",
-    "build": "tsc && bunx --bun vite build && bun scripts/compress-dist.ts",
+    "dev": "BUILD_TARGET=host bunx --bun vite",
+    "dev:app": "BUILD_TARGET=app bunx --bun vite --port 5174",
+    "build": "tsc && bun run build:host && bun run build:app && bun scripts/compress-dist.ts",
+    "build:host": "BUILD_TARGET=host bunx --bun vite build",
+    "build:app": "BUILD_TARGET=app bunx --bun vite build",
     "preview": "bunx --bun vite preview",
     "test:perf": "PERF_RUNS=10 PERF_DOMAIN_A=hackme3 PERF_DOMAIN_B=insync bunx playwright test tests/cold-start.spec.ts",
     "test:perf:base": "PERF_RUNS=20 PERF_SAVE_BASE=1 PERF_DOMAIN_A=hackme3 PERF_DOMAIN_B=insync bunx playwright test tests/cold-start.spec.ts",
