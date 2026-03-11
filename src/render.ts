@@ -187,7 +187,10 @@ export function prepareIframe(): void {
   // same-origin access to communicate with the parent frame via postMessage
   // and to access SW-served resources. Without allow-same-origin the SW cannot
   // intercept iframe fetches, breaking archive serving entirely.
-  iframe.sandbox.add("allow-scripts", "allow-same-origin");
+  // TODO: sandbox permissions should be defined by a dApp manifest rather than
+  // hardcoded — allow each product to declare its required permissions.
+  iframe.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms");
+  iframe.allow = "clipboard-write";
   iframe.style.cssText = hasTopbar
     ? "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;visibility:hidden;"
     : "position:fixed;top:0;left:0;width:100%;height:100vh;border:none;margin:0;padding:0;visibility:hidden;";
@@ -216,7 +219,9 @@ export async function renderIframe(url: string, label: string): Promise<void> {
   } else {
     app.innerHTML = "";
     iframe = document.createElement("iframe");
-    iframe.sandbox.add("allow-scripts", "allow-same-origin");
+    // TODO: sandbox permissions should be defined by a dApp manifest
+    iframe.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms");
+    iframe.allow = "clipboard-write";
     iframe.style.cssText = iframeStyle;
     document.body.style.margin = "0";
     document.body.style.overflow = "hidden";
@@ -345,7 +350,9 @@ export async function renderAppSubdomain(
   const url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
 
   const iframe = document.createElement("iframe");
-  iframe.sandbox.add("allow-scripts", "allow-same-origin");
+  // TODO: sandbox permissions should be defined by a dApp manifest
+  iframe.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms");
+  iframe.allow = "clipboard-write";
   iframe.style.cssText =
     "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
   document.body.style.margin = "0";
