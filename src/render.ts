@@ -56,7 +56,13 @@ function getDeepPath(): string {
     p = "/" + p.slice(base.length);
   }
   const stripped = p.replace(/^\/[^/]+\.dot/, "");
-  return stripped === "" || stripped === "/" ? "" : stripped + search + hash;
+  const isRoot = stripped === "" || stripped === "/";
+  // Even when the path is root, forward hash and search params to the iframe
+  // so hash-based routing (e.g. /#/events/create) works correctly.
+  if (isRoot) {
+    return search || hash ? search + hash : "";
+  }
+  return stripped + search + hash;
 }
 
 /**
