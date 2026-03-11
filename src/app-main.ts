@@ -184,6 +184,17 @@ async function storeArchiveInSW(
   await archiveReady;
 }
 
+/**
+ * Optionally inject the sandbox checker script into HTML for relay mode.
+ * In relay mode, document.write() replaces the page, so we must inject
+ * the checker inline — the render.ts injection path is not used.
+ */
+async function maybeInjectSandboxChecker(html: string): Promise<string> {
+  if (!import.meta.env.VITE_SANDBOX_CHECKER) return html;
+  const { injectSandboxChecker } = await import("./sandbox-checker");
+  return injectSandboxChecker(html);
+}
+
 // Module-level reference for cleanup
 let destroyHeliaFn: (() => Promise<void>) | null = null;
 
@@ -237,7 +248,8 @@ async function main(): Promise<void> {
             `[dot.li app] Relay mode: archive stored in SW (${elapsed()})`,
           );
         }
-        const html = new TextDecoder().decode(indexHtml);
+        let html = new TextDecoder().decode(indexHtml);
+        html = await maybeInjectSandboxChecker(html);
         console.warn(
           `[dot.li app] Relay mode: writing cached content into window (${elapsed()})`,
         );
@@ -290,6 +302,7 @@ async function main(): Promise<void> {
     }
 
     if (html !== null) {
+      html = await maybeInjectSandboxChecker(html);
       console.warn(
         `[dot.li app] Relay mode: writing content into window (${elapsed()})`,
       );

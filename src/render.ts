@@ -41,6 +41,7 @@ void containerChunkPromise.catch(() => {
 const app = document.getElementById("app") ?? document.body;
 
 let currentDispose: (() => void) | null = null;
+let currentPanelDispose: (() => void) | null = null;
 let currentBlobUrl: string | null = null;
 
 /**
@@ -78,7 +79,12 @@ export async function renderContent(
 ): Promise<void> {
   cleanup();
 
-  const html = new TextDecoder().decode(content);
+  let html = new TextDecoder().decode(content);
+
+  if (import.meta.env.VITE_SANDBOX_CHECKER) {
+    const { injectSandboxChecker } = await import("./sandbox-checker");
+    html = injectSandboxChecker(html);
+  }
 
   // Create a blob URL so the iframe has a proper origin for postMessage
   const blob = new Blob([html], { type: "text/html" });
@@ -237,6 +243,11 @@ export async function renderIframe(url: string, label: string): Promise<void> {
     disposeNested();
   };
 
+  if (import.meta.env.VITE_SANDBOX_CHECKER) {
+    const { setupViolationPanel } = await import("./sandbox-checker-ui");
+    currentPanelDispose = setupViolationPanel(iframe);
+  }
+
   // Mirror the iframe's document.title and <meta name="theme-color"> to the
   // parent page. SPAs change these dynamically, so we observe mutations.
   const fallbackTitle = `${label}.dot`;
@@ -372,6 +383,11 @@ export async function renderAppSubdomain(
     disposeNested();
   };
 
+  if (import.meta.env.VITE_SANDBOX_CHECKER) {
+    const { setupViolationPanel } = await import("./sandbox-checker-ui");
+    currentPanelDispose = setupViolationPanel(iframe);
+  }
+
   document.title = `${label}.dot`;
 }
 
@@ -385,6 +401,10 @@ function getAppOrigin(cid: string): string {
 }
 
 function cleanup(): void {
+  if (currentPanelDispose) {
+    currentPanelDispose();
+    currentPanelDispose = null;
+  }
   if (currentDispose) {
     currentDispose();
     currentDispose = null;

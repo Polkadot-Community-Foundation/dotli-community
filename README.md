@@ -133,6 +133,21 @@ The app context uses `document.write()` to eliminate extra iframe nesting: when 
 
 ## Development
 
+The project scripts use [Bun](https://bun.sh). Install it first:
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
+Then:
+
+```bash
+bun install
+bun run dev
+```
+
+Alternatively, if you don't want to install Bun, you can use `npx` directly:
+
 ```bash
 bun install
 
@@ -148,6 +163,38 @@ Local dev uses wildcard subdomains:
 - `bafyrei....app.localhost:5174` — fetches and renders CID content directly
 
 Both servers should run simultaneously for full functionality.
+
+## Sandbox API Checker
+
+dApps rendered in dot.li's sandboxed iframe should communicate exclusively through the container bridge (postMessage), not use web APIs directly. The sandbox checker detects restricted API usage and reports violations in a UI panel.
+
+### Activation
+
+Both the host and app dev servers need the env var:
+
+```bash
+# Terminal 1 — Host shell (port 5173)
+VITE_SANDBOX_CHECKER=true bun run dev
+
+# Terminal 2 — App content (port 5174)
+VITE_SANDBOX_CHECKER=true bun run dev:app
+```
+
+When the env var is not set, the checker is tree-shaken out of production builds entirely.
+
+### Monitored APIs
+
+| Category | APIs |
+|----------|------|
+| Network | `fetch`, `XMLHttpRequest`, `WebSocket`, `RTCPeerConnection`, `EventSource`, `sendBeacon` |
+| Workers | `Worker`, `SharedWorker`, `ServiceWorker.register` |
+| Storage | `localStorage`, `sessionStorage`, `IndexedDB`, `CacheStorage`, `document.cookie` |
+| DOM | `document.createElement('iframe')` |
+| Wallet | `window.injectedWeb3`, `window.polkadot`, `window.ethereum` |
+
+Same-origin requests (static dApp files served by the Service Worker) are excluded from reporting for `fetch` and `XMLHttpRequest`. Violations are logged but calls still proceed (log-and-forward pattern).
+
+The violation panel appears at the bottom of the viewport when the first violation is detected, showing the API name, details, and timestamp for each call.
 
 ## Network configuration
 
