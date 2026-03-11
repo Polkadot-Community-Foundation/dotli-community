@@ -110,8 +110,34 @@ jobs:
           > Merge to `main` to establish a baseline.
           EOF
 
-      - name: Post PR comment
-        uses: peter-evans/create-or-update-comment@v5
+      - name: Post or update PR comment
+        uses: actions/github-script@v8
         with:
-          issue-number: ${{ github.event.pull_request.number }}
-          body-path: /tmp/perf-comment.md
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/perf-comment.md', 'utf8');
+            const marker = '## ⚡ Performance Report';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

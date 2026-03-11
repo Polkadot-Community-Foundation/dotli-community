@@ -12,9 +12,10 @@ export default defineConfig({
   },
   reporter: [["list"], ["json", { outputFile: "tests/results.json" }]],
   webServer: {
-    command: "bunx --bun vite --host",
+    command:
+      "bun run build:host && bun run build:app && bun scripts/preview-server.ts",
     url: "http://localhost:5173",
     reuseExistingServer: true,
-    timeout: 15_000,
+    timeout: 120_000,
   },
 });

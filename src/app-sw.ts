@@ -364,7 +364,11 @@ function lookupArchive(pathname: string): Response | null {
 
 /** Inject sandbox checker script into HTML (SW context — inline the script). */
 function injectSandboxScript(html: string): string {
-  if (!import.meta.env.VITE_SANDBOX_CHECKER) return html;
+  if (
+    (import.meta.env.VITE_SANDBOX_CHECKER as string | undefined) === undefined
+  ) {
+    return html;
+  }
   // Inline the same IIFE as sandbox-checker.ts to avoid importing from main bundle.
   // The SW build is separate, so we duplicate the script string here.
   const script = `<script>(function(){

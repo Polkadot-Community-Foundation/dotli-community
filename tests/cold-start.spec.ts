@@ -11,7 +11,13 @@
  *   PERF_RUNS=5 npm run test:perf   — override iteration count
  */
 
-import { test, expect, type Page, type Browser } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Page,
+  type Browser,
+  type Frame,
+} from "@playwright/test";
 import * as ss from "simple-statistics";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -74,10 +80,14 @@ const NUM_RUNS = parseInt(process.env.PERF_RUNS ?? "10", 10);
 const DOMAIN_A = process.env.PERF_DOMAIN_A ?? "hackme3";
 const DOMAIN_B = process.env.PERF_DOMAIN_B ?? "insync";
 const PORT = process.env.PERF_PORT ?? "5173";
+const PERF_VERBOSE = process.env.PERF_VERBOSE === "1";
 const ITERATION_TIMEOUT = 3 * 60_000; // 3 minutes per iteration
 
 const PHASE_PAIRS: [string, string, string][] = [
-  ["Total (main)", "dotli:main:start", "dotli:main:end"],
+  // Cross-layer: host start → app end (wall-clock end-to-end)
+  ["End-to-end", "dotli:main:start", "dotli:app:end"],
+  // Host phases (name.localhost — resolution + iframe creation)
+  ["Host total", "dotli:main:start", "dotli:main:end"],
   ["SW registration", "dotli:sw:start", "dotli:sw:end"],
   ["Name resolution", "dotli:resolve:start", "dotli:resolve:end"],
   ["  Smoldot init", "dotli:smoldot:init:start", "dotli:smoldot:init:end"],
@@ -89,12 +99,11 @@ const PHASE_PAIRS: [string, string, string][] = [
   ],
   ["    Chain sync", "dotli:smoldot:sync:start", "dotli:smoldot:sync:end"],
   ["  SW smoldot", "dotli:smoldot:sw:start", "dotli:smoldot:sw:end"],
-  ["Cache check", "dotli:cache-check:start", "dotli:cache-check:end"],
-  ["Content fetch", "dotli:fetch:start", "dotli:fetch:end"],
+  // App phases (cid.app.localhost — content fetch + render)
+  ["App total", "dotli:app:start", "dotli:app:end"],
   ["  P2P attempt", "dotli:fetch:p2p:start", "dotli:fetch:p2p:end"],
   ["  Gateway fetch", "dotli:fetch:gateway:start", "dotli:fetch:gateway:end"],
   ["  Archive parse", "dotli:fetch:parse:start", "dotli:fetch:parse:end"],
-  ["Render", "dotli:render:start", "dotli:render:end"],
 ];
 
 // ── Statistics (simple-statistics) ─────────────────────────
@@ -148,12 +157,46 @@ function computeStats(rawValues: number[]): PhaseStats {
 // ── Helpers ────────────────────────────────────────────────
 
 async function collectMarks(page: Page): Promise<PerfMark[]> {
-  return page.evaluate(() => {
-    return performance
+  // Collect host-side marks + timeOrigin for cross-frame normalization
+  const hostData = await page.evaluate(() => ({
+    marks: performance
       .getEntriesByType("mark")
       .filter((m) => m.name.startsWith("dotli:"))
-      .map((m) => ({ name: m.name, startTime: m.startTime }));
-  });
+      .map((m) => ({ name: m.name, startTime: m.startTime })),
+    timeOrigin: performance.timeOrigin,
+  }));
+
+  // Collect app iframe marks (cid.app.localhost) and normalize to host timeline
+  const appFrame = page
+    .frames()
+    .find((f) => f.url().includes(".app.localhost"));
+  if (!appFrame) {
+    return hostData.marks;
+  }
+
+  try {
+    const appData = await appFrame.evaluate(() => ({
+      marks: performance
+        .getEntriesByType("mark")
+        .filter((m) => m.name.startsWith("dotli:"))
+        .map((m) => ({ name: m.name, startTime: m.startTime })),
+      timeOrigin: performance.timeOrigin,
+    }));
+
+    // Normalize app marks onto the host performance timeline.
+    // offset = appTimeOrigin - hostTimeOrigin; adding it converts app
+    // mark timestamps to be relative to the host's timeOrigin.
+    const offset = appData.timeOrigin - hostData.timeOrigin;
+    const normalizedAppMarks = appData.marks.map((m) => ({
+      name: m.name,
+      startTime: m.startTime + offset,
+    }));
+
+    return [...hostData.marks, ...normalizedAppMarks];
+  } catch {
+    // App frame may not be accessible after document.write() replaces it
+    return hostData.marks;
+  }
 }
 
 function computePhases(marks: PerfMark[]): PhaseResult[] {
@@ -178,23 +221,52 @@ function computePhases(marks: PerfMark[]): PhaseResult[] {
 }
 
 async function waitForPipeline(page: Page): Promise<void> {
+  // 1. Wait for host to finish (CID resolution + app iframe creation)
   await page.waitForFunction(
-    () => {
-      const marks = performance.getEntriesByType("mark").map((m) => m.name);
-      // Check for a visible iframe — prepareIframe() creates a hidden one early,
-      // so we can't just check for existence.
-      const iframe = document.querySelector("iframe");
-      const iframeVisible =
-        iframe !== null && iframe.style.visibility !== "hidden";
-      return (
-        marks.includes("dotli:main:end") ||
-        marks.includes("dotli:render:end") ||
-        iframeVisible
-      );
-    },
+    () =>
+      performance
+        .getEntriesByType("mark")
+        .some((m) => m.name === "dotli:main:end"),
     { timeout: 90_000, polling: 500 },
   );
+
+  // 2. Wait for the app iframe (cid.app.localhost) to appear and finish
+  const appFrame = await getAppFrame(page, 30_000);
+  if (appFrame !== null) {
+    try {
+      await appFrame.waitForFunction(
+        () =>
+          performance
+            .getEntriesByType("mark")
+            .some((m) => m.name === "dotli:app:end"),
+        { timeout: 90_000, polling: 500 },
+      );
+    } catch {
+      console.log(
+        "  Warning: app frame did not signal completion (dotli:app:end)",
+      );
+    }
+  } else {
+    console.log("  Warning: app iframe not found within timeout");
+  }
+
   await page.waitForTimeout(500);
+}
+
+/**
+ * Poll for the app iframe (cid.app.localhost) among the page's frames.
+ * Returns null if not found within the timeout.
+ */
+async function getAppFrame(page: Page, timeout: number): Promise<Frame | null> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const frame = page.frames().find((f) => f.url().includes(".app.localhost"));
+    if (frame !== undefined) {
+      return frame;
+    }
+    await page.waitForTimeout(200);
+  }
+  return null;
 }
 
 async function getBrowserMetrics(
@@ -330,7 +402,54 @@ function printStatsTable(
   baseStats?: RunStats | null,
   lastStats?: RunStats | null,
 ): void {
-  const div = "─".repeat(120);
+  const div = "─".repeat(100);
+  const totalPhase =
+    "End-to-end" in stats.phases ? stats.phases["End-to-end"] : null;
+
+  console.log(`\n${div}`);
+  console.log(`  ${title}  (${String(stats.iterations)} iterations)`);
+
+  // ── Compact summary (always shown) ──
+  if (totalPhase !== null) {
+    let summary = `  p50: ${fmt(totalPhase.p50)}  |  p95: ${fmt(totalPhase.p95)}  |  cv: ${totalPhase.cv.toFixed(2)}`;
+
+    const hasBase =
+      baseStats !== undefined &&
+      baseStats !== null &&
+      "End-to-end" in baseStats.phases;
+    const hasLast =
+      lastStats !== undefined &&
+      lastStats !== null &&
+      "End-to-end" in lastStats.phases;
+
+    if (hasBase) {
+      const bp = baseStats.phases["End-to-end"];
+      summary += `  |  vs base p50: ${fmtDelta(totalPhase.p50, bp.p50)}`;
+    }
+    if (hasLast) {
+      const lp = lastStats.phases["End-to-end"];
+      summary += `  |  vs last p50: ${fmtDelta(totalPhase.p50, lp.p50)}`;
+    }
+
+    console.log(summary);
+
+    if (totalPhase.cv > 0.3) {
+      console.log(
+        `  ${YELLOW}Warning: CV=${totalPhase.cv.toFixed(2)} — high variance, results may not be reliable.${RESET}`,
+      );
+    }
+  }
+
+  console.log(div);
+
+  // ── Detailed breakdown (only with PERF_VERBOSE=1) ──
+  if (!PERF_VERBOSE) {
+    console.log(
+      `  ${DIM}Set PERF_VERBOSE=1 for detailed phase breakdown${RESET}\n`,
+    );
+    return;
+  }
+
   const hasBase =
     baseStats !== undefined &&
     baseStats !== null &&
@@ -340,11 +459,7 @@ function printStatsTable(
     lastStats !== null &&
     Object.keys(lastStats.phases).length > 0;
 
-  console.log(`\n${div}`);
-  console.log(`  ${title}  (${String(stats.iterations)} iterations)`);
-  console.log(div);
-
-  // Browser metrics summary
+  // Browser metrics
   const dcl = stats.browserMetrics.domContentLoaded;
   const heap = stats.browserMetrics.jsHeapUsed;
   const reqs = stats.networkStats.requestCount;
@@ -362,7 +477,7 @@ function printStatsTable(
     `  Bytes Transferred: p50=${(bytes.p50 / 1024 / 1024).toFixed(2)}MB`,
   );
 
-  // Main stats table header
+  // Phase table
   let header = `\n  ${"Phase".padEnd(22)} ${"p50".padStart(9)} ${"p95".padStart(9)} ${"p99".padStart(9)} ${"Mean".padStart(9)} ${"StdDev".padStart(9)} ${"CV".padStart(6)}`;
   if (hasBase) {
     header += `  ${"vs Base (p50)".padStart(26)}`;
@@ -412,17 +527,10 @@ function printStatsTable(
   }
 
   // Per-iteration breakdown
-  const totalPhase =
-    "Total (main)" in stats.phases ? stats.phases["Total (main)"] : null;
   if (totalPhase !== null) {
     console.log(
       `\n  ${DIM}Iterations: [${totalPhase.values.map((v) => fmt(v)).join(", ")}]${RESET}`,
     );
-    if (totalPhase.cv > 0.3) {
-      console.log(
-        `  ${YELLOW}Warning: CV=${totalPhase.cv.toFixed(2)} — high variance, results may not be reliable. Consider more iterations.${RESET}`,
-      );
-    }
   }
 
   console.log(`\n${div}\n`);

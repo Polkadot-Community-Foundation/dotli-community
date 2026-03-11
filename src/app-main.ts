@@ -190,7 +190,11 @@ async function storeArchiveInSW(
  * the checker inline — the render.ts injection path is not used.
  */
 async function maybeInjectSandboxChecker(html: string): Promise<string> {
-  if (!import.meta.env.VITE_SANDBOX_CHECKER) return html;
+  if (
+    (import.meta.env.VITE_SANDBOX_CHECKER as string | undefined) === undefined
+  ) {
+    return html;
+  }
   const { injectSandboxChecker } = await import("./sandbox-checker");
   return injectSandboxChecker(html);
 }
@@ -253,6 +257,7 @@ async function main(): Promise<void> {
         console.warn(
           `[dot.li app] Relay mode: writing cached content into window (${elapsed()})`,
         );
+        performance.mark("dotli:app:end");
         document.open();
         // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
         document.write(html);
@@ -306,6 +311,7 @@ async function main(): Promise<void> {
       console.warn(
         `[dot.li app] Relay mode: writing content into window (${elapsed()})`,
       );
+      performance.mark("dotli:app:end");
       document.open();
       // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
       document.write(html);

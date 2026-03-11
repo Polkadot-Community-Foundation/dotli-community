@@ -244,26 +244,35 @@ jobs:
               echo "> No baseline found on \`main\`. Merge to \`main\` to establish a baseline."
               echo ""
             fi
-            echo "| File | Raw | Brotli | Gzip |"
-            echo "|------|----:|-------:|-----:|"
-            echo -n "$rows"
-            echo "| **Total** | **${total_raw_fmt}** | **${total_br_fmt}** (-${br_pct}%) | **${total_gz_fmt}** |"
 
+            # Show only chunks over 500 KB + total by default
             if [[ -n "$large_rows" ]]; then
-              echo ""
-              echo "<details>"
-              echo "<summary>Chunks over 500 KB (candidates for optimization)</summary>"
+              echo "**Chunks over 500 KB:**"
               echo ""
               echo "| File | Raw | Brotli | Gzip |"
               echo "|------|----:|-------:|-----:|"
               echo -n "$large_rows"
+              echo "| **Total** | **${total_raw_fmt}** | **${total_br_fmt}** (-${br_pct}%) | **${total_gz_fmt}** |"
+            else
+              echo "No chunks over 500 KB."
               echo ""
-              echo "Consider:"
-              echo "- Lazy-loading with dynamic \`import()\` to code-split"
-              echo "- \`build.rollupOptions.output.manualChunks\` to improve chunking"
-              echo "- Replacing heavy dependencies with lighter alternatives"
-              echo "</details>"
+              echo "**Total:** ${total_raw_fmt} raw / ${total_br_fmt} brotli (-${br_pct}%) / ${total_gz_fmt} gzip"
             fi
+
+            # Full file list in expandable section
+            echo ""
+            echo "<details>"
+            echo "<summary>All files</summary>"
+            echo ""
+            echo "| File | Raw | Brotli | Gzip |"
+            echo "|------|----:|-------:|-----:|"
+            echo -n "$rows"
+            echo "| **Total** | **${total_raw_fmt}** | **${total_br_fmt}** (-${br_pct}%) | **${total_gz_fmt}** |"
+            echo ""
+            echo "</details>"
+            echo ""
+            SHORT_SHA="${GITHUB_SHA:0:7}"
+            echo "<sub>Commit: [${SHORT_SHA}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})</sub>"
           } > /tmp/comment-body.md
 
       - name: Post or update PR comment

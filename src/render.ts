@@ -81,7 +81,9 @@ export async function renderContent(
 
   let html = new TextDecoder().decode(content);
 
-  if (import.meta.env.VITE_SANDBOX_CHECKER) {
+  if (
+    (import.meta.env.VITE_SANDBOX_CHECKER as string | undefined) !== undefined
+  ) {
     const { injectSandboxChecker } = await import("./sandbox-checker");
     html = injectSandboxChecker(html);
   }
@@ -195,7 +197,12 @@ export function prepareIframe(): void {
   // intercept iframe fetches, breaking archive serving entirely.
   // TODO: sandbox permissions should be defined by a dApp manifest rather than
   // hardcoded — allow each product to declare its required permissions.
-  iframe.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms", "allow-pointer-lock");
+  iframe.sandbox.add(
+    "allow-scripts",
+    "allow-same-origin",
+    "allow-forms",
+    "allow-pointer-lock",
+  );
   iframe.allow = "clipboard-write";
   iframe.style.cssText = hasTopbar
     ? "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;visibility:hidden;"
@@ -226,7 +233,12 @@ export async function renderIframe(url: string, label: string): Promise<void> {
     app.innerHTML = "";
     iframe = document.createElement("iframe");
     // TODO: sandbox permissions should be defined by a dApp manifest
-    iframe.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms", "allow-pointer-lock");
+    iframe.sandbox.add(
+      "allow-scripts",
+      "allow-same-origin",
+      "allow-forms",
+      "allow-pointer-lock",
+    );
     iframe.allow = "clipboard-write";
     iframe.style.cssText = iframeStyle;
     document.body.style.margin = "0";
@@ -243,7 +255,9 @@ export async function renderIframe(url: string, label: string): Promise<void> {
     disposeNested();
   };
 
-  if (import.meta.env.VITE_SANDBOX_CHECKER) {
+  if (
+    (import.meta.env.VITE_SANDBOX_CHECKER as string | undefined) !== undefined
+  ) {
     const { setupViolationPanel } = await import("./sandbox-checker-ui");
     currentPanelDispose = setupViolationPanel(iframe);
   }
@@ -362,7 +376,12 @@ export async function renderAppSubdomain(
 
   const iframe = document.createElement("iframe");
   // TODO: sandbox permissions should be defined by a dApp manifest
-  iframe.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms", "allow-pointer-lock");
+  iframe.sandbox.add(
+    "allow-scripts",
+    "allow-same-origin",
+    "allow-forms",
+    "allow-pointer-lock",
+  );
   iframe.allow = "clipboard-write";
   iframe.style.cssText =
     "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
@@ -383,7 +402,9 @@ export async function renderAppSubdomain(
     disposeNested();
   };
 
-  if (import.meta.env.VITE_SANDBOX_CHECKER) {
+  if (
+    (import.meta.env.VITE_SANDBOX_CHECKER as string | undefined) !== undefined
+  ) {
     const { setupViolationPanel } = await import("./sandbox-checker-ui");
     currentPanelDispose = setupViolationPanel(iframe);
   }

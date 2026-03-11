@@ -197,8 +197,8 @@ function loadJson(filepath: string): SavedResults | null {
 // ── Phase order ────────────────────────────────────────────
 
 const ORDERED_PHASES = [
-  "Total (main)",
-  "Auth init",
+  "End-to-end",
+  "Host total",
   "SW registration",
   "Name resolution",
   "  Smoldot init",
@@ -206,12 +206,10 @@ const ORDERED_PHASES = [
   "    Parachain",
   "    Chain sync",
   "  SW smoldot",
-  "Cache check",
-  "Content fetch",
+  "App total",
   "  P2P attempt",
   "  Gateway fetch",
   "  Archive parse",
-  "Render",
 ];
 
 // ── Verdict logic ──────────────────────────────────────────
@@ -278,11 +276,20 @@ function standaloneRunMd(label: string, run: RunStats): string {
 
   lines.push(`### ${label}`);
   lines.push("");
-  lines.push(`> ${String(run.iterations)} runs`);
-  lines.push("");
+
+  if ("End-to-end" in run.phases) {
+    const total = run.phases["End-to-end"];
+    lines.push(
+      `**Overall:** p50: ${fmt(total.p50)} &nbsp;|&nbsp; p95: ${fmt(total.p95)} &nbsp;|&nbsp; cv: ${total.cv.toFixed(2)}`,
+    );
+    lines.push("");
+  }
 
   const allPhases = ORDERED_PHASES.filter((p) => p in run.phases);
 
+  lines.push("<details>");
+  lines.push(`<summary>Phase breakdown</summary>`);
+  lines.push("");
   lines.push("| Phase | p50 | p95 | p99 | cv |");
   lines.push("|-------|-----|-----|-----|----|");
 
@@ -294,13 +301,8 @@ function standaloneRunMd(label: string, run: RunStats): string {
     );
   }
 
-  if ("Total (main)" in run.phases) {
-    const total = run.phases["Total (main)"];
-    lines.push("");
-    lines.push(
-      `**Overall:** p50: ${fmt(total.p50)} &nbsp;|&nbsp; p95: ${fmt(total.p95)} &nbsp;|&nbsp; cv: ${total.cv.toFixed(2)}`,
-    );
-  }
+  lines.push("");
+  lines.push("</details>");
 
   return lines.join("\n");
 }
@@ -310,15 +312,38 @@ function compareRunsMd(label: string, base: RunStats, last: RunStats): string {
 
   lines.push(`### ${label}`);
   lines.push("");
-  lines.push(
-    `> Base: ${String(base.iterations)} runs &nbsp;|&nbsp; PR: ${String(last.iterations)} runs`,
-  );
-  lines.push("");
 
+  // Overall summary (always visible)
+  if ("End-to-end" in base.phases && "End-to-end" in last.phases) {
+    const bTotal = base.phases["End-to-end"];
+    const lTotal = last.phases["End-to-end"];
+    const verdict = getVerdict(bTotal, lTotal);
+    const mw = mannWhitneyU(bTotal.values, lTotal.values);
+
+    lines.push(
+      `**Overall:** ${verdictEmoji(verdict)} **${verdict.label}** &nbsp;|&nbsp; ` +
+        `p50: ${fmt(bTotal.p50)} → ${fmt(lTotal.p50)} (${fmtPct(lTotal.p50, bTotal.p50)}) &nbsp;|&nbsp; ` +
+        `p95: ${fmt(bTotal.p95)} → ${fmt(lTotal.p95)} (${fmtPct(lTotal.p95, bTotal.p95)}) &nbsp;|&nbsp; ` +
+        `Mann-Whitney: z=${mw.z.toFixed(2)} ${mw.significant ? "✅ significant" : "not significant"}`,
+    );
+
+    if (bTotal.cv > 0.3 || lTotal.cv > 0.3) {
+      lines.push("");
+      lines.push(
+        `> ⚠️ High variance (CV > 0.3) — results may not be reliable.`,
+      );
+    }
+    lines.push("");
+  }
+
+  // Detailed table in expandable section
   const allPhases = ORDERED_PHASES.filter(
     (p) => p in base.phases || p in last.phases,
   );
 
+  lines.push("<details>");
+  lines.push(`<summary>Phase breakdown</summary>`);
+  lines.push("");
   lines.push(
     "| Phase | Base p50 | PR p50 | p50 Δ | Base p95 | PR p95 | p95 Δ | Verdict |",
   );
@@ -348,44 +373,38 @@ function compareRunsMd(label: string, base: RunStats, last: RunStats): string {
     );
   }
 
-  if ("Total (main)" in base.phases && "Total (main)" in last.phases) {
-    const bTotal = base.phases["Total (main)"];
-    const lTotal = last.phases["Total (main)"];
-    const verdict = getVerdict(bTotal, lTotal);
-    const mw = mannWhitneyU(bTotal.values, lTotal.values);
-
-    lines.push("");
-    lines.push(
-      `**Overall:** ${verdictEmoji(verdict)} **${verdict.label}** &nbsp;|&nbsp; ` +
-        `p50: ${fmt(bTotal.p50)} → ${fmt(lTotal.p50)} (${fmtPct(lTotal.p50, bTotal.p50)}) &nbsp;|&nbsp; ` +
-        `p95: ${fmt(bTotal.p95)} → ${fmt(lTotal.p95)} (${fmtPct(lTotal.p95, bTotal.p95)}) &nbsp;|&nbsp; ` +
-        `Mann-Whitney: z=${mw.z.toFixed(2)} ${mw.significant ? "✅ significant" : "not significant"}`,
-    );
-
-    if (bTotal.cv > 0.3 || lTotal.cv > 0.3) {
-      lines.push("");
-      lines.push(
-        `> ⚠️ High variance (CV > 0.3) — results may not be reliable.`,
-      );
-    }
-  }
+  lines.push("");
+  lines.push("</details>");
 
   return lines.join("\n");
 }
 
 // ── Comparison (terminal) ─────────────────────────────────
 
-function standaloneRun(label: string, run: RunStats): void {
-  const div = "═".repeat(100);
+function standaloneRun(label: string, run: RunStats, verbose: boolean): void {
   const thin = "─".repeat(100);
 
-  console.log(`\n${div}`);
-  console.log(`  ${B}${label}${R}  ${D}(no baseline to compare)${R}`);
-  console.log(`  ${run.timestamp} (${String(run.iterations)} runs)`);
-  console.log(div);
+  // ── Compact summary (always shown) ──
+  if ("End-to-end" in run.phases) {
+    const total = run.phases["End-to-end"];
+    console.log(
+      `  ${B}${label}${R}  ${D}(no baseline)${R}  |  p50: ${fmt(total.p50)}  |  p95: ${fmt(total.p95)}  |  cv: ${total.cv.toFixed(2)}`,
+    );
+  } else {
+    console.log(
+      `  ${B}${label}${R}  ${D}(no baseline, no end-to-end data)${R}`,
+    );
+  }
 
+  if (!verbose) {
+    return;
+  }
+
+  // ── Detailed breakdown (--verbose) ──
   const allPhases = ORDERED_PHASES.filter((p) => p in run.phases);
 
+  console.log(thin);
+  console.log(`  ${run.timestamp} (${String(run.iterations)} runs)`);
   console.log(
     `\n  ${"Phase".padEnd(22)} ${"p50".padStart(9)} ${"p95".padStart(9)} ${"p99".padStart(9)}  ${"cv".padStart(5)}`,
   );
@@ -401,30 +420,53 @@ function standaloneRun(label: string, run: RunStats): void {
     );
   }
 
-  if ("Total (main)" in run.phases) {
-    const total = run.phases["Total (main)"];
-    console.log(`\n  ${B}Summary${R}`);
-    console.log(thin);
-    console.log(
-      `  p50: ${fmt(total.p50)}  p95: ${fmt(total.p95)}  cv: ${total.cv.toFixed(2)}`,
-    );
-  }
-
-  console.log(`\n${thin}\n`);
+  console.log(`\n${thin}`);
 }
 
-function compareRuns(label: string, base: RunStats, last: RunStats): void {
-  const div = "═".repeat(140);
+function compareRuns(
+  label: string,
+  base: RunStats,
+  last: RunStats,
+  verbose: boolean,
+): void {
   const thin = "─".repeat(140);
 
-  console.log(`\n${div}`);
-  console.log(`  ${B}${label}${R}`);
+  // ── Compact summary (always shown) ──
+  if ("End-to-end" in base.phases && "End-to-end" in last.phases) {
+    const bTotal = base.phases["End-to-end"];
+    const lTotal = last.phases["End-to-end"];
+    const p50Diff = lTotal.p50 - bTotal.p50;
+    const p95Diff = lTotal.p95 - bTotal.p95;
+    const verdict = getVerdict(bTotal, lTotal);
+    const mw = mannWhitneyU(bTotal.values, lTotal.values);
+
+    const p50Color = p50Diff < 0 ? G : p50Diff > 0 ? RD : "";
+    const p95Color = p95Diff < 0 ? G : p95Diff > 0 ? RD : "";
+
+    console.log(
+      `  ${B}${label}${R}  ${verdict.color}${verdict.icon} ${verdict.label}${R}  |  ` +
+        `p50: ${fmt(bTotal.p50)} → ${p50Color}${fmt(lTotal.p50)}${R} (${p50Color}${fmtPct(lTotal.p50, bTotal.p50)}${R})  |  ` +
+        `p95: ${fmt(bTotal.p95)} → ${p95Color}${fmt(lTotal.p95)}${R} (${p95Color}${fmtPct(lTotal.p95, bTotal.p95)}${R})  |  ` +
+        `Mann-Whitney: z=${mw.z.toFixed(2)} ${mw.significant ? `${G}significant${R}` : `${D}not significant${R}`}`,
+    );
+
+    if (bTotal.cv > 0.3 || lTotal.cv > 0.3) {
+      console.log(`  ${Y}Warning: CV > 0.3 — results may not be reliable.${R}`);
+    }
+  } else {
+    console.log(`  ${B}${label}${R}  ${D}(no end-to-end data to compare)${R}`);
+  }
+
+  if (!verbose) {
+    return;
+  }
+
+  // ── Detailed breakdown (--verbose) ──
+  console.log(thin);
   console.log(
     `  Base: ${base.timestamp} (${String(base.iterations)} runs)    Last: ${last.timestamp} (${String(last.iterations)} runs)`,
   );
-  console.log(div);
 
-  // Phase comparison table
   const allPhases = ORDERED_PHASES.filter(
     (p) => p in base.phases || p in last.phases,
   );
@@ -458,7 +500,6 @@ function compareRuns(label: string, base: RunStats, last: RunStats): void {
     const bCv = `${cvColor(bStat.cv)}${bStat.cv.toFixed(2)}${R}`;
     const lCv = `${cvColor(lStat.cv)}${lStat.cv.toFixed(2)}${R}`;
 
-    // Raw (no ANSI) widths for padding calculation
     const p50DeltaRaw = `${lStat.p50 - bStat.p50 > 0 ? "+" : ""}${fmt(lStat.p50 - bStat.p50)} (${fmtPct(lStat.p50, bStat.p50)})`;
     const p95DeltaRaw = `${lStat.p95 - bStat.p95 > 0 ? "+" : ""}${fmt(lStat.p95 - bStat.p95)} (${fmtPct(lStat.p95, bStat.p95)})`;
     const p50Pad = 24 - p50DeltaRaw.length;
@@ -469,43 +510,9 @@ function compareRuns(label: string, base: RunStats, last: RunStats): void {
     );
   }
 
-  // Overall summary
-  if ("Total (main)" in base.phases && "Total (main)" in last.phases) {
-    const bTotal = base.phases["Total (main)"];
-    const lTotal = last.phases["Total (main)"];
-    const p50Diff = lTotal.p50 - bTotal.p50;
-    const p95Diff = lTotal.p95 - bTotal.p95;
-    const verdict = getVerdict(bTotal, lTotal);
-    const mw = mannWhitneyU(bTotal.values, lTotal.values);
-
-    console.log(`\n  ${B}Summary${R}`);
-    console.log(thin);
-
-    const p50Color = p50Diff < 0 ? G : p50Diff > 0 ? RD : "";
-    const p95Color = p95Diff < 0 ? G : p95Diff > 0 ? RD : "";
-
-    console.log(
-      `  p50:  ${fmt(bTotal.p50)} → ${p50Color}${fmt(lTotal.p50)}${R}  (${p50Color}${fmtPct(lTotal.p50, bTotal.p50)}${R})`,
-    );
-    console.log(
-      `  p95:  ${fmt(bTotal.p95)} → ${p95Color}${fmt(lTotal.p95)}${R}  (${p95Color}${fmtPct(lTotal.p95, bTotal.p95)}${R})`,
-    );
-    console.log(
-      `  cv:   ${bTotal.cv.toFixed(2)} → ${lTotal.cv.toFixed(2)}  ${lTotal.cv > bTotal.cv + 0.1 ? `${Y}(less stable)${R}` : lTotal.cv < bTotal.cv - 0.1 ? `${G}(more stable)${R}` : "(stable)"}`,
-    );
-    console.log(
-      `  Mann-Whitney: z=${mw.z.toFixed(2)}  ${mw.significant ? `${G}significant (p<0.05)${R}` : `${D}not significant${R}`}`,
-    );
-    console.log(
-      `  Verdict: ${verdict.color}${B}${verdict.icon} ${verdict.label}${R}`,
-    );
-
-    // Warn about mean comparison
-    if (bTotal.cv > 0.3 || lTotal.cv > 0.3) {
-      console.log(
-        `\n  ${Y}Note: CV > 0.3 on one or both runs — mean comparison unreliable. Use p50.${R}`,
-      );
-    }
+  if ("End-to-end" in base.phases && "End-to-end" in last.phases) {
+    const bTotal = base.phases["End-to-end"];
+    const lTotal = last.phases["End-to-end"];
 
     console.log(
       `\n  ${D}Base runs:  [${bTotal.values.map((v) => fmt(v)).join(", ")}]${R}`,
@@ -515,12 +522,13 @@ function compareRuns(label: string, base: RunStats, last: RunStats): void {
     );
   }
 
-  console.log(`\n${thin}\n`);
+  console.log(`\n${thin}`);
 }
 
 // ── Main ──────────────────────────────────────────────────
 
 const markdown = process.argv.includes("--markdown");
+const verbose = process.argv.includes("--verbose");
 
 const base = loadJson(BASE_FILE);
 const last = loadJson(LAST_FILE);
@@ -577,13 +585,26 @@ if (markdown) {
   }
   sections.push("");
   sections.push(
-    `<sub>Commit: ${process.env.GITHUB_SHA?.slice(0, 7) ?? "local"} &nbsp;|&nbsp; Outliers (>2x best) discarded before stats</sub>`,
+    (() => {
+      const sha = process.env.GITHUB_SHA;
+      const server = process.env.GITHUB_SERVER_URL ?? "https://github.com";
+      const repo = process.env.GITHUB_REPOSITORY ?? "";
+      const commitRef =
+        sha !== undefined && sha !== "" && repo !== ""
+          ? `[${sha.slice(0, 7)}](${server}/${repo}/commit/${sha})`
+          : "local";
+      return `<sub>Commit: ${commitRef} &nbsp;|&nbsp; Outliers (>2x best) discarded before stats</sub>`;
+    })(),
   );
   console.log(sections.join("\n"));
 } else {
-  console.log(`\n  ${B}dot.li Performance Comparison: Base vs Last${R}\n`);
+  console.log(`\n  ${B}dot.li Performance Comparison: Base vs Last${R}`);
+  if (!verbose) {
+    console.log(`  ${D}Use --verbose for detailed phase breakdown${R}`);
+  }
+  console.log("");
 
-  compareRuns("COLD START", base.cold, last.cold);
+  compareRuns("COLD START", base.cold, last.cold, verbose);
 
   if (
     base.warm !== null &&
@@ -591,9 +612,9 @@ if (markdown) {
     last.warm !== null &&
     last.warm !== undefined
   ) {
-    compareRuns("WARM START", base.warm, last.warm);
+    compareRuns("WARM START", base.warm, last.warm, verbose);
   } else if (last.warm !== null && last.warm !== undefined) {
-    standaloneRun("WARM START", last.warm);
+    standaloneRun("WARM START", last.warm, verbose);
   }
 
   if (
@@ -606,11 +627,13 @@ if (markdown) {
       "LUKEWARM START (different site, same session)",
       base.lukewarm,
       last.lukewarm,
+      verbose,
     );
   } else if (last.lukewarm !== null && last.lukewarm !== undefined) {
     standaloneRun(
       "LUKEWARM START (different site, same session)",
       last.lukewarm,
+      verbose,
     );
   }
 }

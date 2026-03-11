@@ -29,12 +29,14 @@ export function setupViolationPanel(iframe: HTMLIFrameElement): () => void {
   `;
   document.body.appendChild(panel);
 
+  /* eslint-disable @typescript-eslint/non-nullable-type-assertion-style */
   const badge = panel.querySelector(".sc-badge") as HTMLSpanElement;
   const log = panel.querySelector(".sc-log") as HTMLDivElement;
   const toggle = panel.querySelector(".sc-toggle") as HTMLButtonElement;
   const resizeHandle = panel.querySelector(
     ".sc-resize-handle",
   ) as HTMLDivElement;
+  /* eslint-enable @typescript-eslint/non-nullable-type-assertion-style */
   let count = 0;
   let collapsed = false;
 
@@ -54,27 +56,33 @@ export function setupViolationPanel(iframe: HTMLIFrameElement): () => void {
   let dragging = false;
 
   function onPointerDown(e: PointerEvent): void {
-    if (collapsed) return;
+    if (collapsed) {
+      return;
+    }
     dragging = true;
     resizeHandle.setPointerCapture(e.pointerId);
     document.body.style.userSelect = "none";
   }
 
   function onPointerMove(e: PointerEvent): void {
-    if (!dragging) return;
+    if (!dragging) {
+      return;
+    }
     const panelTop = e.clientY;
     const viewportHeight = window.innerHeight;
     const newHeight = viewportHeight - panelTop;
     // Clamp between header-only (~40px) and 80% of viewport
     const clamped = Math.max(40, Math.min(newHeight, viewportHeight * 0.8));
-    panel.style.height = `${clamped}px`;
+    panel.style.height = `${String(clamped)}px`;
     const headerHeight = 32 + 5; // header + resize handle
-    log.style.maxHeight = `${clamped - headerHeight}px`;
+    log.style.maxHeight = `${String(clamped - headerHeight)}px`;
     adjustIframe();
   }
 
   function onPointerUp(): void {
-    if (!dragging) return;
+    if (!dragging) {
+      return;
+    }
     dragging = false;
     document.body.style.userSelect = "";
   }
@@ -88,13 +96,22 @@ export function setupViolationPanel(iframe: HTMLIFrameElement): () => void {
 
   function adjustIframe(): void {
     const panelHeight = collapsed ? 32 : panel.offsetHeight;
-    iframe.style.height = `calc(100vh - ${topbarOffset}px - ${panelHeight}px)`;
+    iframe.style.height = `calc(100vh - ${String(topbarOffset)}px - ${String(panelHeight)}px)`;
   }
 
   function onMessage(event: MessageEvent): void {
-    if (event.source !== iframe.contentWindow) return;
-    const data = event.data as ViolationMessage | null;
-    if (!data || data.type !== "DOTLI_API_VIOLATION") return;
+    if (event.source !== iframe.contentWindow) {
+      return;
+    }
+    const raw: unknown = event.data;
+    if (
+      typeof raw !== "object" ||
+      raw === null ||
+      (raw as { type?: unknown }).type !== "DOTLI_API_VIOLATION"
+    ) {
+      return;
+    }
+    const data = raw as ViolationMessage;
 
     count++;
     badge.textContent = String(count);
@@ -104,10 +121,8 @@ export function setupViolationPanel(iframe: HTMLIFrameElement): () => void {
 
     const time = new Date(data.timestamp).toLocaleTimeString();
     const detailParts: string[] = [];
-    if (data.details) {
-      for (const [k, v] of Object.entries(data.details)) {
-        detailParts.push(`${k}=${String(v)}`);
-      }
+    for (const [k, v] of Object.entries(data.details)) {
+      detailParts.push(`${k}=${String(v)}`);
     }
 
     entry.innerHTML =
