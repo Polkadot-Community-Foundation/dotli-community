@@ -47,11 +47,15 @@
     "format": "bunx prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "format:check": "bunx prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "update-chain-specs": "bash scripts/update-chain-specs.sh",
-    "update-metadata": "bash scripts/update-metadata.sh"
+    "update-metadata": "bash scripts/update-metadata.sh",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.58.2",
+    "@tauri-apps/cli": "^2",
     "@types/node": "^25.3.5",
     "@types/qrcode": "^1.5.6",
     "eslint": "^10.0.2",
@@ -91,6 +95,8 @@
     "@polkadot-api/utils": "^0.2.0",
     "@scure/sr25519": "^1.0.0",
     "@sentry/browser": "^10.42.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-shell": "^2",
     "helia": "^6.0.20",
     "ipfs-unixfs": "^12.0.0",
     "multiformats": "^13.4.2",

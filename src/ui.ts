@@ -146,6 +146,17 @@ export function showLanding(): void {
     if (!name) {
       return;
     }
+    // Tauri desktop: resolve via Rust backend and render inline
+    if ("__TAURI_INTERNALS__" in window) {
+      input.disabled = true;
+      goBtn.style.opacity = "0.5";
+      void import("./tauri-bridge").then(({ tauriResolveAndRender }) => {
+        void addRecentLabel(name).finally(() => {
+          void tauriResolveAndRender(name);
+        });
+      });
+      return;
+    }
     const url = dotUrl(name);
     void addRecentLabel(name).finally(() => {
       window.location.href = url;
