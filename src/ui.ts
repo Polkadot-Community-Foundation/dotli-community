@@ -4,6 +4,7 @@
 // No heavy dependencies — kept in the eager bundle.
 
 import { getRecentLabels, addRecentLabel } from "./cid-cache";
+import { BASE_DOMAIN } from "./config";
 
 const app = document.getElementById("app") ?? document.body;
 
@@ -12,15 +13,14 @@ function dotUrl(label: string): string {
   if (host.endsWith(".localhost") || host === "localhost") {
     return `${window.location.protocol}//${label}.localhost:${window.location.port}`;
   }
-  // GitHub Pages or other non-dot.li hosts: use path-based routing
-  if (host !== "dot.li") {
-    // Strip any existing .dot segment and trailing slash from the base path
+  // GitHub Pages or other non-matching hosts: use path-based routing
+  if (host !== BASE_DOMAIN && !host.endsWith(`.${BASE_DOMAIN}`)) {
     const base = window.location.pathname
       .replace(/\/[^/]+\.dot(?:\/.*)?$/, "")
       .replace(/\/$/, "");
     return `${window.location.origin}${base}/${label}.dot`;
   }
-  return `https://${label}.dot.li`;
+  return `https://${label}.${BASE_DOMAIN}`;
 }
 
 /**
@@ -70,11 +70,15 @@ export function showLanding(): void {
       <div class="landing-center">
       <div class="landing-content">
         <h1 class="landing-title">
-          dot<span class="landing-tld">.li</span>
+          ${BASE_DOMAIN.split(".")
+            .map((p, i) =>
+              i === 0 ? p : `<span class="landing-tld">.${p}</span>`,
+            )
+            .join("")}
         </h1>
         <p class="landing-subtitle">
           The decentralized web, in your browser.<br>
-          <span class="landing-hint">Search below or go directly to <span class="landing-hint-name">name</span><span class="landing-tld">.dot.li</span></span>
+          <span class="landing-hint">Search below or go directly to <span class="landing-hint-name">name</span><span class="landing-tld">.${BASE_DOMAIN}</span></span>
         </p>
         <form id="dotli-nav-form" class="landing-nav-form" autocomplete="off">
           <div class="landing-search-bar" id="dotli-nav-bar">

@@ -5,6 +5,7 @@
 // Uses blob URLs so the container bridge can communicate via postMessage.
 
 import type { ArchiveFiles } from "./archive";
+import { BASE_DOMAIN } from "./config";
 
 /**
  * Darken a CSS hex color by a given factor (0 = unchanged, 1 = black).
@@ -418,7 +419,7 @@ function getAppOrigin(cid: string): string {
     const port = import.meta.env.DEV ? "5174" : window.location.port;
     return `http://${cid}.app.localhost:${port}`;
   }
-  return `https://${cid}.app.dot.li`;
+  return `https://${cid}.app.${BASE_DOMAIN}`;
 }
 
 function cleanup(): void {

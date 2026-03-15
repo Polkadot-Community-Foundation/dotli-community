@@ -20,7 +20,7 @@ Sentry.init({
 });
 import { getCachedCid, setCachedCid } from "./cid-cache";
 import { dur } from "./perf";
-import { TIMEOUTS } from "./config";
+import { TIMEOUTS, BASE_DOMAIN } from "./config";
 
 const T0 = performance.now();
 function elapsed(): string {
@@ -61,12 +61,12 @@ function parseLocalhostUrl(): string | null {
 function parseDotLabel(): string | null {
   const hostname = window.location.hostname;
 
-  // Production: name.dot.li (but NOT cid.app.dot.li)
-  if (hostname.endsWith(".dot.li")) {
-    if (hostname.endsWith(".app.dot.li")) {
+  // Production: name.{BASE_DOMAIN} (but NOT cid.app.{BASE_DOMAIN})
+  if (hostname.endsWith(`.${BASE_DOMAIN}`)) {
+    if (hostname.endsWith(`.app.${BASE_DOMAIN}`)) {
       return null;
     }
-    const label = hostname.slice(0, -".dot.li".length);
+    const label = hostname.slice(0, -(BASE_DOMAIN.length + 1));
     return label || null;
   }
 

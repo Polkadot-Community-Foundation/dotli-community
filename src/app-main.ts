@@ -8,7 +8,7 @@ import "./styles.css";
 import * as Sentry from "@sentry/browser";
 import type { ArchiveFiles } from "./archive";
 import { showStatus, showError } from "./ui";
-import { TIMEOUTS } from "./config";
+import { TIMEOUTS, BASE_DOMAIN } from "./config";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN as string,
@@ -31,9 +31,10 @@ function elapsed(): string {
 function parseCidFromHostname(): string | null {
   const hostname = window.location.hostname;
 
-  // Production: cid.app.dot.li
-  if (hostname.endsWith(".app.dot.li")) {
-    const cid = hostname.slice(0, -".app.dot.li".length);
+  // Production: cid.app.{BASE_DOMAIN}
+  const appSuffix = `.app.${BASE_DOMAIN}`;
+  if (hostname.endsWith(appSuffix)) {
+    const cid = hostname.slice(0, -appSuffix.length);
     return cid || null;
   }
 
@@ -210,7 +211,7 @@ async function main(): Promise<void> {
   if (cid === null) {
     showError(
       "No CID",
-      "This page requires a CID in the subdomain (e.g. bafyrei....app.dot.li)",
+      `This page requires a CID in the subdomain (e.g. bafyrei....app.${BASE_DOMAIN})`,
     );
     return;
   }

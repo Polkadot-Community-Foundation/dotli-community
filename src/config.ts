@@ -1,6 +1,17 @@
 // dot.li Universal Viewer — Configuration
 // Contract addresses, chain config, peer multiaddrs, and minimal ABIs.
 
+// Supports dot.li, paseo.li, or any future two-segment domain.
+// Falls back to "dot.li" for localhost / unknown hosts.
+const hostname = self.location.hostname;
+const segments = hostname.split(".");
+export const BASE_DOMAIN =
+  segments.length >= 2 &&
+  !hostname.endsWith(".localhost") &&
+  hostname !== "localhost"
+    ? `${segments[segments.length - 2]}.${segments[segments.length - 1]}`
+    : "dot.li";
+
 // --- dotNS Contracts on Asset Hub Paseo (Revive EVM pallet) ---
 
 export const CONTRACTS = {
