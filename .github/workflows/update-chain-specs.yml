@@ -2,7 +2,7 @@ name: Refresh Chain Spec Checkpoints
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Every 6 hours — keeps smoldot sync gap ≤ ~14,400 blocks (~1-3s)
+    - cron: '0 0 * * *' # Every 24 hours
   workflow_dispatch:
 
 permissions:
@@ -37,9 +37,9 @@ jobs:
         with:
           title: 'chore: refresh chain spec checkpoints'
           body: |
-            Automated 6-hourly update of Paseo relay chain spec checkpoint.
+            Automated 24-hourly update of Paseo relay chain spec checkpoint.
 
-            This keeps the smoldot light client sync gap small (~14,400 blocks / ~1-3s)
+            This keeps the smoldot light client sync gap small
             instead of falling further behind on cold loads.
           branch: auto/chain-spec-update
           commit-message: 'chore: refresh chain spec checkpoints'
@@ -50,4 +50,4 @@ jobs:
         if: steps.pr.outputs.pull-request-number
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr merge ${{ steps.pr.outputs.pull-request-number }} --auto --squash
+        run: gh pr merge ${{ steps.pr.outputs.pull-request-number }} --squash
