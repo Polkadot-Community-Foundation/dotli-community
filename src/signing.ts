@@ -3,8 +3,8 @@
 // Shows Sign/Cancel modals for signPayload and signRaw requests.
 // Returns a Promise that resolves with the signing result or rejects on cancel.
 
-import { SigningErr } from "@novasamatech/host-api";
-import { toHex } from "@novasamatech/host-api";
+import { SigningErr, toHex } from "@novasamatech/host-api";
+import { log } from "./log";
 import type {
   UserSession,
   SigningPayloadRequest,
@@ -14,6 +14,38 @@ import type {
 export interface SigningResult {
   signature: `0x${string}`;
   signedTransaction?: `0x${string}`;
+}
+
+/** Timeout for the wallet to respond (ms). Covers WS drops and unresponsive wallets. */
+const SIGN_TIMEOUT_MS = 90_000; // 90 seconds
+
+class SignTimeoutError extends Error {
+  constructor() {
+    super("Wallet did not respond in time — the connection may have dropped.");
+    this.name = "SignTimeoutError";
+  }
+}
+
+/** Race a thenable against a timeout. Clears the timer on settlement. */
+function withTimeout<T>(thenable: PromiseLike<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new SignTimeoutError());
+    }, ms);
+    const cleanup = (): void => {
+      clearTimeout(timer);
+    };
+    Promise.resolve(thenable).then(
+      (v) => {
+        cleanup();
+        resolve(v);
+      },
+      (e: unknown) => {
+        cleanup();
+        reject(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
 }
 
 function truncateAddress(address: string): string {
@@ -94,6 +126,21 @@ export function showSignPayloadModal(
   payload: SigningPayloadRequest,
 ): Promise<SigningResult> {
   return new Promise((resolve, reject) => {
+    log.warn("[dot.li signing] signPayload request received:", {
+      address: payload.address,
+      genesisHash: payload.genesisHash,
+      method: payload.method.slice(0, 40) + "...",
+      mode: payload.mode,
+      withSignedTransaction: payload.withSignedTransaction,
+      metadataHash: payload.metadataHash,
+      assetId: payload.assetId,
+    });
+    log.warn("[dot.li signing] session info:", {
+      localAccountId: toHex(session.localAccount.accountId),
+      remoteAccountId: toHex(session.remoteAccount.accountId),
+      remotePublicKey: toHex(session.remoteAccount.publicKey),
+    });
+
     const fields: { label: string; value: string; mono?: boolean }[] = [
       { label: "Signer", value: truncateAddress(payload.address) },
       { label: "Genesis Hash", value: payload.genesisHash, mono: true },
@@ -106,6 +153,7 @@ export function showSignPayloadModal(
     );
 
     cancelBtn.addEventListener("click", () => {
+      log.warn("[dot.li signing] user cancelled signPayload");
       removeModal(backdrop);
       reject(new SigningErr.Rejected());
     });
@@ -114,32 +162,52 @@ export function showSignPayloadModal(
       signBtn.disabled = true;
       signBtn.textContent = "Signing...";
 
-      void session
-        .signPayload({
-          ...payload,
-          method: payload.method,
-          assetId: payload.assetId,
-          mode: payload.mode,
-          withSignedTransaction: payload.withSignedTransaction,
-          metadataHash: payload.metadataHash,
-        })
-        .match(
-          ({ signature, signedTransaction }) => {
-            removeModal(backdrop);
-            resolve({
-              signature: toHex(signature),
-              signedTransaction: signedTransaction
-                ? typeof signedTransaction === "string"
-                  ? (signedTransaction as `0x${string}`)
-                  : toHex(signedTransaction)
-                : undefined,
-            });
-          },
-          (e) => {
-            removeModal(backdrop);
-            reject(new SigningErr.Unknown({ reason: e.message }));
-          },
-        );
+      const signRequest = {
+        ...payload,
+        method: payload.method,
+        assetId: payload.assetId,
+        mode: payload.mode,
+        withSignedTransaction: payload.withSignedTransaction,
+        metadataHash: payload.metadataHash,
+      };
+      log.warn("[dot.li signing] dispatching signPayload to session:", {
+        method: signRequest.method.slice(0, 40) + "...",
+        mode: signRequest.mode,
+        withSignedTransaction: signRequest.withSignedTransaction,
+      });
+
+      void withTimeout(session.signPayload(signRequest), SIGN_TIMEOUT_MS).then(
+        (result) => {
+          result.match(
+            ({ signature, signedTransaction }) => {
+              log.warn("[dot.li signing] signPayload SUCCESS:", {
+                signature: toHex(signature).slice(0, 20) + "...",
+                hasSignedTx: !!signedTransaction,
+              });
+              removeModal(backdrop);
+              resolve({
+                signature: toHex(signature),
+                signedTransaction: signedTransaction
+                  ? typeof signedTransaction === "string"
+                    ? (signedTransaction as `0x${string}`)
+                    : toHex(signedTransaction)
+                  : undefined,
+              });
+            },
+            (e) => {
+              log.error("[dot.li signing] signPayload FAILED:", e.message, e);
+              removeModal(backdrop);
+              reject(new SigningErr.Unknown({ reason: e.message }));
+            },
+          );
+        },
+        (e: unknown) => {
+          log.error("[dot.li signing] signPayload timed out:", e);
+          removeModal(backdrop);
+          const msg = e instanceof Error ? e.message : "Request timed out";
+          reject(new SigningErr.Unknown({ reason: msg }));
+        },
+      );
     });
   });
 }
@@ -154,6 +222,17 @@ export function showSignRawModal(
         ? payload.data.value
         : toHex(payload.data.value);
 
+    log.warn("[dot.li signing] signRaw request received:", {
+      address: payload.address,
+      dataTag: payload.data.tag,
+      message: message.slice(0, 80) + (message.length > 80 ? "..." : ""),
+    });
+    log.warn("[dot.li signing] session info:", {
+      localAccountId: toHex(session.localAccount.accountId),
+      remoteAccountId: toHex(session.remoteAccount.accountId),
+      remotePublicKey: toHex(session.remoteAccount.publicKey),
+    });
+
     const fields: { label: string; value: string; mono?: boolean }[] = [
       { label: "Signer", value: truncateAddress(payload.address) },
       { label: "Message", value: message, mono: true },
@@ -165,6 +244,7 @@ export function showSignRawModal(
     );
 
     cancelBtn.addEventListener("click", () => {
+      log.warn("[dot.li signing] user cancelled signRaw");
       removeModal(backdrop);
       reject(new SigningErr.Rejected());
     });
@@ -173,21 +253,38 @@ export function showSignRawModal(
       signBtn.disabled = true;
       signBtn.textContent = "Signing...";
 
-      void session.signRaw(payload).match(
-        ({ signature, signedTransaction }) => {
-          removeModal(backdrop);
-          resolve({
-            signature: toHex(signature),
-            signedTransaction: signedTransaction
-              ? typeof signedTransaction === "string"
-                ? (signedTransaction as `0x${string}`)
-                : toHex(signedTransaction)
-              : undefined,
-          });
+      log.warn("[dot.li signing] dispatching signRaw to session");
+
+      void withTimeout(session.signRaw(payload), SIGN_TIMEOUT_MS).then(
+        (result) => {
+          result.match(
+            ({ signature, signedTransaction }) => {
+              log.warn("[dot.li signing] signRaw SUCCESS:", {
+                signature: toHex(signature).slice(0, 20) + "...",
+                hasSignedTx: !!signedTransaction,
+              });
+              removeModal(backdrop);
+              resolve({
+                signature: toHex(signature),
+                signedTransaction: signedTransaction
+                  ? typeof signedTransaction === "string"
+                    ? (signedTransaction as `0x${string}`)
+                    : toHex(signedTransaction)
+                  : undefined,
+              });
+            },
+            (e) => {
+              log.error("[dot.li signing] signRaw FAILED:", e.message, e);
+              removeModal(backdrop);
+              reject(new SigningErr.Unknown({ reason: e.message }));
+            },
+          );
         },
-        (e) => {
+        (e: unknown) => {
+          log.error("[dot.li signing] signRaw timed out:", e);
           removeModal(backdrop);
-          reject(new SigningErr.Unknown({ reason: e.message }));
+          const msg = e instanceof Error ? e.message : "Request timed out";
+          reject(new SigningErr.Unknown({ reason: msg }));
         },
       );
     });

@@ -12,6 +12,24 @@ export const BASE_DOMAIN =
     ? `${segments[segments.length - 2]}.${segments[segments.length - 1]}`
     : "dot.li";
 
+// --- Site identity -------------------------------------------------------
+
+export type SiteId = "dot.li" | "paseo.li" | "local.li";
+
+const isLocalhost =
+  hostname === "localhost" ||
+  hostname.endsWith(".localhost") ||
+  hostname === "127.0.0.1";
+
+export const SITE_ID: SiteId = isLocalhost
+  ? "local.li"
+  : (BASE_DOMAIN as SiteId);
+
+// --- Debug logging -------------------------------------------------------
+
+export const DEBUG =
+  (import.meta.env.VITE_APP_DEBUG as string | undefined) !== "false";
+
 // --- dotNS Contracts on Asset Hub Paseo (Revive EVM pallet) ---
 
 export const CONTRACTS = {

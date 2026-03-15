@@ -13,8 +13,23 @@ import {
   type UserSession,
 } from "@novasamatech/host-papp";
 import { createLocalStorageAdapter } from "@novasamatech/storage-adapter";
-import { createLazyClient } from "@novasamatech/statement-store";
+import {
+  createLazyClient,
+  createPapiStatementStoreAdapter,
+  type StatementStoreAdapter,
+} from "@novasamatech/statement-store";
+import type { Statement } from "@novasamatech/sdk-statement";
+import { toHex } from "@novasamatech/host-api";
 import { getWsProvider } from "polkadot-api/ws-provider";
+import { SITE_ID } from "./config";
+import { log } from "./log";
+
+// ── Metadata file selection ────────────────────────────────
+
+function getMetadataFile(): string {
+  const id = SITE_ID;
+  return `${id.split(".")[0]}-metadata.json`;
+}
 
 // ── Auth State ─────────────────────────────────────────────
 
@@ -32,7 +47,7 @@ let currentState: AuthState = { status: "idle" };
 const listeners = new Set<AuthListener>();
 
 function setState(state: AuthState): void {
-  console.warn("[dot.li auth]", state.status, state);
+  log.warn("[dot.li auth]", state.status, state);
   currentState = state;
   for (const fn of listeners) {
     fn(state);
@@ -52,21 +67,100 @@ export function onAuthStateChange(fn: AuthListener): () => void {
 
 let initialized = false;
 
+function toHexSafe(value: unknown): string {
+  if (value instanceof Uint8Array) {
+    return toHex(value);
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return String(value);
+}
+
+function logStatement(prefix: string, stmt: Statement): void {
+  const keys = Object.keys(stmt);
+  log.warn(`${prefix} keys:`, keys);
+  if (stmt.channel !== undefined) {
+    log.warn(`${prefix} channel:`, stmt.channel);
+  }
+  if (stmt.topics !== undefined) {
+    log.warn(`${prefix} topics:`, stmt.topics);
+  }
+  if (stmt.data !== undefined) {
+    log.warn(
+      `${prefix} data (${String(stmt.data.length)} bytes):`,
+      toHexSafe(stmt.data),
+    );
+  }
+}
+
+function createLoggingStatementStore(
+  inner: StatementStoreAdapter,
+): StatementStoreAdapter {
+  return {
+    queryStatements: inner.queryStatements.bind(inner),
+    subscribeStatements(topics, callback) {
+      log.warn(
+        "[dotli ss] subscribeStatements called, topics count:",
+        topics.length,
+      );
+      for (let i = 0; i < topics.length; i++) {
+        log.warn(
+          `[dotli ss]   topic[${String(i)}] (${String(topics[i].length)} bytes):`,
+          toHexSafe(topics[i]),
+        );
+      }
+      return inner.subscribeStatements(topics, (statements) => {
+        log.warn("[dotli ss] >>> RECEIVED", statements.length, "statements");
+        for (let i = 0; i < statements.length; i++) {
+          logStatement(`[dotli ss]   stmt[${String(i)}]`, statements[i]);
+        }
+        return callback(statements);
+      });
+    },
+    submitStatement(statement) {
+      log.warn("[dotli ss] submitStatement called");
+      logStatement("[dotli ss]  ", statement);
+      const result = inner.submitStatement(statement);
+      result.map(() => {
+        log.warn("[dotli ss] submitStatement OK");
+      });
+      result.mapErr((e: Error) => {
+        if (e.constructor.name === "ExpiryTooLowError") {
+          log.warn(
+            "[dotli ss] submitStatement ExpiryTooLow (non-critical):",
+            e.message,
+          );
+        } else {
+          log.error("[dotli ss] submitStatement ERROR:", e);
+        }
+      });
+      return result;
+    },
+  };
+}
+
 export function initAuth(): void {
   if (initialized) {
     return;
   }
   initialized = true;
 
-  const storage = createLocalStorageAdapter("dot.li");
+  const siteId = SITE_ID;
+  const storage = createLocalStorageAdapter(siteId);
   const lazyClient = createLazyClient(
-    getWsProvider([...SS_STABLE_STAGE_ENDPOINTS]),
+    getWsProvider([...SS_STABLE_STAGE_ENDPOINTS], {
+      heartbeatTimeout: 120_000, // 2 minutes — default 40s is too aggressive through tunnels
+    }),
   );
 
+  const rawStatementStore = createPapiStatementStoreAdapter(lazyClient);
+  const statementStore = createLoggingStatementStore(rawStatementStore);
+
   adapter = createPappAdapter({
-    appId: "dot.li",
-    metadata: "https://dot.li/host-metadata.json",
-    adapters: { lazyClient, storage },
+    appId: siteId,
+    metadata: `${window.location.origin}/${getMetadataFile()}`,
+    adapters: { lazyClient, statementStore, storage },
   });
 
   // Check for existing session
@@ -77,7 +171,7 @@ export function initAuth(): void {
 
   // Subscribe to session changes (handles reconnects)
   adapter.sessions.sessions.subscribe((sessions: UserSession[]) => {
-    console.warn(
+    log.warn(
       "[dot.li auth] sessions subscription fired, count:",
       sessions.length,
     );
@@ -111,7 +205,7 @@ async function resolveIdentityAndSetAuth(session: UserSession): Promise<void> {
       setState({ status: "authenticated", session, identity: result.value });
     }
   } catch (err) {
-    console.warn("[dot.li] Failed to resolve identity:", err);
+    log.warn("[dot.li] Failed to resolve identity:", err);
   }
 }
 
@@ -154,7 +248,7 @@ export function startPairing(): void {
 
   unsubPairing = adapter.sso.pairingStatus.subscribe(
     (status: PairingStatus) => {
-      console.warn("[dot.li auth] pairingStatus:", status.step, status);
+      log.warn("[dot.li auth] pairingStatus:", status.step, status);
       switch (status.step) {
         case "initial":
           setState({ status: "pairing", payload: "" });
@@ -182,7 +276,7 @@ export function startPairing(): void {
 
   unsubAttestation = adapter.sso.attestationStatus.subscribe(
     (status: AttestationStatus) => {
-      console.warn("[dot.li auth] attestationStatus:", status.step, status);
+      log.warn("[dot.li auth] attestationStatus:", status.step, status);
       switch (status.step) {
         case "attestation":
           setState({ status: "attesting", username: status.username });
@@ -204,13 +298,13 @@ export function startPairing(): void {
 
   adapter.sso.authenticate().then(
     (result) => {
-      console.warn("[dot.li auth] authenticate() resolved:", result);
+      log.warn("[dot.li auth] authenticate() resolved:", result);
       if (result.isOk() && result.value) {
         // authenticate() resolved successfully — session is now persisted.
         // Pick up via sessions subscription or fallback here.
         pickUpSession();
       } else if (result.isErr()) {
-        console.error("[dot.li auth] authenticate() error:", result.error);
+        log.error("[dot.li auth] authenticate() error:", result.error);
         // Only show error if we're still in an active auth flow (not idle/authenticated)
         if (
           currentState.status !== "authenticated" &&
@@ -221,7 +315,7 @@ export function startPairing(): void {
       }
     },
     (err) => {
-      console.error("[dot.li auth] authenticate() rejected:", err);
+      log.error("[dot.li auth] authenticate() rejected:", err);
     },
   );
 }

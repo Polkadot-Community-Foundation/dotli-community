@@ -158,10 +158,13 @@ export function initTopBar(): void {
 
   // If there's a persisted session, lazy-load auth to restore it.
   // Deferred to idle to avoid competing with critical-path bandwidth.
-  // The storage adapter prefixes keys with "PAPP_dot.li_", so check
+  // The storage adapter prefixes keys with "PAPP_<siteId>_", so check
   // for any key with that prefix to detect a persisted session.
-  const hasPersistedSession = Object.keys(localStorage).some((k) =>
-    k.startsWith("PAPP_dot.li_"),
+  const hasPersistedSession = Object.keys(localStorage).some(
+    (k) =>
+      k.startsWith("PAPP_dot.li_") ||
+      k.startsWith("PAPP_paseo.li_") ||
+      k.startsWith("PAPP_local.li_"),
   );
   if (hasPersistedSession) {
     requestIdleCallback(() => {
@@ -196,6 +199,7 @@ function renderAuthState(state: AuthState): void {
 function renderLoggedOut(): void {
   authButton.innerHTML = HEXAGON_SVG;
   authButton.title = "Login with Polkadot App";
+  window.dispatchEvent(new Event("dotli:logged-out"));
 }
 
 function renderLoggedIn(state: AuthState & { status: "authenticated" }): void {

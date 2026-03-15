@@ -32,6 +32,24 @@
         <!-- Styles are loaded via src/styles.css (imported in main.ts) -->
     </head>
     <body>
+        <script>
+            // Detect paseo.li or localhost deployment and set site variant
+            (function() {
+                var h = location.hostname;
+                var isPaseo = h === "paseo.li" || h.endsWith(".paseo.li");
+                var isLocal = h === "localhost" || h.endsWith(".localhost") || h === "127.0.0.1";
+                if (isPaseo || isLocal) {
+                    document.documentElement.setAttribute("data-site", "paseo");
+                    var brandName = isLocal ? "local" : "paseo";
+                    document.addEventListener("DOMContentLoaded", function() {
+                        var name = document.querySelector(".topbar-brand-name");
+                        if (name) name.textContent = brandName;
+                        var loadingBrand = document.querySelector(".loading-brand");
+                        if (loadingBrand) loadingBrand.textContent = brandName + ".li";
+                    });
+                }
+            })();
+        </script>
         <!-- Top Bar -->
         <div id="topbar">
             <a class="topbar-left" id="topbar-home" href="/">
@@ -49,7 +67,7 @@
                         />
                     </svg>
                 </div>
-                <span class="topbar-brand">dot<span class="topbar-brand-tld">.li</span></span>
+                <span class="topbar-brand"><span class="topbar-brand-name">dot</span><span class="topbar-brand-tld">.li</span></span>
             </a>
             <div class="topbar-url" id="topbar-url"></div>
             <div class="topbar-right">
@@ -154,7 +172,7 @@
         <!-- App Content -->
         <div id="app">
             <div class="loading">
-                <h1>dot.li</h1>
+                <h1 class="loading-brand">dot.li</h1>
                 <div class="spinner"></div>
                 <p id="status">Initializing...</p>
             </div>

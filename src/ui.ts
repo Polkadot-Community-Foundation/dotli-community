@@ -4,7 +4,7 @@
 // No heavy dependencies — kept in the eager bundle.
 
 import { getRecentLabels, addRecentLabel } from "./cid-cache";
-import { BASE_DOMAIN } from "./config";
+import { BASE_DOMAIN, SITE_ID } from "./config";
 
 const app = document.getElementById("app") ?? document.body;
 
@@ -43,7 +43,7 @@ export function showError(title: string, detail: string): void {
         <h1 class="error-page-title">${title}</h1>
         <p class="error-page-detail">${detail}</p>
         <div class="error-page-tags">
-          <span class="error-page-tag">dot.li</span>
+          <span class="error-page-tag">${SITE_ID}</span>
           <span class="error-page-tag">dotNS</span>
           <span class="error-page-tag">Bulletin</span>
         </div>
@@ -107,6 +107,23 @@ export function showLanding(): void {
       </div>
     </div>
   `;
+
+  // Update landing text for paseo/localhost variant
+  const siteVariant = document.documentElement.getAttribute("data-site");
+  if (siteVariant === "paseo") {
+    const h = location.hostname;
+    const isLocal =
+      h === "localhost" || h.endsWith(".localhost") || h === "127.0.0.1";
+    const brandName = isLocal ? "local" : "paseo";
+    const brandEl = document.querySelector(".landing-brand-name");
+    if (brandEl) {
+      brandEl.textContent = brandName;
+    }
+    const hintTld = document.querySelector(".landing-hint-tld");
+    if (hintTld) {
+      hintTld.textContent = `.${brandName}.li`;
+    }
+  }
 
   const form = document.getElementById(
     "dotli-nav-form",

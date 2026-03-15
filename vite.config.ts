@@ -235,6 +235,7 @@ export default defineConfig({
   server: {
     headers: {
       "Service-Worker-Allowed": "/",
+      "Access-Control-Allow-Origin": "*",
     },
   },
 });

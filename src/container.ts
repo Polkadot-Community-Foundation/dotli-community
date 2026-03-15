@@ -24,6 +24,7 @@ import { getAuthState, onAuthStateChange, type AuthState } from "./auth";
 import { showSignPayloadModal, showSignRawModal } from "./signing";
 import { deriveProductPublicKey } from "./account";
 import { createChainProvider, isChainSupported } from "./chains";
+import { log } from "./log";
 
 // ── Session helpers (shared by all bridges) ────────────────
 
@@ -106,8 +107,14 @@ function wireContainerHandlers(
   // ── Signing ────────────────────────────────────────────
 
   container.handleSignPayload((payload, { ok, err }) => {
+    log.warn(`[${label}] handleSignPayload invoked:`, {
+      address: payload.address,
+      genesisHash: payload.genesisHash,
+      method: payload.method.slice(0, 40) + "...",
+    });
     const session = getSession();
     if (!session) {
+      log.error(`[${label}] handleSignPayload — no session, rejecting`);
       return err(new SigningErr.PermissionDenied(undefined));
     }
 
@@ -115,29 +122,42 @@ function wireContainerHandlers(
       showSignPayloadModal(session, payload),
       (e) => e as never,
     )
-      .andThen((result) =>
-        ok({
+      .andThen((result) => {
+        log.warn(`[${label}] handleSignPayload — resolved OK`);
+        return ok({
           signature: result.signature,
           signedTransaction: result.signedTransaction,
-        }),
-      )
-      .orElse((e) => err(e));
+        });
+      })
+      .orElse((e) => {
+        log.warn(`[${label}] handleSignPayload — rejected:`, e);
+        return err(e);
+      });
   });
 
   container.handleSignRaw((payload, { ok, err }) => {
+    log.warn(`[${label}] handleSignRaw invoked:`, {
+      address: payload.address,
+      dataTag: payload.data.tag,
+    });
     const session = getSession();
     if (!session) {
+      log.error(`[${label}] handleSignRaw — no session, rejecting`);
       return err(new SigningErr.PermissionDenied(undefined));
     }
 
     return fromPromise(showSignRawModal(session, payload), (e) => e as never)
-      .andThen((result) =>
-        ok({
+      .andThen((result) => {
+        log.warn(`[${label}] handleSignRaw — resolved OK`);
+        return ok({
           signature: result.signature,
           signedTransaction: result.signedTransaction,
-        }),
-      )
-      .orElse((e) => err(e));
+        });
+      })
+      .orElse((e) => {
+        log.warn(`[${label}] handleSignRaw — rejected:`, e);
+        return err(e);
+      });
   });
 
   // ── Local Storage (scoped per dApp) ────────────────────
@@ -198,7 +218,7 @@ function wireContainerHandlers(
   // ── Push notifications ─────────────────────────────────
 
   container.handlePushNotification((text, { ok }) => {
-    console.warn(`[${label}] Notification:`, text);
+    log.warn(`[${label}] Notification:`, text);
     return ok(undefined);
   });
 }
@@ -314,7 +334,7 @@ export function setupNestedBridgeDetector(
     // New nested dApp detected
     knownWindows.add(event.source);
     const nestedId = String(knownWindows.size);
-    console.warn(`[dot.li] Nested dApp #${nestedId} detected, creating bridge`);
+    log.warn(`[dot.li] Nested dApp #${nestedId} detected, creating bridge`);
 
     const provider = createWindowProvider(event.source as Window);
     const container = createContainer(provider);
