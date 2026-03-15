@@ -21,8 +21,8 @@ dot.li supports two URL formats:
 
 | Format | Example |
 |--------|---------|
-| **Subdomain** | `https://mytestapp.dot.li` |
-| **Path** | `https://dot.li/mytestapp.dot` |
+| **Subdomain** | `https://testingout.dot.li` |
+| **Path** | `https://dot.li/testingout.dot` |
 
 ### Landing page
 
@@ -48,7 +48,7 @@ cid.app.dot.li           App build (CID from subdomain, P2P fetch, render)
 
 | URL | Role | What happens |
 |-----|------|--------------|
-| `myapp.dot.li` | Host shell | Resolves `myapp` via dotns, iframes `bafyrei....app.dot.li` |
+| `testingout.dot.li` | Host shell | Resolves `testingout` via dotns, iframes `bafyrei....app.dot.li` |
 | `bafyrei....app.dot.li` | App content | Parses CID from subdomain, fetches content, renders |
 | `dot.li` | Landing page | Search bar, recent apps |
 | Direct `bafyrei....app.dot.li` | Standalone | Works without a host — fetches and renders directly |
@@ -62,7 +62,7 @@ Each `cid.app.dot.li` is a distinct origin, preventing SW/storage/security confl
 3. **Renders** the content in a sandboxed iframe with a full host-container bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage — all through postMessage.
 
 ```
-mytestapp.dot.li
+testingout.dot.li
     -> Host: smoldot resolves dotNS -> IPFS CID
     -> Host: iframes cid.app.dot.li
     -> App:  Helia fetches content (P2P or gateway)
@@ -73,8 +73,8 @@ Single-file apps are served as blob URLs. Multi-file SPAs (directories) are fetc
 
 ## How resolution works
 
-1. Parse label from URL — subdomain (`mytestapp.dot.li` -> `mytestapp`) or path (`/mytestapp.dot` -> `mytestapp`)
-2. Compute ENS-style namehash of `mytestapp.dot`
+1. Parse label from URL — subdomain (`testingout.dot.li` -> `testingout`) or path (`/testingout.dot` -> `testingout`)
+2. Compute ENS-style namehash of `testingout.dot`
 3. Call `recordExists(node)` on the dotNS Registry contract via Revive dry-run
 4. Call `contenthash(node)` on the dotNS ContentResolver contract
 5. Decode the contenthash bytes to an IPFS CID (using `@ensdomains/content-hash`)
@@ -159,7 +159,7 @@ bun run dev:app
 ```
 
 Local dev uses wildcard subdomains:
-- `mytestapp.localhost:5173` — resolves `mytestapp.dot` via the host
+- `testingout.localhost:5173` — resolves `testingout.dot` via the host
 - `bafyrei....app.localhost:5174` — fetches and renders CID content directly
 
 Both servers should run simultaneously for full functionality.
