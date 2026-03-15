@@ -12,7 +12,7 @@ permissions:
 jobs:
   update:
     name: Update Chain Specs
-    runs-on: ubuntu-latest
+    runs-on: parity-default
 
     steps:
       - name: Checkout

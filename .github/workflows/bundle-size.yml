@@ -17,7 +17,7 @@ jobs:
   # ── Main branch: build and store baseline sizes ─────────────
   baseline:
     name: Update Baseline
-    runs-on: ubuntu-latest
+    runs-on: parity-default
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
@@ -73,7 +73,7 @@ jobs:
   # ── PR: build, compare against main, and comment ───────────
   compare:
     name: PR Bundle Size
-    runs-on: ubuntu-latest
+    runs-on: parity-default
     if: github.event_name == 'pull_request' && github.event.sender.type != 'Bot'
 
     steps:

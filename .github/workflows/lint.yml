@@ -13,7 +13,7 @@ permissions:
 jobs:
   lint:
     name: Code Analyzer
-    runs-on: ubuntu-latest
+    runs-on: parity-default
     if: ${{ github.event.sender.type != 'Bot' }}
 
     steps:

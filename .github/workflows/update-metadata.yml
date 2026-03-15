@@ -12,7 +12,7 @@ permissions:
 jobs:
   update:
     name: Update Metadata
-    runs-on: ubuntu-latest
+    runs-on: parity-default
 
     steps:
       - name: Checkout

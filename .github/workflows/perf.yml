@@ -16,7 +16,7 @@ jobs:
   # ── Main branch: compute and store baseline ────────────────
   baseline:
     name: Update Baseline
-    runs-on: ubuntu-latest
+    runs-on: parity-default
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
@@ -51,7 +51,7 @@ jobs:
   # ── PR: compare against main baseline ──────────────────────
   compare:
     name: PR Benchmark
-    runs-on: ubuntu-latest
+    runs-on: parity-default
     if: github.event_name == 'pull_request'
 
     steps:
