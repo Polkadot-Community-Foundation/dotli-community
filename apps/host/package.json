@@ -10,6 +10,8 @@
     "preview:test": "bun scripts/preview-server.ts",
     "test:perf": "PERF_RUNS=10 PERF_DOMAIN_A=hackme3 PERF_DOMAIN_B=insync bunx playwright test tests/cold-start.spec.ts",
     "test:perf:base": "PERF_RUNS=20 PERF_SAVE_BASE=1 PERF_DOMAIN_A=hackme3 PERF_DOMAIN_B=insync bunx playwright test tests/cold-start.spec.ts",
+    "test:perf:compare": "bun tests/compare.ts",
+    "test:perf:compare:md": "bun tests/compare.ts --markdown",
     "lint": "bunx eslint src/",
     "typecheck": "tsc --noEmit"
   },

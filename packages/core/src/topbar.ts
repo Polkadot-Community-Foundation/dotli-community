@@ -8,6 +8,7 @@
 // user clicks the auth button.
 
 import type { AuthState } from "./auth";
+import { log } from "./log";
 
 // ── DOM refs ───────────────────────────────────────────────
 
@@ -257,7 +258,7 @@ function renderPairing(payload: string): void {
       modalQr.appendChild(canvas);
     })
     .catch((err: unknown) => {
-      console.error("[dot.li] QR render failed:", err);
+      log.error("[dot.li] QR render failed:", err);
     });
 }
 

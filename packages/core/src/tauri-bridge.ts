@@ -4,6 +4,8 @@
 // (host-chain) and renders content in an iframe via the dotapp:// custom URI
 // scheme. Assets are served directly from Rust memory — no encoding overhead.
 
+import { log } from "./log";
+
 interface ResolveResult {
   cid: string;
   owner: string | null;
@@ -177,7 +179,7 @@ export async function tauriResolveAndRender(label: string): Promise<void> {
   setupContainer(iframe, appUrl, label);
 
   document.title = `${label}.dot`;
-  console.warn(
+  log.warn(
     `[dot.li tauri] Rendered ${label}.dot — CID: ${result.cid}, ${String(result.files.length)} file(s)`,
   );
 }

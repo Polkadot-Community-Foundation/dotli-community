@@ -1,0 +1,368 @@
+/* dot.li — Top bar, URL pill, popovers, auth UI */
+
+/* ── Top Bar ────────────────────────────── */
+#topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #111;
+  border-bottom: 1px solid #222;
+  padding: 0 12px;
+  z-index: 1000;
+}
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+}
+.topbar-logo svg {
+  display: block;
+  width: 16px;
+  height: 18px;
+}
+.topbar-logo svg path {
+  fill: #ffffff;
+}
+.topbar-brand {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.02em;
+}
+.topbar-brand-tld {
+  color: #777;
+}
+.topbar-url {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 480px;
+  margin: 0 12px;
+}
+.topbar-url:empty {
+  display: none;
+}
+.topbar-url-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 13px;
+  font-size: 0.75rem;
+  color: #888;
+  letter-spacing: 0.01em;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.topbar-url-pill:hover {
+  border-color: #444;
+}
+.topbar-url-pill .dot-domain {
+  color: #fff;
+  font-weight: 500;
+}
+.topbar-url-pill .dot-tld {
+  color: #555;
+  font-weight: 500;
+}
+.localhost-pill .dot-domain {
+  font-family: monospace;
+  font-size: 0.7rem;
+}
+.localhost-icon {
+  color: #a78bfa;
+  flex-shrink: 0;
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.topbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #ccc;
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.topbar-btn:hover {
+  background: #1a1a1a;
+  border-color: #444;
+}
+
+/* ── Paseo variant (green topbar) ──────── */
+[data-site="paseo"] #topbar {
+  background: #00b171;
+  border-bottom-color: #009a62;
+}
+[data-site="paseo"] .topbar-brand-tld {
+  color: rgba(255, 255, 255, 0.6);
+}
+[data-site="paseo"] .topbar-url-pill {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+[data-site="paseo"] .topbar-url-pill .dot-domain {
+  color: #fff;
+}
+[data-site="paseo"] .topbar-url-pill .dot-tld {
+  color: rgba(255, 255, 255, 0.7);
+}
+[data-site="paseo"] .topbar-btn {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+[data-site="paseo"] .topbar-btn:hover {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+[data-site="paseo"][data-theme="light"] #topbar {
+  background: #00b171;
+  border-bottom-color: #009a62;
+}
+[data-site="paseo"][data-theme="light"] .topbar-logo svg path {
+  fill: #fff;
+}
+[data-site="paseo"][data-theme="light"] .topbar-brand {
+  color: #fff;
+}
+[data-site="paseo"][data-theme="light"] .topbar-brand-tld {
+  color: rgba(255, 255, 255, 0.6);
+}
+[data-site="paseo"][data-theme="light"] .topbar-btn {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+[data-site="paseo"][data-theme="light"] .topbar-btn:hover {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+[data-site="paseo"][data-theme="light"] .topbar-url-pill {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+[data-site="paseo"][data-theme="light"] .topbar-url-pill .dot-domain {
+  color: #fff;
+}
+[data-site="paseo"][data-theme="light"] .topbar-url-pill .dot-tld {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* ── Verification Shield ────────────────── */
+.verification-shield {
+  display: block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: #555;
+  transition: color 0.3s;
+}
+.verification-shield.validating {
+  color: #eab308;
+}
+.verification-shield.verified {
+  color: #4ade80;
+}
+.verification-shield.stale {
+  color: #f87171;
+}
+.verification-shield.gateway {
+  color: #f97316;
+}
+
+/* ── Domain Info Popover ────────────────── */
+.domain-popover {
+  display: none;
+  position: fixed;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  background: #171717;
+  border: 1px solid #333;
+  border-radius: 10px;
+  z-index: 1500;
+  padding: 14px 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+.domain-popover.open {
+  display: block;
+}
+.domain-popover-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.domain-popover-row:last-child {
+  margin-bottom: 0;
+}
+.domain-popover-label {
+  font-size: 0.68rem;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  width: 48px;
+}
+.domain-popover-value {
+  font-size: 0.75rem;
+  color: #ccc;
+  font-family:
+    ui-monospace, "Cascadia Code", "Source Code Pro", Menlo,
+    Consolas, monospace;
+  word-break: break-all;
+  line-height: 1.4;
+}
+.domain-popover-value.loading {
+  color: #555;
+}
+.domain-popover-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: none;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #666;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  margin-left: 4px;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+  vertical-align: middle;
+}
+.domain-popover-copy:hover {
+  color: #fff;
+  border-color: #555;
+}
+
+/* ── Honor Badge ────────────────────────── */
+.honor-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-family: system-ui, sans-serif;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+.honor-badge.unknown {
+  color: #777;
+  background: #222;
+  border: 1px solid #333;
+}
+.honor-badge.neutral {
+  color: #a3a3a3;
+  background: #1a1a1a;
+  border: 1px solid #404040;
+}
+.honor-badge.positive {
+  color: #4ade80;
+  background: #0a1f0f;
+  border: 1px solid #16532a;
+}
+.honor-badge.negative {
+  color: #f87171;
+  background: #1f0a0a;
+  border: 1px solid #531616;
+}
+
+/* ── User Badge ─────────────────────────── */
+.user-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: #000;
+  color: #fff;
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0.12px;
+  text-transform: uppercase;
+}
+
+/* ── User Popover ───────────────────────── */
+.user-popover {
+  display: none;
+  position: fixed;
+  top: 44px;
+  right: 12px;
+  width: 220px;
+  background: #171717;
+  border: 1px solid #404040;
+  border-radius: 12px;
+  z-index: 1500;
+  overflow: hidden;
+}
+.user-popover.open {
+  display: block;
+}
+.user-popover-name {
+  padding: 12px 14px 8px;
+}
+.user-popover-name .label {
+  font-size: 0.75rem;
+  color: #a3a3a3;
+}
+.user-popover-name .name {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #fafafa;
+  margin-top: 2px;
+}
+.user-popover-divider {
+  border-top: 1px solid #404040;
+}
+.user-popover-disconnect {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  color: #f87171;
+  font-size: 0.85rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.user-popover-disconnect:hover {
+  background: #262626;
+}
+.user-popover-disconnect svg {
+  width: 18px;
+  height: 18px;
+}

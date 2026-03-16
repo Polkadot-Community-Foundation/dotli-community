@@ -18,14 +18,17 @@ function buildServiceWorker(): Plugin {
         plugins: [wasm()],
         resolve: {
           alias: {
-            "@dotli/core": resolve(__dirname, "../../packages/core/src"),
+            "@dotli/core": resolve(
+              import.meta.dirname,
+              "../../packages/core/src",
+            ),
           },
         },
         build: {
           emptyOutDir: false,
           outDir: OUT_DIR,
           lib: {
-            entry: resolve(__dirname, "src/app-sw.ts"),
+            entry: resolve(import.meta.dirname, "src/app-sw.ts"),
             formats: ["es"],
             fileName: () => "app-sw.js",
           },
@@ -44,9 +47,46 @@ function buildServiceWorker(): Plugin {
   };
 }
 
-const CORE_SRC = resolve(__dirname, "../../packages/core/src");
+/**
+ * Vite plugin that injects <link rel="modulepreload"> for critical chunks
+ * (fetch/P2P and render) so the browser starts downloading them during
+ * HTML parse instead of waiting for the entry module to import() them.
+ */
+function preloadCriticalAssets(): Plugin {
+  let resolvedBase = "/";
+  return {
+    name: "preload-critical-assets",
+    configResolved(config) {
+      resolvedBase = config.base;
+    },
+    transformIndexHtml: {
+      order: "post",
+      handler(_html, ctx) {
+        if (!ctx.bundle) return [];
+
+        const bundleKeys = Object.keys(ctx.bundle);
+        const findChunk = (pattern: RegExp) =>
+          bundleKeys.find((name) => pattern.test(name));
+
+        const fetchChunk = findChunk(/^assets\/fetch-.*\.js$/);
+        const renderChunk = findChunk(/^assets\/render-.*\.js$/);
+
+        const chunks = [fetchChunk, renderChunk].filter(Boolean);
+        if (chunks.length === 0) return [];
+
+        return chunks.map((c) => ({
+          tag: "link",
+          attrs: { rel: "modulepreload", href: `${resolvedBase}${c}` },
+          injectTo: "head" as const,
+        }));
+      },
+    },
+  };
+}
+
+const CORE_SRC = resolve(import.meta.dirname, "../../packages/core/src");
 const SANDBOX_CHECKER_SRC = resolve(
-  __dirname,
+  import.meta.dirname,
   "../../packages/sandbox-checker/src",
 );
 
@@ -54,7 +94,7 @@ export default defineConfig({
   base: process.env.VITE_APP_URL
     ? new URL(process.env.VITE_APP_URL).pathname
     : "/",
-  plugins: [wasm(), buildServiceWorker()],
+  plugins: [wasm(), preloadCriticalAssets(), buildServiceWorker()],
   resolve: {
     alias: {
       "@dotli/core": CORE_SRC,

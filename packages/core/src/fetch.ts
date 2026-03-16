@@ -5,11 +5,9 @@
 //
 // Pattern from: polkadot-bulletin-chain-main/console-ui/src/lib/helia.ts
 
-function dur(start: number): string {
-  return `${(performance.now() - start).toFixed(0)}ms`;
-}
-
 import { TIMEOUTS } from "./config";
+import { dur } from "./perf";
+import { log } from "./log";
 import { createHelia, type Helia } from "helia";
 import { bitswap, trustlessGateway } from "@helia/block-brokers";
 import { httpGatewayRouting } from "@helia/routers";
@@ -91,7 +89,7 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
       },
     },
   });
-  console.warn(`[dot.li fetch] createHelia() done (${dur(createStart)})`);
+  log.warn(`[dot.li fetch] createHelia() done (${dur(createStart)})`);
 
   // Dial all peers in parallel; proceed as soon as the first connects.
   // Remaining peers continue connecting in the background for redundancy.
@@ -102,11 +100,11 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
     const peerStart = performance.now();
     try {
       await helia.libp2p.dial(multiaddr(addr));
-      console.warn(
+      log.warn(
         `[dot.li fetch] Peer dialed (${dur(peerStart)}): ${addr.slice(-20)}`,
       );
     } catch (err) {
-      console.warn(
+      log.warn(
         `[dot.li fetch] Peer failed (${dur(peerStart)}): ${addr.slice(-20)}`,
       );
       throw err;
@@ -122,18 +120,18 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
   // Keep dialing remaining peers in background for redundancy
   void Promise.allSettled(dialPromises).then(() => {
     const total = helia.libp2p.getConnections().length;
-    console.warn(
+    log.warn(
       `[dot.li fetch] All peers settled (${dur(dialStart)}), ${String(total)} connected`,
     );
   });
 
   const connections = helia.libp2p.getConnections();
-  console.warn(
+  log.warn(
     `[dot.li fetch] First peer connected (${dur(dialStart)}), ${String(connections.length)} connected so far`,
   );
   onStatus?.(`Connected to Bulletin peer, dialing others...`);
 
-  console.warn(`[dot.li fetch] ensureHelia() total: ${dur(heliaStart)}`);
+  log.warn(`[dot.li fetch] ensureHelia() total: ${dur(heliaStart)}`);
   return heliaInstance;
 }
 
@@ -178,18 +176,18 @@ async function fetchViaP2P(
 
   // For dag-pb (UnixFS) content — could be a file or directory
   if (cid.code === 0x70) {
-    console.warn(`[dot.li fetch] P2P: fetching dag-pb (UnixFS) CID...`);
+    log.warn(`[dot.li fetch] P2P: fetching dag-pb (UnixFS) CID...`);
     const fs = unixfs(helia);
 
     // Try as file first
     try {
       const content = await collectCat(fs, cid, signal);
-      console.warn(
+      log.warn(
         `[dot.li fetch] P2P: fetched file ${String(Math.round(content.length / 1024))} KB in ${dur(p2pStart)}`,
       );
       // Content may be a CAR archive (e.g. deployed via web-hosting tooling)
       if (isCarFile(content)) {
-        console.warn(`[dot.li fetch] P2P: content is a CAR file, parsing...`);
+        log.warn(`[dot.li fetch] P2P: content is a CAR file, parsing...`);
         const files = await parseIpfsResponse(content);
         return toFetchResult(files);
       }
@@ -201,7 +199,7 @@ async function fetchViaP2P(
     }
 
     // It's a directory — walk it recursively with ls + cat
-    console.warn(`[dot.li fetch] P2P: CID is a directory, walking entries...`);
+    log.warn(`[dot.li fetch] P2P: CID is a directory, walking entries...`);
     onStatus?.("Fetching directory via P2P...");
     const files: ArchiveFiles = {};
 
@@ -246,17 +244,17 @@ async function fetchViaP2P(
     }
 
     await walkDir(cid, "");
-    console.warn(
+    log.warn(
       `[dot.li fetch] P2P: fetched directory (${String(Object.keys(files).length)} files) in ${dur(p2pStart)}`,
     );
     return toFetchResult(files);
   }
 
   // For raw blocks, fetch directly from blockstore
-  console.warn(`[dot.li fetch] P2P: fetching raw block...`);
+  log.warn(`[dot.li fetch] P2P: fetching raw block...`);
   const blockData = helia.blockstore.get(cid, { signal });
   if (blockData instanceof Uint8Array) {
-    console.warn(
+    log.warn(
       `[dot.li fetch] P2P: fetched ${String(Math.round(blockData.length / 1024))} KB in ${dur(p2pStart)}`,
     );
     return { type: "single", content: blockData };
@@ -294,7 +292,7 @@ async function fetchCarFromGateway(
   }
 
   const buffer = await response.arrayBuffer();
-  console.warn(
+  log.warn(
     `[dot.li fetch] Gateway CAR: fetched ${String(Math.round(buffer.byteLength / 1024))} KB in ${dur(carStart)}`,
   );
   return new Uint8Array(buffer);
@@ -326,7 +324,7 @@ export async function fetchArchive(
       if (!controller.signal.aborted) {
         throw err;
       }
-      console.warn(
+      log.warn(
         "[dot.li fetch] P2P timed out (60s), falling back to gateway...",
       );
       onStatus?.("P2P timeout, trying gateway...");
@@ -359,10 +357,7 @@ function toFetchResult(files: ArchiveFiles): FetchResult {
     return { type: "single", content: files["index.html"] };
   }
   const fileCount = keys.length;
-  console.warn(
-    `[dot.li] Loaded archive with ${String(fileCount)} file(s):`,
-    keys,
-  );
+  log.warn(`[dot.li] Loaded archive with ${String(fileCount)} file(s):`, keys);
   return { type: "archive", files };
 }
 

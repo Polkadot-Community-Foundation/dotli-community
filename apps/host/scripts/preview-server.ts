@@ -13,17 +13,19 @@ import { join, extname } from "node:path";
 
 const PORT = parseInt(process.env.PORT ?? "5173", 10);
 const ROOT = join(import.meta.dir, "..");
-const HOST_DIR = join(ROOT, "dist/host");
-const APP_DIR = join(ROOT, "dist/app");
+const MONOREPO_ROOT = join(ROOT, "../..");
+// Monorepo layout: apps/host/dist/ and apps/sandbox/dist/
+const HOST_DIR = join(ROOT, "dist");
+const APP_DIR = join(MONOREPO_ROOT, "apps/sandbox/dist");
 
 // Verify builds exist
 for (const [label, dir] of [
   ["Host", HOST_DIR],
-  ["App", APP_DIR],
+  ["App (sandbox)", APP_DIR],
 ] as const) {
   if (!existsSync(dir)) {
     console.error(
-      `${label} build not found at ${dir}\nRun: bun run build:host && bun run build:app`,
+      `${label} build not found at ${dir}\nRun: bun run build (from monorepo root)`,
     );
     process.exit(1);
   }
@@ -70,7 +72,7 @@ Bun.serve({
     const url = new URL(req.url);
     const isApp = url.hostname.includes(".app.");
     const baseDir = isApp ? APP_DIR : HOST_DIR;
-    const fallback = isApp ? "app.html" : "index.html";
+    const fallback = "index.html";
 
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === "/") pathname = `/${fallback}`;

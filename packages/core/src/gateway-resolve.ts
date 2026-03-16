@@ -26,6 +26,7 @@ import {
   decodeContractResult,
 } from "./codegen/revive-api";
 import { dur } from "./perf";
+import { log } from "./log";
 
 // ── Gateway resolution via HTTP state_call ──────────────────
 
@@ -52,7 +53,7 @@ export async function resolveViaGateway(label: string): Promise<string | null> {
     18446744073709551615n,
     calldata,
   );
-  console.warn(`[dot.li gateway] Params encoded (${dur(start)})`);
+  log.warn(`[dot.li gateway] Params encoded (${dur(start)})`);
 
   for (const wsUrl of ASSET_HUB_PASEO_RPC) {
     const httpUrl = wsUrl.replace("wss://", "https://");
@@ -71,7 +72,7 @@ export async function resolveViaGateway(label: string): Promise<string | null> {
       });
 
       if (!response.ok) {
-        console.warn(
+        log.warn(
           `[dot.li gateway] HTTP ${String(response.status)} from ${httpUrl} (${dur(fetchStart)})`,
         );
         continue;
@@ -81,25 +82,23 @@ export async function resolveViaGateway(label: string): Promise<string | null> {
         result?: string;
         error?: { message?: string; code?: number };
       };
-      console.warn(
-        `[dot.li gateway] RPC response received (${dur(fetchStart)})`,
-      );
+      log.warn(`[dot.li gateway] RPC response received (${dur(fetchStart)})`);
 
       if (json.error) {
-        console.warn(
+        log.warn(
           `[dot.li gateway] RPC error: ${json.error.message ?? "unknown"}`,
         );
         continue;
       }
 
       if (json.result === undefined || typeof json.result !== "string") {
-        console.warn(`[dot.li gateway] No result in RPC response`);
+        log.warn(`[dot.li gateway] No result in RPC response`);
         continue;
       }
 
       const returnData = await decodeContractResult(json.result);
       if (returnData === null) {
-        console.warn(
+        log.warn(
           `[dot.li gateway] Contract call failed or reverted (${dur(fetchStart)})`,
         );
         continue;
@@ -107,16 +106,16 @@ export async function resolveViaGateway(label: string): Promise<string | null> {
 
       const contenthashBytes = decodeBytes(returnData);
       const cid = decodeIpfsContenthash(contenthashBytes);
-      console.warn(
+      log.warn(
         `[dot.li gateway] Resolved CID (${dur(start)}): ${cid ?? "null"}`,
       );
       return cid;
     } catch (err) {
-      console.warn(`[dot.li gateway] Failed ${httpUrl} (${dur(start)}):`, err);
+      log.warn(`[dot.li gateway] Failed ${httpUrl} (${dur(start)}):`, err);
       continue;
     }
   }
 
-  console.warn(`[dot.li gateway] All endpoints failed (${dur(start)})`);
+  log.warn(`[dot.li gateway] All endpoints failed (${dur(start)})`);
   return null;
 }

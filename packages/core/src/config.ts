@@ -21,7 +21,8 @@ const isLocalhost =
   hostname.endsWith(".localhost") ||
   hostname === "127.0.0.1";
 
-const IS_TAURI = "__TAURI_INTERNALS__" in window;
+const IS_TAURI =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export const SITE_ID: SiteId = IS_TAURI
   ? "dot.li"

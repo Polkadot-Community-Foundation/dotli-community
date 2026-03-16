@@ -74,6 +74,52 @@ export async function saveChainDb(
   }
 }
 
+// ── Relay chain DB extraction + save ──────────────────────────
+
+/** Minimal chain interface for JSON-RPC relay DB extraction. */
+export interface ChainRpc {
+  sendJsonRpc(rpc: string): void;
+  nextJsonRpcResponse(): Promise<string>;
+}
+
+let dbSaveId = 0;
+
+/**
+ * Extract the relay chain database via JSON-RPC and save to IndexedDB.
+ *
+ * Shared by both main-thread smoldot (`smoldot.ts`) and SW smoldot
+ * (`sw-smoldot.ts`). The `logFn` parameter allows each caller to use
+ * its own logging mechanism (`log.warn` vs `console.warn` in SW context).
+ */
+export async function extractAndSaveChainDb(
+  chain: ChainRpc,
+  maxSize: number,
+  logFn: (...args: unknown[]) => void,
+  prefix: string,
+): Promise<void> {
+  const id = ++dbSaveId;
+  try {
+    chain.sendJsonRpc(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "chainHead_unstable_finalizedDatabase",
+        params: [maxSize],
+      }),
+    );
+    const raw = await chain.nextJsonRpcResponse();
+    const resp = JSON.parse(raw) as { id?: number; result?: string };
+    if (resp.id === id && typeof resp.result === "string") {
+      await saveChainDb("paseo", resp.result);
+      logFn(
+        `${prefix} Saved relay chain DB (${String(Math.round(resp.result.length / 1024))} KB)`,
+      );
+    }
+  } catch {
+    // Non-critical — DB persistence failure doesn't affect functionality
+  }
+}
+
 /**
  * Get the shared database connection.
  * Reuses the pre-opened connection from window.__dotliDb if available.

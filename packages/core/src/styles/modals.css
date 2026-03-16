@@ -1,0 +1,77 @@
+/* dot.li — Auth modal (QR pairing) */
+
+.auth-modal-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 2000;
+  align-items: center;
+  justify-content: center;
+}
+.auth-modal-backdrop.open {
+  display: flex;
+}
+.auth-modal {
+  background: #151515;
+  border: 1px solid #2a2a2a;
+  border-radius: 16px;
+  padding: 24px;
+  text-align: center;
+  max-width: 340px;
+  width: 100%;
+}
+.auth-modal h2 {
+  font-size: 1rem;
+  color: #fff;
+  margin-bottom: 4px;
+}
+.auth-modal p {
+  font-size: 0.8rem;
+  color: #888;
+  margin-bottom: 16px;
+  line-height: 1.4;
+}
+.auth-modal-qr {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+.auth-modal-qr canvas {
+  border-radius: 8px;
+}
+.auth-modal-close {
+  margin-top: 16px;
+  padding: 6px 16px;
+  background: transparent;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #888;
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.auth-modal-close:hover {
+  background: #1a1a1a;
+}
+.auth-modal-error {
+  color: #f87171;
+  font-size: 0.8rem;
+  margin-bottom: 12px;
+}
+.auth-modal-retry {
+  padding: 6px 16px;
+  background: #e6007a;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.auth-modal-retry:hover {
+  opacity: 0.85;
+}

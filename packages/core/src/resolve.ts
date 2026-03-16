@@ -24,6 +24,7 @@ import {
   decodeIpfsContenthash,
 } from "./abi";
 import { dur } from "./perf";
+import { log } from "./log";
 import { getSmoldot, getRelayChain, extractAndSaveRelayDb } from "./smoldot";
 
 export { getSmoldot, getRelayChain } from "./smoldot";
@@ -61,7 +62,7 @@ async function trySwSmoldot(
     // On cold start the SW was just registered — smoldot can't be ready yet.
     // Skip the isSwSmoldotReady() check to avoid the 500ms timeout.
     if (freshSwRegistration) {
-      console.warn(
+      log.warn(
         "[dot.li resolve] Fresh SW registration, skipping SW smoldot check",
       );
       return null;
@@ -69,9 +70,7 @@ async function trySwSmoldot(
 
     const ready = await isSwSmoldotReady();
     if (!ready) {
-      console.warn(
-        "[dot.li resolve] SW smoldot not ready, using direct smoldot",
-      );
+      log.warn("[dot.li resolve] SW smoldot not ready, using direct smoldot");
       return null;
     }
 
@@ -92,7 +91,7 @@ async function trySwSmoldot(
       ),
     ]);
     performance.mark("dotli:smoldot:sw:end");
-    console.warn(
+    log.warn(
       `[dot.li resolve] SW smoldot: synced to finalized block (${dur(swStart)})`,
     );
 
@@ -101,7 +100,7 @@ async function trySwSmoldot(
     onStatus?.("Connected to Asset Hub Paseo (via Service Worker)");
     return apiInstance;
   } catch (err) {
-    console.warn("[dot.li resolve] SW smoldot failed, falling back:", err);
+    log.warn("[dot.li resolve] SW smoldot failed, falling back:", err);
     clientInstance?.destroy();
     clientInstance = null;
     return null;
@@ -149,14 +148,14 @@ async function doEnsureClient(
   const initStart = performance.now();
   onStatus?.("Starting light client...");
   const smoldot = getSmoldot();
-  console.warn(`[dot.li resolve] Smoldot instance created (${dur(initStart)})`);
+  log.warn(`[dot.li resolve] Smoldot instance created (${dur(initStart)})`);
 
   onStatus?.("Adding Paseo relay chain...");
   performance.mark("dotli:smoldot:relay:start");
   const relayStart = performance.now();
   const relayChain = await getRelayChain();
   performance.mark("dotli:smoldot:relay:end");
-  console.warn(`[dot.li resolve] Relay chain added (${dur(relayStart)})`);
+  log.warn(`[dot.li resolve] Relay chain added (${dur(relayStart)})`);
 
   onStatus?.("Adding Asset Hub Paseo...");
   performance.mark("dotli:smoldot:parachain:start");
@@ -170,7 +169,7 @@ async function doEnsureClient(
   const provider = getSmProvider(chain);
   clientInstance = createClient(provider);
   performance.mark("dotli:smoldot:parachain:end");
-  console.warn(
+  log.warn(
     `[dot.li resolve] Parachain added + client created (${dur(paraStart)})`,
   );
 
@@ -179,13 +178,11 @@ async function doEnsureClient(
   const syncStart = performance.now();
   await clientInstance.getFinalizedBlock();
   performance.mark("dotli:smoldot:sync:end");
-  console.warn(
-    `[dot.li resolve] Synced to finalized block (${dur(syncStart)})`,
-  );
+  log.warn(`[dot.li resolve] Synced to finalized block (${dur(syncStart)})`);
 
   apiInstance = clientInstance.getUnsafeApi();
   performance.mark("dotli:smoldot:init:end");
-  console.warn(`[dot.li resolve] ensureClient() total: ${dur(initStart)}`);
+  log.warn(`[dot.li resolve] ensureClient() total: ${dur(initStart)}`);
   onStatus?.("Connected to Asset Hub Paseo");
 
   // Persist relay chain DB for future fast syncs (yield to rendering first)
@@ -318,7 +315,7 @@ export async function resolveDotName(
   }
 
   const contenthashBytes = decodeBytes(contentResult);
-  console.warn(`[dot.li resolve] contenthash() dry-run: ${dur(contentStart)}`);
+  log.warn(`[dot.li resolve] contenthash() dry-run: ${dur(contentStart)}`);
 
   // Decode the contenthash to a CID
   const cid = decodeIpfsContenthash(contenthashBytes);

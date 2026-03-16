@@ -19,14 +19,11 @@ Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN as string,
 });
 import { getCachedCid, setCachedCid } from "@dotli/core/cid-cache";
-import { dur } from "@dotli/core/perf";
+import { dur, elapsed } from "@dotli/core/perf";
 import { TIMEOUTS, BASE_DOMAIN, SITE_ID } from "@dotli/core/config";
 import { log } from "@dotli/core/log";
 
 const T0 = performance.now();
-function elapsed(): string {
-  return `+${((performance.now() - T0) / 1000).toFixed(3)}s`;
-}
 
 /**
  * Parse a localhost proxy URL from the path.
@@ -425,7 +422,7 @@ async function main(): Promise<void> {
   }
 
   performance.mark("dotli:main:start");
-  log.warn(`[dot.li perf] main() started (${elapsed()})`);
+  log.warn(`[dot.li perf] main() started (${elapsed(T0)})`);
 
   // Pre-warm smoldot unconditionally — start downloading the resolve chunk
   // and kick off relay chain sync immediately.
@@ -447,7 +444,7 @@ async function main(): Promise<void> {
   const localhostUrl = parseLocalhostUrl();
   if (label === null && localhostUrl !== null) {
     const host = new URL(localhostUrl).host;
-    log.warn(`[dot.li perf] Localhost proxy: ${host} (${elapsed()})`);
+    log.warn(`[dot.li perf] Localhost proxy: ${host} (${elapsed(T0)})`);
 
     const urlBar = document.getElementById("topbar-url");
     if (urlBar !== null) {
@@ -462,7 +459,7 @@ async function main(): Promise<void> {
   }
 
   if (label === null) {
-    log.warn(`[dot.li perf] Landing page — no subdomain (${elapsed()})`);
+    log.warn(`[dot.li perf] Landing page — no subdomain (${elapsed(T0)})`);
     showLanding();
     performance.mark("dotli:main:end");
     return;
@@ -484,7 +481,7 @@ async function main(): Promise<void> {
     setTopbarVisible(true);
   });
 
-  log.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed()})`);
+  log.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed(T0)})`);
 
   // ── TEMPORARY: external URL overrides (remove when domains are on-chain) ──
   const TEMP_OVERRIDES: Partial<Record<string, string>> = {
@@ -557,7 +554,7 @@ async function main(): Promise<void> {
     // Start SW registration in parallel (for smoldot persistence)
     performance.mark("dotli:sw:start");
     const swStart = performance.now();
-    log.warn(`[dot.li perf] SW registration started (${elapsed()})`);
+    log.warn(`[dot.li perf] SW registration started (${elapsed(T0)})`);
 
     if (!navigator.serviceWorker.controller) {
       void resolveChunkPromise.then(({ markFreshSwRegistration }) => {
@@ -568,7 +565,7 @@ async function main(): Promise<void> {
     const swReady = registerServiceWorker().then(() => {
       performance.mark("dotli:sw:end");
       log.warn(
-        `[dot.li perf] SW registration done (${dur(swStart)}, ${elapsed()})`,
+        `[dot.li perf] SW registration done (${dur(swStart)}, ${elapsed(T0)})`,
       );
     });
     void swReady.catch(() => {
@@ -578,7 +575,7 @@ async function main(): Promise<void> {
     // ── Fast path: CID cache hit → iframe to cid.app.dot.li ──
     const cachedCid = await getCachedCid(label);
     if (cachedCid !== null) {
-      log.warn(`[dot.li perf] CID cache HIT: ${cachedCid} (${elapsed()})`);
+      log.warn(`[dot.li perf] CID cache HIT: ${cachedCid} (${elapsed(T0)})`);
       setShieldState("validating");
       const { renderAppSubdomain } = await renderChunkPromise;
       await renderAppSubdomain(cachedCid, label);
@@ -609,7 +606,7 @@ async function main(): Promise<void> {
         .catch(log.error);
       return;
     }
-    log.warn(`[dot.li perf] CID cache MISS (${elapsed()})`);
+    log.warn(`[dot.li perf] CID cache MISS (${elapsed(T0)})`);
 
     // ── Full resolution path ──
 
@@ -621,23 +618,23 @@ async function main(): Promise<void> {
     let gatewayPromise: Promise<string | null>;
     if (swSmoldotReady) {
       log.warn(
-        `[dot.li perf] SW smoldot ready — skipping gateway (${elapsed()})`,
+        `[dot.li perf] SW smoldot ready — skipping gateway (${elapsed(T0)})`,
       );
       gatewayPromise = Promise.resolve(null);
     } else {
       log.warn(
-        `[dot.li perf] Starting gateway + smoldot resolve... (${elapsed()})`,
+        `[dot.li perf] Starting gateway + smoldot resolve... (${elapsed(T0)})`,
       );
       gatewayPromise = gatewayChunkPromise
         .then(({ resolveViaGateway }) => resolveViaGateway(label))
         .catch(() => null as string | null);
     }
 
-    log.warn(`[dot.li perf] Awaiting resolve chunk... (${elapsed()})`);
+    log.warn(`[dot.li perf] Awaiting resolve chunk... (${elapsed(T0)})`);
     const { resolveDotName, resolveOwner, destroyClient } =
       await resolveChunkPromise;
     log.warn(
-      `[dot.li perf] Resolve chunk loaded (${dur(resolveChunkStart)}, ${elapsed()})`,
+      `[dot.li perf] Resolve chunk loaded (${dur(resolveChunkStart)}, ${elapsed(T0)})`,
     );
     destroyClientFn = destroyClient;
     populateOwner(resolveOwner, label);
@@ -653,7 +650,7 @@ async function main(): Promise<void> {
     const winner = await raceResolvers(gatewayPromise, smoldotPromise);
     performance.mark("dotli:resolve:end");
     log.warn(
-      `[dot.li perf] Resolution done (${dur(resolveStart)}, ${elapsed()}) → ${winner?.source ?? "none"}: ${winner?.cid ?? "null"}`,
+      `[dot.li perf] Resolution done (${dur(resolveStart)}, ${elapsed(T0)}) → ${winner?.source ?? "none"}: ${winner?.cid ?? "null"}`,
     );
 
     if (winner === null) {

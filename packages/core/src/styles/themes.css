@@ -1,0 +1,209 @@
+/* dot.li — Light theme overrides */
+
+[data-theme="light"] {
+  background: #f5f5f5;
+  color: #1a1a1a;
+}
+[data-theme="light"] #topbar {
+  background: #fff;
+  border-bottom-color: #ddd;
+}
+[data-theme="light"] .topbar-logo svg path {
+  fill: #111;
+}
+[data-theme="light"] .topbar-brand {
+  color: #111;
+}
+[data-theme="light"] .topbar-brand-tld {
+  color: #999;
+}
+[data-theme="light"] .topbar-url-pill {
+  background: #f0f0f0;
+  border-color: #ddd;
+}
+[data-theme="light"] .topbar-url-pill .dot-domain {
+  color: #111;
+}
+[data-theme="light"] .topbar-url-pill .dot-tld {
+  color: #999;
+}
+[data-theme="light"] .localhost-icon {
+  color: #7c3aed;
+}
+[data-theme="light"] .topbar-btn {
+  border-color: #ddd;
+  color: #555;
+}
+[data-theme="light"] .topbar-btn:hover {
+  background: #f0f0f0;
+  border-color: #bbb;
+}
+[data-theme="light"] .domain-popover {
+  background: #fff;
+  border-color: #ddd;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .domain-popover-label {
+  color: #999;
+}
+[data-theme="light"] .domain-popover-value {
+  color: #333;
+}
+[data-theme="light"] .honor-badge.unknown {
+  color: #999;
+  background: #f0f0f0;
+  border-color: #ddd;
+}
+[data-theme="light"] .honor-badge.neutral {
+  color: #666;
+  background: #f5f5f5;
+  border-color: #ddd;
+}
+[data-theme="light"] .honor-badge.positive {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+[data-theme="light"] .honor-badge.negative {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+[data-theme="light"] .auth-modal-backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+[data-theme="light"] .auth-modal {
+  background: #fff;
+  border-color: #ddd;
+}
+[data-theme="light"] .auth-modal h2 {
+  color: #111;
+}
+[data-theme="light"] .auth-modal p {
+  color: #666;
+}
+[data-theme="light"] .auth-modal-close {
+  border-color: #ddd;
+  color: #666;
+}
+[data-theme="light"] .auth-modal-close:hover {
+  background: #f5f5f5;
+}
+[data-theme="light"] .user-popover {
+  background: #fff;
+  border-color: #ddd;
+}
+[data-theme="light"] .user-popover-name .label {
+  color: #666;
+}
+[data-theme="light"] .user-popover-name .name {
+  color: #111;
+}
+[data-theme="light"] .user-popover-divider {
+  border-top-color: #eee;
+}
+[data-theme="light"] .user-popover-disconnect:hover {
+  background: #f5f5f5;
+}
+[data-theme="light"] .user-badge {
+  background: #e6007a;
+}
+[data-theme="light"] #app {
+  background: #f5f5f5;
+  color: #1a1a1a;
+}
+[data-theme="light"] .loading h1 {
+  color: #111;
+}
+[data-theme="light"] #status {
+  color: #666;
+}
+[data-theme="light"] .spinner {
+  border-color: #ddd;
+  border-top-color: #333;
+}
+[data-theme="light"] .signing-modal {
+  background: #fff;
+  border-color: #ddd;
+}
+[data-theme="light"] .signing-modal h2 {
+  color: #111;
+}
+[data-theme="light"] .signing-field-value {
+  color: #333;
+}
+[data-theme="light"] .signing-field-value.mono {
+  background: #f5f5f5;
+  border-color: #ddd;
+  color: #555;
+}
+[data-theme="light"] .signing-btn-cancel {
+  border-color: #ddd;
+  color: #666;
+}
+[data-theme="light"] .signing-btn-cancel:hover {
+  background: #f5f5f5;
+}
+[data-theme="light"] .error-page-title {
+  color: #111;
+}
+[data-theme="light"] .error-page-detail {
+  color: #666;
+}
+[data-theme="light"] .error-page-tags {
+  color: #888;
+}
+[data-theme="light"] .error-page-tag {
+  border-color: #ddd;
+}
+[data-theme="light"] .landing {
+  background: #f5f5f5;
+  color: #1a1a1a;
+}
+[data-theme="light"] .landing-title {
+  color: #111;
+}
+[data-theme="light"] .landing-tld {
+  color: #999;
+}
+[data-theme="light"] .landing-subtitle {
+  color: #666;
+}
+[data-theme="light"] .landing-hint {
+  color: #888;
+}
+[data-theme="light"] .landing-hint-name {
+  color: #333;
+}
+[data-theme="light"] .landing-search-bar {
+  background: #fff;
+  border-color: #ddd;
+}
+[data-theme="light"] .landing-search-input {
+  color: #111;
+}
+[data-theme="light"] .landing-dot-label {
+  color: #999;
+}
+[data-theme="light"] .landing-go-btn {
+  border-left-color: #ddd;
+  color: #999;
+}
+[data-theme="light"] .landing-footer-text {
+  color: #888;
+}
+[data-theme="light"] .landing-tags {
+  color: #888;
+}
+[data-theme="light"] .landing-tag {
+  border-color: #ddd;
+}
+[data-theme="light"] .landing-recent-pill {
+  background: #fff;
+  border-color: #ddd;
+}
+[data-theme="light"] .landing-recent-pill:hover {
+  border-color: #bbb;
+  background: #f0f0f0;
+}
+[data-theme="light"] .landing-recent-label {
+  color: #555;
+}

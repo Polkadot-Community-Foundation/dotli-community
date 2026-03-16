@@ -1,0 +1,101 @@
+/* dot.li — Base styles: reset, layout, shared components */
+
+/* ── Reset ──────────────────────────────── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: system-ui, sans-serif;
+}
+
+/* ── Spinner (shared) ───────────────────── */
+.spinner {
+  width: 24px;
+  height: 24px;
+  margin: 1rem auto;
+  border: 2px solid #333;
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── App Content ────────────────────────── */
+#app {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100dvh - 40px);
+  margin-top: 40px;
+  text-align: center;
+}
+.loading {
+  max-width: 480px;
+  padding: 2rem;
+}
+.loading h1 {
+  font-size: 1.5rem;
+  color: #fff;
+  margin-bottom: 0.75rem;
+}
+.accent {
+  color: #e6007a;
+}
+#status {
+  color: #888;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* ── Attesting (login spinner) ──────────── */
+.attesting {
+  text-align: center;
+}
+.attesting p {
+  color: #888;
+  font-size: 0.8rem;
+  margin-top: 8px;
+}
+
+/* ── Error Page ─────────────────────────── */
+.error-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100dvh - 40px);
+  font-family: system-ui, sans-serif;
+}
+.error-page-inner {
+  max-width: 480px;
+  padding: 2rem;
+  text-align: center;
+}
+.error-page-title {
+  font-size: 1.5rem;
+  color: #fff;
+  margin-bottom: 0.75rem;
+}
+.error-page-detail {
+  color: #888;
+  line-height: 1.6;
+}
+.error-page-tags {
+  margin-top: 1.5rem;
+  display: inline-flex;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: #555;
+}
+.error-page-tag {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid #222;
+  border-radius: 4px;
+}

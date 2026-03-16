@@ -4,7 +4,7 @@
 // The iframe isolates the resolved site from the viewer's origin.
 // Uses blob URLs so the container bridge can communicate via postMessage.
 
-import type { ArchiveFiles } from "./archive";
+import { packArchive, type ArchiveFiles } from "./archive";
 import { BASE_DOMAIN } from "./config";
 
 /**
@@ -131,23 +131,7 @@ export async function renderArchive(
     throw new Error("No service worker and no index.html in archive");
   }
 
-  // Pack all files into a single buffer + offset index.
-  // Transfers 1 Transferable instead of N, reducing structured clone overhead
-  // from O(n_files) to O(1).
-  const entries = Object.entries(files);
-  const index: { p: string; o: number; l: number }[] = [];
-  let totalSize = 0;
-  for (const [, data] of entries) {
-    totalSize += data.byteLength;
-  }
-  const packed = new ArrayBuffer(totalSize);
-  const packedView = new Uint8Array(packed);
-  let offset = 0;
-  for (const [filePath, data] of entries) {
-    index.push({ p: filePath, o: offset, l: data.byteLength });
-    packedView.set(data, offset);
-    offset += data.byteLength;
-  }
+  const { packed, index } = packArchive(files);
 
   // Wait for the SW to confirm it has received the archive
   const archiveReady = new Promise<void>((resolve) => {

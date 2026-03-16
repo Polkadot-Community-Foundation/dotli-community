@@ -34,7 +34,10 @@ function preconnectBootnodes(): Plugin {
   return {
     name: "preconnect-bootnodes",
     transformIndexHtml(html) {
-      const specDir = resolve(__dirname, "../../packages/core/src/chain-specs");
+      const specDir = resolve(
+        import.meta.dirname,
+        "../../packages/core/src/chain-specs",
+      );
       const hosts = [
         ...extractBootnodeHosts(resolve(specDir, "paseo.json")),
         ...extractBootnodeHosts(resolve(specDir, "asset-hub-paseo.json")),
@@ -132,7 +135,7 @@ function githubPages404(): Plugin {
     name: "github-pages-404",
     apply: "build",
     closeBundle() {
-      const dist = resolve(__dirname, OUT_DIR);
+      const dist = resolve(import.meta.dirname, OUT_DIR);
       copyFileSync(resolve(dist, "index.html"), resolve(dist, "404.html"));
       console.log(
         "Copied index.html -> 404.html (GitHub Pages SPA fallback)\n",
@@ -155,14 +158,17 @@ function buildServiceWorker(): Plugin {
         plugins: [wasm()],
         resolve: {
           alias: {
-            "@dotli/core": resolve(__dirname, "../../packages/core/src"),
+            "@dotli/core": resolve(
+              import.meta.dirname,
+              "../../packages/core/src",
+            ),
           },
         },
         build: {
           emptyOutDir: false,
           outDir: OUT_DIR,
           lib: {
-            entry: resolve(__dirname, "src/host-sw.ts"),
+            entry: resolve(import.meta.dirname, "src/host-sw.ts"),
             formats: ["es"],
             fileName: () => "host-sw.js",
           },
@@ -181,9 +187,9 @@ function buildServiceWorker(): Plugin {
   };
 }
 
-const CORE_SRC = resolve(__dirname, "../../packages/core/src");
+const CORE_SRC = resolve(import.meta.dirname, "../../packages/core/src");
 const SANDBOX_CHECKER_SRC = resolve(
-  __dirname,
+  import.meta.dirname,
   "../../packages/sandbox-checker/src",
 );
 

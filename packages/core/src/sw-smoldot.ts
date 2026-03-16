@@ -10,10 +10,7 @@
 
 import type { Client, Chain } from "smoldot";
 import { TIMEOUTS, FINALIZED_DB_MAX_SIZE } from "./config";
-
-// ── IndexedDB persistence (shared with resolve.ts via db.ts) ──
-
-import { loadChainDb, saveChainDb } from "./db";
+import { loadChainDb, extractAndSaveChainDb } from "./db";
 
 // ── Smoldot lifecycle ────────────────────────────────────────
 
@@ -21,7 +18,6 @@ let smoldotClient: Client | null = null;
 let relayChain: Chain | null = null;
 let assetHubChain: Chain | null = null;
 let initPromise: Promise<void> | null = null;
-let dbSaveId = 0;
 
 /**
  * Extract the relay chain database via JSON-RPC and save to IndexedDB.
@@ -30,27 +26,12 @@ async function extractAndSaveRelayDb(): Promise<void> {
   if (!relayChain) {
     return;
   }
-  const id = ++dbSaveId;
-  try {
-    relayChain.sendJsonRpc(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id,
-        method: "chainHead_unstable_finalizedDatabase",
-        params: [FINALIZED_DB_MAX_SIZE],
-      }),
-    );
-    const raw = await relayChain.nextJsonRpcResponse();
-    const resp = JSON.parse(raw) as { id?: number; result?: string };
-    if (resp.id === id && typeof resp.result === "string") {
-      await saveChainDb("paseo", resp.result);
-      console.warn(
-        `[dot.li SW] Saved relay chain DB (${String(Math.round(resp.result.length / 1024))} KB)`,
-      );
-    }
-  } catch {
-    // Non-critical
-  }
+  await extractAndSaveChainDb(
+    relayChain,
+    FINALIZED_DB_MAX_SIZE,
+    console.warn.bind(console),
+    "[dot.li SW]",
+  );
 }
 
 /**

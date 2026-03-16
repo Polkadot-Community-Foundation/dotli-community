@@ -149,3 +149,33 @@ export async function parseIpfsResponse(
 ): Promise<ArchiveFiles> {
   return isCarFile(buffer) ? parseCarFile(buffer) : { "index.html": buffer };
 }
+
+// ── Archive packing (for SW transfer) ────────────────────────
+
+export interface PackedArchive {
+  packed: ArrayBuffer;
+  index: { p: string; o: number; l: number }[];
+}
+
+/**
+ * Pack all archive files into a single ArrayBuffer with an offset index.
+ * Transfers 1 Transferable instead of N, reducing structured clone overhead
+ * from O(n_files) to O(1) when sending to the Service Worker.
+ */
+export function packArchive(files: ArchiveFiles): PackedArchive {
+  const entries = Object.entries(files);
+  const index: { p: string; o: number; l: number }[] = [];
+  let totalSize = 0;
+  for (const [, data] of entries) {
+    totalSize += data.byteLength;
+  }
+  const packed = new ArrayBuffer(totalSize);
+  const packedView = new Uint8Array(packed);
+  let offset = 0;
+  for (const [filePath, data] of entries) {
+    index.push({ p: filePath, o: offset, l: data.byteLength });
+    packedView.set(data, offset);
+    offset += data.byteLength;
+  }
+  return { packed, index };
+}

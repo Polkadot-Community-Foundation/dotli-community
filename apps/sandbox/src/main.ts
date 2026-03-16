@@ -6,18 +6,17 @@
 
 import "@dotli/core/styles.css";
 import * as Sentry from "@sentry/browser";
-import type { ArchiveFiles } from "@dotli/core/archive";
+import { packArchive, type ArchiveFiles } from "@dotli/core/archive";
 import { showStatus, showError } from "@dotli/core/ui";
 import { TIMEOUTS, BASE_DOMAIN } from "@dotli/core/config";
+import { elapsed } from "@dotli/core/perf";
+import { log } from "@dotli/core/log";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN as string,
 });
 
 const T0 = performance.now();
-function elapsed(): string {
-  return `+${((performance.now() - T0) / 1000).toFixed(3)}s`;
-}
 
 /**
  * Extract the CID from the hostname.
@@ -136,7 +135,7 @@ async function registerAppServiceWorker(): Promise<void> {
       });
     });
   } catch (err) {
-    console.warn("[dot.li app] Service worker registration failed:", err);
+    log.warn("[dot.li app] Service worker registration failed:", err);
   }
 }
 
@@ -155,20 +154,7 @@ async function storeArchiveInSW(
     return;
   }
 
-  const entries = Object.entries(files);
-  const index: { p: string; o: number; l: number }[] = [];
-  let totalSize = 0;
-  for (const [, data] of entries) {
-    totalSize += data.byteLength;
-  }
-  const packed = new ArrayBuffer(totalSize);
-  const packedView = new Uint8Array(packed);
-  let offset = 0;
-  for (const [filePath, data] of entries) {
-    index.push({ p: filePath, o: offset, l: data.byteLength });
-    packedView.set(data, offset);
-    offset += data.byteLength;
-  }
+  const { packed, index } = packArchive(files);
 
   const archiveReady = new Promise<void>((resolve) => {
     const handler = (evt: MessageEvent): void => {
@@ -206,7 +192,7 @@ let destroyHeliaFn: (() => Promise<void>) | null = null;
 
 async function main(): Promise<void> {
   performance.mark("dotli:app:start");
-  console.warn(`[dot.li app] main() started (${elapsed()})`);
+  log.warn(`[dot.li app] main() started (${elapsed(T0)})`);
 
   const cid = parseCidFromHostname();
   if (cid === null) {
@@ -217,7 +203,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.warn(`[dot.li app] CID from hostname: ${cid}`);
+  log.warn(`[dot.li app] CID from hostname: ${cid}`);
   showStatus("Loading content...");
 
   // Register SW + pre-load chunks in parallel
@@ -227,7 +213,7 @@ async function main(): Promise<void> {
 
   // Wait for SW before cache check
   await swReady;
-  console.warn(`[dot.li app] SW ready (${elapsed()})`);
+  log.warn(`[dot.li app] SW ready (${elapsed(T0)})`);
 
   // Detect relay mode: APP is inside the HOST iframe.
   // The HOST's container bridge targets this iframe directly.
@@ -240,7 +226,7 @@ async function main(): Promise<void> {
   // Check SW cache first
   const cachedFiles = await getCachedArchive(cid, cid);
   if (cachedFiles) {
-    console.warn(`[dot.li app] SW archive cache HIT (${elapsed()})`);
+    log.warn(`[dot.li app] SW archive cache HIT (${elapsed(T0)})`);
 
     if (isRelayMode) {
       // Extract index.html and write it directly into this window
@@ -250,14 +236,14 @@ async function main(): Promise<void> {
         // sub-resources (CSS, JS, fonts) when the browser loads them.
         if (Object.keys(cachedFiles).length > 1) {
           await storeArchiveInSW(cachedFiles, cid, cid);
-          console.warn(
-            `[dot.li app] Relay mode: archive stored in SW (${elapsed()})`,
+          log.warn(
+            `[dot.li app] Relay mode: archive stored in SW (${elapsed(T0)})`,
           );
         }
         let html = new TextDecoder().decode(indexHtml);
         html = await maybeInjectSandboxChecker(html);
-        console.warn(
-          `[dot.li app] Relay mode: writing cached content into window (${elapsed()})`,
+        log.warn(
+          `[dot.li app] Relay mode: writing cached content into window (${elapsed(T0)})`,
         );
         performance.mark("dotli:app:end");
         document.open();
@@ -272,21 +258,21 @@ async function main(): Promise<void> {
     const { renderArchive } = await renderChunkPromise;
     await renderArchive(cachedFiles, cid, cid);
     performance.mark("dotli:app:end");
-    console.warn(`[dot.li app] Done — cached (${elapsed()})`);
+    log.warn(`[dot.li app] Done — cached (${elapsed(T0)})`);
     return;
   }
 
   // Fetch via P2P / gateway
-  console.warn(
-    `[dot.li app] SW archive cache MISS — fetching via P2P (${elapsed()})`,
+  log.warn(
+    `[dot.li app] SW archive cache MISS — fetching via P2P (${elapsed(T0)})`,
   );
   showStatus("Connecting to peers...");
   const { fetchArchive, ensureHelia, destroyHelia } = await fetchChunkPromise;
   destroyHeliaFn = destroyHelia;
   await ensureHelia();
-  console.warn(`[dot.li app] Helia P2P ready (${elapsed()})`);
+  log.warn(`[dot.li app] Helia P2P ready (${elapsed(T0)})`);
   const result = await fetchArchive(cid, showStatus);
-  console.warn(`[dot.li app] Content fetched → ${result.type} (${elapsed()})`);
+  log.warn(`[dot.li app] Content fetched → ${result.type} (${elapsed(T0)})`);
 
   if (isRelayMode) {
     // Write the dApp content directly into this window so it occupies
@@ -299,8 +285,8 @@ async function main(): Promise<void> {
       // For multi-file archives, store files in the SW so it can serve
       // sub-resources (CSS, JS, fonts) when the browser loads them.
       await storeArchiveInSW(result.files, cid, cid);
-      console.warn(
-        `[dot.li app] Relay mode: archive stored in SW (${elapsed()})`,
+      log.warn(
+        `[dot.li app] Relay mode: archive stored in SW (${elapsed(T0)})`,
       );
       const indexHtml = result.files["index.html"] as Uint8Array | undefined;
       if (indexHtml) {
@@ -310,8 +296,8 @@ async function main(): Promise<void> {
 
     if (html !== null) {
       html = await maybeInjectSandboxChecker(html);
-      console.warn(
-        `[dot.li app] Relay mode: writing content into window (${elapsed()})`,
+      log.warn(
+        `[dot.li app] Relay mode: writing content into window (${elapsed(T0)})`,
       );
       performance.mark("dotli:app:end");
       document.open();
@@ -332,7 +318,7 @@ async function main(): Promise<void> {
   }
 
   performance.mark("dotli:app:end");
-  console.warn(`[dot.li app] Done (${elapsed()})`);
+  log.warn(`[dot.li app] Done (${elapsed(T0)})`);
 }
 
 // Cleanup on page unload
