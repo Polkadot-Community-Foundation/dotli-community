@@ -1,77 +1,23 @@
 version: 2
 updates:
-  # Root workspace
   - package-ecosystem: npm
     directory: "/"
     schedule:
       interval: weekly
-    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
-    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
+    assignees: ["BigTava", "leonardocustodio", "ba1uev", "piggydoughnut"]
+    reviewers: ["BigTava", "leonardocustodio", "ba1uev", "piggydoughnut"]
     labels: ["dependencies"]
     groups:
-      node:
+      npm-packages:
         patterns:
           - "*"
 
-  # apps/host
-  - package-ecosystem: npm
-    directory: "/apps/host"
-    schedule:
-      interval: weekly
-    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
-    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
-    labels: ["dependencies"]
-    groups:
-      node:
-        patterns:
-          - "*"
-
-  # apps/sandbox
-  - package-ecosystem: npm
-    directory: "/apps/sandbox"
-    schedule:
-      interval: weekly
-    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
-    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
-    labels: ["dependencies"]
-    groups:
-      node:
-        patterns:
-          - "*"
-
-  # packages/sandbox-checker
-  - package-ecosystem: npm
-    directory: "/packages/sandbox-checker"
-    schedule:
-      interval: weekly
-    assignees: ["TorstenStueber"]
-    reviewers: ["TorstenStueber"]
-    labels: ["dependencies"]
-    groups:
-      node:
-        patterns:
-          - "*"
-
-  # packages/core
-  - package-ecosystem: npm
-    directory: "/packages/core"
-    schedule:
-      interval: weekly
-    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
-    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
-    labels: ["dependencies"]
-    groups:
-      node:
-        patterns:
-          - "*"
-
-  # GitHub Actions
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
-    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
-    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
+    assignees: ["BigTava", "leonardocustodio", "ba1uev", "piggydoughnut"]
+    reviewers: ["BigTava", "leonardocustodio", "ba1uev", "piggydoughnut"]
     labels: ["dependencies"]
     groups:
       gh-actions:

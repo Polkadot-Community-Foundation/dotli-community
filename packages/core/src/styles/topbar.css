@@ -30,13 +30,11 @@
   fill: #ffffff;
 }
 .topbar-brand {
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-family: "DM Serif Display", serif;
+  font-size: 0.95rem;
+  font-weight: 400;
   color: #fff;
   letter-spacing: 0.02em;
-}
-.topbar-brand-tld {
-  color: #777;
 }
 .topbar-url {
   flex: 1;
@@ -120,9 +118,6 @@
   background: #00b171;
   border-bottom-color: #009a62;
 }
-[data-site="paseo"] .topbar-brand-tld {
-  color: rgba(255, 255, 255, 0.6);
-}
 [data-site="paseo"] .topbar-url-pill {
   background: rgba(0, 0, 0, 0.3);
   border-color: rgba(255, 255, 255, 0.3);
@@ -151,9 +146,6 @@
 [data-site="paseo"][data-theme="light"] .topbar-brand {
   color: #fff;
 }
-[data-site="paseo"][data-theme="light"] .topbar-brand-tld {
-  color: rgba(255, 255, 255, 0.6);
-}
 [data-site="paseo"][data-theme="light"] .topbar-btn {
   border-color: rgba(255, 255, 255, 0.4);
   color: #fff;
@@ -170,6 +162,58 @@
   color: #fff;
 }
 [data-site="paseo"][data-theme="light"] .topbar-url-pill .dot-tld {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* ── Local/other variant (yellow topbar) ── */
+[data-site="local"] #topbar {
+  background: #b8860b;
+  border-bottom-color: #9a7209;
+}
+[data-site="local"] .topbar-url-pill {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+[data-site="local"] .topbar-url-pill .dot-domain {
+  color: #fff;
+}
+[data-site="local"] .topbar-url-pill .dot-tld {
+  color: rgba(255, 255, 255, 0.7);
+}
+[data-site="local"] .topbar-btn {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+[data-site="local"] .topbar-btn:hover {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+[data-site="local"][data-theme="light"] #topbar {
+  background: #b8860b;
+  border-bottom-color: #9a7209;
+}
+[data-site="local"][data-theme="light"] .topbar-logo svg path {
+  fill: #fff;
+}
+[data-site="local"][data-theme="light"] .topbar-brand {
+  color: #fff;
+}
+[data-site="local"][data-theme="light"] .topbar-btn {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+[data-site="local"][data-theme="light"] .topbar-btn:hover {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+[data-site="local"][data-theme="light"] .topbar-url-pill {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+[data-site="local"][data-theme="light"] .topbar-url-pill .dot-domain {
+  color: #fff;
+}
+[data-site="local"][data-theme="light"] .topbar-url-pill .dot-tld {
   color: rgba(255, 255, 255, 0.5);
 }
 

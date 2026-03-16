@@ -15,6 +15,10 @@
 /packages/eslint-config @leonardocustodio @Cyr06130
 /packages/typescript-config @leonardocustodio @Cyr06130
 
+# package.json changes (e.g. dependency bumps) only need default reviewers
+/apps/*/package.json @BigTava @leonardocustodio @ba1uev @piggydoughnut
+/packages/*/package.json @BigTava @leonardocustodio @ba1uev @piggydoughnut
+
 # Server configuration
 /Makefile @KarimJedda
 /nginx @KarimJedda

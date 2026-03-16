@@ -14,9 +14,6 @@
 [data-theme="light"] .topbar-brand {
   color: #111;
 }
-[data-theme="light"] .topbar-brand-tld {
-  color: #999;
-}
 [data-theme="light"] .topbar-url-pill {
   background: #f0f0f0;
   border-color: #ddd;
