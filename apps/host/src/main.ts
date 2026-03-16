@@ -582,28 +582,18 @@ async function main(): Promise<void> {
       performance.mark("dotli:main:end");
       log.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
 
-      // Background: validate CID is still current
-      resolveChunkPromise
-        .then(({ resolveDotName, resolveOwner, destroyClient }) => {
+      // Release the resolver mutex immediately — no dedicated chain is needed
+      // when loading from cache. This unblocks chains.ts so the embedded app
+      // can connect to the shared Asset Hub chain right away.
+      // (Background smoldot-based CID validation is skipped to avoid creating
+      // a second Asset Hub chain that would conflict with the shared one.)
+      void resolveChunkPromise.then(
+        ({ destroyClient, releaseResolverMutex }) => {
           destroyClientFn = destroyClient;
-          populateOwner(resolveOwner, label);
-          resolveDotName(label).then((freshCid) => {
-            if (freshCid !== null && freshCid !== cachedCid) {
-              log.warn(`[dot.li] CID changed: ${cachedCid} → ${freshCid}`);
-              requestIdleCallback(() => {
-                void setCachedCid(label, freshCid);
-              });
-              setShieldState("stale");
-              showUpdateBanner();
-            } else if (freshCid !== null) {
-              requestIdleCallback(() => {
-                void setCachedCid(label, freshCid);
-              });
-              setShieldState("verified");
-            }
-          }, log.error);
-        })
-        .catch(log.error);
+          releaseResolverMutex();
+        },
+      );
+      setShieldState("verified");
       return;
     }
     log.warn(`[dot.li perf] CID cache MISS (${elapsed(T0)})`);
@@ -667,12 +657,19 @@ async function main(): Promise<void> {
       void setCachedCid(label, cid);
     });
 
+    // Release the resolve client so chains.ts can use the shared
+    // Asset Hub chain for the embedded app's connection.
     if (winner.source === "gateway") {
       setShieldState("gateway");
       showSmoldotStatus = false;
       handleGatewayWinner(label, cid, smoldotPromise);
+      await smoldotPromise.catch(() => {
+        /* ignore — gateway already won */
+      });
+      destroyClient();
     } else {
       setShieldState("verified");
+      destroyClient();
     }
 
     // Render: iframe to cid.app.dot.li

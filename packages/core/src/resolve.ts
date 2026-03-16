@@ -4,7 +4,7 @@
 // calls the dotNS contracts through the Revive runtime API,
 // and returns the IPFS CID associated with a .dot name.
 
-import { getAssetHubPaseoChainSpec } from "./chain-specs";
+// Chain spec is now managed by smoldot.ts singleton
 import { getSmProvider } from "polkadot-api/sm-provider";
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { isSwSmoldotReady, getSwSmoldotProvider } from "./sw-provider";
@@ -25,15 +25,20 @@ import {
 } from "./abi";
 import { dur } from "./perf";
 import { log } from "./log";
-import { getSmoldot, getRelayChain, extractAndSaveRelayDb } from "./smoldot";
+import {
+  getSmoldot,
+  getRelayChain,
+  extractAndSaveRelayDb,
+  createResolverAssetHubChain,
+  releaseResolverMutex,
+} from "./smoldot";
 
-export { getSmoldot, getRelayChain } from "./smoldot";
+export { getSmoldot, getRelayChain, releaseResolverMutex } from "./smoldot";
 
 export type StatusCallback = (status: string) => void;
 
 let clientInstance: PolkadotClient | null = null;
 let apiInstance: ReturnType<PolkadotClient["getUnsafeApi"]> | null = null;
-let usingSwSmoldot = false;
 
 // When true, skip trySwSmoldot() entirely — the SW was freshly registered
 // and can't have smoldot ready. Avoids 500ms isSwSmoldotReady() timeout.
@@ -96,7 +101,6 @@ async function trySwSmoldot(
     );
 
     apiInstance = clientInstance.getUnsafeApi();
-    usingSwSmoldot = true;
     onStatus?.("Connected to Asset Hub Paseo (via Service Worker)");
     return apiInstance;
   } catch (err) {
@@ -147,7 +151,7 @@ async function doEnsureClient(
   performance.mark("dotli:smoldot:init:start");
   const initStart = performance.now();
   onStatus?.("Starting light client...");
-  const smoldot = getSmoldot();
+  getSmoldot(); // pre-warm
   log.warn(`[dot.li resolve] Smoldot instance created (${dur(initStart)})`);
 
   onStatus?.("Adding Paseo relay chain...");
@@ -160,30 +164,37 @@ async function doEnsureClient(
   onStatus?.("Adding Asset Hub Paseo...");
   performance.mark("dotli:smoldot:parachain:start");
   const paraStart = performance.now();
-  const assetHubSpec = await getAssetHubPaseoChainSpec();
-  const chain = smoldot.addChain({
-    chainSpec: assetHubSpec,
-    potentialRelayChains: [relayChain],
-  });
+  const chain = await createResolverAssetHubChain();
 
-  const provider = getSmProvider(chain);
-  clientInstance = createClient(provider);
-  performance.mark("dotli:smoldot:parachain:end");
-  log.warn(
-    `[dot.li resolve] Parachain added + client created (${dur(paraStart)})`,
-  );
+  // Once the dedicated chain exists, any failure must destroy it and
+  // release the mutex so chains.ts is not blocked forever.
+  try {
+    const provider = getSmProvider(chain);
+    clientInstance = createClient(provider);
+    performance.mark("dotli:smoldot:parachain:end");
+    log.warn(
+      `[dot.li resolve] Parachain added + client created (${dur(paraStart)})`,
+    );
 
-  onStatus?.("Syncing with Asset Hub Paseo...");
-  performance.mark("dotli:smoldot:sync:start");
-  const syncStart = performance.now();
-  await clientInstance.getFinalizedBlock();
-  performance.mark("dotli:smoldot:sync:end");
-  log.warn(`[dot.li resolve] Synced to finalized block (${dur(syncStart)})`);
+    onStatus?.("Syncing with Asset Hub Paseo...");
+    performance.mark("dotli:smoldot:sync:start");
+    const syncStart = performance.now();
+    await clientInstance.getFinalizedBlock();
+    performance.mark("dotli:smoldot:sync:end");
+    log.warn(`[dot.li resolve] Synced to finalized block (${dur(syncStart)})`);
 
-  apiInstance = clientInstance.getUnsafeApi();
-  performance.mark("dotli:smoldot:init:end");
-  log.warn(`[dot.li resolve] ensureClient() total: ${dur(initStart)}`);
-  onStatus?.("Connected to Asset Hub Paseo");
+    apiInstance = clientInstance.getUnsafeApi();
+    performance.mark("dotli:smoldot:init:end");
+    log.warn(`[dot.li resolve] ensureClient() total: ${dur(initStart)}`);
+    onStatus?.("Connected to Asset Hub Paseo");
+  } catch (err) {
+    // Tear down the dedicated chain and release the mutex so chains.ts
+    // can still create the shared singleton.
+    clientInstance?.destroy();
+    clientInstance = null;
+    releaseResolverMutex();
+    throw err;
+  }
 
   // Persist relay chain DB for future fast syncs (yield to rendering first)
   requestIdleCallback(() => {
@@ -362,17 +373,18 @@ export async function resolveOwner(label: string): Promise<string | null> {
 
 /**
  * Destroy the light client (cleanup).
+ * destroy() disconnects the provider, which calls chain.remove() —
+ * this fully removes the resolver's dedicated Asset Hub chain from smoldot.
+ *
+ * Then releases the resolver mutex so chains.ts can create the shared
+ * Asset Hub singleton (smoldot panics on double-addChain).
  */
 export function destroyClient(): void {
-  // When using SW smoldot, don't destroy — the SW keeps smoldot alive
-  // for future page loads. Just release the main-thread references.
-  if (usingSwSmoldot) {
-    clientInstance?.destroy();
-    clientInstance = null;
-    apiInstance = null;
-    return;
-  }
   clientInstance?.destroy();
   clientInstance = null;
   apiInstance = null;
+
+  // Release AFTER destroy so the chain is fully removed before
+  // chains.ts tries to create the shared singleton.
+  releaseResolverMutex();
 }

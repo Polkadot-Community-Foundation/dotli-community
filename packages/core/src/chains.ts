@@ -8,7 +8,13 @@ import { getPaseoChainSpec, getAssetHubPaseoChainSpec } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 
-import { getSmoldot, getRelayChain } from "./smoldot";
+import {
+  getSmoldot,
+  getRelayChain,
+  getAssetHubChain,
+  makeNonRemovingChain,
+  waitForResolverRelease,
+} from "./smoldot";
 import {
   createTauriChainProvider,
   isTauriChainSupported,
@@ -72,10 +78,20 @@ export function createChainProvider(
     return cached;
   }
 
-  const smoldot = getSmoldot();
+  let chainPromise: Promise<ReturnType<typeof makeNonRemovingChain>>;
 
-  let chainPromise;
-  if (entry.isParachain) {
+  if (key === ASSET_HUB_PASEO.toLowerCase()) {
+    // Reuse the shared singleton; wait for resolver to finish first.
+    // The resolver uses a dedicated chain that is fully removed before
+    // this runs, so no stale messages — just wrap to prevent removal.
+    chainPromise = waitForResolverRelease().then(() =>
+      getAssetHubChain().then(makeNonRemovingChain),
+    );
+  } else if (key === PASEO_RELAY.toLowerCase()) {
+    // Reuse the shared relay chain singleton
+    chainPromise = getRelayChain().then(makeNonRemovingChain);
+  } else if (entry.isParachain) {
+    const smoldot = getSmoldot();
     chainPromise = Promise.all([getRelayChain(), entry.getChainSpec()]).then(
       ([relayChain, chainSpec]) =>
         smoldot.addChain({
@@ -84,13 +100,10 @@ export function createChainProvider(
         }),
     );
   } else {
-    // Relay chain — reuse getRelayChain() for Paseo since it's the same chain
-    chainPromise =
-      key === PASEO_RELAY.toLowerCase()
-        ? getRelayChain()
-        : entry
-            .getChainSpec()
-            .then((chainSpec) => smoldot.addChain({ chainSpec }));
+    const smoldot = getSmoldot();
+    chainPromise = entry
+      .getChainSpec()
+      .then((chainSpec) => smoldot.addChain({ chainSpec }));
   }
 
   const provider = getSmProvider(chainPromise);
