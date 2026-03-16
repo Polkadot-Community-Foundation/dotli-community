@@ -198,7 +198,7 @@ function renderAuthState(state: AuthState): void {
 
 function renderLoggedOut(): void {
   authButton.innerHTML = HEXAGON_SVG;
-  authButton.title = "Login with Polkadot App";
+  authButton.title = "Login with Polkadot Mobile";
   window.dispatchEvent(new Event("dotli:logged-out"));
 }
 
