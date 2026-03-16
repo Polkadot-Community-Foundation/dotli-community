@@ -65,19 +65,6 @@ updates:
         patterns:
           - "*"
 
-  # apps/desktop (Rust / Tauri)
-  - package-ecosystem: cargo
-    directory: "/apps/desktop/src-tauri"
-    schedule:
-      interval: weekly
-    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
-    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
-    labels: ["dependencies"]
-    groups:
-      rust:
-        patterns:
-          - "*"
-
   # GitHub Actions
   - package-ecosystem: github-actions
     directory: "/"

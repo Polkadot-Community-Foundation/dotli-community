@@ -19,13 +19,6 @@ github-actions:
           - '!apps/sandbox/package.json'
           - '!apps/sandbox/CHANGELOG.md'
 
-"app: desktop":
-  - changed-files:
-      - all-globs-to-any-file:
-          - 'apps/desktop/**'
-          - '!apps/desktop/package.json'
-          - '!apps/desktop/CHANGELOG.md'
-
 "pkg: core":
   - changed-files:
       - all-globs-to-any-file:
