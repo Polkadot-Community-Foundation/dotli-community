@@ -35,8 +35,8 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Build
-        run: bun run build:host
+      - name: Build host
+        run: bunx turbo run build --filter=@dotli/host
         env:
           VITE_APP_URL: https://paritytech.github.io/dotli/
 
@@ -46,7 +46,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: dist/host
+          path: apps/host/dist
 
       - name: Deploy to GitHub Pages
         id: deployment

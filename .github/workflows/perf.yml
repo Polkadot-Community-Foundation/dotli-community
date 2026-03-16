@@ -38,13 +38,14 @@ jobs:
         run: bun run build
 
       - name: Run baseline perf tests
+        working-directory: apps/host
         run: bun run test:perf:base || true
 
       - name: Upload baseline artifact
         uses: actions/upload-artifact@v7
         with:
           name: perf-baseline
-          path: tests/results/last.json
+          path: apps/host/tests/results/last.json
           retention-days: 90
           overwrite: true
 
@@ -80,13 +81,13 @@ jobs:
           name: perf-baseline
           workflow: perf.yml
           branch: main
-          path: tests/results
+          path: apps/host/tests/results
           if_no_artifact_found: warn
 
       - name: Rename baseline
         run: |
-          if [ -f tests/results/last.json ]; then
-            mv tests/results/last.json tests/results/base.json
+          if [ -f apps/host/tests/results/last.json ]; then
+            mv apps/host/tests/results/last.json apps/host/tests/results/base.json
             echo "HAVE_BASE=true" >> "$GITHUB_ENV"
           else
             echo "HAVE_BASE=false" >> "$GITHUB_ENV"
@@ -94,10 +95,12 @@ jobs:
           fi
 
       - name: Run PR perf tests
+        working-directory: apps/host
         run: bun run test:perf || true
 
       - name: Generate comparison
         if: env.HAVE_BASE == 'true'
+        working-directory: apps/host
         run: bun run test:perf:compare:md > /tmp/perf-comment.md || true
 
       - name: Generate standalone report

@@ -12,12 +12,12 @@ node_modules
 dist
 coverage
 *.local
-docs
 
 # Lock files
 package-lock.json
 yarn.lock
-pnpm-lock.yyaml
+pnpm-lock.yaml
+bun.lock
 
 # Editor directories and files
 .vscode/*
@@ -44,4 +44,7 @@ tests/results.json
 # Tauri
 src-tauri/target
 src-tauri/gen
+
+# Turbo
+.turbo
 

@@ -19,10 +19,10 @@ A decentralized web browser that runs in your browser. Visit any Polkadot applic
 
 dot.li supports two URL formats:
 
-| Format | Example |
-|--------|---------|
-| **Subdomain** | `https://testingout.dot.li` |
-| **Path** | `https://dot.li/testingout.dot` |
+| Format        | Example                         |
+| ------------- | ------------------------------- |
+| **Subdomain** | `https://testingout.dot.li`     |
+| **Path**      | `https://dot.li/testingout.dot` |
 
 ### Landing page
 
@@ -46,12 +46,12 @@ cid.app.dot.li           App build (CID from subdomain, P2P fetch, render)
                           Parses CID from URL, fetches via P2P/gateway, renders
 ```
 
-| URL | Role | What happens |
-|-----|------|--------------|
-| `testingout.dot.li` | Host shell | Resolves `testingout` via dotns, iframes `bafyrei....app.dot.li` |
-| `bafyrei....app.dot.li` | App content | Parses CID from subdomain, fetches content, renders |
-| `dot.li` | Landing page | Search bar, recent apps |
-| Direct `bafyrei....app.dot.li` | Standalone | Works without a host — fetches and renders directly |
+| URL                            | Role         | What happens                                                     |
+| ------------------------------ | ------------ | ---------------------------------------------------------------- |
+| `testingout.dot.li`            | Host shell   | Resolves `testingout` via dotns, iframes `bafyrei....app.dot.li` |
+| `bafyrei....app.dot.li`        | App content  | Parses CID from subdomain, fetches content, renders              |
+| `dot.li`                       | Landing page | Search bar, recent apps                                          |
+| Direct `bafyrei....app.dot.li` | Standalone   | Works without a host — fetches and renders directly              |
 
 Each `cid.app.dot.li` is a distinct origin, preventing SW/storage/security conflicts between apps.
 
@@ -101,27 +101,27 @@ dot.li uses a two-layer cache for fast repeat visits:
 
 On repeat visits, content renders instantly from cache while smoldot validates the CID in the background. The topbar shield indicates the verification state:
 
-| Shield | Meaning |
-|--------|---------|
-| Yellow | Validating — rendering from cache, checking on-chain |
-| Green | Verified — on-chain CID matches cached version |
+| Shield | Meaning                                                     |
+| ------ | ----------------------------------------------------------- |
+| Yellow | Validating — rendering from cache, checking on-chain        |
+| Green  | Verified — on-chain CID matches cached version              |
 | Orange | Gateway — resolved via gateway, awaiting chain confirmation |
-| Red | Outdated — on-chain CID differs; an update banner appears |
+| Red    | Outdated — on-chain CID differs; an update banner appears   |
 
 ## Host-container bridge
 
 Loaded SPAs communicate with dot.li through `@novasamatech/host-container`, a postMessage-based protocol. The bridge exposes:
 
-| Handler | What it does |
-|---------|-------------|
-| `accountGet` | Derives a per-app public key via HDKD soft derivation |
-| `getNonProductAccounts` | Returns the connected Polkadot App account |
-| `signPayload` / `signRaw` | Shows signing modals, delegates to host-papp session |
-| `chainConnection` | Returns a smoldot-backed JsonRpcProvider for supported chains |
-| `localStorageRead/Write/Clear` | Scoped `localStorage` per `.dot` domain |
-| `navigateTo` | Opens URLs in new tabs |
-| `featureSupported` | Reports supported chain genesis hashes |
-| `connectionStatus` | Streams auth state changes to the SPA |
+| Handler                        | What it does                                                  |
+| ------------------------------ | ------------------------------------------------------------- |
+| `accountGet`                   | Derives a per-app public key via HDKD soft derivation         |
+| `getNonProductAccounts`        | Returns the connected Polkadot App account                    |
+| `signPayload` / `signRaw`      | Shows signing modals, delegates to host-papp session          |
+| `chainConnection`              | Returns a smoldot-backed JsonRpcProvider for supported chains |
+| `localStorageRead/Write/Clear` | Scoped `localStorage` per `.dot` domain                       |
+| `navigateTo`                   | Opens URLs in new tabs                                        |
+| `featureSupported`             | Reports supported chain genesis hashes                        |
+| `connectionStatus`             | Streams auth state changes to the SPA                         |
 
 ### Nested dApp support
 
@@ -159,6 +159,7 @@ bun run dev:app
 ```
 
 Local dev uses wildcard subdomains:
+
 - `testingout.localhost:5173` — resolves `testingout.dot` via the host
 - `bafyrei....app.localhost:5174` — fetches and renders CID content directly
 
@@ -184,13 +185,13 @@ When the env var is not set, the checker is tree-shaken out of production builds
 
 ### Monitored APIs
 
-| Category | APIs |
-|----------|------|
-| Network | `fetch`, `XMLHttpRequest`, `WebSocket`, `RTCPeerConnection`, `EventSource`, `sendBeacon` |
-| Workers | `Worker`, `SharedWorker`, `ServiceWorker.register` |
-| Storage | `localStorage`, `sessionStorage`, `IndexedDB`, `CacheStorage`, `document.cookie` |
-| DOM | `document.createElement('iframe')` |
-| Wallet | `window.injectedWeb3`, `window.polkadot`, `window.ethereum` |
+| Category | APIs                                                                                     |
+| -------- | ---------------------------------------------------------------------------------------- |
+| Network  | `fetch`, `XMLHttpRequest`, `WebSocket`, `RTCPeerConnection`, `EventSource`, `sendBeacon` |
+| Workers  | `Worker`, `SharedWorker`, `ServiceWorker.register`                                       |
+| Storage  | `localStorage`, `sessionStorage`, `IndexedDB`, `CacheStorage`, `document.cookie`         |
+| DOM      | `document.createElement('iframe')`                                                       |
+| Wallet   | `window.injectedWeb3`, `window.polkadot`, `window.ethereum`                              |
 
 Same-origin requests (static dApp files served by the Service Worker) are excluded from reporting for `fetch` and `XMLHttpRequest`. Violations are logged but calls still proceed (log-and-forward pattern).
 

@@ -1,24 +1,91 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
+  # Root workspace
+  - package-ecosystem: npm
     directory: "/"
     schedule:
-      interval: "weekly"
-    assignees: [ "KarimJedda", "BigTava", "leonardocustodio" ]
-    reviewers: [ "KarimJedda", "BigTava", "leonardocustodio" ]
-    labels: [ "dependencies" ]
+      interval: weekly
+    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
+    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
+    labels: ["dependencies"]
     groups:
       node:
         patterns:
           - "*"
 
-  - package-ecosystem: github-actions
-    directory: '/'
-    labels: [ "dependencies" ]
-    assignees: [ "KarimJedda", "BigTava", "leonardocustodio" ]
-    reviewers: [ "KarimJedda", "BigTava", "leonardocustodio" ]
+  # apps/host
+  - package-ecosystem: npm
+    directory: "/apps/host"
     schedule:
       interval: weekly
+    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
+    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
+    labels: ["dependencies"]
+    groups:
+      node:
+        patterns:
+          - "*"
+
+  # apps/sandbox
+  - package-ecosystem: npm
+    directory: "/apps/sandbox"
+    schedule:
+      interval: weekly
+    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
+    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
+    labels: ["dependencies"]
+    groups:
+      node:
+        patterns:
+          - "*"
+
+  # packages/sandbox-checker
+  - package-ecosystem: npm
+    directory: "/packages/sandbox-checker"
+    schedule:
+      interval: weekly
+    assignees: ["TorstenStueber"]
+    reviewers: ["TorstenStueber"]
+    labels: ["dependencies"]
+    groups:
+      node:
+        patterns:
+          - "*"
+
+  # packages/core
+  - package-ecosystem: npm
+    directory: "/packages/core"
+    schedule:
+      interval: weekly
+    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
+    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
+    labels: ["dependencies"]
+    groups:
+      node:
+        patterns:
+          - "*"
+
+  # apps/desktop (Rust / Tauri)
+  - package-ecosystem: cargo
+    directory: "/apps/desktop/src-tauri"
+    schedule:
+      interval: weekly
+    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
+    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
+    labels: ["dependencies"]
+    groups:
+      rust:
+        patterns:
+          - "*"
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    assignees: ["KarimJedda", "BigTava", "leonardocustodio"]
+    reviewers: ["KarimJedda", "BigTava", "leonardocustodio"]
+    labels: ["dependencies"]
     groups:
       gh-actions:
         patterns:

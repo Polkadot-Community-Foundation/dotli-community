@@ -24,7 +24,7 @@ jobs:
       - name: Check for changes
         id: diff
         run: |
-          if git diff --quiet src/chain-specs/; then
+          if git diff --quiet packages/core/src/chain-specs/; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"

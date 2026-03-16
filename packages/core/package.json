@@ -1,0 +1,65 @@
+{
+  "name": "@dotli/core",
+  "private": true,
+  "version": "0.2.2",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "postinstall": "papi",
+    "typecheck": "tsc --noEmit",
+    "lint": "bunx eslint src/"
+  },
+  "devDependencies": {
+    "@dotli/eslint-config": "workspace:*",
+    "@dotli/typescript-config": "workspace:*",
+    "@types/qrcode": "^1.5.6",
+    "eslint": "^10.0.2",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@dotli/sandbox-checker": "workspace:*",
+    "@chainsafe/libp2p-noise": "^17.0.0",
+    "@chainsafe/libp2p-yamux": "^8.0.1",
+    "@ensdomains/content-hash": "^3.0.0",
+    "@helia/block-brokers": "^5.1.2",
+    "@helia/routers": "^5.0.3",
+    "@helia/unixfs": "^7.0.4",
+    "@ipld/car": "^5.4.2",
+    "@ipld/dag-pb": "^4.1.5",
+    "@libp2p/identify": "^4.0.12",
+    "@libp2p/ping": "^3.0.12",
+    "@libp2p/websockets": "^10.1.5",
+    "@multiformats/blake2": "^2.0.2",
+    "@multiformats/multiaddr": "^13.0.1",
+    "@noble/hashes": "^2.0.1",
+    "@novasamatech/host-api": "^0.6.6-1",
+    "@novasamatech/host-container": "^0.6.6-1",
+    "@novasamatech/host-papp": "^0.6.6-1",
+    "@novasamatech/sdk-statement": "^0.5.0",
+    "@novasamatech/statement-store": "^0.6.6-1",
+    "@novasamatech/storage-adapter": "^0.6.6-1",
+    "@polkadot-api/descriptors": "file:.papi/descriptors",
+    "@polkadot-api/json-rpc-provider": "^0.0.4",
+    "@polkadot-api/json-rpc-provider-proxy": "^0.2.8",
+    "@polkadot-api/metadata-builders": "^0.13.9",
+    "@polkadot-api/substrate-bindings": "^0.17.0",
+    "@polkadot-api/utils": "^0.2.0",
+    "@scure/sr25519": "^1.0.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-shell": "^2",
+    "helia": "^6.0.20",
+    "ipfs-unixfs": "^12.0.0",
+    "multiformats": "^13.4.2",
+    "neverthrow": "^8.2.0",
+    "polkadot-api": "^1.23.3",
+    "qrcode": "^1.5.4",
+    "scale-ts": "^1.6.1",
+    "smoldot": "^2.0.40"
+  },
+  "trustedDependencies": [
+    "node-datachannel"
+  ]
+}

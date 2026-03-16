@@ -44,21 +44,25 @@ jobs:
 
           echo "{" > /tmp/bundle-baseline.json
           first=true
-          while IFS= read -r file; do
-            rel="${file#dist/}"
-            name=$(strip_hash "$rel")
-            raw=$(stat --format=%s "$file")
+          for app_dist in apps/host/dist apps/sandbox/dist; do
+            [ -d "$app_dist" ] || continue
+            app_name=$(basename "$(dirname "$app_dist")")
+            while IFS= read -r file; do
+              rel="${app_name}/${file#${app_dist}/}"
+              name=$(strip_hash "$rel")
+              raw=$(stat --format=%s "$file")
 
-            br=$raw
-            [[ -f "${file}.br" ]] && br=$(stat --format=%s "${file}.br")
+              br=$raw
+              [[ -f "${file}.br" ]] && br=$(stat --format=%s "${file}.br")
 
-            gz=$raw
-            [[ -f "${file}.gz" ]] && gz=$(stat --format=%s "${file}.gz")
+              gz=$raw
+              [[ -f "${file}.gz" ]] && gz=$(stat --format=%s "${file}.gz")
 
-            $first || echo "," >> /tmp/bundle-baseline.json
-            first=false
-            printf '  "%s": {"raw": %d, "br": %d, "gz": %d}' "$name" "$raw" "$br" "$gz" >> /tmp/bundle-baseline.json
-          done < <(find dist -type f ! -name '*.br' ! -name '*.gz' | sort)
+              $first || echo "," >> /tmp/bundle-baseline.json
+              first=false
+              printf '  "%s": {"raw": %d, "br": %d, "gz": %d}' "$name" "$raw" "$br" "$gz" >> /tmp/bundle-baseline.json
+            done < <(find "$app_dist" -type f ! -name '*.br' ! -name '*.gz' | sort)
+          done
           echo "" >> /tmp/bundle-baseline.json
           echo "}" >> /tmp/bundle-baseline.json
 
@@ -175,52 +179,56 @@ jobs:
           base_total_br=0
           base_total_gz=0
 
-          while IFS= read -r file; do
-            rel="${file#dist/}"
-            name=$(strip_hash "$rel")
-            raw=$(stat --format=%s "$file")
-            total_raw=$((total_raw + raw))
+          for app_dist in apps/host/dist apps/sandbox/dist; do
+            [ -d "$app_dist" ] || continue
+            app_name=$(basename "$(dirname "$app_dist")")
+            while IFS= read -r file; do
+              rel="${app_name}/${file#${app_dist}/}"
+              name=$(strip_hash "$rel")
+              raw=$(stat --format=%s "$file")
+              total_raw=$((total_raw + raw))
 
-            if [[ -f "${file}.br" ]]; then
-              br=$(stat --format=%s "${file}.br")
-            else
-              br=$raw
-            fi
-            total_br=$((total_br + br))
+              if [[ -f "${file}.br" ]]; then
+                br=$(stat --format=%s "${file}.br")
+              else
+                br=$raw
+              fi
+              total_br=$((total_br + br))
 
-            if [[ -f "${file}.gz" ]]; then
-              gz=$(stat --format=%s "${file}.gz")
-            else
-              gz=$raw
-            fi
-            total_gz=$((total_gz + gz))
+              if [[ -f "${file}.gz" ]]; then
+                gz=$(stat --format=%s "${file}.gz")
+              else
+                gz=$raw
+              fi
+              total_gz=$((total_gz + gz))
 
-            # Look up baseline
-            base_raw=$(baseline_val "$name" "raw")
-            base_br=$(baseline_val "$name" "br")
-            base_gz=$(baseline_val "$name" "gz")
+              # Look up baseline
+              base_raw=$(baseline_val "$name" "raw")
+              base_br=$(baseline_val "$name" "br")
+              base_gz=$(baseline_val "$name" "gz")
 
-            if [[ -n "$base_raw" ]]; then
-              base_total_raw=$((base_total_raw + base_raw))
-              base_total_br=$((base_total_br + base_br))
-              base_total_gz=$((base_total_gz + base_gz))
-            fi
+              if [[ -n "$base_raw" ]]; then
+                base_total_raw=$((base_total_raw + base_raw))
+                base_total_br=$((base_total_br + base_br))
+                base_total_gz=$((base_total_gz + base_gz))
+              fi
 
-            raw_diff=$(fmt_diff $raw "$base_raw")
-            br_diff=$(fmt_diff $br "$base_br")
-            gz_diff=$(fmt_diff $gz "$base_gz")
+              raw_diff=$(fmt_diff $raw "$base_raw")
+              br_diff=$(fmt_diff $br "$base_br")
+              gz_diff=$(fmt_diff $gz "$base_gz")
 
-            raw_fmt="$(fmt $raw)${raw_diff}"
-            br_fmt="$(fmt $br)${br_diff}"
-            gz_fmt="$(fmt $gz)${gz_diff}"
+              raw_fmt="$(fmt $raw)${raw_diff}"
+              br_fmt="$(fmt $br)${br_diff}"
+              gz_fmt="$(fmt $gz)${gz_diff}"
 
-            row="| \`${name}\` | ${raw_fmt} | ${br_fmt} | ${gz_fmt} |"
-            rows="${rows}${row}"$'\n'
+              row="| \`${name}\` | ${raw_fmt} | ${br_fmt} | ${gz_fmt} |"
+              rows="${rows}${row}"$'\n'
 
-            if (( raw >= SIZE_THRESHOLD )); then
-              large_rows="${large_rows}${row}"$'\n'
-            fi
-          done < <(find dist -type f ! -name '*.br' ! -name '*.gz' | sort)
+              if (( raw >= SIZE_THRESHOLD )); then
+                large_rows="${large_rows}${row}"$'\n'
+              fi
+            done < <(find "$app_dist" -type f ! -name '*.br' ! -name '*.gz' | sort)
+          done
 
           # Format totals with diffs
           total_raw_diff=""

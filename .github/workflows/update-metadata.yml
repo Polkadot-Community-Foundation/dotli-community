@@ -24,12 +24,14 @@ jobs:
           node-version: 22
 
       - name: Update metadata
+        working-directory: packages/core
         run: npx papi update ah --skip-codegen
+
 
       - name: Check for changes
         id: diff
         run: |
-          if git diff --quiet .papi/metadata/; then
+          if git diff --quiet packages/core/.papi/metadata/; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,56 @@
+# GitHub Actions labeler configuration for dotli monorepo
+# https://github.com/actions/labeler
+
+github-actions:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
+
+"app: host":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'apps/host/**'
+          - '!apps/host/package.json'
+          - '!apps/host/CHANGELOG.md'
+
+"app: sandbox":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'apps/sandbox/**'
+          - '!apps/sandbox/package.json'
+          - '!apps/sandbox/CHANGELOG.md'
+
+"app: desktop":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'apps/desktop/**'
+          - '!apps/desktop/package.json'
+          - '!apps/desktop/CHANGELOG.md'
+
+"pkg: core":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'packages/core/**'
+          - '!packages/core/package.json'
+          - '!packages/core/CHANGELOG.md'
+
+"pkg: sandbox-checker":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'packages/sandbox-checker/**'
+          - '!packages/sandbox-checker/package.json'
+
+"pkg: eslint":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'packages/eslint-config/**'
+          - '!packages/eslint-config/package.json'
+
+"pkg: typescript":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'packages/typescript-config/**'
+          - '!packages/typescript-config/package.json'
+
+"nginx":
+  - changed-files:
+      - any-glob-to-any-file: 'nginx/**'

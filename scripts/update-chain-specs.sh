@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-SPECS_DIR="$PROJECT_DIR/src/chain-specs"
+SPECS_DIR="$PROJECT_DIR/packages/core/src/chain-specs"
 
 # RPC endpoints (fallback order)
 PASEO_RPCS=(
@@ -129,5 +129,5 @@ process.stdin.on("end", async () => {
 ' "$SPECS_DIR/paseo.json"
 
 echo ""
-echo "Done. Chain specs updated in src/chain-specs/"
+echo "Done. Chain specs updated in packages/core/src/chain-specs/"
 echo "Rebuild the app to use the new specs."

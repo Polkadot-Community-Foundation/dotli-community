@@ -1,0 +1,19 @@
+{
+  "name": "@dotli/desktop",
+  "private": true,
+  "version": "0.2.2",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  },
+  "dependencies": {
+    "@dotli/core": "workspace:*",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-shell": "^2"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "extends": "@dotli/typescript-config/base.json",
+  "compilerOptions": {
+    "paths": {
+      "@dotli/sandbox-checker/*": ["../sandbox-checker/src/*"]
+    }
+  },
+  "include": ["src"]
+}

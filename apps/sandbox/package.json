@@ -1,0 +1,28 @@
+{
+  "name": "@dotli/sandbox",
+  "private": true,
+  "version": "0.2.2",
+  "type": "module",
+  "scripts": {
+    "dev": "bunx --bun vite --port 5174",
+    "build": "tsc && bunx --bun vite build && bun scripts/compress-dist.ts",
+    "preview": "bunx --bun vite preview",
+    "lint": "bunx eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@dotli/eslint-config": "workspace:*",
+    "@dotli/typescript-config": "workspace:*",
+    "@types/node": "^25.3.5",
+    "eslint": "^10.0.2",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1",
+    "vite-plugin-wasm": "^3.5.0"
+  },
+  "dependencies": {
+    "@dotli/core": "workspace:*",
+    "@dotli/sandbox-checker": "workspace:*",
+    "@sentry/browser": "^10.42.0"
+  }
+}
