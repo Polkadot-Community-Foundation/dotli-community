@@ -76,7 +76,7 @@ jobs:
       # Download baseline from the latest main push
       - name: Download baseline from main
         id: baseline
-        uses: dawidd6/action-download-artifact@v16
+        uses: dawidd6/action-download-artifact@v18
         with:
           name: perf-baseline
           workflow: perf.yml
