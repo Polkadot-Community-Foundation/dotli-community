@@ -16,7 +16,7 @@ import { showStatus, showError, showLanding } from "@dotli/core/ui";
 import { initTopBar } from "@dotli/core/topbar";
 
 Sentry.init({
-  dsn: import.meta.env.VITE_SENTRY_DSN as string,
+  dsn: "https://9c9b3dd75ea406bee7f5eeb5eae0b044@o4509440811401216.ingest.de.sentry.io/4510997636186192",
 });
 import { getCachedCid, setCachedCid } from "@dotli/core/cid-cache";
 import { dur, elapsed } from "@dotli/core/perf";
