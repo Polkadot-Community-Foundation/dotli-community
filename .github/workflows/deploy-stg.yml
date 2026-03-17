@@ -23,6 +23,8 @@ jobs:
 
       - run: bun run build
 
+      - run: npx @sentry/wizard@latest -i sourcemaps --saas --org paritytech --project dotli
+
       - uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}

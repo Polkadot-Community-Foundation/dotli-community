@@ -24,6 +24,8 @@ jobs:
       - run: bun install
 
       - run: bun run build
+      
+      - run: npx @sentry/wizard@latest -i sourcemaps --saas --org paritytech --project dotli
 
       - uses: webfactory/ssh-agent@v0.10.0
         with:

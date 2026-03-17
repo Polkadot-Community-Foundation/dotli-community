@@ -13,7 +13,7 @@ import { elapsed } from "@dotli/core/perf";
 import { log } from "@dotli/core/log";
 
 Sentry.init({
-  dsn: import.meta.env.VITE_SENTRY_DSN as string,
+  dsn: "https://3ebe2deee78fda6021c488d20d405722@o4511059872841728.ingest.de.sentry.io/4511059878477904",
 });
 
 const T0 = performance.now();
