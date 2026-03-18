@@ -1,7 +1,6 @@
 // dot.li — Content fetching from Bulletin Chain
 //
-// Primary: Helia P2P (in-browser libp2p node dials Bulletin peers via bitswap)
-// Fallback: IPFS gateway HTTP fetch
+// Helia P2P (in-browser libp2p node dials Bulletin peers via bitswap)
 //
 // Pattern from: polkadot-bulletin-chain-main/console-ui/src/lib/helia.ts
 
@@ -9,8 +8,7 @@ import { TIMEOUTS } from "./config";
 import { dur } from "./perf";
 import { log } from "./log";
 import { createHelia, type Helia } from "helia";
-import { bitswap, trustlessGateway } from "@helia/block-brokers";
-import { httpGatewayRouting } from "@helia/routers";
+import { bitswap } from "@helia/block-brokers";
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { identify } from "@libp2p/identify";
@@ -22,7 +20,7 @@ import { blake2b256 } from "@multiformats/blake2/blake2b";
 import { sha256 } from "multiformats/hashes/sha2";
 import { from as hasherFrom } from "multiformats/hashes/hasher";
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { BULLETIN_PEERS, IPFS_GATEWAY } from "./config";
+import { BULLETIN_PEERS } from "./config";
 import type { StatusCallback } from "./resolve";
 import { isCarFile, parseIpfsResponse, type ArchiveFiles } from "./archive";
 
@@ -58,10 +56,8 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
   const createStart = performance.now();
   heliaInstance = await createHelia({
     hashers: [blake2b256, sha256, keccak256Hasher],
-    // Race bitswap (P2P) vs trustless gateway (HTTP) internally.
-    // Both are hash-verified — the gateway is trustless, not trusted.
-    blockBrokers: [bitswap(), trustlessGateway()],
-    routers: [httpGatewayRouting({ gateways: [IPFS_GATEWAY] })],
+    blockBrokers: [bitswap()],
+    routers: [],
     libp2p: {
       // Minimal libp2p config — we only dial known Bulletin peers via WebSocket.
       // Strips DHT, delegated routing, autoNAT, circuit relay, webRTC, bootstrap.
@@ -91,45 +87,39 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
   });
   log.warn(`[dot.li fetch] createHelia() done (${dur(createStart)})`);
 
-  // Dial all peers in parallel; proceed as soon as the first connects.
-  // Remaining peers continue connecting in the background for redundancy.
+  // Dial all peers in parallel and wait for all to settle before fetching.
+  // This maximizes bitswap availability — more connected peers means a higher
+  // chance that at least one has the requested block.
   onStatus?.("Connecting to Bulletin Chain peers...");
   const dialStart = performance.now();
   const helia = heliaInstance;
-  const dialPromises = BULLETIN_PEERS.map(async (addr) => {
-    const peerStart = performance.now();
-    try {
-      await helia.libp2p.dial(multiaddr(addr));
-      log.warn(
-        `[dot.li fetch] Peer dialed (${dur(peerStart)}): ${addr.slice(-20)}`,
-      );
-    } catch (err) {
-      log.warn(
-        `[dot.li fetch] Peer failed (${dur(peerStart)}): ${addr.slice(-20)}`,
-      );
-      throw err;
-    }
-  });
+  const dialResults = await Promise.allSettled(
+    BULLETIN_PEERS.map(async (addr) => {
+      const peerStart = performance.now();
+      try {
+        await helia.libp2p.dial(multiaddr(addr));
+        log.warn(
+          `[dot.li fetch] Peer dialed (${dur(peerStart)}): ${addr.slice(-20)}`,
+        );
+      } catch (err) {
+        log.warn(
+          `[dot.li fetch] Peer failed (${dur(peerStart)}): ${addr.slice(-20)}`,
+        );
+        throw err;
+      }
+    }),
+  );
 
-  try {
-    await Promise.any(dialPromises);
-  } catch {
+  const connected = dialResults.filter((r) => r.status === "fulfilled").length;
+  const failed = dialResults.filter((r) => r.status === "rejected").length;
+  if (connected === 0) {
     throw new Error("Could not connect to any Bulletin Chain peers");
   }
 
-  // Keep dialing remaining peers in background for redundancy
-  void Promise.allSettled(dialPromises).then(() => {
-    const total = helia.libp2p.getConnections().length;
-    log.warn(
-      `[dot.li fetch] All peers settled (${dur(dialStart)}), ${String(total)} connected`,
-    );
-  });
-
-  const connections = helia.libp2p.getConnections();
   log.warn(
-    `[dot.li fetch] First peer connected (${dur(dialStart)}), ${String(connections.length)} connected so far`,
+    `[dot.li fetch] All peers settled (${dur(dialStart)}): ${String(connected)} connected, ${String(failed)} failed`,
   );
-  onStatus?.(`Connected to Bulletin peer, dialing others...`);
+  onStatus?.(`Connected to ${String(connected)} Bulletin peer(s)`);
 
   log.warn(`[dot.li fetch] ensureHelia() total: ${dur(heliaStart)}`);
   return heliaInstance;
@@ -159,9 +149,6 @@ async function collectCat(
 
 /**
  * Fetch content via Helia P2P from Bulletin Chain.
- * Helia internally races bitswap (P2P) vs trustless gateway (HTTP) — both
- * are hash-verified. The trustless gateway provides fast fallback when
- * Bulletin peers don't have content in their bitswap cache.
  */
 async function fetchViaP2P(
   cidString: string,
@@ -173,6 +160,9 @@ async function fetchViaP2P(
 
   onStatus?.("Fetching content via P2P...");
   const p2pStart = performance.now();
+  log.warn(
+    `[dot.li fetch] CID: codec=0x${cid.code.toString(16)}, hash=0x${cid.multihash.code.toString(16)}, version=${String(cid.version)}`,
+  );
 
   // For dag-pb (UnixFS) content — could be a file or directory
   if (cid.code === 0x70) {
@@ -250,17 +240,25 @@ async function fetchViaP2P(
     return toFetchResult(files);
   }
 
-  // For raw blocks, fetch directly from blockstore
-  log.warn(`[dot.li fetch] P2P: fetching raw block...`);
-  const blockData = helia.blockstore.get(cid, { signal });
-  if (blockData instanceof Uint8Array) {
-    log.warn(
-      `[dot.li fetch] P2P: fetched ${String(Math.round(blockData.length / 1024))} KB in ${dur(p2pStart)}`,
-    );
-    return { type: "single", content: blockData };
+  // For raw blocks (codec 0x55), consume the async generator from blockstore
+  log.warn(
+    `[dot.li fetch] P2P: fetching raw block (codec 0x${cid.code.toString(16)})...`,
+  );
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of helia.blockstore.get(cid, { signal })) {
+    chunks.push(chunk);
   }
-
-  throw new Error(`Unexpected block data type for CID ${cidString}`);
+  const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+  const content = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    content.set(chunk, offset);
+    offset += chunk.length;
+  }
+  log.warn(
+    `[dot.li fetch] P2P: fetched raw block ${String(Math.round(content.length / 1024))} KB in ${dur(p2pStart)}`,
+  );
+  return { type: "single", content };
 }
 
 // ── Multi-file archive support ─────────────────────────────
@@ -270,81 +268,127 @@ export type FetchResult =
   | { type: "archive"; files: ArchiveFiles };
 
 /**
- * Fetch content as CAR archive from the IPFS gateway.
- * The gateway's ?format=car returns the entire directory tree in one response.
+ * Log a fetch error with AggregateError unwrapping for diagnostics.
  */
-async function fetchCarFromGateway(
-  cidString: string,
-  onStatus?: StatusCallback,
-): Promise<Uint8Array> {
-  const url = `${IPFS_GATEWAY}/ipfs/${cidString}?format=car`;
-  onStatus?.("Fetching archive from IPFS gateway...");
-  const carStart = performance.now();
-
-  const response = await fetch(url, {
-    headers: { Accept: "application/vnd.ipld.car" },
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Gateway CAR fetch failed: HTTP ${String(response.status)}`,
+function logFetchError(err: unknown): void {
+  if (err instanceof AggregateError && Array.isArray(err.errors)) {
+    const reasons = err.errors
+      .map((e) => (e instanceof Error ? e.message : String(e)))
+      .join("; ");
+    log.error(
+      `[dot.li fetch] Block retrieval failed (${String(err.errors.length)} broker error(s)): ${reasons}`,
     );
+  } else if (err instanceof Error) {
+    log.error(`[dot.li fetch] Fetch failed: ${err.message}`);
   }
-
-  const buffer = await response.arrayBuffer();
-  log.warn(
-    `[dot.li fetch] Gateway CAR: fetched ${String(Math.round(buffer.byteLength / 1024))} KB in ${dur(carStart)}`,
-  );
-  return new Uint8Array(buffer);
 }
 
 /**
- * Fetch content by CID via P2P, with gateway fallback after 60s.
- * Supports both single files and multi-file directories.
+ * Reconnect to Bulletin Chain peers by closing existing connections
+ * and re-dialing all peers in parallel. Used between retry attempts
+ * to reset bitswap state and establish fresh connections.
+ */
+async function reconnectPeers(): Promise<number> {
+  if (heliaInstance === null) {
+    return 0;
+  }
+  const helia = heliaInstance;
+
+  // Close existing connections
+  const existing = helia.libp2p.getConnections();
+  log.warn(
+    `[dot.li fetch] Reconnecting: closing ${String(existing.length)} existing connection(s)...`,
+  );
+  await Promise.allSettled(
+    existing.map((conn) => helia.libp2p.hangUp(conn.remotePeer)),
+  );
+
+  // Re-dial all peers in parallel
+  const dialResults = await Promise.allSettled(
+    BULLETIN_PEERS.map(async (addr) => {
+      await helia.libp2p.dial(multiaddr(addr));
+    }),
+  );
+
+  const connected = dialResults.filter((r) => r.status === "fulfilled").length;
+  log.warn(
+    `[dot.li fetch] Reconnected: ${String(connected)}/${String(BULLETIN_PEERS.length)} peers`,
+  );
+  return connected;
+}
+
+/**
+ * Fetch content by CID via P2P with retry and peer reconnection.
+ *
+ * On failure, closes existing peer connections, re-dials all Bulletin peers,
+ * and retries the fetch. This resets bitswap state and gives peers a fresh
+ * chance to respond. Retries up to P2P_MAX_RETRIES times with P2P_RETRY_DELAY
+ * between attempts.
  */
 export async function fetchArchive(
   cidString: string,
   onStatus?: StatusCallback,
 ): Promise<FetchResult> {
-  // Try P2P with 60s timeout
-  try {
-    performance.mark("dotli:fetch:p2p:start");
+  performance.mark("dotli:fetch:p2p:start");
+
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= TIMEOUTS.P2P_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      log.warn(
+        `[dot.li fetch] Retry ${String(attempt)}/${String(TIMEOUTS.P2P_MAX_RETRIES)}: waiting ${String(TIMEOUTS.P2P_RETRY_DELAY / 1000)}s before reconnecting...`,
+      );
+      onStatus?.(
+        `Reconnecting to peers...\nRetry attempt ${String(attempt)} of ${String(TIMEOUTS.P2P_MAX_RETRIES)}`,
+      );
+      await new Promise((resolve) =>
+        setTimeout(resolve, TIMEOUTS.P2P_RETRY_DELAY),
+      );
+
+      const connected = await reconnectPeers();
+      if (connected === 0) {
+        log.error("[dot.li fetch] Retry aborted: no peers reconnected");
+        onStatus?.("Retry failed\nCould not reconnect to any peers");
+        break;
+      }
+      onStatus?.(
+        `Fetching content...\nRetry attempt ${String(attempt)} of ${String(TIMEOUTS.P2P_MAX_RETRIES)}`,
+      );
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
     }, TIMEOUTS.P2P_FETCH);
+
+    // Wrap onStatus to show retry info on a second line
+    const retryLabel = `Retry attempt ${String(attempt)} of ${String(TIMEOUTS.P2P_MAX_RETRIES)}`;
+    const statusCb: StatusCallback | undefined =
+      attempt > 0 ? (msg) => onStatus?.(`${msg}\n${retryLabel}`) : onStatus;
+
     try {
-      const result = await fetchViaP2P(cidString, onStatus, controller.signal);
+      const result = await fetchViaP2P(cidString, statusCb, controller.signal);
       clearTimeout(timer);
+      if (attempt > 0) {
+        log.warn(`[dot.li fetch] Succeeded on retry ${String(attempt)}`);
+      }
       performance.mark("dotli:fetch:p2p:end");
       return result;
     } catch (err) {
       clearTimeout(timer);
-      performance.mark("dotli:fetch:p2p:end");
-      if (!controller.signal.aborted) {
-        throw err;
+      lastError = err;
+      logFetchError(err);
+
+      if (attempt < TIMEOUTS.P2P_MAX_RETRIES) {
+        log.warn(
+          `[dot.li fetch] Attempt ${String(attempt + 1)} failed, will retry...`,
+        );
       }
-      log.warn(
-        "[dot.li fetch] P2P timed out (60s), falling back to gateway...",
-      );
-      onStatus?.("P2P timeout, trying gateway...");
     }
-  } catch (p2pError) {
-    performance.mark("dotli:fetch:p2p:end");
-    onStatus?.(
-      `P2P failed (${(p2pError as Error).message}), trying gateway...`,
-    );
   }
 
-  // Gateway fallback — fetch as CAR archive
-  performance.mark("dotli:fetch:gateway:start");
-  const carBuffer = await fetchCarFromGateway(cidString, onStatus);
-  performance.mark("dotli:fetch:gateway:end");
-  onStatus?.("Parsing content...");
-  performance.mark("dotli:fetch:parse:start");
-  const files = await parseIpfsResponse(carBuffer);
-  performance.mark("dotli:fetch:parse:end");
-  return toFetchResult(files);
+  performance.mark("dotli:fetch:p2p:end");
+  throw lastError;
 }
 
 /**

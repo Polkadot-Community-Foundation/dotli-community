@@ -15,13 +15,6 @@ import {
   makeNonRemovingChain,
   waitForResolverRelease,
 } from "./smoldot";
-import {
-  createTauriChainProvider,
-  isTauriChainSupported,
-} from "./tauri-chains";
-
-const IS_TAURI = "__TAURI_INTERNALS__" in window;
-
 // Well-known genesis hashes (Paseo testnet)
 const PASEO_RELAY =
   "0x77afd6190f1554ad45fd0d31aee62aacc33c6db0ea801129acb813f913e0764f";
@@ -48,9 +41,6 @@ const providerCache = new Map<string, JsonRpcProvider>();
  * Check if a genesis hash corresponds to a supported chain.
  */
 export function isChainSupported(genesisHash: string): boolean {
-  if (IS_TAURI) {
-    return isTauriChainSupported(genesisHash);
-  }
   return genesisHash.toLowerCase() in SUPPORTED_CHAINS;
 }
 
@@ -62,11 +52,6 @@ export function isChainSupported(genesisHash: string): boolean {
 export function createChainProvider(
   genesisHash: string,
 ): JsonRpcProvider | null {
-  // In Tauri, route through the Rust smoldot bridge
-  if (IS_TAURI) {
-    return createTauriChainProvider(genesisHash);
-  }
-
   const key = genesisHash.toLowerCase();
   const entry = SUPPORTED_CHAINS[key] as ChainEntry | undefined;
   if (entry === undefined) {

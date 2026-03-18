@@ -29,19 +29,35 @@ function dotUrl(label: string): string {
 export function showStatus(message: string): void {
   const status = document.getElementById("status");
   if (status) {
-    status.textContent = message;
+    if (message.includes("\n")) {
+      status.innerHTML = "";
+      const parts = message.split("\n");
+      for (let i = 0; i < parts.length; i++) {
+        if (i > 0) {
+          status.appendChild(document.createElement("br"));
+        }
+        status.appendChild(document.createTextNode(parts[i]));
+      }
+    } else {
+      status.textContent = message;
+    }
   }
 }
 
 /**
- * Show an error state.
+ * Show an error state with an optional retry button.
  */
-export function showError(title: string, detail: string): void {
+export function showError(
+  title: string,
+  detail: string,
+  onRetry?: () => void,
+): void {
   app.innerHTML = `
     <div class="error-page">
       <div class="error-page-inner">
         <h1 class="error-page-title">${title}</h1>
         <p class="error-page-detail">${detail}</p>
+        ${onRetry !== undefined ? '<button class="error-page-retry" id="error-retry-btn">Retry</button>' : ""}
         <div class="error-page-tags">
           <span class="error-page-tag">${SITE_ID}</span>
           <span class="error-page-tag">dotNS</span>
@@ -50,6 +66,12 @@ export function showError(title: string, detail: string): void {
       </div>
     </div>
   `;
+
+  if (onRetry !== undefined) {
+    document
+      .getElementById("error-retry-btn")
+      ?.addEventListener("click", onRetry);
+  }
 }
 
 /**
@@ -147,17 +169,6 @@ export function showLanding(): void {
       .toLowerCase()
       .replace(/\.dot$/, "");
     if (!name) {
-      return;
-    }
-    // Tauri desktop: resolve via Rust backend and render inline
-    if ("__TAURI_INTERNALS__" in window) {
-      input.disabled = true;
-      goBtn.style.opacity = "0.5";
-      void import("./tauri-bridge").then(({ tauriResolveAndRender }) => {
-        void addRecentLabel(name).finally(() => {
-          void tauriResolveAndRender(name);
-        });
-      });
       return;
     }
     const url = dotUrl(name);

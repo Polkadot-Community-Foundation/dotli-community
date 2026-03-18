@@ -1,7 +1,7 @@
 // dot.li — App context entry point
 //
 // Runs on cid.app.dot.li — parses the CID from the subdomain,
-// fetches content via P2P/gateway, and renders it in a sandboxed iframe.
+// fetches content via P2P, and renders it in a sandboxed iframe.
 // No dotns resolution, no smoldot, no topbar.
 
 import "@dotli/core/styles.css";
@@ -266,7 +266,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Fetch via P2P / gateway
+  // Fetch via P2P
   log.warn(
     `[dot.li app] SW archive cache MISS — fetching via P2P (${elapsed(T0)})`,
   );
@@ -332,7 +332,22 @@ window.addEventListener("beforeunload", () => {
   }
 });
 
-void main().catch((err: unknown) => {
-  const message = err instanceof Error ? err.message : String(err);
-  showError("Failed to load content", message);
-});
+function run(): void {
+  void main().catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    showError("Failed to load content", message, () => {
+      // Restore the loading UI and re-run main
+      const app = document.getElementById("app") ?? document.body;
+      app.innerHTML = `
+        <div class="loading">
+          <h1>dot.li</h1>
+          <div class="spinner"></div>
+          <p id="status">Retrying...</p>
+        </div>
+      `;
+      run();
+    });
+  });
+}
+
+run();

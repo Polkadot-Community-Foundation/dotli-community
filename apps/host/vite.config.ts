@@ -78,16 +78,10 @@ function preloadCriticalAssets(): Plugin {
         const resolveChunk = findChunk(/^assets\/resolve-.*\.js$/);
         const fetchChunk = findChunk(/^assets\/fetch-.*\.js$/);
         const renderChunk = findChunk(/^assets\/render-.*\.js$/);
-        const gatewayChunk = findChunk(/^assets\/gateway-.*\.js$/);
         const wasmAsset = findChunk(/^assets\/.*\.wasm$/);
         const metadataAsset = findChunk(/^assets\/ah-.*\.scale$/);
 
-        const chunks = [
-          resolveChunk,
-          fetchChunk,
-          renderChunk,
-          gatewayChunk,
-        ].filter(Boolean);
+        const chunks = [resolveChunk, fetchChunk, renderChunk].filter(Boolean);
         if (chunks.length === 0) return [];
 
         const b = resolvedBase;

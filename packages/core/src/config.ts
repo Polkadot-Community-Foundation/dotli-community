@@ -21,14 +21,9 @@ const isLocalhost =
   hostname.endsWith(".localhost") ||
   hostname === "127.0.0.1";
 
-const IS_TAURI =
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-export const SITE_ID: SiteId = IS_TAURI
-  ? "dot.li"
-  : isLocalhost
-    ? "local.li"
-    : (BASE_DOMAIN as SiteId);
+export const SITE_ID: SiteId = isLocalhost
+  ? "local.li"
+  : (BASE_DOMAIN as SiteId);
 
 // --- Debug logging -------------------------------------------------------
 
@@ -58,22 +53,26 @@ export const DRY_RUN_STORAGE_LIMIT = 18446744073709551615n;
 // A dummy substrate address for read-only calls (Alice's well-known dev address)
 export const DUMMY_ORIGIN = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 
-// --- Bulletin Chain Paseo — Peer multiaddrs for Helia P2P ---
+// --- Bulletin Chain — Peer multiaddrs for Helia P2P ---
 
-export const BULLETIN_PEERS = [
+export const BULLETIN_PEERS_PASEO = [
   "/dns4/paseo-bulletin-collator-node-0.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWRuKisocQ2Z5hBZagV5YGxJMYuW13xT42sUiUCWf5bRtu",
   "/dns4/paseo-bulletin-collator-node-1.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWSgdX2egCUiXtDUNV6hGh6JrtTb9vQ6iRfFMdnTemQDDp",
   "/dns4/paseo-bulletin-rpc-node-0.polkadot.io/tcp/443/wss/p2p/12D3KooWG7dt8yAMBaNrWh5juvHMGvJtPKTCaS87kkadWZKpV7ox",
   "/dns4/paseo-bulletin-rpc-node-1.polkadot.io/tcp/443/wss/p2p/12D3KooWSS9QNRiLGBoZrDrtXvPyBV7QrV7F3A1V8f6xAXECSnj5",
 ];
 
-// --- IPFS Gateway fallback ---
+export const BULLETIN_PEERS_WESTEND = [
+  "/dns4/westend-bulletin-rpc-node-0.polkadot.io/tcp/443/wss/p2p/12D3KooWGb3sdXpdQPvL1wwHYHpQpMAEWxpgNNb6sndHmCByMXZw",
+  "/dns4/westend-bulletin-rpc-node-1.polkadot.io/tcp/443/wss/p2p/12D3KooWN8hBVUWXNiur1w6EiEPkTJibbzpagZmm4cphMxWLv9yc",
+  "/dns4/westend-bulletin-collator-node-0.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWSxYQRoTT9rZNZRrjCfG2fPpBwPumkQsxLroTKjX6Mvkw",
+  "/dns4/westend-bulletin-collator-node-1.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWSD5tovFkmja9aFYA6QM8eU3mFhZKdAuCsa5MgSsNDmxc",
+];
 
-export const IPFS_GATEWAY = "https://paseo-ipfs.polkadot.io";
-
-// --- Asset Hub Paseo public RPC (for fast gateway CID resolution) ---
-
-export const ASSET_HUB_PASEO_RPC = ["wss://sys.ibp.network/asset-hub-paseo"];
+export const BULLETIN_PEERS = [
+  ...BULLETIN_PEERS_PASEO,
+  ...BULLETIN_PEERS_WESTEND,
+];
 
 // --- SW archive cache ---
 
@@ -91,10 +90,12 @@ export const TIMEOUTS = {
   SW_SMOLDOT_READY: 500,
   /** SW smoldot connect handshake */
   SW_SMOLDOT_CONNECT: 30_000,
-  /** P2P fetch abort */
-  P2P_FETCH: 60_000,
-  /** Gateway CID resolution */
-  GATEWAY_RESOLVE: 6_000,
+  /** P2P fetch abort (per attempt) */
+  P2P_FETCH: 30_000,
+  /** Delay between P2P retry attempts */
+  P2P_RETRY_DELAY: 3_000,
+  /** Maximum P2P fetch retry attempts (total attempts = 1 + retries) */
+  P2P_MAX_RETRIES: 2,
   /** Initial relay DB save after smoldot starts */
   RELAY_DB_FIRST_SAVE: 5_000,
   /** Periodic relay DB save interval */

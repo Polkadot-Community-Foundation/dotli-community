@@ -217,12 +217,10 @@ function setupTopbarAutoHide(): void {
   }
 }
 
-function setShieldState(
-  state: "validating" | "verified" | "stale" | "gateway",
-): void {
+function setShieldState(state: "validating" | "verified" | "stale"): void {
   const shield = document.getElementById("verification-shield");
   if (shield !== null) {
-    shield.classList.remove("validating", "verified", "stale", "gateway");
+    shield.classList.remove("validating", "verified", "stale");
     shield.classList.add(state);
   }
 
@@ -230,13 +228,11 @@ function setShieldState(
     validating: "VALIDATING",
     verified: "VERIFIED",
     stale: "OUTDATED",
-    gateway: "GATEWAY",
   };
   const colors: Record<string, string> = {
     verified: "#4ade80",
     stale: "#f87171",
     validating: "#eab308",
-    gateway: "#f97316",
   };
   const el = document.getElementById("domain-popover-verification");
   if (el !== null) {
@@ -290,6 +286,38 @@ function showUpdateBanner(): void {
 }
 
 /**
+ * Verify a cached CID against the on-chain value in the background.
+ * If the chain returns a different CID, update the cache and show a banner.
+ */
+function verifyCachedCid(
+  label: string,
+  cachedCid: string,
+  resolveChunkPromise: Promise<ResolveChunk>,
+): void {
+  void resolveChunkPromise
+    .then(async ({ resolveDotName, destroyClient }) => {
+      const chainCid = await resolveDotName(label);
+      destroyClient();
+      if (chainCid !== null && chainCid !== cachedCid) {
+        log.warn(
+          `[dot.li] CID mismatch: cached=${cachedCid}, chain=${chainCid}`,
+        );
+        requestIdleCallback(() => {
+          void setCachedCid(label, chainCid);
+        });
+        setShieldState("stale");
+        showUpdateBanner();
+      } else if (chainCid !== null) {
+        log.warn("[dot.li] Cached CID verified by chain");
+        setShieldState("verified");
+      }
+    })
+    .catch(() => {
+      /* fire-and-forget — cached version still works */
+    });
+}
+
+/**
  * Fire-and-forget: populate the domain popover with owner info.
  */
 function populateOwner(
@@ -332,86 +360,10 @@ function populateOwner(
     });
 }
 
-// ── Extracted helpers for main() ─────────────────────────────
-
-interface ResolveWinner {
-  cid: string;
-  source: "gateway" | "chain";
-}
-
-/**
- * Race gateway and smoldot resolution — first non-null CID wins.
- */
-function raceResolvers(
-  gatewayPromise: Promise<string | null>,
-  smoldotPromise: Promise<string | null>,
-): Promise<ResolveWinner | null> {
-  return new Promise<ResolveWinner | null>((resolve) => {
-    let done = false;
-    const tryResolve = (
-      cid: string | null,
-      source: "gateway" | "chain",
-    ): void => {
-      if (!done && cid !== null) {
-        done = true;
-        resolve({ cid, source });
-      }
-    };
-
-    gatewayPromise
-      .then((cid) => {
-        tryResolve(cid, "gateway");
-      })
-      .catch(() => {
-        /* fire-and-forget */
-      });
-    smoldotPromise
-      .then((cid) => {
-        tryResolve(cid, "chain");
-      })
-      .catch(() => {
-        /* fire-and-forget */
-      });
-
-    void Promise.allSettled([gatewayPromise, smoldotPromise]).then(() => {
-      if (!done) {
-        resolve(null);
-      }
-    });
-  });
-}
-
-/**
- * When gateway resolved first, verify the CID against smoldot in the background.
- */
-function handleGatewayWinner(
-  label: string,
-  gatewayCid: string,
-  smoldotPromise: Promise<string | null>,
-): void {
-  void smoldotPromise
-    .then((chainCid) => {
-      if (chainCid !== null && chainCid !== gatewayCid) {
-        log.warn(
-          `[dot.li] CID mismatch: gateway=${gatewayCid}, chain=${chainCid}`,
-        );
-        requestIdleCallback(() => {
-          void setCachedCid(label, chainCid);
-        });
-        setShieldState("stale");
-        showUpdateBanner();
-      } else if (chainCid !== null) {
-        log.warn("[dot.li] Gateway CID verified by chain");
-        setShieldState("verified");
-      }
-    })
-    .catch(() => {
-      /* fire-and-forget */
-    });
-}
-
 import type * as RenderModule from "@dotli/core/render";
 type RenderChunk = typeof RenderModule;
+import type * as ResolveModule from "@dotli/core/resolve";
+type ResolveChunk = typeof ResolveModule;
 
 // ── Main ─────────────────────────────────────────────────────
 
@@ -486,42 +438,9 @@ async function main(): Promise<void> {
 
   log.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed(T0)})`);
 
-  // ── TEMPORARY: external URL overrides (remove when domains are on-chain) ──
-  const TEMP_OVERRIDES: Partial<Record<string, string>> = {
-    polka: "https://polkadotcom-spektr-sdk-demo.teleport.parity.io/",
-  };
-  const overrideUrl = TEMP_OVERRIDES[label];
-  if (overrideUrl !== undefined) {
-    const topbar = document.getElementById("topbar");
-    if (topbar !== null) {
-      topbar.style.display = "none";
-    }
-    const app = document.getElementById("app") ?? document.body;
-    app.innerHTML = "";
-    const iframe = document.createElement("iframe");
-    iframe.src = overrideUrl;
-    iframe.style.cssText =
-      "position:fixed;top:0;left:0;width:100%;height:100vh;border:none;margin:0;padding:0;";
-    document.body.style.margin = "0";
-    document.body.style.overflow = "hidden";
-    app.appendChild(iframe);
-    document.title = `${label}.dot`;
-    performance.mark("dotli:main:end");
-    return;
-  }
-  // ── END TEMPORARY ──
-
-  // Pre-load chunks in parallel (overlap with CID resolution)
-  const gatewayChunkPromise = import("@dotli/core/gateway-resolve");
-  void gatewayChunkPromise.catch(() => {
-    /* fire-and-forget */
-  });
+  // Pre-load render chunk in parallel (overlap with CID resolution)
   const renderChunkPromise: Promise<RenderChunk> = import("@dotli/core/render");
   void renderChunkPromise.catch(() => {
-    /* fire-and-forget */
-  });
-  const swProviderChunkPromise = import("@dotli/core/sw-provider");
-  void swProviderChunkPromise.catch(() => {
     /* fire-and-forget */
   });
 
@@ -585,43 +504,14 @@ async function main(): Promise<void> {
       performance.mark("dotli:main:end");
       log.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
 
-      // Release the resolver mutex immediately — no dedicated chain is needed
-      // when loading from cache. This unblocks chains.ts so the embedded app
-      // can connect to the shared Asset Hub chain right away.
-      // (Background smoldot-based CID validation is skipped to avoid creating
-      // a second Asset Hub chain that would conflict with the shared one.)
-      void resolveChunkPromise.then(
-        ({ destroyClient, releaseResolverMutex }) => {
-          destroyClientFn = destroyClient;
-          releaseResolverMutex();
-        },
-      );
-      setShieldState("verified");
+      // Verify the cached CID against the chain in the background.
+      // If the on-chain CID has changed, show an update banner.
+      verifyCachedCid(label, cachedCid, resolveChunkPromise);
       return;
     }
     log.warn(`[dot.li perf] CID cache MISS (${elapsed(T0)})`);
 
     // ── Full resolution path ──
-
-    // Check if SW smoldot is already synced
-    const { isSwSmoldotReady } = await swProviderChunkPromise;
-    const swSmoldotReady = await isSwSmoldotReady();
-
-    performance.mark("dotli:resolve:start");
-    let gatewayPromise: Promise<string | null>;
-    if (swSmoldotReady) {
-      log.warn(
-        `[dot.li perf] SW smoldot ready — skipping gateway (${elapsed(T0)})`,
-      );
-      gatewayPromise = Promise.resolve(null);
-    } else {
-      log.warn(
-        `[dot.li perf] Starting gateway + smoldot resolve... (${elapsed(T0)})`,
-      );
-      gatewayPromise = gatewayChunkPromise
-        .then(({ resolveViaGateway }) => resolveViaGateway(label))
-        .catch(() => null as string | null);
-    }
 
     log.warn(`[dot.li perf] Awaiting resolve chunk... (${elapsed(T0)})`);
     const { resolveDotName, resolveOwner, destroyClient } =
@@ -632,21 +522,17 @@ async function main(): Promise<void> {
     destroyClientFn = destroyClient;
     populateOwner(resolveOwner, label);
 
-    let showSmoldotStatus = true;
-    const smoldotPromise = resolveDotName(label, (msg: string) => {
-      if (showSmoldotStatus) {
-        showStatus(msg);
-      }
-    });
-
+    performance.mark("dotli:resolve:start");
     const resolveStart = performance.now();
-    const winner = await raceResolvers(gatewayPromise, smoldotPromise);
+    const cid = await resolveDotName(label, (msg: string) => {
+      showStatus(msg);
+    });
     performance.mark("dotli:resolve:end");
     log.warn(
-      `[dot.li perf] Resolution done (${dur(resolveStart)}, ${elapsed(T0)}) → ${winner?.source ?? "none"}: ${winner?.cid ?? "null"}`,
+      `[dot.li perf] Resolution done (${dur(resolveStart)}, ${elapsed(T0)}) → ${cid ?? "null"}`,
     );
 
-    if (winner === null) {
+    if (cid === null) {
       showError(
         `${label}.dot`,
         "This domain has no content set. The owner needs to publish content to the Bulletin Chain and set the content hash.",
@@ -654,26 +540,12 @@ async function main(): Promise<void> {
       return;
     }
 
-    const cid = winner.cid;
-
     requestIdleCallback(() => {
       void setCachedCid(label, cid);
     });
 
-    // Release the resolve client so chains.ts can use the shared
-    // Asset Hub chain for the embedded app's connection.
-    if (winner.source === "gateway") {
-      setShieldState("gateway");
-      showSmoldotStatus = false;
-      handleGatewayWinner(label, cid, smoldotPromise);
-      await smoldotPromise.catch(() => {
-        /* ignore — gateway already won */
-      });
-      destroyClient();
-    } else {
-      setShieldState("verified");
-      destroyClient();
-    }
+    setShieldState("verified");
+    destroyClient();
 
     // Render: iframe to cid.app.dot.li
     const { renderAppSubdomain } = await renderChunkPromise;

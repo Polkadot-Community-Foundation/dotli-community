@@ -27,11 +27,6 @@ import { log } from "./log";
 // ── Metadata file selection ────────────────────────────────
 
 function getMetadataUrl(): string {
-  // In Tauri, window.location.origin is localhost — use the production URL
-  // so the Polkadot App wallet can fetch the metadata.
-  if ("__TAURI_INTERNALS__" in window) {
-    return `https://${SITE_ID}/metadata.json`;
-  }
   return `${window.location.origin}/metadata.json`;
 }
 
