@@ -121,6 +121,9 @@ export default defineConfig({
   define: {
     __BUILD_TARGET__: JSON.stringify("app"),
   },
+  optimizeDeps: {
+    exclude: ["@polkadot-api/wasm-executor", "verifiablejs"],
+  },
   build: {
     target: "esnext",
     modulePreload: { polyfill: false },
