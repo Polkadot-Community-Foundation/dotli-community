@@ -23,7 +23,7 @@ jobs:
 
       - run: bun run build
         env:
-          VITE_APP_ENV: development
+          VITE_APP_ENV: staging
           VITE_APP_URL: ${{ secrets.APP_URL }}
           VITE_COMMIT_SHA: ${{ github.sha }}
           VITE_SENTRY_DSN_HOST: ${{ secrets.SENTRY_DSN_HOST }}

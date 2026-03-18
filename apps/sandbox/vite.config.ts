@@ -107,6 +107,9 @@ export default defineConfig({
       release: {
         name: process.env.VITE_COMMIT_SHA,
       },
+      sourcemaps: {
+        filesToDeleteAfterUpload: ["./dist/**/*.map"],
+      },
     }),
   ],
   resolve: {

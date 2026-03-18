@@ -35,6 +35,9 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Remove source maps
+        run: find apps/*/dist -name '*.map' -delete
+
       - name: Generate baseline sizes
         run: |
           # Strip content hashes from filenames: "fetch-CMRV9u5T.js" → "fetch.js"
@@ -94,6 +97,9 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: Remove source maps
+        run: find apps/*/dist -name '*.map' -delete
 
       - name: Download baseline from main
         id: baseline
