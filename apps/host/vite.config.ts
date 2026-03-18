@@ -1,3 +1,4 @@
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, build as viteBuild, type Plugin } from "vite";
 import { readFileSync, copyFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -203,6 +204,15 @@ export default defineConfig({
     preloadCriticalAssets(),
     buildServiceWorker(),
     githubPages404(),
+    sentryVitePlugin({
+      org: "paritytech",
+      project: "dotli",
+      telemetry: false,
+      authToken: process.env.SENTRY_AUTH_TOKEN,
+      release: {
+        name: process.env.VITE_COMMIT_SHA,
+      },
+    }),
   ],
   resolve: {
     alias: {
@@ -217,6 +227,7 @@ export default defineConfig({
     target: "esnext",
     modulePreload: { polyfill: false },
     outDir: OUT_DIR,
+    sourcemap: true,
   },
   server: {
     headers: {

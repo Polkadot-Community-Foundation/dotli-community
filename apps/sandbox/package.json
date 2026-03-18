@@ -23,6 +23,7 @@
   "dependencies": {
     "@dotli/core": "workspace:*",
     "@dotli/sandbox-checker": "workspace:*",
-    "@sentry/browser": "^10.42.0"
+    "@sentry/browser": "^10.42.0",
+    "@sentry/vite-plugin": "^5.1.1"
   }
 }

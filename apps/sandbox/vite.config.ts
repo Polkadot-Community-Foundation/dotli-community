@@ -1,3 +1,4 @@
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, build as viteBuild, type Plugin } from "vite";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
@@ -94,7 +95,20 @@ export default defineConfig({
   base: process.env.VITE_APP_URL
     ? new URL(process.env.VITE_APP_URL).pathname
     : "/",
-  plugins: [wasm(), preloadCriticalAssets(), buildServiceWorker()],
+  plugins: [
+    wasm(),
+    preloadCriticalAssets(),
+    buildServiceWorker(),
+    sentryVitePlugin({
+      org: "paritytech",
+      project: "dotli-sandbox",
+      telemetry: false,
+      authToken: process.env.SENTRY_AUTH_TOKEN,
+      release: {
+        name: process.env.VITE_COMMIT_SHA,
+      },
+    }),
+  ],
   resolve: {
     alias: {
       "@dotli/core": CORE_SRC,
@@ -108,6 +122,7 @@ export default defineConfig({
     target: "esnext",
     modulePreload: { polyfill: false },
     outDir: OUT_DIR,
+    sourcemap: true,
   },
   server: {
     headers: {

@@ -21,8 +21,13 @@ jobs:
       - run: bun install
 
       - run: bun run build
-
-      - run: npx @sentry/wizard@latest -i sourcemaps --saas --org paritytech --project dotli
+        env:
+          VITE_APP_ENV: development
+          VITE_APP_URL: ${{ secrets.APP_URL }}
+          VITE_COMMIT_SHA: ${{ github.sha }}
+          VITE_SENTRY_DSN_HOST: ${{ secrets.SENTRY_DSN_HOST }}
+          VITE_SENTRY_DSN_SANDBOX: ${{ secrets.SENTRY_DSN_SANDBOX }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - uses: webfactory/ssh-agent@v0.10.0
         with:

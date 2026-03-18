@@ -1,7 +1,6 @@
 // dot.li — Host entry point
 //
 // Flow: parse URL → resolve .dot name via smoldot → iframe to cid.app.dot.li
-
 // Polyfill for Safari < 18.4 which lacks requestIdleCallback
 if (typeof globalThis.requestIdleCallback !== "function") {
   globalThis.requestIdleCallback = (cb: IdleRequestCallback): number =>
@@ -14,14 +13,18 @@ import "@dotli/core/styles.css";
 import * as Sentry from "@sentry/browser";
 import { showStatus, showError, showLanding } from "@dotli/core/ui";
 import { initTopBar } from "@dotli/core/topbar";
-
-Sentry.init({
-  dsn: "https://3ebe2deee78fda6021c488d20d405722@o4511059872841728.ingest.de.sentry.io/4511059878477904",
-});
 import { getCachedCid, setCachedCid } from "@dotli/core/cid-cache";
 import { dur, elapsed } from "@dotli/core/perf";
 import { TIMEOUTS, BASE_DOMAIN, SITE_ID } from "@dotli/core/config";
 import { log } from "@dotli/core/log";
+
+Sentry.init({
+  dsn: import.meta.env.VITE_SENTRY_DSN_HOST as string | undefined,
+  environment:
+    (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
+  release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
+  sendDefaultPii: false,
+});
 
 const T0 = performance.now();
 
