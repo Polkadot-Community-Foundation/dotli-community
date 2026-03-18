@@ -74,6 +74,17 @@ export const BULLETIN_PEERS = [
   ...BULLETIN_PEERS_WESTEND,
 ];
 
+// --- IPFS Gateways (same as console-ui/src/lib/ipfs.ts) ---
+
+export const IPFS_GATEWAYS: Record<string, string> = {
+  local: "http://127.0.0.1:8283",
+  paseo: "https://paseo-ipfs.polkadot.io",
+  previewnet: "https://previewnet.substrate.dev",
+};
+
+/** Gateway used for fallback when P2P fetch fails */
+export const IPFS_GATEWAY = IPFS_GATEWAYS.paseo;
+
 // --- SW archive cache ---
 
 /** Max number of domain archives kept in the SW in-memory LRU cache. */
