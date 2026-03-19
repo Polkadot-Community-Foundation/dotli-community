@@ -9,14 +9,14 @@ if (typeof globalThis.requestIdleCallback !== "function") {
     }, 1) as unknown as number;
 }
 
-import "@dotli/core/styles.css";
+import "@dotli/ui/styles.css";
 import * as Sentry from "@sentry/browser";
-import { showStatus, showError, showLanding } from "@dotli/core/ui";
-import { initTopBar } from "@dotli/core/topbar";
-import { getCachedCid, setCachedCid } from "@dotli/core/cid-cache";
-import { dur, elapsed } from "@dotli/core/perf";
-import { TIMEOUTS, BASE_DOMAIN, SITE_ID } from "@dotli/core/config";
-import { log } from "@dotli/core/log";
+import { showStatus, showError, showLanding } from "@dotli/ui/ui";
+import { initTopBar } from "@dotli/ui/topbar";
+import { getCachedCid, setCachedCid } from "@dotli/storage/cid-cache";
+import { dur, elapsed } from "@dotli/shared/perf";
+import { TIMEOUTS, BASE_DOMAIN, SITE_ID } from "@dotli/config/config";
+import { log } from "@dotli/shared/log";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN_HOST as string | undefined,
@@ -360,9 +360,9 @@ function populateOwner(
     });
 }
 
-import type * as RenderModule from "@dotli/core/render";
+import type * as RenderModule from "@dotli/ui/render";
 type RenderChunk = typeof RenderModule;
-import type * as ResolveModule from "@dotli/core/resolve";
+import type * as ResolveModule from "@dotli/resolver/resolve";
 type ResolveChunk = typeof ResolveModule;
 
 // ── Main ─────────────────────────────────────────────────────
@@ -382,7 +382,7 @@ async function main(): Promise<void> {
   // Pre-warm smoldot unconditionally — start downloading the resolve chunk
   // and kick off relay chain sync immediately.
   const resolveChunkStart = performance.now();
-  const resolveChunkPromise = import("@dotli/core/resolve");
+  const resolveChunkPromise = import("@dotli/resolver/resolve");
   void resolveChunkPromise.then(({ getSmoldot, getRelayChain }) => {
     getSmoldot();
     void getRelayChain();
@@ -406,7 +406,7 @@ async function main(): Promise<void> {
       urlBar.innerHTML = `<div class="topbar-url-pill localhost-pill" id="url-pill"><svg class="localhost-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="dot-domain">${host}</span></div>`;
     }
 
-    const { renderIframe } = await import("@dotli/core/render");
+    const { renderIframe } = await import("@dotli/ui/render");
     await renderIframe(localhostUrl, host);
     document.title = `${host} — ${SITE_ID}`;
     performance.mark("dotli:main:end");
@@ -439,7 +439,7 @@ async function main(): Promise<void> {
   log.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed(T0)})`);
 
   // Pre-load render chunk in parallel (overlap with CID resolution)
-  const renderChunkPromise: Promise<RenderChunk> = import("@dotli/core/render");
+  const renderChunkPromise: Promise<RenderChunk> = import("@dotli/ui/render");
   void renderChunkPromise.catch(() => {
     /* fire-and-forget */
   });

@@ -21,7 +21,11 @@
     "vite-plugin-wasm": "^3.5.0"
   },
   "dependencies": {
-    "@dotli/core": "workspace:*",
+    "@dotli/config": "workspace:*",
+    "@dotli/shared": "workspace:*",
+    "@dotli/storage": "workspace:*",
+    "@dotli/content": "workspace:*",
+    "@dotli/ui": "workspace:*",
     "@dotli/sandbox-checker": "workspace:*",
     "@sentry/browser": "^10.42.0",
     "@sentry/vite-plugin": "^5.1.1"

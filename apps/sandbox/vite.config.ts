@@ -19,9 +19,13 @@ function buildServiceWorker(): Plugin {
         plugins: [wasm()],
         resolve: {
           alias: {
-            "@dotli/core": resolve(
+            "@dotli/config": resolve(
               import.meta.dirname,
-              "../../packages/core/src",
+              "../../packages/config/src",
+            ),
+            "@dotli/shared": resolve(
+              import.meta.dirname,
+              "../../packages/shared/src",
             ),
           },
         },
@@ -85,11 +89,8 @@ function preloadCriticalAssets(): Plugin {
   };
 }
 
-const CORE_SRC = resolve(import.meta.dirname, "../../packages/core/src");
-const SANDBOX_CHECKER_SRC = resolve(
-  import.meta.dirname,
-  "../../packages/sandbox-checker/src",
-);
+const PACKAGES = resolve(import.meta.dirname, "../../packages");
+const SANDBOX_CHECKER_SRC = resolve(PACKAGES, "sandbox-checker/src");
 
 export default defineConfig({
   base: process.env.VITE_APP_URL
@@ -114,7 +115,13 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@dotli/core": CORE_SRC,
+      "@dotli/config": resolve(PACKAGES, "config/src"),
+      "@dotli/shared": resolve(PACKAGES, "shared/src"),
+      "@dotli/storage": resolve(PACKAGES, "storage/src"),
+      "@dotli/resolver": resolve(PACKAGES, "resolver/src"),
+      "@dotli/content": resolve(PACKAGES, "content/src"),
+      "@dotli/auth": resolve(PACKAGES, "auth/src"),
+      "@dotli/ui": resolve(PACKAGES, "ui/src"),
       "@dotli/sandbox-checker": SANDBOX_CHECKER_SRC,
     },
   },

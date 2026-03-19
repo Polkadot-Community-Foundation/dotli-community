@@ -2,7 +2,13 @@
   "extends": "@dotli/typescript-config/base.json",
   "compilerOptions": {
     "paths": {
-      "@dotli/core/*": ["../../packages/core/src/*"],
+      "@dotli/config/*": ["../../packages/config/src/*"],
+      "@dotli/shared/*": ["../../packages/shared/src/*"],
+      "@dotli/storage/*": ["../../packages/storage/src/*"],
+      "@dotli/resolver/*": ["../../packages/resolver/src/*"],
+      "@dotli/content/*": ["../../packages/content/src/*"],
+      "@dotli/auth/*": ["../../packages/auth/src/*"],
+      "@dotli/ui/*": ["../../packages/ui/src/*"],
       "@dotli/sandbox-checker/*": ["../../packages/sandbox-checker/src/*"]
     }
   },

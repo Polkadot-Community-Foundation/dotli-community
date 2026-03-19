@@ -1,0 +1,9 @@
+{
+  "extends": "@dotli/typescript-config/base.json",
+  "compilerOptions": {
+    "paths": {
+      "@dotli/config/*": ["../config/src/*"]
+    }
+  },
+  "include": ["src"]
+}

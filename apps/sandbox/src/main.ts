@@ -4,13 +4,13 @@
 // fetches content via P2P, and renders it in a sandboxed iframe.
 // No dotns resolution, no smoldot, no topbar.
 
-import "@dotli/core/styles.css";
+import "@dotli/ui/styles.css";
 import * as Sentry from "@sentry/browser";
-import { packArchive, type ArchiveFiles } from "@dotli/core/archive";
-import { showStatus, showError } from "@dotli/core/ui";
-import { TIMEOUTS, BASE_DOMAIN } from "@dotli/core/config";
-import { elapsed } from "@dotli/core/perf";
-import { log } from "@dotli/core/log";
+import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
+import { showStatus, showError } from "@dotli/ui/ui";
+import { TIMEOUTS, BASE_DOMAIN } from "@dotli/config/config";
+import { elapsed } from "@dotli/shared/perf";
+import { log } from "@dotli/shared/log";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN_SANDBOX as string | undefined,
@@ -212,8 +212,8 @@ async function main(): Promise<void> {
 
   // Register SW + pre-load chunks in parallel
   const swReady = registerAppServiceWorker();
-  const renderChunkPromise = import("@dotli/core/render");
-  const fetchChunkPromise = import("@dotli/core/fetch");
+  const renderChunkPromise = import("@dotli/ui/render");
+  const fetchChunkPromise = import("@dotli/content/fetch");
 
   // Wait for SW before cache check
   await swReady;

@@ -1,0 +1,28 @@
+{
+  "name": "@dotli/storage",
+  "private": true,
+  "version": "0.2.2",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "bunx eslint src/",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@dotli/eslint-config": "workspace:*",
+    "@dotli/typescript-config": "workspace:*",
+    "eslint": "^10.0.2",
+    "fake-indexeddb": "^6.2.5",
+    "happy-dom": "^20.8.4",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.0",
+    "vitest": "^4.1.0"
+  },
+  "dependencies": {
+    "@dotli/config": "workspace:*",
+    "@dotli/shared": "workspace:*"
+  }
+}

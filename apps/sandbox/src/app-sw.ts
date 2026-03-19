@@ -6,8 +6,8 @@
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;
 
-import { getMimeType } from "@dotli/core/mime";
-import { SW_ARCHIVE_CACHE_MAX } from "@dotli/core/config";
+import { getMimeType } from "@dotli/shared/mime";
+import { SW_ARCHIVE_CACHE_MAX } from "@dotli/config/config";
 
 // ── Base path (derived at runtime from SW script location) ────
 const BASE = self.location.pathname.replace(/(?:src\/)?app-sw\.[jt]s$/, "");

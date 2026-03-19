@@ -45,3 +45,11 @@ tests/results.json
 # Turbo
 .turbo
 
+# AI files
+.claude
+.claude-flow
+.codex
+.mcp.json
+opencode.json
+docs
+CLAUDE.md

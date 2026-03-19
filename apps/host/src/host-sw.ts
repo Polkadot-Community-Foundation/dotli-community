@@ -10,8 +10,8 @@ import {
   handleConnect,
   handleStatus,
   ensureSmoldot,
-} from "@dotli/core/sw-smoldot";
-import { TIMEOUTS } from "@dotli/core/config";
+} from "@dotli/resolver/sw-smoldot";
+import { TIMEOUTS } from "@dotli/config/config";
 
 // ── SW Lifecycle ─────────────────────────────────────────────
 
