@@ -178,55 +178,6 @@
                 <p id="status">Initializing...</p>
             </div>
         </div>
-        <!-- Desktop Download Banner -->
-        <div class="toast-card desktop-banner" id="desktop-banner">
-            <div class="toast-card-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                    <line x1="8" y1="21" x2="16" y2="21" />
-                    <line x1="12" y1="17" x2="12" y2="21" />
-                </svg>
-            </div>
-            <div class="toast-card-text">
-                <a href="https://polkadot.com/get-started/polkadot-for-desktop" target="_blank" rel="noopener">
-                    Get Polkadot Desktop
-                    <span class="toast-card-subtitle">Full experience with native performance</span>
-                </a>
-            </div>
-            <button class="toast-card-close" id="desktop-banner-close" aria-label="Dismiss">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-            </button>
-        </div>
-        <script>
-            (function () {
-                var banner = document.getElementById("desktop-banner");
-                // Hide on mobile/tablet — this is a desktop-only feature
-                if (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-                    banner.remove();
-                    return;
-                }
-                var dismissed = localStorage.getItem("desktop-banner-dismissed");
-                if (dismissed && Math.random() > 0.05) {
-                    banner.remove();
-                } else {
-                    document
-                        .getElementById("desktop-banner-close")
-                        .addEventListener("click", function () {
-                            banner.classList.add("hidden");
-                            localStorage.setItem(
-                                "desktop-banner-dismissed",
-                                "1",
-                            );
-                            setTimeout(function () {
-                                banner.remove();
-                            }, 300);
-                        });
-                }
-            })();
-        </script>
         <script type="module" src="/src/main.ts"></script>
     </body>
 </html>

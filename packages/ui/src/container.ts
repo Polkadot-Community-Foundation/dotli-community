@@ -29,6 +29,7 @@ import { showSignPayloadModal, showSignRawModal } from "@dotli/auth/signing";
 import { deriveProductPublicKey } from "@dotli/auth/account";
 import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
 import { log } from "@dotli/shared/log";
+import { showPushNotification } from "./notification";
 
 // ── Session helpers (shared by all bridges) ────────────────
 
@@ -221,8 +222,9 @@ function wireContainerHandlers(
 
   // ── Push notifications ─────────────────────────────────
 
-  container.handlePushNotification((text, { ok }) => {
-    log.warn(`[${label}] Notification:`, text);
+  container.handlePushNotification(({ text, deeplink }, { ok }) => {
+    log.warn(`[${label}] Push notification:`, { text, deeplink });
+    showPushNotification({ text, deeplink, label });
     return ok(undefined);
   });
 }

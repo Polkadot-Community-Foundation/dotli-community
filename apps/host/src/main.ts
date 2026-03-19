@@ -17,6 +17,28 @@ import { getCachedCid, setCachedCid } from "@dotli/storage/cid-cache";
 import { dur, elapsed } from "@dotli/shared/perf";
 import { TIMEOUTS, BASE_DOMAIN, SITE_ID } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
+import { showNotification } from "@dotli/ui/notification";
+
+// ── Desktop download banner ──────────────────────────────
+if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+  const dismissed = localStorage.getItem("desktop-banner-dismissed");
+  if (!dismissed || Math.random() <= 0.05) {
+    showNotification({
+      label: "Get Polkadot Desktop",
+      text: "Full experience with native performance",
+      deeplink: "https://polkadot.com/get-started/polkadot-for-desktop",
+      icon:
+        '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>' +
+        '<line x1="8" y1="21" x2="16" y2="21"/>' +
+        '<line x1="12" y1="17" x2="12" y2="21"/></svg>',
+      iconBackground: "#000",
+      dismissMs: 0,
+      browserNotification: false,
+      onDismiss: () => localStorage.setItem("desktop-banner-dismissed", "1"),
+    });
+  }
+}
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN_HOST as string | undefined,
