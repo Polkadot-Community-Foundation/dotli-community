@@ -133,55 +133,24 @@ The app context uses `document.write()` to eliminate extra iframe nesting: when 
 
 ## Development
 
-The project scripts use [Bun](https://bun.sh). Install it first:
+The project uses [Bun](https://bun.sh) and [Turborepo](https://turbo.build).
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
-```
-
-Then:
-
-```bash
 bun install
-bun run dev
+bun run preview          # Build + serve both apps on localhost:5173
 ```
 
-Alternatively, if you don't want to install Bun, you can use `npx` directly:
-
-```bash
-bun install
-
-# Host shell (port 5173) — topbar, dotns, smoldot
-bun run dev
-
-# App content (port 5174) — CID fetch, render
-bun run dev:app
-```
-
-Local dev uses wildcard subdomains:
+Local development uses wildcard subdomains:
 
 - `testingout.localhost:5173` — resolves `testingout.dot` via the host
-- `bafyrei....app.localhost:5174` — fetches and renders CID content directly
-
-Both servers should run simultaneously for full functionality.
+- `bafyrei....app.localhost:5173` — fetches and renders CID content directly
 
 ## Sandbox API Checker
 
 dApps rendered in dot.li's sandboxed iframe should communicate exclusively through the container bridge (postMessage), not use web APIs directly. The sandbox checker detects restricted API usage and reports violations in a UI panel.
 
-### Activation
-
-Both the host and app dev servers need the env var:
-
-```bash
-# Terminal 1 — Host shell (port 5173)
-VITE_SANDBOX_CHECKER=true bun run dev
-
-# Terminal 2 — App content (port 5174)
-VITE_SANDBOX_CHECKER=true bun run dev:app
-```
-
-When the env var is not set, the checker is tree-shaken out of production builds entirely.
+The checker is activated by setting `VITE_SANDBOX_CHECKER=true` at build time. When the env var is not set, the checker is tree-shaken out of production builds entirely.
 
 ### Monitored APIs
 
@@ -206,4 +175,4 @@ The app currently targets **Paseo testnet**:
 - **Bulletin Chain peers**: 4 Parity-hosted collator/RPC nodes (WebSocket)
 - **IPFS gateway**: `https://paseo-ipfs.polkadot.io`
 
-All addresses and endpoints are in `src/config.ts`.
+All addresses and endpoints are in `packages/config/src/config.ts`.

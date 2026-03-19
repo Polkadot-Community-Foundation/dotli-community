@@ -101,13 +101,13 @@ export class HeliaClient {
       hashers: [blake2b256, sha256, keccak256Hasher],
       libp2p: {
         connectionGater: {
-          denyDialMultiaddr: async (maAddr) => {
+          denyDialMultiaddr: (maAddr) => {
             const addr = maAddr.toString();
             const match = /\/p2p\/([^/]+)/.exec(addr);
             if (match?.[1] && allowedPeerIds.has(match[1])) {
-              return false; // Allow whitelisted peers
+              return Promise.resolve(false); // Allow whitelisted peers
             }
-            return true; // Deny all others
+            return Promise.resolve(true); // Deny all others
           },
         },
       },
@@ -167,6 +167,7 @@ export class HeliaClient {
       } catch (error) {
         throw new Error(
           `Invalid CID: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
         );
       }
     } else {
@@ -180,7 +181,7 @@ export class HeliaClient {
     );
 
     this.log("debug", "Requesting block from blockstore...");
-    const blockData = await this.helia.blockstore.get(cid);
+    const blockData = this.helia.blockstore.get(cid);
 
     // Convert to Uint8Array
     let data: Uint8Array;
@@ -194,10 +195,9 @@ export class HeliaClient {
       const chunks: Uint8Array[] = [];
       const timeoutMs = TIMEOUTS.P2P_FETCH;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(
-          () => reject(new Error(`Timeout after ${String(timeoutMs / 1000)}s`)),
-          timeoutMs,
-        );
+        setTimeout(() => {
+          reject(new Error(`Timeout after ${String(timeoutMs / 1000)}s`));
+        }, timeoutMs);
       });
 
       const iterator = (blockData as AsyncIterable<Uint8Array>)[
@@ -206,7 +206,7 @@ export class HeliaClient {
       let done = false;
       while (!done) {
         const result = await Promise.race([iterator.next(), timeoutPromise]);
-        if (result.done) {
+        if (result.done === true) {
           done = true;
         } else {
           chunks.push(result.value);
@@ -267,22 +267,20 @@ export class HeliaClient {
 let client: HeliaClient | null = null;
 
 function getClient(): HeliaClient {
-  if (client === null) {
-    client = new HeliaClient({
-      peerMultiaddrs: BULLETIN_PEERS,
-      onLog: (level, message, data) => {
-        const fn =
-          level === "error"
-            ? log.error
-            : level === "success"
-              ? log.warn
-              : level === "debug"
-                ? log.debug
-                : log.warn;
-        fn(`[dot.li fetch] ${message}`, data ?? "");
-      },
-    });
-  }
+  client ??= new HeliaClient({
+    peerMultiaddrs: BULLETIN_PEERS,
+    onLog: (level, message, data) => {
+      const fn =
+        level === "error"
+          ? log.error
+          : level === "success"
+            ? log.warn
+            : level === "debug"
+              ? log.debug
+              : log.warn;
+      fn(`[dot.li fetch] ${message}`, data ?? "");
+    },
+  });
   return client;
 }
 

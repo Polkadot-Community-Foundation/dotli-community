@@ -4,9 +4,7 @@
   "version": "0.2.2",
   "type": "module",
   "scripts": {
-    "dev": "bunx --bun vite --port 5174",
-    "build": "tsc && bunx --bun vite build && bun scripts/compress-dist.ts",
-    "preview": "bunx --bun vite preview",
+    "build": "tsc && bunx --bun vite build && bun ../../scripts/compress-dist.ts",
     "lint": "bunx eslint src/",
     "typecheck": "tsc --noEmit"
   },

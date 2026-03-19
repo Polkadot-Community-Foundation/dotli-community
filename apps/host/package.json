@@ -4,10 +4,7 @@
   "version": "0.2.2",
   "type": "module",
   "scripts": {
-    "dev": "bunx --bun vite",
-    "build": "tsc && bunx --bun vite build && bun scripts/compress-dist.ts",
-    "preview": "bunx --bun vite preview",
-    "preview:test": "bun scripts/preview-server.ts",
+    "build": "tsc && bunx --bun vite build && bun ../../scripts/compress-dist.ts",
     "test:perf": "PERF_RUNS=10 PERF_DOMAIN_A=hackme3 PERF_DOMAIN_B=insync npx playwright test tests/cold-start.spec.ts",
     "test:perf:base": "PERF_RUNS=20 PERF_SAVE_BASE=1 PERF_DOMAIN_A=hackme3 PERF_DOMAIN_B=insync npx playwright test tests/cold-start.spec.ts",
     "test:perf:compare": "bun tests/compare.ts",

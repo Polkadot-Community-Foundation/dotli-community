@@ -24,7 +24,7 @@ export async function fetchFromIpfs(
     );
   }
 
-  const contentType = response.headers.get("content-type") || undefined;
+  const contentType = response.headers.get("content-type") ?? undefined;
   const arrayBuffer = await response.arrayBuffer();
 
   return {

@@ -9,21 +9,54 @@ github-actions:
       - all-globs-to-any-file:
           - 'apps/host/**'
           - '!apps/host/package.json'
-          - '!apps/host/CHANGELOG.md'
 
 "app: sandbox":
   - changed-files:
       - all-globs-to-any-file:
           - 'apps/sandbox/**'
           - '!apps/sandbox/package.json'
-          - '!apps/sandbox/CHANGELOG.md'
 
-"pkg: core":
+"pkg: config":
   - changed-files:
       - all-globs-to-any-file:
-          - 'packages/core/**'
-          - '!packages/core/package.json'
-          - '!packages/core/CHANGELOG.md'
+          - 'packages/config/**'
+          - '!packages/config/package.json'
+
+"pkg: shared":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'packages/shared/**'
+          - '!packages/shared/package.json'
+
+"pkg: storage":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'packages/storage/**'
+          - '!packages/storage/package.json'
+
+"pkg: resolver":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'packages/resolver/**'
+          - '!packages/resolver/package.json'
+
+"pkg: content":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'packages/content/**'
+          - '!packages/content/package.json'
+
+"pkg: auth":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'packages/auth/**'
+          - '!packages/auth/package.json'
+
+"pkg: ui":
+  - changed-files:
+      - all-globs-to-any-file:
+          - 'packages/ui/**'
+          - '!packages/ui/package.json'
 
 "pkg: sandbox-checker":
   - changed-files:
@@ -43,6 +76,6 @@ github-actions:
           - 'packages/typescript-config/**'
           - '!packages/typescript-config/package.json'
 
-"nginx":
+nginx:
   - changed-files:
       - any-glob-to-any-file: 'nginx/**'

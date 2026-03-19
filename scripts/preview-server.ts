@@ -13,10 +13,9 @@ import { join, extname } from "node:path";
 
 const PORT = parseInt(process.env.PORT ?? "5173", 10);
 const ROOT = join(import.meta.dir, "..");
-const MONOREPO_ROOT = join(ROOT, "../..");
 // Monorepo layout: apps/host/dist/ and apps/sandbox/dist/
-const HOST_DIR = join(ROOT, "dist");
-const APP_DIR = join(MONOREPO_ROOT, "apps/sandbox/dist");
+const HOST_DIR = join(ROOT, "apps/host/dist");
+const APP_DIR = join(ROOT, "apps/sandbox/dist");
 
 // Verify builds exist
 for (const [label, dir] of [
