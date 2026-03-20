@@ -15,7 +15,7 @@ import { showStatus, showError, showLanding } from "@dotli/ui/ui";
 import { initTopBar } from "@dotli/ui/topbar";
 import { getCachedCid, setCachedCid } from "@dotli/storage/cid-cache";
 import { dur, elapsed } from "@dotli/shared/perf";
-import { TIMEOUTS, BASE_DOMAIN, SITE_ID } from "@dotli/config/config";
+import { BASE_DOMAIN, SITE_ID } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { showNotification } from "@dotli/ui/notification";
 
@@ -112,51 +112,6 @@ function parseDotLabel(): string | null {
   }
 
   return null;
-}
-
-/**
- * Register the host Service Worker for smoldot persistence.
- */
-async function registerServiceWorker(): Promise<void> {
-  if (!("serviceWorker" in navigator)) {
-    return;
-  }
-
-  try {
-    const swUrl = import.meta.env.DEV
-      ? "/src/host-sw.ts"
-      : `${import.meta.env.BASE_URL}host-sw.js`;
-    const swScope = import.meta.env.DEV ? "/" : import.meta.env.BASE_URL;
-    await navigator.serviceWorker.register(swUrl, {
-      type: "module",
-      scope: swScope,
-    });
-
-    // Wait until the SW is controlling this page
-    if (navigator.serviceWorker.controller) {
-      return;
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Service Worker not available after 10s"));
-      }, TIMEOUTS.SW_READY);
-      navigator.serviceWorker.addEventListener("controllerchange", () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-      void navigator.serviceWorker.ready.then((registration) => {
-        if (navigator.serviceWorker.controller) {
-          clearTimeout(timeout);
-          resolve();
-        } else if (registration.active) {
-          registration.active.postMessage({ type: "SW_CLAIM_EVENT" });
-        }
-      });
-    });
-  } catch (err) {
-    log.warn("[dot.li] Service worker registration failed:", err);
-  }
 }
 
 /**
@@ -497,27 +452,6 @@ async function main(): Promise<void> {
   showStatus(`Resolving ${label}.dot...`);
 
   try {
-    // Start SW registration in parallel (for smoldot persistence)
-    performance.mark("dotli:sw:start");
-    const swStart = performance.now();
-    log.warn(`[dot.li perf] SW registration started (${elapsed(T0)})`);
-
-    if (!navigator.serviceWorker.controller) {
-      void resolveChunkPromise.then(({ markFreshSwRegistration }) => {
-        markFreshSwRegistration();
-      });
-    }
-
-    const swReady = registerServiceWorker().then(() => {
-      performance.mark("dotli:sw:end");
-      log.warn(
-        `[dot.li perf] SW registration done (${dur(swStart)}, ${elapsed(T0)})`,
-      );
-    });
-    void swReady.catch(() => {
-      /* fire-and-forget */
-    });
-
     // ── Fast path: CID cache hit → iframe to cid.app.dot.li ──
     const cachedCid = await getCachedCid(label);
     if (cachedCid !== null) {

@@ -1,5 +1,5 @@
 import { sentryVitePlugin } from "@sentry/vite-plugin";
-import { defineConfig, build as viteBuild, type Plugin } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import { readFileSync, copyFileSync } from "node:fs";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
@@ -140,57 +140,6 @@ function githubPages404(): Plugin {
 }
 
 /**
- * Build the Service Worker as a self-contained ES module bundle.
- */
-function buildServiceWorker(): Plugin {
-  return {
-    name: "build-service-worker",
-    apply: "build",
-    async closeBundle() {
-      console.log("\nBuilding Service Worker (host-sw)...");
-      await viteBuild({
-        configFile: false,
-        plugins: [wasm()],
-        resolve: {
-          alias: {
-            "@dotli/config": resolve(
-              import.meta.dirname,
-              "../../packages/config/src",
-            ),
-            "@dotli/shared": resolve(
-              import.meta.dirname,
-              "../../packages/shared/src",
-            ),
-            "@dotli/storage": resolve(
-              import.meta.dirname,
-              "../../packages/storage/src",
-            ),
-            "@dotli/resolver": resolve(
-              import.meta.dirname,
-              "../../packages/resolver/src",
-            ),
-          },
-        },
-        build: {
-          emptyOutDir: false,
-          outDir: OUT_DIR,
-          lib: {
-            entry: resolve(import.meta.dirname, "src/host-sw.ts"),
-            formats: ["es"],
-            fileName: () => "host-sw.js",
-          },
-          codeSplitting: false,
-          sourcemap: false,
-          minify: true,
-        },
-        logLevel: "warn",
-      });
-      console.log(`Service Worker built -> ${OUT_DIR}/host-sw.js\n`);
-    },
-  };
-}
-
-/**
  * Sentry plugin — only active when SENTRY_AUTH_TOKEN is set (CI deploys).
  * Skipped locally so source maps are preserved for debugging.
  */
@@ -217,7 +166,6 @@ export default defineConfig({
     wasm(),
     preconnectBootnodes(),
     preloadCriticalAssets(),
-    buildServiceWorker(),
     githubPages404(),
     sentry("dotli"),
   ],

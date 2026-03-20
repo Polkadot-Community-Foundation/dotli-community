@@ -6,9 +6,8 @@
 
 import { getSmProvider } from "polkadot-api/sm-provider";
 import { createClient, type PolkadotClient } from "polkadot-api";
-import { isSwSmoldotReady, getSwSmoldotProvider } from "./sw-provider";
 import { Binary } from "polkadot-api";
-import { CONTRACTS, STORAGE_SLOTS, TIMEOUTS } from "@dotli/config/config";
+import { CONTRACTS, STORAGE_SLOTS } from "@dotli/config/config";
 import {
   namehash,
   computeMappingSlot,
@@ -35,81 +34,10 @@ export type StatusCallback = (status: string) => void;
 let clientInstance: PolkadotClient | null = null;
 let apiInstance: ReturnType<PolkadotClient["getUnsafeApi"]> | null = null;
 
-// When true, skip trySwSmoldot() entirely — the SW was freshly registered
-// and can't have smoldot ready. Avoids 500ms isSwSmoldotReady() timeout.
-let freshSwRegistration = false;
-
-/**
- * Mark the SW as freshly registered (cold start).
- * Called from main.ts when no controller existed before registration.
- */
-export function markFreshSwRegistration(): void {
-  freshSwRegistration = true;
-}
-
-/**
- * Try to connect via the Service Worker's smoldot instance.
- * Returns the API if the SW has smoldot ready, null otherwise.
- */
-async function trySwSmoldot(
-  onStatus?: StatusCallback,
-): Promise<ReturnType<PolkadotClient["getUnsafeApi"]> | null> {
-  try {
-    if (!navigator.serviceWorker.controller) {
-      return null;
-    }
-
-    // On cold start the SW was just registered — smoldot can't be ready yet.
-    // Skip the isSwSmoldotReady() check to avoid the 500ms timeout.
-    if (freshSwRegistration) {
-      log.warn(
-        "[dot.li resolve] Fresh SW registration, skipping SW smoldot check",
-      );
-      return null;
-    }
-
-    const ready = await isSwSmoldotReady();
-    if (!ready) {
-      log.warn("[dot.li resolve] SW smoldot not ready, using direct smoldot");
-      return null;
-    }
-
-    performance.mark("dotli:smoldot:sw:start");
-    const swStart = performance.now();
-    onStatus?.("Connecting to light client (Service Worker)...");
-
-    const provider = getSwSmoldotProvider();
-    clientInstance = createClient(provider);
-
-    onStatus?.("Syncing with Asset Hub Paseo...");
-    await Promise.race([
-      clientInstance.getFinalizedBlock(),
-      new Promise((_resolve, reject) =>
-        setTimeout(() => {
-          reject(new Error("SW smoldot sync timeout"));
-        }, TIMEOUTS.SW_SMOLDOT_SYNC),
-      ),
-    ]);
-    performance.mark("dotli:smoldot:sw:end");
-    log.warn(
-      `[dot.li resolve] SW smoldot: synced to finalized block (${dur(swStart)})`,
-    );
-
-    apiInstance = clientInstance.getUnsafeApi();
-    onStatus?.("Connected to Asset Hub Paseo (via Service Worker)");
-    return apiInstance;
-  } catch (err) {
-    log.warn("[dot.li resolve] SW smoldot failed, falling back:", err);
-    clientInstance?.destroy();
-    clientInstance = null;
-    return null;
-  }
-}
-
 /**
  * Initialize the smoldot light client and connect to Asset Hub Paseo.
- * Tries the Service Worker's persistent smoldot first, falls back to
- * starting a new smoldot instance in the main thread.
+ * Runs smoldot in a Web Worker on the main thread. The relay chain DB
+ * is persisted to IndexedDB for fast restarts on subsequent visits.
  */
 let ensureClientPromise: Promise<
   ReturnType<PolkadotClient["getUnsafeApi"]>
@@ -136,13 +64,6 @@ async function ensureClient(
 async function doEnsureClient(
   onStatus?: StatusCallback,
 ): Promise<ReturnType<PolkadotClient["getUnsafeApi"]>> {
-  // Try SW smoldot first (persistent across navigations)
-  const swApi = await trySwSmoldot(onStatus);
-  if (swApi) {
-    return swApi;
-  }
-
-  // Fall back to direct smoldot (main thread Web Worker)
   performance.mark("dotli:smoldot:init:start");
   const initStart = performance.now();
   onStatus?.("Starting light client...");

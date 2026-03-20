@@ -109,10 +109,6 @@ export const TIMEOUTS = {
   SW_CACHE_LOOKUP: 3_000,
   /** Waiting for SW controllerchange after registration */
   SW_READY: 10_000,
-  /** SW smoldot ready check */
-  SW_SMOLDOT_READY: 500,
-  /** SW smoldot connect handshake */
-  SW_SMOLDOT_CONNECT: 30_000,
   /** P2P fetch abort (per attempt) */
   P2P_FETCH: 30_000,
   /** Delay between P2P retry attempts */
@@ -123,10 +119,6 @@ export const TIMEOUTS = {
   RELAY_DB_FIRST_SAVE: 5_000,
   /** Periodic relay DB save interval */
   RELAY_DB_SAVE_INTERVAL: 60_000,
-  /** Timeout for SW smoldot getFinalizedBlock before falling back */
-  SW_SMOLDOT_SYNC: 5_000,
-  /** Delay before starting smoldot in SW activate */
-  SW_SMOLDOT_INIT_DELAY: 100,
 } as const;
 
 /** Max bytes for `chainHead_unstable_finalizedDatabase` RPC param. */
