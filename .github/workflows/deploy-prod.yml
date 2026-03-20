@@ -10,37 +10,9 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.release.tag_name }}
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - run: bun install
-
-      - run: bun run build:prod
-        env:
-          VITE_APP_ENV: production
-          VITE_APP_URL: ${{ secrets.APP_URL }}
-          VITE_COMMIT_SHA: ${{ github.sha }}
-          VITE_SENTRY_DSN_HOST: ${{ secrets.SENTRY_DSN_HOST }}
-          VITE_SENTRY_DSN_SANDBOX: ${{ secrets.SENTRY_DSN_SANDBOX }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-
-      - uses: webfactory/ssh-agent@v0.10.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - run: ssh-keyscan ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
-
-      - name: Deploy
-        run: |
-          rsync -avz --delete apps/host/dist/ \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/host/
-          rsync -avz --delete apps/sandbox/dist/ \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/app/
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: production
+      app_env: production
+      ref: ${{ github.event.release.tag_name }}
+    secrets: inherit

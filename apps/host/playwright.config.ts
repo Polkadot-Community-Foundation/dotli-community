@@ -12,7 +12,7 @@ export default defineConfig({
   },
   reporter: [["list"], ["json", { outputFile: "tests/results.json" }]],
   webServer: {
-    command: "bun scripts/preview-server.ts",
+    command: "bun ../../scripts/preview-server.ts",
     url: "http://localhost:5173",
     reuseExistingServer: true,
     timeout: 30_000,

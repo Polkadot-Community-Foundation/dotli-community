@@ -85,7 +85,7 @@ export class HeliaClient {
     const allowedPeerIds = new Set<string>();
     for (const addr of this.config.peerMultiaddrs) {
       const match = /\/p2p\/([^/]+)/.exec(addr);
-      if (match?.[1]) {
+      if (match?.[1] !== undefined && match[1] !== "") {
         allowedPeerIds.add(match[1]);
       }
     }
@@ -104,7 +104,11 @@ export class HeliaClient {
           denyDialMultiaddr: (maAddr) => {
             const addr = maAddr.toString();
             const match = /\/p2p\/([^/]+)/.exec(addr);
-            if (match?.[1] && allowedPeerIds.has(match[1])) {
+            if (
+              match?.[1] !== undefined &&
+              match[1] !== "" &&
+              allowedPeerIds.has(match[1])
+            ) {
               return Promise.resolve(false); // Allow whitelisted peers
             }
             return Promise.resolve(true); // Deny all others

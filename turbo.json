@@ -17,10 +17,10 @@
       "dependsOn": ["build"]
     },
     "lint": {
-      "dependsOn": ["^lint"]
+      "outputs": []
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"]
+      "outputs": []
     },
     "dev": {
       "cache": false,

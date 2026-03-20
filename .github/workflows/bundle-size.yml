@@ -16,7 +16,7 @@ permissions:
 jobs:
   # ── Main branch: build and store baseline sizes ─────────────
   baseline:
-    name: Update Baseline
+    name: Continuous Integration
     runs-on: parity-default
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
@@ -79,7 +79,7 @@ jobs:
 
   # ── PR: build, compare against main, and comment ───────────
   compare:
-    name: PR Bundle Size
+    name: Continuous Integration
     runs-on: parity-default
     if: github.event_name == 'pull_request' && github.event.sender.type != 'Bot'
 

@@ -118,8 +118,7 @@ export function wordToBigInt(data: Uint8Array): bigint {
  * Address is right-aligned (last 20 bytes).
  */
 export function extractAddress(data: Uint8Array): string {
-  const hex = toHex(data).slice(2);
-  return `0x${hex.slice(24)}`;
+  return `0x${bytesToHex(data.slice(12))}`;
 }
 
 /**

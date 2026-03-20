@@ -224,6 +224,7 @@ function wireContainerHandlers(
 
   container.handlePushNotification(({ text, deeplink }, { ok }) => {
     log.warn(`[${label}] Push notification:`, { text, deeplink });
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
     showPushNotification({ text, deeplink, label });
     return ok(undefined);
   });

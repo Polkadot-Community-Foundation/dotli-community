@@ -53,7 +53,7 @@ interface Notif {
 
 // ── State ────────────────────────────────────────────────
 
-let items: Notif[] = [];
+const items: Notif[] = [];
 let expanded = false;
 let nextId = 0;
 const timers = new Map<number, ReturnType<typeof setTimeout>>();
@@ -69,7 +69,9 @@ function sanitizeText(raw: string): string {
 }
 
 function validateDeeplink(dl: string | undefined): string | undefined {
-  if (!dl) return undefined;
+  if (dl === undefined || dl === "") {
+    return undefined;
+  }
   try {
     const u = new URL(dl);
     return u.protocol === "https:" || u.protocol === "http:" ? dl : undefined;
@@ -85,11 +87,15 @@ function shouldPause(): boolean {
 // ── Timers ───────────────────────────────────────────────
 
 function startTimer(n: Notif): void {
-  if (n.remaining <= 0 || n.leaving || shouldPause()) return;
+  if (n.remaining <= 0 || n.leaving || shouldPause()) {
+    return;
+  }
   n.startedAt = Date.now();
   timers.set(
     n.id,
-    setTimeout(() => dismiss(n.id), n.remaining),
+    setTimeout(() => {
+      dismiss(n.id);
+    }, n.remaining),
   );
 }
 
@@ -106,29 +112,42 @@ function pauseTimer(n: Notif): void {
 }
 
 function pauseAll(): void {
-  for (const n of items) pauseTimer(n);
+  for (const n of items) {
+    pauseTimer(n);
+  }
 }
 
 function resumeAll(): void {
-  if (shouldPause()) return;
-  for (const n of items) startTimer(n);
+  if (shouldPause()) {
+    return;
+  }
+  for (const n of items) {
+    startTimer(n);
+  }
 }
 
 // ── Visibility listener ──────────────────────────────────
 
 function ensureVisibilityListener(): void {
-  if (visListenerBound) return;
+  if (visListenerBound) {
+    return;
+  }
   visListenerBound = true;
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") resumeAll();
-    else pauseAll();
+    if (document.visibilityState === "visible") {
+      resumeAll();
+    } else {
+      pauseAll();
+    }
   });
 }
 
 // ── DOM setup (created once, reused) ─────────────────────
 
 function ensureRoot(): void {
-  if (root) return;
+  if (root) {
+    return;
+  }
 
   root = document.createElement("div");
   root.className = "notif-stack";
@@ -148,7 +167,9 @@ function ensureRoot(): void {
 }
 
 function teardownRoot(): void {
-  if (!root) return;
+  if (!root) {
+    return;
+  }
   root.removeEventListener("click", handleClick);
   removeOutsideListeners();
   root.remove();
@@ -165,10 +186,10 @@ function handleClick(e: MouseEvent): void {
     return;
   }
 
-  const closeBtn = t.closest(".notif-card-close") as HTMLElement | null;
+  const closeBtn = t.closest(".notif-card-close");
   if (closeBtn) {
     e.stopPropagation();
-    dismiss(Number(closeBtn.dataset.id));
+    dismiss(Number((closeBtn as HTMLElement).dataset.id));
     return;
   }
 
@@ -193,7 +214,9 @@ function createCardEl(n: Notif): HTMLElement {
   const icon = document.createElement("div");
   icon.className = "notif-icon";
   icon.innerHTML = n.icon;
-  if (n.iconBackground) icon.style.background = n.iconBackground;
+  if (n.iconBackground) {
+    icon.style.background = n.iconBackground;
+  }
   card.appendChild(icon);
 
   const textArea = document.createElement("div");
@@ -204,7 +227,7 @@ function createCardEl(n: Notif): HTMLElement {
   title.textContent = n.label;
   textArea.appendChild(title);
 
-  if (n.deeplink) {
+  if (n.deeplink !== undefined && n.deeplink !== "") {
     const a = document.createElement("a");
     a.href = n.deeplink;
     a.target = "_blank";
@@ -229,7 +252,9 @@ function createCardEl(n: Notif): HTMLElement {
 
   card.addEventListener(
     "animationend",
-    () => card.classList.remove("notif-enter"),
+    () => {
+      card.classList.remove("notif-enter");
+    },
     { once: true },
   );
 
@@ -239,7 +264,9 @@ function createCardEl(n: Notif): HTMLElement {
 // ── Layout update ────────────────────────────────────────
 
 function updateLayout(): void {
-  if (!root || !cardsEl || !items.length) return;
+  if (!root || !cardsEl || !items.length) {
+    return;
+  }
 
   root.classList.toggle("expanded", expanded);
 
@@ -247,7 +274,9 @@ function updateLayout(): void {
   const visible = expanded ? active : active.slice(-MAX_STACK);
 
   for (const n of items) {
-    if (n.leaving) continue;
+    if (n.leaving) {
+      continue;
+    }
     n.el.classList.toggle("notif-hidden-card", !visible.includes(n));
   }
 
@@ -259,24 +288,31 @@ function updateLayout(): void {
   cardsEl.style.cursor = !expanded && active.length > 1 ? "pointer" : "";
 
   // Hide stack close-all when only one notification; show per-card close instead
-  const closeAllBtn = root.querySelector(
-    ".notif-close-all",
-  ) as HTMLElement | null;
-  if (closeAllBtn) closeAllBtn.style.display = active.length > 1 ? "" : "none";
+  const closeAllBtn = root.querySelector(".notif-close-all");
+  if (closeAllBtn) {
+    (closeAllBtn as HTMLElement).style.display =
+      active.length > 1 ? "" : "none";
+  }
   root.classList.toggle("single", active.length <= 1);
 }
 
 function hideCloseAll(): void {
-  if (!root) return;
-  const btn = root.querySelector(".notif-close-all") as HTMLElement | null;
-  if (btn) btn.style.display = "none";
+  if (!root) {
+    return;
+  }
+  const btn = root.querySelector(".notif-close-all");
+  if (btn) {
+    (btn as HTMLElement).style.display = "none";
+  }
 }
 
 // ── Actions ──────────────────────────────────────────────
 
 function dismiss(id: number): void {
   const n = items.find((x) => x.id === id);
-  if (!n || n.leaving) return;
+  if (!n || n.leaving) {
+    return;
+  }
 
   n.leaving = true;
   pauseTimer(n);
@@ -292,7 +328,9 @@ function dismiss(id: number): void {
 
   // If this is the last active card, hide close-all button immediately
   const remaining = items.filter((x) => !x.leaving);
-  if (!remaining.length) hideCloseAll();
+  if (!remaining.length) {
+    hideCloseAll();
+  }
 
   n.el.classList.add("notif-leave");
   n.el.addEventListener(
@@ -300,7 +338,9 @@ function dismiss(id: number): void {
     () => {
       n.el.remove();
       const idx = items.indexOf(n);
-      if (idx >= 0) items.splice(idx, 1);
+      if (idx >= 0) {
+        items.splice(idx, 1);
+      }
       afterRemoval();
     },
     { once: true },
@@ -310,7 +350,9 @@ function dismiss(id: number): void {
 
 function dismissAll(): void {
   const active = items.filter((n) => !n.leaving);
-  if (!active.length) return;
+  if (!active.length) {
+    return;
+  }
 
   pauseAll();
   removeOutsideListeners();
@@ -351,14 +393,18 @@ function afterRemoval(): void {
 }
 
 function onClickOutside(e: MouseEvent): void {
-  if (!expanded || !root) return;
+  if (!expanded || !root) {
+    return;
+  }
   if (!root.contains(e.target as Node)) {
     collapseStack();
   }
 }
 
 function onWindowBlur(): void {
-  if (expanded) collapseStack();
+  if (expanded) {
+    collapseStack();
+  }
 }
 
 function addOutsideListeners(): void {
@@ -375,7 +421,9 @@ function expandStack(): void {
   expanded = true;
   pauseAll();
   updateLayout();
-  if (cardsEl) cardsEl.scrollTop = cardsEl.scrollHeight;
+  if (cardsEl) {
+    cardsEl.scrollTop = cardsEl.scrollHeight;
+  }
   addOutsideListeners();
 }
 
@@ -393,21 +441,30 @@ function fireBrowserNotification(
   deeplink: string | undefined,
   label: string,
 ): void {
-  if (!("Notification" in window)) return;
+  if (!("Notification" in window)) {
+    return;
+  }
 
   const show = (): void => {
     const n = new Notification(label, { body: text });
     n.onclick = () => {
       window.focus();
-      if (deeplink) window.open(deeplink, "_blank");
+      if (deeplink !== undefined && deeplink !== "") {
+        window.open(deeplink, "_blank");
+      }
     };
-    setTimeout(() => n.close(), 5000);
+    setTimeout(() => {
+      n.close();
+    }, 5000);
   };
 
-  if (Notification.permission === "granted") show();
-  else if (Notification.permission !== "denied") {
+  if (Notification.permission === "granted") {
+    show();
+  } else if (Notification.permission !== "denied") {
     void Notification.requestPermission().then((p) => {
-      if (p === "granted") show();
+      if (p === "granted") {
+        show();
+      }
     });
   }
 }
@@ -416,7 +473,9 @@ function fireBrowserNotification(
 
 export function showNotification(params: NotificationParams): void {
   const text = sanitizeText(params.text);
-  if (!text) return;
+  if (!text) {
+    return;
+  }
   const deeplink = validateDeeplink(params.deeplink);
   const dismissMs = params.dismissMs ?? NOTIFICATION_DISMISS_MS;
   const useBrowserNotif = params.browserNotification ?? true;
@@ -434,14 +493,16 @@ export function showNotification(params: NotificationParams): void {
     iconBackground: params.iconBackground ?? "",
     remaining: dismissMs,
     startedAt: 0,
-    el: null!,
+    el: undefined as unknown as HTMLElement,
     leaving: false,
     onDismiss: params.onDismiss,
   };
   item.el = createCardEl(item);
 
   items.push(item);
-  cardsEl!.appendChild(item.el);
+  if (cardsEl) {
+    cardsEl.appendChild(item.el);
+  }
   updateLayout();
   startTimer(item);
 
