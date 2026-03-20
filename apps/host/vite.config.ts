@@ -179,11 +179,7 @@ function buildServiceWorker(): Plugin {
             formats: ["es"],
             fileName: () => "host-sw.js",
           },
-          rollupOptions: {
-            output: {
-              inlineDynamicImports: true,
-            },
-          },
+          codeSplitting: false,
           sourcemap: false,
           minify: true,
         },
@@ -192,6 +188,22 @@ function buildServiceWorker(): Plugin {
       console.log(`Service Worker built -> ${OUT_DIR}/host-sw.js\n`);
     },
   };
+}
+
+/**
+ * Sentry plugin — only active when SENTRY_AUTH_TOKEN is set (CI deploys).
+ * Skipped locally so source maps are preserved for debugging.
+ */
+function sentry(project: string): Plugin | false {
+  if (!process.env.SENTRY_AUTH_TOKEN) return false;
+  return sentryVitePlugin({
+    org: "paritytech",
+    project,
+    telemetry: false,
+    authToken: process.env.SENTRY_AUTH_TOKEN,
+    release: { name: process.env.VITE_COMMIT_SHA },
+    sourcemaps: { filesToDeleteAfterUpload: ["./dist/**/*.map"] },
+  });
 }
 
 const PACKAGES = resolve(import.meta.dirname, "../../packages");
@@ -207,18 +219,7 @@ export default defineConfig({
     preloadCriticalAssets(),
     buildServiceWorker(),
     githubPages404(),
-    sentryVitePlugin({
-      org: "paritytech",
-      project: "dotli",
-      telemetry: false,
-      authToken: process.env.SENTRY_AUTH_TOKEN,
-      release: {
-        name: process.env.VITE_COMMIT_SHA,
-      },
-      sourcemaps: {
-        filesToDeleteAfterUpload: ["./dist/**/*.map"],
-      },
-    }),
+    sentry("dotli"),
   ],
   resolve: {
     alias: {

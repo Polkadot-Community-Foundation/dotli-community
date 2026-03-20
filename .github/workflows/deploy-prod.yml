@@ -23,7 +23,7 @@ jobs:
 
       - run: bun install
 
-      - run: bun run build
+      - run: bun run build:prod
         env:
           VITE_APP_ENV: production
           VITE_APP_URL: ${{ secrets.APP_URL }}

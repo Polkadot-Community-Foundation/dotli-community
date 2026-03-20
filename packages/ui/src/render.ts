@@ -2,10 +2,12 @@
 //
 // Takes fetched content and renders it in a sandboxed <iframe>.
 // The iframe isolates the resolved site from the viewer's origin.
-// Uses blob URLs so the container bridge can communicate via postMessage.
+//
+// This module is bridge-free — it does not import the container bridge,
+// auth, resolver, or smoldot. The host build uses bridge.ts which
+// adds container bridge support for dApp ↔ host communication.
 
 import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
-import { BASE_DOMAIN } from "@dotli/config/config";
 
 /**
  * Darken a CSS hex color by a given factor (0 = unchanged, 1 = black).
@@ -31,13 +33,6 @@ function darkenColor(color: string, amount: number): string {
     Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0");
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
-
-// Eagerly load the container bridge chunk — starts downloading when
-// the render chunk is imported, so it's ready by the time we need it.
-const containerChunkPromise = import("./container");
-void containerChunkPromise.catch(() => {
-  /* fire-and-forget */
-});
 
 const app = document.getElementById("app") ?? document.body;
 
@@ -68,11 +63,9 @@ function getDeepPath(): string {
 }
 
 /**
- * Render single-file HTML content in a sandboxed iframe with host-container bridge.
+ * Render single-file HTML content in a sandboxed iframe.
  *
- * Creates a blob URL from the content and passes it to createIframeProvider,
- * which sets iframe.src itself. The container bridge enables postMessage
- * communication between the SPA and dot.li.
+ * Creates a blob URL from the content and loads it in an iframe.
  */
 export async function renderContent(
   content: Uint8Array,
@@ -104,7 +97,7 @@ export async function renderContent(
     }
   }
 
-  await renderIframe(blobUrl, label);
+  renderIframe(blobUrl, label);
 }
 
 /**
@@ -159,7 +152,7 @@ export async function renderArchive(
     deepPath !== ""
       ? `${window.location.origin}${appBase}${deepPath}`
       : `${window.location.origin}${appBase}/index.html`;
-  await renderIframe(swUrl, label);
+  renderIframe(swUrl, label);
 }
 
 // Pre-created iframe element — call prepareIframe() early to avoid
@@ -199,7 +192,7 @@ export function prepareIframe(): void {
   preparedIframe = iframe;
 }
 
-export async function renderIframe(url: string, label: string): Promise<void> {
+export function renderIframe(url: string, label: string): void {
   const hasTopbar = document.getElementById("topbar") !== null;
   const iframeStyle = hasTopbar
     ? "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;"
@@ -232,22 +225,7 @@ export async function renderIframe(url: string, label: string): Promise<void> {
     app.appendChild(iframe);
   }
 
-  const { setupContainer, setupNestedBridgeDetector } =
-    await containerChunkPromise;
-  const disposePrimary = setupContainer(iframe, url, label);
-  const disposeNested = setupNestedBridgeDetector(iframe, label);
-  currentDispose = () => {
-    disposePrimary();
-    disposeNested();
-  };
-
-  if (
-    (import.meta.env.VITE_SANDBOX_CHECKER as string | undefined) !== undefined
-  ) {
-    const { setupViolationPanel } =
-      await import("@dotli/sandbox-checker/sandbox-checker-ui");
-    currentPanelDispose = setupViolationPanel(iframe);
-  }
+  iframe.src = url;
 
   // Mirror the iframe's document.title and <meta name="theme-color"> to the
   // parent page. SPAs change these dynamically, so we observe mutations.
@@ -342,71 +320,6 @@ function applyTopbarColor(
     urlPill.style.backgroundColor = darkenColor(color, 0.35);
     urlPill.style.borderColor = darkenColor(color, 0.2);
   }
-}
-
-/**
- * Render content in a cross-origin app subdomain iframe (cid.app.dot.li).
- * Used by the host build to delegate content fetching+rendering to the app context.
- *
- * Sets up the container bridge targeting the app iframe. The app context
- * acts as a transparent postMessage relay between the host and the dApp iframe.
- */
-export async function renderAppSubdomain(
-  cid: string,
-  label: string,
-): Promise<void> {
-  cleanup();
-
-  const appOrigin = getAppOrigin(cid);
-  const deepPath = getDeepPath();
-  const url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
-
-  const iframe = document.createElement("iframe");
-  // TODO: sandbox permissions should be defined by a dApp manifest
-  iframe.sandbox.add(
-    "allow-scripts",
-    "allow-same-origin",
-    "allow-forms",
-    "allow-pointer-lock",
-  );
-  iframe.allow = "clipboard-write";
-  iframe.style.cssText =
-    "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
-  document.body.style.margin = "0";
-  document.body.style.overflow = "hidden";
-  app.innerHTML = "";
-  app.appendChild(iframe);
-
-  // Set up container bridge targeting the app iframe.
-  // createIframeProvider sets iframe.src = url internally.
-  // The nested bridge detector handles dApps embedded within the primary dApp.
-  const { setupContainer, setupNestedBridgeDetector } =
-    await containerChunkPromise;
-  const disposePrimary = setupContainer(iframe, url, label);
-  const disposeNested = setupNestedBridgeDetector(iframe, label);
-  currentDispose = () => {
-    disposePrimary();
-    disposeNested();
-  };
-
-  if (
-    (import.meta.env.VITE_SANDBOX_CHECKER as string | undefined) !== undefined
-  ) {
-    const { setupViolationPanel } =
-      await import("@dotli/sandbox-checker/sandbox-checker-ui");
-    currentPanelDispose = setupViolationPanel(iframe);
-  }
-
-  document.title = `${label}.dot`;
-}
-
-function getAppOrigin(cid: string): string {
-  const hostname = window.location.hostname;
-  if (hostname.endsWith(".localhost") || hostname === "localhost") {
-    const port = import.meta.env.DEV ? "5174" : window.location.port;
-    return `http://${cid}.app.localhost:${port}`;
-  }
-  return `https://${cid}.app.${BASE_DOMAIN}`;
 }
 
 function cleanup(): void {

@@ -21,14 +21,20 @@
   "dependencies": {
     "@dotli/config": "workspace:*",
     "@dotli/shared": "workspace:*",
-    "@dotli/auth": "workspace:*",
     "@dotli/content": "workspace:*",
-    "@dotli/resolver": "workspace:*",
     "@dotli/sandbox-checker": "workspace:*",
     "@novasamatech/host-api": "^0.6.6-1",
     "@novasamatech/host-container": "^0.6.6-1",
     "@novasamatech/host-papp": "^0.6.6-1",
     "neverthrow": "^8.2.0",
     "qrcode": "^1.5.4"
+  },
+  "peerDependencies": {
+    "@dotli/auth": "workspace:*",
+    "@dotli/resolver": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@dotli/auth": { "optional": true },
+    "@dotli/resolver": { "optional": true }
   }
 }

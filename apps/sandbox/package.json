@@ -4,7 +4,8 @@
   "version": "0.2.2",
   "type": "module",
   "scripts": {
-    "build": "tsc && bunx --bun vite build && bun ../../scripts/compress-dist.ts",
+    "build": "tsc && bunx --bun vite build",
+    "build:prod": "tsc && bunx --bun vite build && bun ../../scripts/compress-dist.ts",
     "lint": "bunx eslint src/",
     "typecheck": "tsc --noEmit"
   },

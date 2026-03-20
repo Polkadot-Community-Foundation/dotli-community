@@ -6,6 +6,22 @@ import wasm from "vite-plugin-wasm";
 const OUT_DIR = "dist";
 
 /**
+ * Sentry plugin — only active when SENTRY_AUTH_TOKEN is set (CI deploys).
+ * Skipped locally so source maps are preserved for debugging.
+ */
+function sentry(project: string): Plugin | false {
+  if (!process.env.SENTRY_AUTH_TOKEN) return false;
+  return sentryVitePlugin({
+    org: "paritytech",
+    project,
+    telemetry: false,
+    authToken: process.env.SENTRY_AUTH_TOKEN,
+    release: { name: process.env.VITE_COMMIT_SHA },
+    sourcemaps: { filesToDeleteAfterUpload: ["./dist/**/*.map"] },
+  });
+}
+
+/**
  * Build the Service Worker as a self-contained ES module bundle.
  */
 function buildServiceWorker(): Plugin {
@@ -37,11 +53,7 @@ function buildServiceWorker(): Plugin {
             formats: ["es"],
             fileName: () => "app-sw.js",
           },
-          rollupOptions: {
-            output: {
-              inlineDynamicImports: true,
-            },
-          },
+          codeSplitting: false,
           sourcemap: false,
           minify: true,
         },
@@ -100,27 +112,14 @@ export default defineConfig({
     wasm(),
     preloadCriticalAssets(),
     buildServiceWorker(),
-    sentryVitePlugin({
-      org: "paritytech",
-      project: "dotli-sandbox",
-      telemetry: false,
-      authToken: process.env.SENTRY_AUTH_TOKEN,
-      release: {
-        name: process.env.VITE_COMMIT_SHA,
-      },
-      sourcemaps: {
-        filesToDeleteAfterUpload: ["./dist/**/*.map"],
-      },
-    }),
+    sentry("dotli-sandbox"),
   ],
   resolve: {
     alias: {
       "@dotli/config": resolve(PACKAGES, "config/src"),
       "@dotli/shared": resolve(PACKAGES, "shared/src"),
       "@dotli/storage": resolve(PACKAGES, "storage/src"),
-      "@dotli/resolver": resolve(PACKAGES, "resolver/src"),
       "@dotli/content": resolve(PACKAGES, "content/src"),
-      "@dotli/auth": resolve(PACKAGES, "auth/src"),
       "@dotli/ui": resolve(PACKAGES, "ui/src"),
       "@dotli/sandbox-checker": SANDBOX_CHECKER_SRC,
     },
@@ -128,9 +127,7 @@ export default defineConfig({
   define: {
     __BUILD_TARGET__: JSON.stringify("app"),
   },
-  optimizeDeps: {
-    exclude: ["@polkadot-api/wasm-executor", "verifiablejs"],
-  },
+  optimizeDeps: {},
   build: {
     target: "esnext",
     modulePreload: { polyfill: false },

@@ -1,26 +1,21 @@
-// dot.li — dotNS name resolution via smoldot light client
+// dot.li — dotNS name resolution via direct storage reads
 //
-// Connects to Asset Hub Paseo via an in-browser light client,
-// calls the dotNS contracts through the Revive runtime API,
-// and returns the IPFS CID associated with a .dot name.
+// Connects to Asset Hub Paseo via an in-browser smoldot light client
+// and reads dotNS contract storage directly through ReviveApi.get_storage.
+// No EVM execution, no ABI encoding — just raw storage slot reads.
 
-// Chain spec is now managed by smoldot.ts singleton
 import { getSmProvider } from "polkadot-api/sm-provider";
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { isSwSmoldotReady, getSwSmoldotProvider } from "./sw-provider";
 import { Binary } from "polkadot-api";
-import {
-  CONTRACTS,
-  DRY_RUN_WEIGHT_LIMIT,
-  DRY_RUN_STORAGE_LIMIT,
-  DUMMY_ORIGIN,
-  TIMEOUTS,
-} from "@dotli/config/config";
+import { CONTRACTS, STORAGE_SLOTS, TIMEOUTS } from "@dotli/config/config";
 import {
   namehash,
-  encodeFunctionCall,
-  decodeBytes,
-  decodeAddress,
+  computeMappingSlot,
+  addToSlot,
+  toHex,
+  extractAddress,
+  decodeBytesSlot,
   decodeIpfsContenthash,
 } from "./abi";
 import { dur } from "@dotli/shared/perf";
@@ -204,94 +199,151 @@ async function doEnsureClient(
   return apiInstance;
 }
 
+// ── Direct storage reads via ReviveApi.get_storage ──────────
+//
+// Reads contract storage slots directly without executing EVM code.
+// get_storage(address, key) reads from the contract's child trie
+// and returns the raw 32-byte storage value.
+
+type UnsafeApi = ReturnType<PolkadotClient["getUnsafeApi"]>;
+
 /**
- * Call a Revive EVM contract (read-only dry-run).
- * Mirrors the pattern from deploy-to-dotns ReviveClientWrapper.performDryRunCall().
+ * Extract raw bytes from a SCALE-decoded ReviveApi.get_storage result.
+ * The result shape varies by polkadot-api version, so we probe defensively.
  */
-interface ReviveExecResult {
-  value?: ReviveOkResult;
-  isOk?: boolean;
-  ok?: ReviveOkResult;
-  result?: ReviveExecResult;
+function extractBytes(result: unknown): Uint8Array | null {
+  if (result === null || result === undefined) {
+    return null;
+  }
+  if (result instanceof Uint8Array) {
+    return result;
+  }
+  if (typeof result !== "object") {
+    return null;
+  }
+
+  // Binary from polkadot-api
+  const obj = result as Record<string, unknown>;
+  if (typeof obj.asBytes === "function") {
+    return new Uint8Array((result as Binary).asBytes());
+  }
+
+  // { success: true, value: ... }
+  if ("success" in obj) {
+    if (obj.success !== true) {
+      return null;
+    }
+    return extractBytes(obj.value);
+  }
+
+  // { type: "Some", value: ... }
+  if ("value" in obj) {
+    return extractBytes(obj.value);
+  }
+
+  return null;
 }
 
-interface ReviveOkResult {
-  flags?: { toString?: () => string } | number | string;
-  data?:
-    | string
-    | { asHex: () => string }
-    | { toHex: () => string }
-    | Uint8Array;
-}
-
-async function reviveCall(
-  api: ReturnType<PolkadotClient["getUnsafeApi"]>,
+/**
+ * Read a single 32-byte storage slot from a Revive contract.
+ *
+ * Uses ReviveApi.get_storage which reads directly from the contract's
+ * child trie — no EVM execution, no ABI encoding.
+ *
+ * Returns the raw 32-byte value, or null if the slot is empty
+ * or the contract doesn't exist.
+ */
+async function readStorageSlot(
+  api: UnsafeApi,
   contractAddress: string,
-  encodedData: `0x${string}`,
-): Promise<`0x${string}`> {
-  const result = (await api.apis.ReviveApi.call(
-    DUMMY_ORIGIN,
+  slotKey: `0x${string}`,
+): Promise<Uint8Array | null> {
+  const result: unknown = await api.apis.ReviveApi.get_storage(
     Binary.fromHex(contractAddress as `0x${string}`),
-    0n,
-    DRY_RUN_WEIGHT_LIMIT,
-    DRY_RUN_STORAGE_LIMIT,
-    Binary.fromHex(encodedData),
-  )) as { result: ReviveExecResult };
+    Binary.fromHex(slotKey),
+  );
 
-  // Unwrap the result — same normalization as ReviveClientWrapper
-  const execResult: ReviveExecResult = result.result;
-  const ok: ReviveOkResult | null =
-    execResult.value ??
-    (execResult.isOk === true
-      ? (execResult as unknown as ReviveOkResult)
-      : null) ??
-    execResult.ok ??
-    null;
-
-  if (ok === null) {
-    throw new Error("Revive call failed: no result");
-  }
-
-  const flagsRaw = ok.flags;
-  const flagsStr =
-    typeof flagsRaw === "object" && typeof flagsRaw.toString === "function"
-      ? flagsRaw.toString()
-      : String(flagsRaw ?? 0);
-  const flags = BigInt(flagsStr);
-  if ((flags & 1n) === 1n) {
-    throw new Error("Contract execution reverted");
-  }
-
-  // Extract return data
-  const data = ok.data;
-  if (typeof data === "string") {
-    return data as `0x${string}`;
-  }
-  if (
-    data !== undefined &&
-    "asHex" in data &&
-    typeof data.asHex === "function"
-  ) {
-    return data.asHex() as `0x${string}`;
-  }
-  if (
-    data !== undefined &&
-    "toHex" in data &&
-    typeof data.toHex === "function"
-  ) {
-    return data.toHex() as `0x${string}`;
-  }
-  if (data instanceof Uint8Array) {
-    return ("0x" +
-      Array.from(data)
-        .map((b: number) => b.toString(16).padStart(2, "0"))
-        .join("")) as `0x${string}`;
-  }
-  return "0x";
+  // The SCALE-decoded Result<Option<Vec<u8>>> may appear in several shapes
+  // depending on polkadot-api version. Handle them all defensively.
+  return extractBytes(result);
 }
+
+/**
+ * Read a Solidity `bytes` value from a mapping in contract storage.
+ *
+ * Handles both inline (≤ 31 bytes) and multi-slot (> 31 bytes) encoding.
+ * ENS contenthash values are typically 36-38 bytes, so they use the
+ * multi-slot path: base slot has the length, data at keccak256(base).
+ */
+async function readMappingBytes(
+  api: UnsafeApi,
+  contractAddress: string,
+  mappingKey: `0x${string}`,
+  mappingSlot: number,
+): Promise<Uint8Array | null> {
+  const baseSlotKey = computeMappingSlot(mappingKey, mappingSlot);
+  const baseData = await readStorageSlot(api, contractAddress, baseSlotKey);
+  if (baseData === null) {
+    return null;
+  }
+
+  const decoded = decodeBytesSlot(baseData, baseSlotKey);
+  if (decoded === null) {
+    return null;
+  }
+
+  if (decoded.inline) {
+    return decoded.data;
+  }
+
+  // Long bytes: read consecutive data slots
+  const slotsNeeded = Math.ceil(decoded.length / 32);
+  const result = new Uint8Array(decoded.length);
+
+  for (let i = 0; i < slotsNeeded; i++) {
+    const slotKey = addToSlot(decoded.dataSlot, i);
+    const slotData = await readStorageSlot(api, contractAddress, slotKey);
+    if (slotData !== null) {
+      const offset = i * 32;
+      const copyLen = Math.min(32, decoded.length - offset);
+      result.set(slotData.slice(0, copyLen), offset);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Read a Solidity `address` from a mapping in contract storage.
+ *
+ * The address is stored right-aligned in a 32-byte word.
+ */
+async function readMappingAddress(
+  api: UnsafeApi,
+  contractAddress: string,
+  mappingKey: `0x${string}`,
+  mappingSlot: number,
+): Promise<string | null> {
+  const slotKey = computeMappingSlot(mappingKey, mappingSlot);
+  const data = await readStorageSlot(api, contractAddress, slotKey);
+  if (data === null) {
+    return null;
+  }
+
+  const address = extractAddress(data);
+  if (address === "0x0000000000000000000000000000000000000000") {
+    return null;
+  }
+  return address;
+}
+
+// ── Public API ──────────────────────────────────────────────
 
 /**
  * Resolve a .dot name to an IPFS CID.
+ *
+ * Reads the contenthash directly from the ContentResolver contract's
+ * storage via ReviveApi.get_storage — no EVM execution.
  *
  * @param label - The domain label (e.g., "myapp" for "myapp.dot")
  * @param onStatus - Optional callback for progress updates
@@ -306,30 +358,23 @@ export async function resolveDotName(
   const domain = `${label}.dot`;
   const node = namehash(domain);
 
-  // Query the content hash directly from the ContentResolver.
-  // If the domain doesn't exist, contenthash() returns empty bytes
-  // which decodeIpfsContenthash() handles as null — no need for
-  // a separate recordExists() call (saves ~1.7s dry-run overhead).
   onStatus?.(`Resolving content for "${domain}"...`);
-  const contentCalldata = encodeFunctionCall("contenthash", node);
-
   const contentStart = performance.now();
-  let contentResult: `0x${string}`;
-  try {
-    contentResult = await reviveCall(
-      api,
-      CONTRACTS.DOTNS_CONTENT_RESOLVER,
-      contentCalldata,
-    );
-  } catch {
+
+  const contenthashBytes = await readMappingBytes(
+    api,
+    CONTRACTS.DOTNS_CONTENT_RESOLVER,
+    node,
+    STORAGE_SLOTS.CONTENTHASH,
+  );
+  log.warn(`[dot.li resolve] get_storage contenthash: ${dur(contentStart)}`);
+
+  if (contenthashBytes === null) {
+    onStatus?.(`Domain "${domain}" not found or no content set`);
     return null;
   }
 
-  const contenthashBytes = decodeBytes(contentResult);
-  log.warn(`[dot.li resolve] contenthash() dry-run: ${dur(contentStart)}`);
-
-  // Decode the contenthash to a CID
-  const cid = decodeIpfsContenthash(contenthashBytes);
+  const cid = decodeIpfsContenthash(toHex(contenthashBytes));
   if (cid === null || cid === "") {
     onStatus?.(`Domain "${domain}" not found or no content set`);
     return null;
@@ -342,6 +387,9 @@ export async function resolveDotName(
 /**
  * Resolve the owner of a .dot name.
  *
+ * Reads the owner address directly from the Registry contract's
+ * storage via ReviveApi.get_storage — no EVM execution.
+ *
  * @param label - The domain label (e.g., "myapp" for "myapp.dot")
  * @returns The EVM address of the owner, or null if the domain doesn't exist
  */
@@ -351,24 +399,12 @@ export async function resolveOwner(label: string): Promise<string | null> {
   const domain = `${label}.dot`;
   const node = namehash(domain);
 
-  const calldata = encodeFunctionCall("owner", node);
-
-  try {
-    const result = await reviveCall(api, CONTRACTS.DOTNS_REGISTRY, calldata);
-    const owner = decodeAddress(result);
-
-    // Zero address means no owner
-    if (
-      owner === "" ||
-      owner === "0x0000000000000000000000000000000000000000"
-    ) {
-      return null;
-    }
-
-    return owner;
-  } catch {
-    return null;
-  }
+  return readMappingAddress(
+    api,
+    CONTRACTS.DOTNS_REGISTRY,
+    node,
+    STORAGE_SLOTS.REGISTRY_RECORDS,
+  );
 }
 
 /**
@@ -380,9 +416,9 @@ export async function resolveOwner(label: string): Promise<string | null> {
  * Asset Hub singleton (smoldot panics on double-addChain).
  */
 export function destroyClient(): void {
+  apiInstance = null;
   clientInstance?.destroy();
   clientInstance = null;
-  apiInstance = null;
 
   // Release AFTER destroy so the chain is fully removed before
   // chains.ts tries to create the shared singleton.

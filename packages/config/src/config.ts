@@ -41,17 +41,29 @@ export const CONTRACTS = {
 export const DOT_NODE =
   "0x3fce7d1364a893e213bc4212792b517ffc88f5b13b86c8ef9c8d390c3a1370ce" as const;
 
-// --- Revive dry-run limits (max values for read-only calls) ---
-
-export const DRY_RUN_WEIGHT_LIMIT = {
-  ref_time: 18446744073709551615n,
-  proof_size: 18446744073709551615n,
-};
-
-export const DRY_RUN_STORAGE_LIMIT = 18446744073709551615n;
-
-// A dummy substrate address for read-only calls (Alice's well-known dev address)
-export const DUMMY_ORIGIN = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+// --- Solidity storage slot numbers for direct storage reads ---
+// Derived from the dotNS contracts using OpenZeppelin v5 (ERC-7201 namespaced
+// storage). OZ v5 stores Initializable/OwnableUpgradeable/ERC165 state at
+// hash-derived locations, so the contract's own variables start at slot 0.
+//
+// DotnsRegistry layout (own variables only):
+//   slot 0: records  mapping(bytes32 => Record{address owner, address resolver, bool exists})
+//   slot 1: registrarController
+//   slot 2: dotnsRegistrar
+//   slot 3: reverseResolver
+//   slot 4: storeFactory
+//
+// DotnsContentResolver layout (own variables only):
+//   slot 0: registry (address)
+//   slot 1: contenthashes  mapping(bytes32 => bytes)
+//   slot 2: textRecords
+//   slot 3: operators
+export const STORAGE_SLOTS = {
+  /** DotnsRegistry: mapping(bytes32 => Record) at slot 0 */
+  REGISTRY_RECORDS: 0,
+  /** DotnsContentResolver: mapping(bytes32 => bytes) at slot 1 */
+  CONTENTHASH: 1,
+} as const;
 
 // --- Bulletin Chain — Peer multiaddrs for Helia P2P ---
 

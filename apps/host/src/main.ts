@@ -22,7 +22,7 @@ import { showNotification } from "@dotli/ui/notification";
 // ── Desktop download banner ──────────────────────────────
 if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
   const dismissed = localStorage.getItem("desktop-banner-dismissed");
-  if (!dismissed || Math.random() <= 0.05) {
+  if (dismissed === null || Math.random() <= 0.05) {
     showNotification({
       label: "Get Polkadot Desktop",
       text: "Full experience with native performance",
@@ -35,7 +35,9 @@ if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
       iconBackground: "#000",
       dismissMs: 0,
       browserNotification: false,
-      onDismiss: () => localStorage.setItem("desktop-banner-dismissed", "1"),
+      onDismiss: () => {
+        localStorage.setItem("desktop-banner-dismissed", "1");
+      },
     });
   }
 }
@@ -382,7 +384,7 @@ function populateOwner(
     });
 }
 
-import type * as RenderModule from "@dotli/ui/render";
+import type * as RenderModule from "@dotli/ui/bridge";
 type RenderChunk = typeof RenderModule;
 import type * as ResolveModule from "@dotli/resolver/resolve";
 type ResolveChunk = typeof ResolveModule;
@@ -428,7 +430,7 @@ async function main(): Promise<void> {
       urlBar.innerHTML = `<div class="topbar-url-pill localhost-pill" id="url-pill"><svg class="localhost-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="dot-domain">${host}</span></div>`;
     }
 
-    const { renderIframe } = await import("@dotli/ui/render");
+    const { renderIframe } = await import("@dotli/ui/bridge");
     await renderIframe(localhostUrl, host);
     document.title = `${host} — ${SITE_ID}`;
     performance.mark("dotli:main:end");
@@ -461,7 +463,7 @@ async function main(): Promise<void> {
   log.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed(T0)})`);
 
   // Pre-load render chunk in parallel (overlap with CID resolution)
-  const renderChunkPromise: Promise<RenderChunk> = import("@dotli/ui/render");
+  const renderChunkPromise: Promise<RenderChunk> = import("@dotli/ui/bridge");
   void renderChunkPromise.catch(() => {
     /* fire-and-forget */
   });

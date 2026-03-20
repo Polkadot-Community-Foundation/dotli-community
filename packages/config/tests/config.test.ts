@@ -2,9 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CONTRACTS,
   DOT_NODE,
-  DRY_RUN_WEIGHT_LIMIT,
-  DRY_RUN_STORAGE_LIMIT,
-  DUMMY_ORIGIN,
+  STORAGE_SLOTS,
   BULLETIN_PEERS,
   IPFS_GATEWAY,
   TIMEOUTS,
@@ -29,24 +27,15 @@ describe("config constants", () => {
     });
   });
 
-  describe("dry-run limits", () => {
-    it("weight limit has ref_time and proof_size as bigints", () => {
-      expect(typeof DRY_RUN_WEIGHT_LIMIT.ref_time).toBe("bigint");
-      expect(typeof DRY_RUN_WEIGHT_LIMIT.proof_size).toBe("bigint");
-      expect(DRY_RUN_WEIGHT_LIMIT.ref_time).toBeGreaterThan(0n);
-      expect(DRY_RUN_WEIGHT_LIMIT.proof_size).toBeGreaterThan(0n);
+  describe("STORAGE_SLOTS", () => {
+    it("REGISTRY_RECORDS is a non-negative integer", () => {
+      expect(Number.isInteger(STORAGE_SLOTS.REGISTRY_RECORDS)).toBe(true);
+      expect(STORAGE_SLOTS.REGISTRY_RECORDS).toBeGreaterThanOrEqual(0);
     });
 
-    it("storage limit is a positive bigint", () => {
-      expect(typeof DRY_RUN_STORAGE_LIMIT).toBe("bigint");
-      expect(DRY_RUN_STORAGE_LIMIT).toBeGreaterThan(0n);
-    });
-  });
-
-  describe("DUMMY_ORIGIN", () => {
-    it("is a non-empty substrate address", () => {
-      expect(DUMMY_ORIGIN).toMatch(/^5[a-zA-Z0-9]+$/);
-      expect(DUMMY_ORIGIN.length).toBeGreaterThan(40);
+    it("CONTENTHASH is a non-negative integer", () => {
+      expect(Number.isInteger(STORAGE_SLOTS.CONTENTHASH)).toBe(true);
+      expect(STORAGE_SLOTS.CONTENTHASH).toBeGreaterThanOrEqual(0);
     });
   });
 

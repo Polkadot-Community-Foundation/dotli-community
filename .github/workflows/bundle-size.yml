@@ -33,7 +33,7 @@ jobs:
         run: bun install
 
       - name: Build
-        run: bun run build
+        run: bun run build:prod
 
       - name: Remove source maps
         run: find apps/*/dist -name '*.map' -delete
@@ -96,7 +96,7 @@ jobs:
         run: bun install
 
       - name: Build
-        run: bun run build
+        run: bun run build:prod
 
       - name: Remove source maps
         run: find apps/*/dist -name '*.map' -delete

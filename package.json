@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "turbo run build",
+    "build:prod": "turbo run build:prod",
     "preview": "turbo run build && bun scripts/preview-server.ts",
     "test": "turbo run test",
     "lint": "turbo run lint",

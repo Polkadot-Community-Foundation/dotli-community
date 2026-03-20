@@ -1,9 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   namehash,
-  encodeFunctionCall,
-  decodeBytes,
-  decodeAddress,
+  toHex,
+  computeMappingSlot,
+  computeBytesDataSlot,
+  addToSlot,
+  wordToBigInt,
+  extractAddress,
+  decodeBytesSlot,
   decodeIpfsContenthash,
 } from "@dotli/resolver/abi";
 
@@ -53,101 +57,171 @@ describe("namehash", () => {
   });
 });
 
-// ── encodeFunctionCall ──────────────────────────────────────
+// ── computeMappingSlot ──────────────────────────────────────
 
-describe("encodeFunctionCall", () => {
-  const dummyNode =
-    "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef" as `0x${string}`;
-
-  it("encodes contenthash(bytes32) with correct selector", () => {
-    const result = encodeFunctionCall("contenthash", dummyNode);
-    expect(result).toMatch(/^0x/);
-    // the selector is bc1c58d1
-    expect(result.slice(0, 10)).toBe("0xbc1c58d1");
-    // total: 0x + 8 chars selector + 64 chars arg = 74 chars
-    expect(result.length).toBe(74);
+describe("computeMappingSlot", () => {
+  it("returns a 32-byte hex key", () => {
+    const key =
+      "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef" as `0x${string}`;
+    const result = computeMappingSlot(key, 0);
+    expect(result).toMatch(/^0x[0-9a-f]{64}$/);
   });
 
-  it("encodes owner(bytes32) with correct selector", () => {
-    const result = encodeFunctionCall("owner", dummyNode);
-    expect(result.slice(0, 10)).toBe("0x02571be3");
+  it("produces different slots for different keys", () => {
+    const key1 = namehash("a.dot");
+    const key2 = namehash("b.dot");
+    expect(computeMappingSlot(key1, 0)).not.toBe(computeMappingSlot(key2, 0));
   });
 
-  it("encodes recordExists(bytes32) with correct selector", () => {
-    const result = encodeFunctionCall("recordExists", dummyNode);
-    expect(result.slice(0, 10)).toBe("0xf79fe538");
+  it("produces different slots for different slot numbers", () => {
+    const key = namehash("test.dot");
+    expect(computeMappingSlot(key, 0)).not.toBe(computeMappingSlot(key, 1));
   });
 
-  it("pads short node values to 64 hex chars", () => {
-    const shortNode = "0xabcd" as `0x${string}`;
-    const result = encodeFunctionCall("contenthash", shortNode);
-    // 0x + 8 selector + 64 padded arg
-    expect(result.length).toBe(74);
-    expect(result.endsWith("abcd")).toBe(true);
+  it("is deterministic", () => {
+    const key = namehash("test.dot");
+    expect(computeMappingSlot(key, 0)).toBe(computeMappingSlot(key, 0));
   });
 });
 
-// ── decodeBytes ────────────────────────────────────────────
+// ── computeBytesDataSlot ────────────────────────────────────
 
-describe("decodeBytes", () => {
-  it("decodes ABI-encoded dynamic bytes", () => {
-    // offset = 0x20 (32), length = 0x04 (4 bytes), data = "deadbeef"
-    const data =
-      "0x" +
-      "0000000000000000000000000000000000000000000000000000000000000020" + // offset
-      "0000000000000000000000000000000000000000000000000000000000000004" + // length
-      "deadbeef00000000000000000000000000000000000000000000000000000000"; // data + padding
-    const result = decodeBytes(data as `0x${string}`);
-    expect(result).toBe("0xdeadbeef");
+describe("computeBytesDataSlot", () => {
+  it("returns a 32-byte hex key", () => {
+    const slot =
+      "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as `0x${string}`;
+    const result = computeBytesDataSlot(slot);
+    expect(result).toMatch(/^0x[0-9a-f]{64}$/);
   });
 
-  it("returns 0x for too-short data", () => {
-    expect(decodeBytes("0xabcd" as `0x${string}`)).toBe("0x");
-  });
-
-  it("returns 0x for empty hex", () => {
-    expect(decodeBytes("0x" as `0x${string}`)).toBe("0x");
-  });
-
-  it("handles zero-length bytes correctly", () => {
-    const data =
-      "0x" +
-      "0000000000000000000000000000000000000000000000000000000000000020" +
-      "0000000000000000000000000000000000000000000000000000000000000000"; // length = 0
-    const result = decodeBytes(data as `0x${string}`);
-    expect(result).toBe("0x");
+  it("produces a different slot from the input", () => {
+    const slot =
+      "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
+    const result = computeBytesDataSlot(slot);
+    expect(result).not.toBe(slot);
   });
 });
 
-// ── decodeAddress ──────────────────────────────────────────
+// ── addToSlot ───────────────────────────────────────────────
 
-describe("decodeAddress", () => {
-  it("extracts 20-byte address from right-aligned 32-byte word", () => {
-    const data =
-      "0x000000000000000000000000aabbccddee11223344556677889900aabbccddee" as `0x${string}`;
-    expect(decodeAddress(data)).toBe(
+describe("addToSlot", () => {
+  it("returns same slot for offset 0", () => {
+    const slot =
+      "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as `0x${string}`;
+    expect(addToSlot(slot, 0)).toBe(slot);
+  });
+
+  it("increments the last byte for offset 1", () => {
+    const slot =
+      "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
+    expect(addToSlot(slot, 1)).toBe(
+      "0x0000000000000000000000000000000000000000000000000000000000000001",
+    );
+  });
+
+  it("handles carry across bytes", () => {
+    const slot =
+      "0x00000000000000000000000000000000000000000000000000000000000000ff" as `0x${string}`;
+    expect(addToSlot(slot, 1)).toBe(
+      "0x0000000000000000000000000000000000000000000000000000000000000100",
+    );
+  });
+
+  it("handles multi-byte offset", () => {
+    const slot =
+      "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
+    expect(addToSlot(slot, 256)).toBe(
+      "0x0000000000000000000000000000000000000000000000000000000000000100",
+    );
+  });
+});
+
+// ── wordToBigInt ────────────────────────────────────────────
+
+describe("wordToBigInt", () => {
+  it("decodes zero", () => {
+    expect(wordToBigInt(new Uint8Array(32))).toBe(0n);
+  });
+
+  it("decodes 1", () => {
+    const data = new Uint8Array(32);
+    data[31] = 1;
+    expect(wordToBigInt(data)).toBe(1n);
+  });
+
+  it("decodes 256", () => {
+    const data = new Uint8Array(32);
+    data[30] = 1;
+    expect(wordToBigInt(data)).toBe(256n);
+  });
+});
+
+// ── extractAddress ──────────────────────────────────────────
+
+describe("extractAddress", () => {
+  it("extracts address from right-aligned 32-byte word", () => {
+    const data = new Uint8Array(32);
+    // Set last 20 bytes to a known address
+    const addr = [
+      0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+      0x88, 0x99, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+    ];
+    data.set(addr, 12);
+    expect(extractAddress(data)).toBe(
       "0xaabbccddee11223344556677889900aabbccddee",
     );
   });
 
-  it("returns zero address for too-short data", () => {
-    expect(decodeAddress("0xabcd" as `0x${string}`)).toBe(
+  it("returns zero address for all-zero word", () => {
+    expect(extractAddress(new Uint8Array(32))).toBe(
       "0x0000000000000000000000000000000000000000",
     );
   });
+});
 
-  it("returns zero address for empty data", () => {
-    expect(decodeAddress("0x" as `0x${string}`)).toBe(
-      "0x0000000000000000000000000000000000000000",
-    );
+// ── decodeBytesSlot ─────────────────────────────────────────
+
+describe("decodeBytesSlot", () => {
+  const dummySlot =
+    "0x0000000000000000000000000000000000000000000000000000000000000001" as `0x${string}`;
+
+  it("returns null for all-zero slot", () => {
+    expect(decodeBytesSlot(new Uint8Array(32), dummySlot)).toBeNull();
   });
 
-  it("decodes actual zero address", () => {
-    const data =
-      "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
-    expect(decodeAddress(data)).toBe(
-      "0x0000000000000000000000000000000000000000",
-    );
+  it("decodes short bytes (inline)", () => {
+    // 3 bytes of data: 0xaabbcc, length = 3, lowest byte = 6 (3*2)
+    const data = new Uint8Array(32);
+    data[0] = 0xaa;
+    data[1] = 0xbb;
+    data[2] = 0xcc;
+    data[31] = 6; // length * 2
+    const result = decodeBytesSlot(data, dummySlot);
+    expect(result).not.toBeNull();
+    expect(result!.inline).toBe(true);
+    if (result!.inline) {
+      expect(toHex(result!.data)).toBe("0xaabbcc");
+    }
+  });
+
+  it("detects long bytes", () => {
+    // Long bytes: lowest bit is 1, word = length * 2 + 1
+    // For 36 bytes: 36 * 2 + 1 = 73 = 0x49
+    const data = new Uint8Array(32);
+    data[31] = 73; // 0x49
+    const result = decodeBytesSlot(data, dummySlot);
+    expect(result).not.toBeNull();
+    expect(result!.inline).toBe(false);
+    if (!result!.inline) {
+      expect(result!.length).toBe(36);
+      expect(result!.dataSlot).toMatch(/^0x[0-9a-f]{64}$/);
+    }
+  });
+
+  it("returns null for zero-length short bytes", () => {
+    const data = new Uint8Array(32);
+    data[31] = 0; // length * 2 = 0
+    expect(decodeBytesSlot(data, dummySlot)).toBeNull();
   });
 });
 
