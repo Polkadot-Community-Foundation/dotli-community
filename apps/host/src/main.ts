@@ -523,6 +523,7 @@ async function main(): Promise<void> {
       setShieldState("validating");
       const { renderAppSubdomain } = await renderChunkPromise;
       await renderAppSubdomain(cachedCid, label);
+
       performance.mark("dotli:main:end");
       log.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
 

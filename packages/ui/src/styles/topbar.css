@@ -23,11 +23,9 @@
 }
 .topbar-logo svg {
   display: block;
-  width: 16px;
+  width: 18px;
   height: 18px;
-}
-.topbar-logo svg path {
-  fill: #ffffff;
+  overflow: visible;
 }
 .topbar-brand {
   font-family: "DM Serif Display", serif;

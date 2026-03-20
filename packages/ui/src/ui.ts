@@ -23,24 +23,41 @@ function dotUrl(label: string): string {
   return `https://${label}.${BASE_DOMAIN}`;
 }
 
+const STATUS_PHRASES = [
+  "Reaching out",
+  "Finding your way there",
+  "Loading from the network",
+  "Almost there",
+];
+let statusCallCount = 0;
+
 /**
  * Show a status message in the loading UI.
+ * Updates the phrase, progress bar, and cycles underphrase.
  */
-export function showStatus(message: string): void {
+export function showStatus(_message: string): void {
+  statusCallCount++;
+
+  // Update main phrase based on call count
+  const phraseIdx = Math.min(
+    Math.floor(statusCallCount / 3),
+    STATUS_PHRASES.length - 1,
+  );
+  const textBlock = document.getElementById("loading-text");
   const status = document.getElementById("status");
-  if (status) {
-    if (message.includes("\n")) {
-      status.innerHTML = "";
-      const parts = message.split("\n");
-      for (let i = 0; i < parts.length; i++) {
-        if (i > 0) {
-          status.appendChild(document.createElement("br"));
-        }
-        status.appendChild(document.createTextNode(parts[i]));
-      }
-    } else {
-      status.textContent = message;
-    }
+  if (status !== null && textBlock !== null) {
+    textBlock.classList.add("fade-out");
+    setTimeout(() => {
+      status.textContent = STATUS_PHRASES[phraseIdx] ?? "Loading...";
+      textBlock.classList.remove("fade-out");
+    }, 350);
+  }
+
+  // Update progress bar (incremental, max 90% until done)
+  const bar = document.getElementById("loading-bar-fill");
+  if (bar !== null) {
+    const progress = Math.min(90, statusCallCount * 12);
+    bar.style.width = `${String(progress)}%`;
   }
 }
 
