@@ -35,6 +35,8 @@ export interface NotificationParams {
   browserNotification?: boolean;
   /** Called when the notification is dismissed (user close or auto-dismiss). */
   onDismiss?: () => void;
+  /** Optional action button rendered next to the text area. */
+  action?: { label: string; onClick: () => void };
 }
 
 interface Notif {
@@ -49,6 +51,7 @@ interface Notif {
   el: HTMLElement;
   leaving: boolean;
   onDismiss: (() => void) | undefined;
+  action: { label: string; onClick: () => void } | undefined;
 }
 
 // ── State ────────────────────────────────────────────────
@@ -193,6 +196,18 @@ function handleClick(e: MouseEvent): void {
     return;
   }
 
+  const actionBtn = t.closest(".notif-action");
+  if (actionBtn) {
+    e.stopPropagation();
+    const card = actionBtn.closest<HTMLElement>(".notif-card");
+    if (card) {
+      const id = Number(card.dataset.id);
+      const n = items.find((x) => x.id === id);
+      n?.action?.onClick();
+    }
+    return;
+  }
+
   // Click on cards area → expand (only collapsed, multiple items, not on links)
   if (
     !expanded &&
@@ -242,6 +257,13 @@ function createCardEl(n: Notif): HTMLElement {
     textArea.appendChild(s);
   }
   card.appendChild(textArea);
+
+  if (n.action) {
+    const actionBtn = document.createElement("button");
+    actionBtn.className = "notif-action";
+    actionBtn.textContent = n.action.label;
+    card.appendChild(actionBtn);
+  }
 
   const close = document.createElement("button");
   close.className = "notif-card-close";
@@ -496,6 +518,7 @@ export function showNotification(params: NotificationParams): void {
     el: undefined as unknown as HTMLElement,
     leaving: false,
     onDismiss: params.onDismiss,
+    action: params.action,
   };
   item.el = createCardEl(item);
 

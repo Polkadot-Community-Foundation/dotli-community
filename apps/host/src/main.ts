@@ -226,45 +226,6 @@ function setShieldState(state: "validating" | "verified" | "stale"): void {
 }
 
 /**
- * Show a toast when the on-chain CID has changed since the cached version.
- */
-function showUpdateBanner(): void {
-  if (document.getElementById("dotli-update-banner")) {
-    return;
-  }
-  const banner = document.createElement("div");
-  banner.id = "dotli-update-banner";
-  banner.className = "toast-card update-banner";
-  banner.innerHTML = `
-    <div class="toast-card-icon">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="23 4 23 10 17 10" />
-        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-      </svg>
-    </div>
-    <div class="toast-card-text">
-      <span class="toast-card-title">A new version is available</span>
-      <span class="toast-card-subtitle">Refresh to load the latest version</span>
-    </div>
-    <button class="update-banner-action">Refresh</button>
-    <button class="toast-card-close" aria-label="Dismiss">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18" />
-        <line x1="6" y1="6" x2="18" y2="18" />
-      </svg>
-    </button>`;
-  banner
-    .querySelector(".update-banner-action")
-    ?.addEventListener("click", () => {
-      window.location.reload();
-    });
-  banner.querySelector(".toast-card-close")?.addEventListener("click", () => {
-    banner.classList.add("hidden");
-  });
-  document.body.appendChild(banner);
-}
-
-/**
  * Verify a cached CID against the on-chain value in the background.
  * If the chain returns a different CID, update the cache and show a banner.
  */
@@ -285,7 +246,23 @@ function verifyCachedCid(
           void setCachedCid(label, chainCid);
         });
         setShieldState("stale");
-        showUpdateBanner();
+        showNotification({
+          label: "A new version is available",
+          text: "Refresh to load the latest version",
+          icon:
+            '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<polyline points="23 4 23 10 17 10"/>' +
+            '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
+          iconBackground: "#000",
+          dismissMs: 0,
+          browserNotification: false,
+          action: {
+            label: "Refresh",
+            onClick: () => {
+              window.location.reload();
+            },
+          },
+        });
       } else if (chainCid !== null) {
         log.warn("[dot.li] Cached CID verified by chain");
         setShieldState("verified");
