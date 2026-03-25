@@ -20,7 +20,7 @@ export const deriveProductPublicKey = (
 ): Uint8Array => {
   const junctions = ["product", productId, String(derivationIndex)];
 
-  return junctions.reduce<Uint8Array>((publicKey, junction) => {
+  return junctions.reduce((publicKey, junction) => {
     return HDKD.publicSoft(publicKey, createChainCode(junction));
   }, rootPublicKey);
 };
