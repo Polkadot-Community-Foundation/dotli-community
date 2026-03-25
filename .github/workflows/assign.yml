@@ -7,4 +7,4 @@ jobs:
   add-reviews:
     runs-on: parity-default
     steps:
-      - uses: kentaro-m/auto-assign-action@v2.0.1
+      - uses: kentaro-m/auto-assign-action@v2.0.2
