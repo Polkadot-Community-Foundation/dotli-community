@@ -1,0 +1,21 @@
+{
+  "applinks": {
+      "details": [
+           {
+             "appIDs": ["P2PX3JU8FT.io.parity.polkadot"],
+             "paths": [ "*" ],
+             "components": [
+                {
+                  "/": "/*"
+                }
+             ]
+           }
+       ]
+   },
+   "webcredentials": {
+      "apps": ["P2PX3JU8FT.io.parity.polkadot"]
+   },
+   "appclips": {
+      "apps": ["P2PX3JU8FT.io.parity.polkadot.clip"]
+   }
+}
