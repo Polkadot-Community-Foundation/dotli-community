@@ -3,7 +3,7 @@ updates:
   - package-ecosystem: npm
     directory: "/"
     schedule:
-      interval: weekly
+      interval: daily
     assignees: ["BigTava", "leonardocustodio", "ba1uev", "piggydoughnut"]
     reviewers: ["BigTava", "leonardocustodio", "ba1uev", "piggydoughnut"]
     labels: ["dependencies"]

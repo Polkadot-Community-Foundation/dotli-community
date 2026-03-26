@@ -16,16 +16,16 @@
     "@types/qrcode": "^1.5.6",
     "eslint": "^10.1.0",
     "typescript": "~5.9.3",
-    "vite": "^8.0.2"
+    "vite": "^8.0.3"
   },
   "dependencies": {
     "@dotli/config": "workspace:*",
     "@dotli/shared": "workspace:*",
     "@dotli/content": "workspace:*",
     "@dotli/sandbox-checker": "workspace:*",
-    "@novasamatech/host-api": "^0.6.9",
-    "@novasamatech/host-container": "^0.6.6-1",
-    "@novasamatech/host-papp": "^0.6.6-1",
+    "@novasamatech/host-api": "^0.6.10",
+    "@novasamatech/host-container": "^0.6.10",
+    "@novasamatech/host-papp": "^0.6.10",
     "neverthrow": "^8.2.0",
     "qrcode": "^1.5.4"
   },
@@ -35,10 +35,10 @@
   },
   "peerDependenciesMeta": {
     "@dotli/auth": {
-    "optional": true
-  },
-  "@dotli/resolver": {
-  "optional": true
-}
-}
+      "optional": true
+    },
+    "@dotli/resolver": {
+      "optional": true
+    }
+  }
 }
