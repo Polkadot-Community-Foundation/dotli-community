@@ -1,0 +1,53 @@
+import { sentryVitePlugin } from "@sentry/vite-plugin";
+import { defineConfig, type Plugin } from "vite";
+import { resolve } from "node:path";
+import wasm from "vite-plugin-wasm";
+
+const OUT_DIR = "dist";
+
+function sentry(project: string): Plugin | false {
+  if (!process.env.SENTRY_AUTH_TOKEN) return false;
+  return sentryVitePlugin({
+    org: "paritytech",
+    project,
+    telemetry: false,
+    authToken: process.env.SENTRY_AUTH_TOKEN,
+    release: { name: process.env.VITE_COMMIT_SHA },
+    sourcemaps: { filesToDeleteAfterUpload: ["./dist/**/*.map"] },
+  });
+}
+
+const PACKAGES = resolve(import.meta.dirname, "../../packages");
+
+export default defineConfig({
+  base: process.env.VITE_APP_URL
+    ? new URL(process.env.VITE_APP_URL).pathname
+    : "/",
+  plugins: [wasm(), sentry("dotli-protocol")],
+  resolve: {
+    alias: {
+      "@dotli/config": resolve(PACKAGES, "config/src"),
+      "@dotli/shared": resolve(PACKAGES, "shared/src"),
+      "@dotli/storage": resolve(PACKAGES, "storage/src"),
+      "@dotli/resolver": resolve(PACKAGES, "resolver/src"),
+      "@dotli/protocol": resolve(PACKAGES, "protocol/src"),
+    },
+  },
+  define: {
+    __BUILD_TARGET__: JSON.stringify("protocol"),
+  },
+  optimizeDeps: {
+    exclude: ["@polkadot-api/wasm-executor"],
+  },
+  build: {
+    target: "esnext",
+    modulePreload: { polyfill: false },
+    outDir: OUT_DIR,
+    sourcemap: true,
+  },
+  server: {
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+    },
+  },
+});

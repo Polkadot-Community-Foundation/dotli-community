@@ -61,7 +61,7 @@ async function ensureAuth(): Promise<AuthModule> {
   if (authMod) {
     return authMod;
   }
-  authMod = (await import("@dotli/auth/auth")) as AuthModule;
+  authMod = (await import("@dotli/auth/auth")) as unknown as AuthModule;
   authMod.initAuth();
   authMod.onAuthStateChange(renderAuthState);
   renderAuthState(authMod.getAuthState());

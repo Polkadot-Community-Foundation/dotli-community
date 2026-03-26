@@ -6,6 +6,7 @@
       "@dotli/shared/*": ["../shared/src/*"],
       "@dotli/storage/*": ["../storage/src/*"],
       "@dotli/resolver/*": ["../resolver/src/*"],
+      "@dotli/protocol/*": ["../protocol/src/*"],
       "@dotli/content/*": ["../content/src/*"],
       "@dotli/auth/*": ["../auth/src/*"],
       "@dotli/sandbox-checker/*": ["../sandbox-checker/src/*"]

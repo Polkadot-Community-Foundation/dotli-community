@@ -7,6 +7,10 @@
 import { getPaseoChainSpec, getAssetHubPaseoChainSpec } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
+import {
+  PASEO_RELAY_GENESIS as PASEO_RELAY,
+  ASSET_HUB_PASEO_GENESIS as ASSET_HUB_PASEO,
+} from "@dotli/config/config";
 
 import {
   getSmoldot,
@@ -15,11 +19,6 @@ import {
   makeNonRemovingChain,
   waitForResolverRelease,
 } from "./smoldot";
-// Well-known genesis hashes (Paseo testnet)
-const PASEO_RELAY =
-  "0x77afd6190f1554ad45fd0d31aee62aacc33c6db0ea801129acb813f913e0764f";
-const ASSET_HUB_PASEO =
-  "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2";
 
 interface ChainEntry {
   getChainSpec: () => Promise<string>;

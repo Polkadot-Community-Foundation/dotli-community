@@ -162,7 +162,7 @@ export function initAuth(): void {
     adapters: { lazyClient, statementStore, storage },
   });
 
-  // Check for existing session
+  // Check for the existing session
   const sessions = adapter.sessions.sessions.read();
   if (sessions.length > 0) {
     void resolveIdentityAndSetAuth(sessions[0]);

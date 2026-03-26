@@ -27,7 +27,10 @@ import {
 } from "@dotli/auth/auth";
 import { showSignPayloadModal, showSignRawModal } from "@dotli/auth/signing";
 import { deriveProductPublicKey } from "@dotli/auth/account";
-import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
+import {
+  createRemoteChainProvider,
+  isRemoteChainSupported,
+} from "@dotli/protocol/client";
 import { log } from "@dotli/shared/log";
 import { showPushNotification } from "./notification";
 
@@ -59,7 +62,7 @@ function wireContainerHandlers(
   container.handleFeatureSupported((params, { ok }) => {
     switch (params.tag as string) {
       case "Chain":
-        return ok(isChainSupported(params.value));
+        return ok(isRemoteChainSupported(params.value));
       default:
         return ok(false);
     }
@@ -68,7 +71,7 @@ function wireContainerHandlers(
   // ── Chain connection ───────────────────────────────────
 
   container.handleChainConnection((genesisHash) => {
-    return createChainProvider(genesisHash);
+    return createRemoteChainProvider(genesisHash);
   });
 
   // ── Accounts ───────────────────────────────────────────

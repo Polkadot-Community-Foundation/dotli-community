@@ -6,12 +6,8 @@
       "@dotli/shared/*": ["../../packages/shared/src/*"],
       "@dotli/storage/*": ["../../packages/storage/src/*"],
       "@dotli/resolver/*": ["../../packages/resolver/src/*"],
-      "@dotli/protocol/*": ["../../packages/protocol/src/*"],
-      "@dotli/content/*": ["../../packages/content/src/*"],
-      "@dotli/auth/*": ["../../packages/auth/src/*"],
-      "@dotli/ui/*": ["../../packages/ui/src/*"],
-      "@dotli/sandbox-checker/*": ["../../packages/sandbox-checker/src/*"]
+      "@dotli/protocol/*": ["../../packages/protocol/src/*"]
     }
   },
-  "include": ["src", "tests"]
+  "include": ["src"]
 }

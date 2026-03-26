@@ -15,11 +15,12 @@
     "@dotli/typescript-config": "workspace:*",
     "@types/qrcode": "^1.5.6",
     "eslint": "^10.1.0",
-    "typescript": "~5.9.3",
+    "typescript": "~6.0.2",
     "vite": "^8.0.3"
   },
   "dependencies": {
     "@dotli/config": "workspace:*",
+    "@dotli/protocol": "workspace:*",
     "@dotli/shared": "workspace:*",
     "@dotli/content": "workspace:*",
     "@dotli/sandbox-checker": "workspace:*",

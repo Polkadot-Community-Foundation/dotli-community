@@ -232,12 +232,11 @@ function setShieldState(state: "validating" | "verified" | "stale"): void {
 function verifyCachedCid(
   label: string,
   cachedCid: string,
-  resolveChunkPromise: Promise<ResolveChunk>,
+  protocolChunkPromise: Promise<ProtocolChunk>,
 ): void {
-  void resolveChunkPromise
-    .then(async ({ resolveDotName, destroyClient }) => {
-      const chainCid = await resolveDotName(label);
-      destroyClient();
+  void protocolChunkPromise
+    .then(async ({ resolveDotNameRemote }) => {
+      const chainCid = await resolveDotNameRemote(label);
       if (chainCid !== null && chainCid !== cachedCid) {
         log.warn(
           `[dot.li] CID mismatch: cached=${cachedCid}, chain=${chainCid}`,
@@ -318,12 +317,10 @@ function populateOwner(
 
 import type * as RenderModule from "@dotli/ui/bridge";
 type RenderChunk = typeof RenderModule;
-import type * as ResolveModule from "@dotli/resolver/resolve";
-type ResolveChunk = typeof ResolveModule;
+import type * as ProtocolModule from "@dotli/protocol/client";
+type ProtocolChunk = typeof ProtocolModule;
 
 // ── Main ─────────────────────────────────────────────────────
-
-let destroyClientFn: (() => void) | null = null;
 
 async function main(): Promise<void> {
   // Guard: if running inside an iframe, bail out to avoid a nested
@@ -335,13 +332,13 @@ async function main(): Promise<void> {
   performance.mark("dotli:main:start");
   log.warn(`[dot.li perf] main() started (${elapsed(T0)})`);
 
-  // Pre-warm smoldot unconditionally — start downloading the resolve chunk
-  // and kick off relay chain sync immediately.
-  const resolveChunkStart = performance.now();
-  const resolveChunkPromise = import("@dotli/resolver/resolve");
-  void resolveChunkPromise.then(({ getSmoldot, getRelayChain }) => {
-    getSmoldot();
-    void getRelayChain();
+  // Pre-warm the shared protocol iframe immediately so the smoldot runtime
+  // and shared storage origin are alive before resolution starts.
+  const protocolChunkStart = performance.now();
+  const protocolChunkPromise = import("@dotli/protocol/client");
+  void protocolChunkPromise.then(({ ensureProtocolFrame, warmupProtocol }) => {
+    void ensureProtocolFrame();
+    void warmupProtocol();
   });
 
   // Initialize top bar UI (auth is lazy-loaded inside topbar when needed)
@@ -442,25 +439,24 @@ async function main(): Promise<void> {
 
       // Verify the cached CID against the chain in the background.
       // If the on-chain CID has changed, show an update banner.
-      verifyCachedCid(label, cachedCid, resolveChunkPromise);
+      verifyCachedCid(label, cachedCid, protocolChunkPromise);
       return;
     }
     log.warn(`[dot.li perf] CID cache MISS (${elapsed(T0)})`);
 
     // ── Full resolution path ──
 
-    log.warn(`[dot.li perf] Awaiting resolve chunk... (${elapsed(T0)})`);
-    const { resolveDotName, resolveOwner, destroyClient } =
-      await resolveChunkPromise;
+    log.warn(`[dot.li perf] Awaiting protocol chunk... (${elapsed(T0)})`);
+    const { resolveDotNameRemote, resolveOwnerRemote } =
+      await protocolChunkPromise;
     log.warn(
-      `[dot.li perf] Resolve chunk loaded (${dur(resolveChunkStart)}, ${elapsed(T0)})`,
+      `[dot.li perf] Protocol chunk loaded (${dur(protocolChunkStart)}, ${elapsed(T0)})`,
     );
-    destroyClientFn = destroyClient;
-    populateOwner(resolveOwner, label);
+    populateOwner(resolveOwnerRemote, label);
 
     performance.mark("dotli:resolve:start");
     const resolveStart = performance.now();
-    const cid = await resolveDotName(label, (msg: string) => {
+    const cid = await resolveDotNameRemote(label, (msg: string) => {
       showStatus(msg);
     });
     performance.mark("dotli:resolve:end");
@@ -481,7 +477,6 @@ async function main(): Promise<void> {
     });
 
     setShieldState("verified");
-    destroyClient();
 
     // Render: iframe to cid.app.dot.li
     const { renderAppSubdomain } = await renderChunkPromise;
@@ -494,10 +489,5 @@ async function main(): Promise<void> {
     showError("Resolution failed", message);
   }
 }
-
-// Cleanup on page unload
-window.addEventListener("beforeunload", () => {
-  destroyClientFn?.();
-});
 
 void main();

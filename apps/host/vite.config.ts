@@ -175,6 +175,7 @@ export default defineConfig({
       "@dotli/shared": resolve(PACKAGES, "shared/src"),
       "@dotli/storage": resolve(PACKAGES, "storage/src"),
       "@dotli/resolver": resolve(PACKAGES, "resolver/src"),
+      "@dotli/protocol": resolve(PACKAGES, "protocol/src"),
       "@dotli/content": resolve(PACKAGES, "content/src"),
       "@dotli/auth": resolve(PACKAGES, "auth/src"),
       "@dotli/ui": resolve(PACKAGES, "ui/src"),
