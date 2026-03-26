@@ -125,7 +125,7 @@ function createLoggingStatementStore(
         log.warn("[dotli ss] submitStatement OK");
       });
       result.mapErr((e: Error) => {
-        if (e.constructor.name === "ExpiryTooLowError") {
+        if (e.message.toLowerCase().includes("expiry too low")) {
           log.warn(
             "[dotli ss] submitStatement ExpiryTooLow (non-critical):",
             e.message,
