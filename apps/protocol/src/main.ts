@@ -29,6 +29,18 @@ Sentry.init({
 const MAX_CHAIN_CONNECTIONS = 10;
 const chainConnections = new Map<string, JsonRpcConnection>();
 
+// Track in-flight resolver operations so we only destroy the client
+// after ALL concurrent operations finish (resolveDotName + resolveOwner
+// can run in parallel from the host).
+let pendingResolverOps = 0;
+
+function resolverFinished(): void {
+  pendingResolverOps--;
+  if (pendingResolverOps === 0) {
+    destroyClient();
+  }
+}
+
 function assertString(value: unknown, name: string): asserts value is string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`Invalid ${name}: expected non-empty string`);
@@ -114,40 +126,48 @@ async function handleRequest(
     case "resolveDotName": {
       const payload = request.payload as ProtocolRequestMap["resolveDotName"];
       assertString(payload.label, "label");
-      const result = await resolveDotName(payload.label, (message) => {
+      pendingResolverOps++;
+      try {
+        const result = await resolveDotName(payload.label, (message) => {
+          postToSource(event.source, origin, {
+            namespace: "dotli:protocol",
+            kind: "progress",
+            id: request.id,
+            message,
+          });
+        });
         postToSource(event.source, origin, {
           namespace: "dotli:protocol",
-          kind: "progress",
+          kind: "response",
           id: request.id,
-          message,
+          ok: true,
+          result,
         });
-      });
-      // Destroy the resolver client immediately so the temporary
-      // Asset Hub chain is removed and the shared chain can be
-      // created for dApp connections (smoldot panics on duplicates).
-      destroyClient();
-      postToSource(event.source, origin, {
-        namespace: "dotli:protocol",
-        kind: "response",
-        id: request.id,
-        ok: true,
-        result,
-      });
+      } finally {
+        // Destroy the resolver client once all in-flight operations
+        // complete so the temporary Asset Hub chain is removed and the
+        // shared chain can be created for dApp connections.
+        resolverFinished();
+      }
       return;
     }
 
     case "resolveOwner": {
       const payload = request.payload as ProtocolRequestMap["resolveOwner"];
       assertString(payload.label, "label");
-      const result = await resolveOwner(payload.label);
-      destroyClient();
-      postToSource(event.source, origin, {
-        namespace: "dotli:protocol",
-        kind: "response",
-        id: request.id,
-        ok: true,
-        result,
-      });
+      pendingResolverOps++;
+      try {
+        const result = await resolveOwner(payload.label);
+        postToSource(event.source, origin, {
+          namespace: "dotli:protocol",
+          kind: "response",
+          id: request.id,
+          ok: true,
+          result,
+        });
+      } finally {
+        resolverFinished();
+      }
       return;
     }
 
