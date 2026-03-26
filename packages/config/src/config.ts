@@ -16,7 +16,7 @@ export const BASE_DOMAIN =
 
 export type SiteId = "dot.li" | "paseo.li" | "local.li";
 
-const isLocalhost =
+export const isLocalhost =
   hostname === "localhost" ||
   hostname.endsWith(".localhost") ||
   hostname === "127.0.0.1";
