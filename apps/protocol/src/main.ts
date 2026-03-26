@@ -2,11 +2,13 @@ import * as Sentry from "@sentry/browser";
 import type { JsonRpcConnection } from "@polkadot-api/json-rpc-provider";
 import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
 import {
+  destroyClient,
   getRelayChain,
   getSmoldot,
   resolveDotName,
   resolveOwner,
 } from "@dotli/resolver/resolve";
+import { extractAndSaveRelayDb } from "@dotli/resolver/smoldot";
 import { log } from "@dotli/shared/log";
 import { BASE_DOMAIN } from "@dotli/config/config";
 import {
@@ -94,7 +96,11 @@ async function handleRequest(
   switch (request.method) {
     case "warmup": {
       getSmoldot();
-      await getRelayChain();
+      const relayChain = await getRelayChain();
+      // Persist relay DB for fast restarts on subsequent visits
+      requestIdleCallback(() => {
+        void extractAndSaveRelayDb(relayChain);
+      });
       postToSource(event.source, origin, {
         namespace: "dotli:protocol",
         kind: "response",
@@ -116,6 +122,10 @@ async function handleRequest(
           message,
         });
       });
+      // Destroy the resolver client immediately so the temporary
+      // Asset Hub chain is removed and the shared chain can be
+      // created for dApp connections (smoldot panics on duplicates).
+      destroyClient();
       postToSource(event.source, origin, {
         namespace: "dotli:protocol",
         kind: "response",
@@ -130,6 +140,7 @@ async function handleRequest(
       const payload = request.payload as ProtocolRequestMap["resolveOwner"];
       assertString(payload.label, "label");
       const result = await resolveOwner(payload.label);
+      destroyClient();
       postToSource(event.source, origin, {
         namespace: "dotli:protocol",
         kind: "response",

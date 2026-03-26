@@ -2,6 +2,12 @@
 //
 // Shared smoldot instance and relay chain, reused by resolve.ts and chains.ts.
 // Handles smoldot startup, relay chain creation, and database persistence.
+//
+// Two Asset Hub chains exist at different lifecycle stages:
+//   1. Resolver chain — temporary, created for name resolution, destroyed after
+//   2. Shared chain  — long-lived singleton for dApp chain connections
+// smoldot panics if the same chain is added twice, so a mutex ensures
+// the resolver chain is fully removed before the shared chain is created.
 
 import { startFromWorker } from "polkadot-api/smoldot/from-worker";
 import SmWorker from "polkadot-api/smoldot/worker?worker";
@@ -67,22 +73,22 @@ export function getRelayChain(): Promise<SmoldotChain> {
   return relayChainPromise;
 }
 
-// ── Dedicated Asset Hub chain for the resolver ───────────────
-// The resolver creates its own temporary chain that is fully removed
-// when resolution completes. This avoids sharing a single
-// nextJsonRpcResponse() queue between the resolver and chains.ts,
-// which would cause message theft and polkadot-api block-tree crashes.
-//
-// Smoldot panics if the same parachain is added twice, so the resolver
-// must fully remove its chain before chains.ts creates the singleton.
-// The sequential-use mutex below enforces this ordering.
+// ── Temporary Asset Hub chain for the resolver ───────────────
+// The resolver creates its own chain that is destroyed after resolution.
+// This avoids sharing nextJsonRpcResponse() between the resolver's
+// polkadot-api client and dApp chain connections (message theft).
 
 /**
- * Create a dedicated Asset Hub Paseo chain for the resolver.
- * The caller owns this chain and MUST call chain.remove() when done
- * (which happens automatically via clientInstance.destroy()).
+ * Create a temporary Asset Hub Paseo chain for the resolver.
+ * The caller MUST call chain.remove() when done (via destroyClient).
+ * Must NOT be called after the shared chain exists (smoldot panics).
  */
 export async function createResolverAssetHubChain(): Promise<SmoldotChain> {
+  if (mutexReleased) {
+    throw new Error(
+      "Cannot create resolver chain: shared chain may already exist",
+    );
+  }
   const [relayChain, chainSpec] = await Promise.all([
     getRelayChain(),
     getAssetHubPaseoChainSpec(),
@@ -93,16 +99,14 @@ export async function createResolverAssetHubChain(): Promise<SmoldotChain> {
   });
 }
 
-// ── Shared Asset Hub Paseo chain (for chains.ts) ─────────────
-// Created lazily, only after the resolver's dedicated chain is removed.
-// Used by chains.ts to serve embedded app connections.
+// ── Shared Asset Hub Paseo chain (for dApp connections) ──────
+// Created lazily after the resolver releases the mutex.
 
 let assetHubChainPromise: Promise<SmoldotChain> | null = null;
 
 /**
  * Get or create the Asset Hub Paseo parachain singleton.
- * Must only be called after the resolver has released the mutex
- * (i.e., after its dedicated chain has been removed).
+ * Only available after the resolver mutex is released.
  */
 export function getAssetHubChain(): Promise<SmoldotChain> {
   assetHubChainPromise ??= Promise.all([
@@ -133,24 +137,11 @@ export function makeNonRemovingChain(chain: SmoldotChain): SmoldotChain {
   };
 }
 
-// ── Sequential-use mutex ─────────────────────────────────────
-// The resolver owns a dedicated Asset Hub chain during resolution.
-// chains.ts must wait for the resolver to destroy its chain before
-// creating the shared singleton — smoldot panics on double-addChain.
-//
-// Starts LOCKED so that even in the fast-path (CID cache hit),
-// chains.ts waits for the resolver to finish.
-//
-// ONE-SHOT: This mutex can only be released once per page load.
-// If multiple resolution cycles are needed (e.g., SPA navigation
-// to a second .dot domain), the page must be fully reloaded.
-//
-// SYNCHRONOUS REMOVE: Correctness depends on polkadot-api's
-// client.destroy() calling chain.remove() synchronously before
-// releaseResolverMutex() fires. Verified: createClient().destroy()
-// → substrate-client disconnect → getSyncProvider disconnect
-// → sm-provider disconnect() → chain.remove() — all synchronous.
+// ── Resolver mutex ───────────────────────────────────────────
+// Ensures the resolver chain is fully removed before the shared
+// chain is created (smoldot panics on duplicate chains).
 
+let mutexReleased = false;
 let resolverRelease: () => void;
 const resolverDone: Promise<void> = new Promise<void>((r) => {
   resolverRelease = r;
@@ -158,16 +149,23 @@ const resolverDone: Promise<void> = new Promise<void>((r) => {
 
 /**
  * Release the resolver mutex.
- * Called by resolve.ts after destroying its dedicated chain.
+ * Called after the resolver's dedicated chain is destroyed.
  */
 export function releaseResolverMutex(): void {
+  mutexReleased = true;
   resolverRelease();
 }
 
 /**
  * Wait until the resolver has released the Asset Hub chain.
- * Blocks until releaseResolverMutex() is called.
  */
 export function waitForResolverRelease(): Promise<void> {
   return resolverDone;
+}
+
+/**
+ * Whether the resolver mutex has been released (shared chain may exist).
+ */
+export function isResolverDone(): boolean {
+  return mutexReleased;
 }

@@ -65,9 +65,8 @@ export function createChainProvider(
   let chainPromise: Promise<ReturnType<typeof makeNonRemovingChain>>;
 
   if (key === ASSET_HUB_PASEO.toLowerCase()) {
-    // Reuse the shared singleton; wait for resolver to finish first.
-    // The resolver uses a dedicated chain that is fully removed before
-    // this runs, so no stale messages — just wrap to prevent removal.
+    // Wait for the resolver to destroy its temporary chain first,
+    // then create the shared singleton (smoldot panics on duplicates).
     chainPromise = waitForResolverRelease().then(() =>
       getAssetHubChain().then(makeNonRemovingChain),
     );
