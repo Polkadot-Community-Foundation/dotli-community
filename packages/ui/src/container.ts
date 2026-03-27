@@ -18,7 +18,7 @@ import { createIframeProvider } from "@novasamatech/host-container";
 import { createContainer } from "@novasamatech/host-container";
 import type { Container } from "@novasamatech/host-container";
 import { fromPromise } from "neverthrow";
-import { isLocalhost } from "@dotli/config/config";
+import { isLocalhost, BASE_DOMAIN } from "@dotli/config/config";
 
 import type { UserSession } from "@novasamatech/host-papp";
 import {
@@ -217,7 +217,7 @@ function wireContainerHandlers(
         const label = host.slice(0, -".dot".length);
         const target = isLocalhost
           ? `http://${label}.localhost:${window.location.port}${parsed.pathname}${parsed.search}${parsed.hash}`
-          : `${window.location.protocol}//${label}.${window.location.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
+          : `${window.location.protocol}//${label}.${BASE_DOMAIN}${parsed.pathname}${parsed.search}${parsed.hash}`;
         window.open(target, "_blank");
       } else {
         window.open(url, "_blank");
