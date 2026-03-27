@@ -7,9 +7,6 @@
 #
 # SSL cert covers: paseo.li (wildcards to be added later via DNS-01)
 
-# Rate limiting zone
-limit_req_zone $binary_remote_addr zone=paseoli_limit:10m rate=10r/s;
-
 # ────────────────────────────────────────────────────────────
 # HTTP → HTTPS redirects
 # ────────────────────────────────────────────────────────────
@@ -73,8 +70,6 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
     ssl_prefer_server_ciphers off;
-
-    limit_req zone=paseoli_limit burst=20 nodelay;
 
     # Security headers — NO X-Frame-Options (this origin must be iframeable)
     add_header X-Content-Type-Options "nosniff" always;
@@ -140,8 +135,6 @@ server {
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
     ssl_prefer_server_ciphers off;
 
-    limit_req zone=paseoli_limit burst=20 nodelay;
-
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Content-Security-Policy "frame-ancestors paseo.li *.paseo.li *.app.paseo.li" always;
@@ -185,8 +178,6 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
     ssl_prefer_server_ciphers off;
-
-    limit_req zone=paseoli_limit burst=20 nodelay;
 
     # Security headers
     add_header X-Frame-Options "SAMEORIGIN" always;
