@@ -129,7 +129,7 @@ function githubPages404(): Plugin {
   return {
     name: "github-pages-404",
     apply: "build",
-    closeBundle() {
+    writeBundle() {
       const dist = resolve(import.meta.dirname, OUT_DIR);
       copyFileSync(resolve(dist, "index.html"), resolve(dist, "404.html"));
       console.log(

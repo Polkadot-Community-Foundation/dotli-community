@@ -8,6 +8,7 @@
 // user clicks the auth button.
 
 import type { AuthState } from "@dotli/auth/auth";
+import type { Identity } from "@novasamatech/host-papp";
 import { log } from "@dotli/shared/log";
 
 // ── DOM refs ───────────────────────────────────────────────
@@ -45,10 +46,7 @@ interface AuthModule {
   startPairing: () => void;
   abortPairing: () => void;
   disconnect: () => Promise<void>;
-  shortenName: (identity: {
-    fullUsername: string | null;
-    liteUsername: string;
-  }) => string;
+  shortenName: (identity: Identity) => string;
 }
 
 let authMod: AuthModule | null = null;

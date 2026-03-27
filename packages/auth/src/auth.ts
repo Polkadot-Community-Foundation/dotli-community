@@ -42,6 +42,8 @@ export type AuthState =
 type AuthListener = (state: AuthState) => void;
 
 let adapter: PappAdapter | null = null;
+let statementStoreInstance: StatementStoreAdapter | null = null;
+let storeReadyResolvers: ((store: StatementStoreAdapter) => void)[] = [];
 let currentState: AuthState = { status: "idle" };
 const listeners = new Set<AuthListener>();
 
@@ -60,6 +62,34 @@ export function getAuthState(): AuthState {
 export function onAuthStateChange(fn: AuthListener): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
+}
+
+// ── Statement store access ────────────────────────────────
+
+export function getStatementStore(): StatementStoreAdapter | null {
+  return statementStoreInstance;
+}
+
+export function onStatementStoreReady(): Promise<StatementStoreAdapter> {
+  if (statementStoreInstance) {
+    return Promise.resolve(statementStoreInstance);
+  }
+  return new Promise((resolve) => {
+    storeReadyResolvers.push(resolve);
+  });
+}
+
+export async function readSessionSecret(
+  sessionId: string,
+): Promise<Uint8Array | null> {
+  if (!adapter) {
+    return null;
+  }
+  const result = await adapter.secrets.read(sessionId);
+  if (result.isErr() || !result.value) {
+    return null;
+  }
+  return result.value.ssSecret;
 }
 
 // ── Initialization ─────────────────────────────────────────
@@ -155,6 +185,11 @@ export function initAuth(): void {
 
   const rawStatementStore = createPapiStatementStoreAdapter(lazyClient);
   const statementStore = createLoggingStatementStore(rawStatementStore);
+  statementStoreInstance = statementStore;
+  for (const resolve of storeReadyResolvers) {
+    resolve(statementStore);
+  }
+  storeReadyResolvers = [];
 
   adapter = createPappAdapter({
     appId: siteId,

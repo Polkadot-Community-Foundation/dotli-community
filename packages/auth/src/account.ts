@@ -24,3 +24,19 @@ export const deriveProductPublicKey = (
     return HDKD.publicSoft(publicKey, createChainCode(junction));
   }, rootPublicKey);
 };
+
+// NOTE: Uncomment when derived product accounts get their own on-chain
+// allowance (quota) on People Chain. Currently only the root session account
+// has allowance, so createProof signs with the root ssSecret directly.
+// Once per-product allowance is supported, use this in handleStatementStoreCreateProof
+// to sign with the product-derived key instead.
+// export const deriveProductSecretKey = (
+//   rootSecret: Uint8Array,
+//   productId: string,
+//   derivationIndex: number,
+// ): Uint8Array => {
+//   const junctions = ["product", productId, String(derivationIndex)];
+//   return junctions.reduce((secret, junction) => {
+//     return HDKD.secretSoft(secret, createChainCode(junction));
+//   }, rootSecret);
+// };

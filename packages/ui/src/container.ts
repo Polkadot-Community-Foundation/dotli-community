@@ -9,21 +9,31 @@
 
 import {
   createDefaultLogger,
+  GenericError,
   RequestCredentialsErr,
   SigningErr,
+  StatementProofErr,
   StorageErr,
 } from "@novasamatech/host-api";
 import type { Provider } from "@novasamatech/host-api";
 import { createIframeProvider } from "@novasamatech/host-container";
 import { createContainer } from "@novasamatech/host-container";
 import type { Container } from "@novasamatech/host-container";
-import { fromPromise } from "neverthrow";
+import type { SignedStatement } from "@novasamatech/sdk-statement";
+import {
+  createSr25519Prover,
+  type StatementStoreAdapter,
+} from "@novasamatech/statement-store";
+import { errAsync, fromPromise } from "neverthrow";
 import { isLocalhost, BASE_DOMAIN } from "@dotli/config/config";
 
 import type { UserSession } from "@novasamatech/host-papp";
 import {
   getAuthState,
+  getStatementStore,
   onAuthStateChange,
+  onStatementStoreReady,
+  readSessionSecret,
   type AuthState,
 } from "@dotli/auth/auth";
 import { showSignPayloadModal, showSignRawModal } from "@dotli/auth/signing";
@@ -34,6 +44,12 @@ import {
 } from "@dotli/protocol/client";
 import { log } from "@dotli/shared/log";
 import { showPushNotification } from "./notification";
+import {
+  mapFromHostSignedStatement,
+  mapFromHostStatement,
+  mapSdkProof,
+  mapSdkSignedStatement,
+} from "./statement-store-mapping";
 
 // ── Session helpers (shared by all bridges) ────────────────
 
@@ -246,6 +262,119 @@ function wireContainerHandlers(
     showPushNotification({ text, deeplink, label });
     return ok(undefined);
   });
+
+  // ── Statement Store ───────────────────────────────────
+  //
+  // Handlers resolve getStatementStore() lazily (at call time, not setup time)
+  // because initAuth() is lazy-loaded and may not have run yet.
+
+  const submitLimiter = createSubmitRateLimiter();
+
+  container.handleStatementStoreSubscribe((topics, send) => {
+    let innerUnsub: (() => void) | null = null;
+    let cancelled = false;
+
+    function startSubscription(store: StatementStoreAdapter): void {
+      if (cancelled) {
+        return;
+      }
+      log.warn(`[${label}] Statement store subscribe, topics:`, topics.length);
+      innerUnsub = store.subscribeStatements(topics, (statements) => {
+        log.warn(
+          `[${label}] Statement store received ${String(statements.length)} statements`,
+        );
+        const signed = statements.filter(
+          (s): s is SignedStatement => s.proof !== undefined,
+        );
+        if (signed.length > 0) {
+          send(signed.map(mapSdkSignedStatement));
+        }
+      });
+    }
+
+    const store = getStatementStore();
+    if (store) {
+      startSubscription(store);
+    } else {
+      log.warn(
+        `[${label}] Statement store subscribe — store not ready, waiting…`,
+      );
+      void onStatementStoreReady().then(startSubscription);
+    }
+
+    return () => {
+      cancelled = true;
+      innerUnsub?.();
+    };
+  });
+
+  container.handleStatementStoreSubmit((statement) => {
+    const store = getStatementStore();
+    if (!store) {
+      return errAsync(
+        new GenericError({ reason: "Statement store not initialized" }),
+      );
+    }
+    if (!submitLimiter.allow()) {
+      return errAsync(new GenericError({ reason: "Rate limited" }));
+    }
+    return store
+      .submitStatement(mapFromHostSignedStatement(statement))
+      .map(() => undefined)
+      .mapErr((e: Error) => new GenericError({ reason: e.message }));
+  });
+
+  // NOTE: ProductAccountId ([dotNsIdentifier, derivationIndex]) is intentionally
+  // unused — the proof is always signed with the root session key because only
+  // the session account has an on-chain allowance (quota) on People Chain.
+  // Derived product accounts are not registered and cannot submit statements.
+  container.handleStatementStoreCreateProof(([, statement], { err }) => {
+    const session = getSession();
+    if (!session) {
+      return err(new StatementProofErr.UnableToSign());
+    }
+
+    return fromPromise(readSessionSecret(session.id), (e) =>
+      e instanceof Error ? e : new Error(String(e)),
+    )
+      .mapErr((e) => new StatementProofErr.Unknown({ reason: e.message }))
+      .andThen((secret) =>
+        secret
+          ? fromPromise(
+              Promise.resolve(createSr25519Prover(secret)),
+              () => new StatementProofErr.UnableToSign(),
+            )
+          : err(new StatementProofErr.UnableToSign()),
+      )
+      .andThen((prover) =>
+        prover
+          .generateMessageProof(mapFromHostStatement(statement))
+          .mapErr((e) => new StatementProofErr.Unknown({ reason: e.message })),
+      )
+      .map((signed) => mapSdkProof(signed.proof));
+  });
+}
+
+// ── Rate limiter (sliding window) ─────────────────────────
+
+const SUBMIT_WINDOW_MS = 10_000;
+const SUBMIT_MAX_PER_WINDOW = 20;
+
+function createSubmitRateLimiter(): { allow: () => boolean } {
+  const timestamps: number[] = [];
+  return {
+    allow() {
+      const now = Date.now();
+      while (timestamps.length > 0 && timestamps[0] <= now - SUBMIT_WINDOW_MS) {
+        timestamps.shift();
+      }
+      if (timestamps.length >= SUBMIT_MAX_PER_WINDOW) {
+        return false;
+      }
+      timestamps.push(now);
+      return true;
+    },
+  };
 }
 
 // ── Helpers ────────────────────────────────────────────────
