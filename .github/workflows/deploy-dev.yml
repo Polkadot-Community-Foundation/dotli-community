@@ -19,6 +19,6 @@ jobs:
   deploy:
     uses: ./.github/workflows/deploy.yml
     with:
-      environment: ${{ github.event.inputs.target == 'paseoli.dev' && 'dev-paseo' || 'dev-dot' }}
+      environment: ${{ github.event.inputs.target == 'paseoli.dev' && 'dev-paseo' || 'dev-polkadot' }}
       app_env: development
     secrets: inherit
