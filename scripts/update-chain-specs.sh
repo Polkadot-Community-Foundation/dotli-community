@@ -46,7 +46,7 @@ fi
 # Merge: take current local spec (compact genesis), update lightSyncState + bootNodes from fresh.
 # Tests each bootnode via TCP connect and only keeps healthy ones.
 # Note: PASEO_RAW is too large for a CLI argument, so we pipe it via stdin.
-echo "$PASEO_RAW" | node -e '
+echo "$PASEO_RAW" | bun -e '
 const fs = require("fs");
 const net = require("net");
 

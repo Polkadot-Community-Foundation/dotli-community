@@ -4,6 +4,14 @@
 // fetches content via P2P, and renders it in a sandboxed iframe.
 // No dotns resolution, no smoldot, no topbar.
 
+// Reload once on chunk load failure (stale HTML referencing deleted assets).
+window.addEventListener("vite:preloadError", () => {
+  if (sessionStorage.getItem("dotli:chunk-reload") === null) {
+    sessionStorage.setItem("dotli:chunk-reload", "1");
+    window.location.reload();
+  }
+});
+
 import "@dotli/ui/styles.css";
 import * as Sentry from "@sentry/browser";
 import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
@@ -160,9 +168,17 @@ async function storeArchiveInSW(
 
   const { packed, index } = packArchive(files);
 
-  const archiveReady = new Promise<void>((resolve) => {
+  const archiveReady = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      navigator.serviceWorker.removeEventListener("message", handler);
+      reject(
+        new Error("Service worker did not acknowledge archive within 10s"),
+      );
+    }, 10_000);
+
     const handler = (evt: MessageEvent): void => {
       if ((evt.data as { type?: string } | null)?.type === "ARCHIVE_READY") {
+        clearTimeout(timer);
         navigator.serviceWorker.removeEventListener("message", handler);
         resolve();
       }

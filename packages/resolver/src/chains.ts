@@ -1,95 +1,56 @@
 // dot.li — Chain provider factory
 //
 // Maps well-known genesis hashes to smoldot chain specs and creates
-// JsonRpcProviders on demand. Used by the host container to serve
-// chain connections to SPAs via handleChainConnection.
+// JsonRpcProviders on demand. For Asset Hub Paseo and the Paseo relay
+// chain, providers are shared with the resolver via the broker — this
+// avoids spinning up duplicate parachain instances in smoldot and
+// ensures dApp connections are immediately usable (the resolver's
+// chain is already synced by the time a dApp loads).
 
-import { getPaseoChainSpec, getAssetHubPaseoChainSpec } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 import {
   PASEO_RELAY_GENESIS as PASEO_RELAY,
   ASSET_HUB_PASEO_GENESIS as ASSET_HUB_PASEO,
 } from "@dotli/config/config";
+import { log } from "@dotli/shared/log";
 
-import {
-  getSmoldot,
-  getRelayChain,
-  getAssetHubChain,
-  makeNonRemovingChain,
-  waitForResolverRelease,
-} from "./smoldot";
+import { getRelayChain, getSharedAssetHubProvider } from "./smoldot";
 
-interface ChainEntry {
-  getChainSpec: () => Promise<string>;
-  isParachain: boolean;
-}
+const SUPPORTED_GENESIS = new Set([
+  PASEO_RELAY.toLowerCase(),
+  ASSET_HUB_PASEO.toLowerCase(),
+]);
 
-const SUPPORTED_CHAINS: Record<string, ChainEntry> = {
-  [PASEO_RELAY]: { getChainSpec: getPaseoChainSpec, isParachain: false },
-  [ASSET_HUB_PASEO]: {
-    getChainSpec: getAssetHubPaseoChainSpec,
-    isParachain: true,
-  },
-};
-
-// Cache: genesis hash → provider (created once per chain)
-const providerCache = new Map<string, JsonRpcProvider>();
-
-/**
- * Check if a genesis hash corresponds to a supported chain.
- */
 export function isChainSupported(genesisHash: string): boolean {
-  return genesisHash.toLowerCase() in SUPPORTED_CHAINS;
+  return SUPPORTED_GENESIS.has(genesisHash.toLowerCase());
 }
 
 /**
  * Create a JsonRpcProvider for a given genesis hash.
- * Returns null if the chain is not supported.
- * Providers are cached — each chain is added to smoldot only once.
+ *
+ * Reuses the resolver's shared chains — the ChainBroker provides session
+ * isolation so dApp connections cannot interfere with the resolver.
+ * This means no duplicate parachain sync: the resolver's Asset Hub is
+ * already synced by the time a dApp loads, so chain queries work immediately.
  */
 export function createChainProvider(
   genesisHash: string,
 ): JsonRpcProvider | null {
   const key = genesisHash.toLowerCase();
-  const entry = SUPPORTED_CHAINS[key] as ChainEntry | undefined;
-  if (entry === undefined) {
-    return null;
-  }
-
-  const cached = providerCache.get(key);
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  let chainPromise: Promise<ReturnType<typeof makeNonRemovingChain>>;
 
   if (key === ASSET_HUB_PASEO.toLowerCase()) {
-    // Wait for the resolver to destroy its temporary chain first,
-    // then create the shared singleton (smoldot panics on duplicates).
-    chainPromise = waitForResolverRelease().then(() =>
-      getAssetHubChain().then(makeNonRemovingChain),
+    log.warn(
+      "[dot.li chains] Returning shared Asset Hub provider (same chain as resolver)",
     );
-  } else if (key === PASEO_RELAY.toLowerCase()) {
-    // Reuse the shared relay chain singleton
-    chainPromise = getRelayChain().then(makeNonRemovingChain);
-  } else if (entry.isParachain) {
-    const smoldot = getSmoldot();
-    chainPromise = Promise.all([getRelayChain(), entry.getChainSpec()]).then(
-      ([relayChain, chainSpec]) =>
-        smoldot.addChain({
-          chainSpec,
-          potentialRelayChains: [relayChain],
-        }),
-    );
-  } else {
-    const smoldot = getSmoldot();
-    chainPromise = entry
-      .getChainSpec()
-      .then((chainSpec) => smoldot.addChain({ chainSpec }));
+    return getSharedAssetHubProvider();
   }
 
-  const provider = getSmProvider(chainPromise);
-  providerCache.set(key, provider);
-  return provider;
+  if (key === PASEO_RELAY.toLowerCase()) {
+    log.warn("[dot.li chains] Returning shared relay chain provider");
+    return getSmProvider(getRelayChain());
+  }
+
+  log.warn(`[dot.li chains] Unsupported chain: ${genesisHash}`);
+  return null;
 }

@@ -111,6 +111,12 @@ export const IPFS_GATEWAY = IPFS_GATEWAYS.paseo;
 /** Max number of domain archives kept in the SW in-memory LRU cache. */
 export const SW_ARCHIVE_CACHE_MAX = 8;
 
+/** Max chain connections per origin on the protocol host. */
+export const MAX_CONNECTIONS_PER_ORIGIN = 3;
+
+/** Max nested container bridges per host shell. */
+export const MAX_NESTED_BRIDGES = 5;
+
 // --- Timeouts (ms) ---
 
 export const TIMEOUTS = {
@@ -120,15 +126,12 @@ export const TIMEOUTS = {
   SW_READY: 10_000,
   /** P2P fetch abort (per attempt) */
   P2P_FETCH: 30_000,
+  /** Delay before starting gateway fetch in parallel with P2P */
+  P2P_RACE_GATEWAY_DELAY: 5_000,
   /** Delay between P2P retry attempts */
   P2P_RETRY_DELAY: 3_000,
   /** Maximum P2P fetch retry attempts (total attempts = 1 + retries) */
   P2P_MAX_RETRIES: 2,
-  /** Initial relay DB save after smoldot starts */
-  RELAY_DB_FIRST_SAVE: 5_000,
-  /** Periodic relay DB save interval */
-  RELAY_DB_SAVE_INTERVAL: 60_000,
+  /** SharedWorker readiness timeout (must cover full cold-start chain sync, up to ~60s) */
+  SHARED_WORKER_READY: 90_000,
 } as const;
-
-/** Max bytes for `chainHead_unstable_finalizedDatabase` RPC param. */
-export const FINALIZED_DB_MAX_SIZE = 1_000_000;

@@ -1,0 +1,271 @@
+import { describe, expect, it, vi } from "vitest";
+import type {
+  JsonRpcConnection,
+  JsonRpcProvider,
+} from "@polkadot-api/json-rpc-provider";
+import { createChainBrokerManager } from "@dotli/protocol/broker";
+
+function createProviderHarness(): {
+  provider: JsonRpcProvider;
+  sent: string[];
+  disconnect: ReturnType<typeof vi.fn>;
+  emit: (message: unknown) => void;
+} {
+  const sent: string[] = [];
+  const disconnect = vi.fn();
+  let onMessage: ((message: string) => void) | null = null;
+
+  const provider: JsonRpcProvider = (listener): JsonRpcConnection => {
+    onMessage = listener;
+    return {
+      send(message) {
+        sent.push(message);
+      },
+      disconnect,
+    };
+  };
+
+  return {
+    provider,
+    sent,
+    disconnect,
+    emit(message) {
+      onMessage?.(JSON.stringify(message));
+    },
+  };
+}
+
+describe("createChainBrokerManager", () => {
+  it("remaps request ids and routes responses back to the correct client", () => {
+    const harness = createProviderHarness();
+    const manager = createChainBrokerManager((genesisHash) =>
+      genesisHash === "asset-hub" ? harness.provider : null,
+    );
+
+    const messagesA: string[] = [];
+    const messagesB: string[] = [];
+    const connectionA = manager.connectRemote(
+      "asset-hub",
+      "conn-a",
+      (message) => {
+        messagesA.push(message);
+      },
+    );
+    const connectionB = manager.connectRemote(
+      "asset-hub",
+      "conn-b",
+      (message) => {
+        messagesB.push(message);
+      },
+    );
+
+    expect(connectionA).not.toBeNull();
+    expect(connectionB).not.toBeNull();
+
+    connectionA?.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "chainHead_v1_header",
+        params: ["token-a", "0xabc"],
+      }),
+    );
+    connectionB?.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "chainHead_v1_header",
+        params: ["token-b", "0xdef"],
+      }),
+    );
+
+    const upstreamA = JSON.parse(harness.sent[0] ?? "{}") as { id: string };
+    const upstreamB = JSON.parse(harness.sent[1] ?? "{}") as { id: string };
+
+    harness.emit({ jsonrpc: "2.0", id: upstreamB.id, result: "header-b" });
+    harness.emit({ jsonrpc: "2.0", id: upstreamA.id, result: "header-a" });
+
+    expect(messagesA).toEqual([
+      JSON.stringify({ jsonrpc: "2.0", id: 1, result: "header-a" }),
+    ]);
+    expect(messagesB).toEqual([
+      JSON.stringify({ jsonrpc: "2.0", id: 7, result: "header-b" }),
+    ]);
+  });
+
+  it("rewrites subscription tokens per client and routes follow events", () => {
+    const harness = createProviderHarness();
+    const manager = createChainBrokerManager(() => harness.provider);
+    const messagesA: string[] = [];
+    const messagesB: string[] = [];
+    const connectionA = manager.connectRemote(
+      "asset-hub",
+      "conn-a",
+      (message) => {
+        messagesA.push(message);
+      },
+    );
+    const connectionB = manager.connectRemote(
+      "asset-hub",
+      "conn-b",
+      (message) => {
+        messagesB.push(message);
+      },
+    );
+
+    connectionA?.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "chainHead_v1_follow",
+        params: [true],
+      }),
+    );
+    connectionB?.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "chainHead_v1_follow",
+        params: [true],
+      }),
+    );
+
+    const upstreamA = JSON.parse(harness.sent[0] ?? "{}") as { id: string };
+    const upstreamB = JSON.parse(harness.sent[1] ?? "{}") as { id: string };
+
+    harness.emit({ jsonrpc: "2.0", id: upstreamA.id, result: "up-a" });
+    harness.emit({ jsonrpc: "2.0", id: upstreamB.id, result: "up-b" });
+
+    const localTokenA = (JSON.parse(messagesA[0] ?? "{}") as { result: string })
+      .result;
+    const localTokenB = (JSON.parse(messagesB[0] ?? "{}") as { result: string })
+      .result;
+
+    harness.emit({
+      jsonrpc: "2.0",
+      method: "chainHead_v1_followEvent",
+      params: { subscription: "up-b", result: { event: "bestBlockChanged" } },
+    });
+    harness.emit({
+      jsonrpc: "2.0",
+      method: "chainHead_v1_followEvent",
+      params: { subscription: "up-a", result: { event: "bestBlockChanged" } },
+    });
+
+    expect(messagesA[1]).toBe(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "chainHead_v1_followEvent",
+        params: {
+          subscription: localTokenA,
+          result: { event: "bestBlockChanged" },
+        },
+      }),
+    );
+    expect(messagesB[1]).toBe(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "chainHead_v1_followEvent",
+        params: {
+          subscription: localTokenB,
+          result: { event: "bestBlockChanged" },
+        },
+      }),
+    );
+  });
+
+  it("releases owned subscriptions on disconnect and tears down the upstream when empty", () => {
+    const harness = createProviderHarness();
+    const manager = createChainBrokerManager(() => harness.provider);
+    const connection = manager.connectRemote("asset-hub", "conn-a", () => {});
+
+    connection?.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "chainHead_v1_follow",
+        params: [true],
+      }),
+    );
+
+    const upstreamRequest = JSON.parse(harness.sent[0] ?? "{}") as {
+      id: string;
+    };
+    harness.emit({ jsonrpc: "2.0", id: upstreamRequest.id, result: "up-a" });
+
+    connection?.disconnect();
+
+    const release = JSON.parse(harness.sent[1] ?? "{}") as {
+      method: string;
+      params: string[];
+    };
+    expect(release.method).toBe("chainHead_v1_unfollow");
+    expect(release.params[0]).toBe("up-a");
+    expect(harness.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("provides a local provider that uses the same upstream broker", () => {
+    const harness = createProviderHarness();
+    const manager = createChainBrokerManager(() => harness.provider);
+    const localProvider = manager.getLocalProvider("asset-hub");
+    const remoteMessages: string[] = [];
+
+    expect(localProvider).not.toBeNull();
+
+    const localMessages: string[] = [];
+    const localConnection = localProvider?.((message) => {
+      localMessages.push(message);
+    });
+    const remoteConnection = manager.connectRemote(
+      "asset-hub",
+      "conn-a",
+      (message) => {
+        remoteMessages.push(message);
+      },
+    );
+
+    localConnection?.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "local-1",
+        method: "chainHead_v1_header",
+        params: ["token", "0xabc"],
+      }),
+    );
+    remoteConnection?.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "remote-1",
+        method: "chainHead_v1_header",
+        params: ["token", "0xdef"],
+      }),
+    );
+
+    const localUpstream = JSON.parse(harness.sent[0] ?? "{}") as { id: string };
+    const remoteUpstream = JSON.parse(harness.sent[1] ?? "{}") as {
+      id: string;
+    };
+
+    harness.emit({
+      jsonrpc: "2.0",
+      id: localUpstream.id,
+      result: "local-result",
+    });
+    harness.emit({
+      jsonrpc: "2.0",
+      id: remoteUpstream.id,
+      result: "remote-result",
+    });
+
+    expect(localMessages).toEqual([
+      JSON.stringify({ jsonrpc: "2.0", id: "local-1", result: "local-result" }),
+    ]);
+    expect(remoteMessages).toEqual([
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "remote-1",
+        result: "remote-result",
+      }),
+    ]);
+  });
+});

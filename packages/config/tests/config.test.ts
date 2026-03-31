@@ -6,7 +6,6 @@ import {
   BULLETIN_PEERS,
   IPFS_GATEWAY,
   TIMEOUTS,
-  FINALIZED_DB_MAX_SIZE,
   SW_ARCHIVE_CACHE_MAX,
 } from "@dotli/config/config";
 
@@ -64,12 +63,6 @@ describe("config constants", () => {
       for (const [key, value] of Object.entries(TIMEOUTS)) {
         expect(value, `TIMEOUTS.${key}`).toBeGreaterThan(0);
       }
-    });
-  });
-
-  describe("FINALIZED_DB_MAX_SIZE", () => {
-    it("is a positive number", () => {
-      expect(FINALIZED_DB_MAX_SIZE).toBeGreaterThan(0);
     });
   });
 

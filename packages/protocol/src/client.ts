@@ -73,9 +73,17 @@ function bindMessageListener(): void {
         }
         return;
       }
-      case "chain-message":
-        chainConnections.get(msg.connectionId)?.onMessage(msg.message);
+      case "chain-message": {
+        const conn = chainConnections.get(msg.connectionId);
+        if (conn) {
+          conn.onMessage(msg.message);
+        } else {
+          log.warn(
+            `[dot.li protocol] chain-message for unknown connectionId: ${msg.connectionId} (known: ${[...chainConnections.keys()].join(", ")})`,
+          );
+        }
         return;
+      }
       case "chain-halt":
         chainConnections.delete(msg.connectionId);
         return;
@@ -93,7 +101,9 @@ function createRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-const IFRAME_READY_TIMEOUT_MS = 15_000;
+// The iframe signals "ready" only after the SharedWorker pre-syncs the chain.
+// Cold-start chain sync can take up to ~60s, so allow enough time.
+const IFRAME_READY_TIMEOUT_MS = 120_000;
 const IFRAME_MAX_RETRIES = 2;
 
 function createProtocolIframe(): Promise<void> {
@@ -107,14 +117,10 @@ function createProtocolIframe(): Promise<void> {
 
     const timer = setTimeout(() => {
       cleanup();
-      // Fall back to resolving on load event timeout — the iframe may
-      // still work even if the "ready" message was missed.
-      if (iframe.contentWindow) {
-        protocolIframe = iframe;
-        resolve();
-      } else {
-        reject(new Error("Shared protocol iframe timed out"));
-      }
+      // Reject unconditionally — if the "ready" message was not received,
+      // the protocol host is not listening and all requests would hang.
+      iframe.remove();
+      reject(new Error("Shared protocol iframe timed out (no ready signal)"));
     }, IFRAME_READY_TIMEOUT_MS);
 
     const onReady = (event: MessageEvent): void => {
@@ -176,8 +182,9 @@ export async function ensureProtocolFrame(): Promise<void> {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const METHOD_TIMEOUTS: Partial<Record<ProtocolRequestMethod, number>> = {
-  warmup: 60_000,
-  resolveDotName: 60_000,
+  warmup: 300_000,
+  resolveDotName: 300_000,
+  resolveOwner: 300_000,
   chainConnect: 30_000,
 };
 
@@ -253,6 +260,30 @@ export function isRemoteChainSupported(genesisHash: string): boolean {
   return SUPPORTED_GENESIS_HASHES.has(genesisHash.toLowerCase());
 }
 
+/**
+ * Build a JSON-RPC error response string for a given request.
+ * Parses the request to extract its `id`, then wraps the error message.
+ * If the request can't be parsed, returns null (nothing to respond to).
+ */
+function buildJsonRpcError(
+  request: string,
+  errorMessage: string,
+): string | null {
+  try {
+    const parsed = JSON.parse(request) as { id?: unknown };
+    if (parsed.id === undefined || parsed.id === null) {
+      return null;
+    }
+    return JSON.stringify({
+      jsonrpc: "2.0",
+      id: parsed.id,
+      error: { code: -32603, message: errorMessage },
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function createRemoteChainProvider(
   genesisHash: string,
 ): JsonRpcProvider | null {
@@ -280,21 +311,52 @@ export function createRemoteChainProvider(
         remote.pendingMessages = [];
       })
       .catch((error: unknown) => {
-        chainConnections.delete(connectionId);
+        // Connection failed — send JSON-RPC error responses for all
+        // pending messages so polkadot-api's client knows the connection
+        // died instead of hanging on "Not connected" forever.
+        const reason =
+          error instanceof Error ? error.message : "Chain connection failed";
         log.error("[dot.li protocol] Failed to connect remote chain:", error);
+        for (const pending of remote.pendingMessages) {
+          const errResponse = buildJsonRpcError(pending, reason);
+          if (errResponse !== null) {
+            onMessage(errResponse);
+          }
+        }
+        remote.pendingMessages = [];
+        chainConnections.delete(connectionId);
       });
 
     return {
       send(message) {
         const current = chainConnections.get(connectionId);
         if (!current) {
+          // Connection was removed (failed or disconnected).
+          // Respond with an error so the caller doesn't hang.
+          const errResponse = buildJsonRpcError(
+            message,
+            "Chain connection is closed",
+          );
+          if (errResponse !== null) {
+            onMessage(errResponse);
+          }
           return;
         }
         if (!current.connected) {
           current.pendingMessages.push(message);
           return;
         }
-        void postRequest("chainSend", { connectionId, message });
+        void postRequest("chainSend", { connectionId, message }).catch(
+          (error: unknown) => {
+            const reason =
+              error instanceof Error ? error.message : "Chain send failed";
+            log.error("[dot.li protocol] Remote chain send failed:", error);
+            const errResponse = buildJsonRpcError(message, reason);
+            if (errResponse !== null) {
+              onMessage(errResponse);
+            }
+          },
+        );
       },
       disconnect() {
         const current = chainConnections.get(connectionId);

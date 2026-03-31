@@ -43,6 +43,7 @@ import {
   createRemoteChainProvider,
   isRemoteChainSupported,
 } from "@dotli/protocol/client";
+import { MAX_NESTED_BRIDGES } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { computePreimageKey, hashToCid } from "@dotli/content/preimage";
 import { ensureHelia } from "@dotli/content/fetch";
@@ -53,6 +54,7 @@ import {
   getTestSigner,
 } from "@dotli/resolver/bulletin";
 import { showPushNotification } from "./notification";
+import { showNotification } from "./notification";
 import { showPreimageSubmitModal } from "./preimage-modal";
 import {
   mapFromHostSignedStatement,
@@ -84,6 +86,26 @@ function wireContainerHandlers(
   label: string,
   storagePrefix: string,
 ): void {
+  let chainConnectionWarned = false;
+
+  function warnOnRawChainConnection(genesisHash: string): void {
+    if (chainConnectionWarned) {
+      return;
+    }
+    chainConnectionWarned = true;
+
+    log.warn(
+      `[${label}] Raw chain connection requested (genesis=${genesisHash.slice(0, 10)}…, storage=${storagePrefix})`,
+    );
+
+    showNotification({
+      label: "Direct Chain Access",
+      text: "This app uses a direct chain connection instead of the recommended host API.",
+      dismissMs: 8000,
+      browserNotification: false,
+    });
+  }
+
   // ── Feature support ────────────────────────────────────
 
   container.handleFeatureSupported((params, { ok }) => {
@@ -98,6 +120,7 @@ function wireContainerHandlers(
   // ── Chain connection ───────────────────────────────────
 
   container.handleChainConnection((genesisHash) => {
+    warnOnRawChainConnection(genesisHash);
     return createRemoteChainProvider(genesisHash);
   });
 
@@ -629,6 +652,33 @@ export function setupNestedBridgeDetector(
     }
     // Skip already-known nested windows
     if (knownWindows.has(event.source)) {
+      return;
+    }
+
+    // Validate origin — only allow *.dot.li and *.localhost origins
+    try {
+      const url = new URL(event.origin);
+      const h = url.hostname;
+      const allowed =
+        h.endsWith(`.${BASE_DOMAIN}`) ||
+        h === BASE_DOMAIN ||
+        h === "localhost" ||
+        h.endsWith(".localhost");
+      if (!allowed) {
+        log.warn(
+          `[dot.li] Rejected nested bridge from disallowed origin: ${event.origin}`,
+        );
+        return;
+      }
+    } catch {
+      return;
+    }
+
+    // Cap the number of nested bridges
+    if (knownWindows.size >= MAX_NESTED_BRIDGES) {
+      log.warn(
+        `[dot.li] Nested bridge limit reached (max ${String(MAX_NESTED_BRIDGES)}), ignoring`,
+      );
       return;
     }
 

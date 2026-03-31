@@ -127,9 +127,17 @@ export async function renderArchive(
   const { packed, index } = packArchive(files);
 
   // Wait for the SW to confirm it has received the archive
-  const archiveReady = new Promise<void>((resolve) => {
+  const archiveReady = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      navigator.serviceWorker.removeEventListener("message", handler);
+      reject(
+        new Error("Service worker did not acknowledge archive within 10s"),
+      );
+    }, 10_000);
+
     const handler = (evt: MessageEvent): void => {
       if ((evt.data as { type?: string } | null)?.type === "ARCHIVE_READY") {
+        clearTimeout(timer);
         navigator.serviceWorker.removeEventListener("message", handler);
         resolve();
       }

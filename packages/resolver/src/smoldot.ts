@@ -1,108 +1,95 @@
 // dot.li — Smoldot lifecycle management
 //
-// Shared smoldot instance and relay chain, reused by resolve.ts and chains.ts.
-// Handles smoldot startup, relay chain creation, and database persistence.
+// Single shared smoldot instance plus a small set of provider factories.
+// The protocol host can override the resolver's Asset Hub provider so
+// `.dot` resolution and remote dApp clients share one upstream JSON-RPC
+// loop through a broker.
 //
-// Two Asset Hub chains exist at different lifecycle stages:
-//   1. Resolver chain — temporary, created for name resolution, destroyed after
-//   2. Shared chain  — long-lived singleton for dApp chain connections
-// smoldot panics if the same chain is added twice, so a mutex ensures
-// the resolver chain is fully removed before the shared chain is created.
+// Chain DB persistence is handled by smoldot internally — we do NOT
+// manually save/load chain databases to IndexedDB.
 
+import { start as startSmoldotDirect } from "polkadot-api/smoldot";
 import { startFromWorker } from "polkadot-api/smoldot/from-worker";
 import SmWorker from "polkadot-api/smoldot/worker?worker";
+import { getSmProvider } from "polkadot-api/sm-provider";
+import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 import {
   getPaseoChainSpec,
   getAssetHubPaseoChainSpec,
   getBulletinPaseoChainSpec,
 } from "./chain-specs";
-import { loadChainDb, extractAndSaveChainDb } from "@dotli/storage/db";
-import { FINALIZED_DB_MAX_SIZE } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 
-export type SmoldotChain = Awaited<
-  ReturnType<ReturnType<typeof startFromWorker>["addChain"]>
->;
+/** The smoldot Client type (shared by `start()` and `startFromWorker()`). */
+export type SmoldotClient = ReturnType<typeof startFromWorker>;
 
-/**
- * Extract the relay chain database via JSON-RPC and save to IndexedDB.
- * The relay chain's JSON-RPC is free (not consumed by any provider).
- */
-export async function extractAndSaveRelayDb(
-  relayChain: SmoldotChain,
-): Promise<void> {
-  await extractAndSaveChainDb(
-    relayChain,
-    FINALIZED_DB_MAX_SIZE,
-    log.warn,
-    "[dot.li smoldot]",
-  );
-}
+export type SmoldotChain = Awaited<ReturnType<SmoldotClient["addChain"]>>;
 
-// ── Shared smoldot instance and relay chain ──────────────────
+// ── Shared smoldot instance ──────────────────────────────────
 
-let smoldotInstance: ReturnType<typeof startFromWorker> | null = null;
+let smoldotInstance: SmoldotClient | null = null;
 let relayChainPromise: Promise<SmoldotChain> | null = null;
 
 /**
- * Get or create the shared smoldot instance.
+ * Create smoldot using `start()` — runs on the current thread.
+ *
+ * Used in SharedWorker context where the `Worker` constructor is unavailable.
+ * Smoldot networking (WebSocket) is async; occasional CPU bursts for block
+ * verification (~2-10ms per block) are acceptable on the SharedWorker thread.
  */
-export function getSmoldot(): ReturnType<typeof startFromWorker> {
-  smoldotInstance ??= startFromWorker(new SmWorker(), {
+export function getSmoldotDirect(): SmoldotClient {
+  if (smoldotInstance !== null) {
+    return smoldotInstance;
+  }
+  log.warn("[dot.li smoldot] Creating smoldot via start() (current thread)");
+  smoldotInstance = startSmoldotDirect({
+    maxLogLevel: 1,
+  });
+  log.warn("[dot.li smoldot] Smoldot client ready (direct mode)");
+  return smoldotInstance;
+}
+
+export function getSmoldot(): SmoldotClient {
+  if (smoldotInstance !== null) {
+    return smoldotInstance;
+  }
+  log.warn("[dot.li smoldot] Creating smoldot via startFromWorker()");
+  smoldotInstance = startFromWorker(new SmWorker(), {
     maxLogLevel: import.meta.env.DEV ? 3 : 1,
   });
   return smoldotInstance;
 }
 
-/**
- * Get or create the Paseo relay chain (needed as potentialRelayChain for parachains).
- * Restores from IndexedDB-persisted database if available, dramatically
- * reducing sync time on revisits (~10s → ~1-3s).
- */
+export function terminateSmoldot(): void {
+  if (smoldotInstance === null) {
+    return;
+  }
+  log.warn("[dot.li smoldot] Terminating smoldot instance");
+  try {
+    void smoldotInstance.terminate();
+  } catch {
+    // Already destroyed or crashed — safe to ignore.
+  }
+  smoldotInstance = null;
+  relayChainPromise = null;
+  resolverAssetHubPromise = null;
+  resolverAssetHubProvider = null;
+}
+
 export function getRelayChain(): Promise<SmoldotChain> {
-  relayChainPromise ??= Promise.all([
-    loadChainDb("paseo"),
-    getPaseoChainSpec(),
-  ]).then(([dbContent, chainSpec]) => {
-    if (dbContent !== undefined) {
-      log.warn(
-        `[dot.li smoldot] Restored relay chain DB (${String(Math.round(dbContent.length / 1024))} KB)`,
-      );
-    }
-    return getSmoldot().addChain({
-      chainSpec,
-      databaseContent: dbContent,
+  relayChainPromise ??= getPaseoChainSpec()
+    .then((chainSpec) => {
+      log.warn("[dot.li smoldot] Adding relay chain...");
+      return getSmoldot().addChain({ chainSpec });
+    })
+    .catch((error: unknown) => {
+      relayChainPromise = null;
+      throw error;
     });
-  });
   return relayChainPromise;
 }
 
-// ── Temporary Asset Hub chain for the resolver ───────────────
-// The resolver creates its own chain that is destroyed after resolution.
-// This avoids sharing nextJsonRpcResponse() between the resolver's
-// polkadot-api client and dApp chain connections (message theft).
-
-/**
- * Create a temporary Asset Hub Paseo chain for the resolver.
- * The caller MUST call chain.remove() when done (via destroyClient).
- * Must NOT be called after the shared chain exists (smoldot panics).
- */
-export async function createResolverAssetHubChain(): Promise<SmoldotChain> {
-  resolverChainCreated = true;
-  if (mutexReleased) {
-    throw new Error(
-      "Cannot create resolver chain: shared chain may already exist",
-    );
-  }
-  const [relayChain, chainSpec] = await Promise.all([
-    getRelayChain(),
-    getAssetHubPaseoChainSpec(),
-  ]);
-  return getSmoldot().addChain({
-    chainSpec,
-    potentialRelayChains: [relayChain],
-  });
-}
+// ── Provider factories ──────────────────────────────────────
 
 // ── Bulletin Paseo chain (for preimage operations) ───────────
 // Long-lived singleton — no mutex conflict with Asset Hub.
@@ -128,30 +115,10 @@ export function getBulletinChain(): Promise<SmoldotChain> {
 
 // ── Shared Asset Hub Paseo chain (for dApp connections) ──────
 // Created lazily after the resolver releases the mutex.
-
-let assetHubChainPromise: Promise<SmoldotChain> | null = null;
-
 /**
- * Get or create the Asset Hub Paseo parachain singleton.
- * Only available after the resolver mutex is released.
- */
-export function getAssetHubChain(): Promise<SmoldotChain> {
-  assetHubChainPromise ??= Promise.all([
-    getRelayChain(),
-    getAssetHubPaseoChainSpec(),
-  ]).then(([relayChain, chainSpec]) =>
-    getSmoldot().addChain({
-      chainSpec,
-      potentialRelayChains: [relayChain],
-    }),
-  );
-  return assetHubChainPromise;
-}
-
-/**
- * Wrap a chain so that remove() is a no-op.
- * Use when passing a shared singleton to getSmProvider() so that
- * polkadot-api's client.destroy() doesn't kill the shared chain.
+ * Wrap a chain so `.remove()` is a no-op.
+ * Used for shared singletons (e.g. bulletin chain) where a polkadot-api
+ * client must not tear down the underlying chain on disconnect.
  */
 export function makeNonRemovingChain(chain: SmoldotChain): SmoldotChain {
   return {
@@ -164,42 +131,65 @@ export function makeNonRemovingChain(chain: SmoldotChain): SmoldotChain {
   };
 }
 
-// ── Resolver mutex ───────────────────────────────────────────
-// Ensures the resolver chain is fully removed before the shared
-// chain is created (smoldot panics on duplicate chains).
-// If no resolver chain is ever created (e.g. localhost mode),
-// waitForResolverRelease() resolves immediately.
+// ── Dedicated provider factories ─────────────────────────────
 
-let resolverChainCreated = false;
-let mutexReleased = false;
-let resolverRelease: () => void;
-const resolverDone: Promise<void> = new Promise<void>((r) => {
-  resolverRelease = r;
-});
+let resolverAssetHubPromise: Promise<SmoldotChain> | null = null;
+let resolverAssetHubProvider: JsonRpcProvider | null = null;
+let resolverAssetHubProviderOverride: JsonRpcProvider | null = null;
 
-/**
- * Release the resolver mutex.
- * Called after the resolver's dedicated chain is destroyed.
- */
-export function releaseResolverMutex(): void {
-  mutexReleased = true;
-  resolverRelease();
+function createAssetHubChain(
+  relay: Promise<SmoldotChain>,
+): Promise<SmoldotChain> {
+  return Promise.all([relay, getAssetHubPaseoChainSpec()])
+    .then(([relayChain, chainSpec]) => {
+      log.warn("[dot.li smoldot] Adding Asset Hub parachain...");
+      return getSmoldot().addChain({
+        chainSpec,
+        potentialRelayChains: [relayChain],
+      });
+    })
+    .catch((error: unknown) => {
+      throw error;
+    });
 }
 
-/**
- * Wait until the resolver has released the Asset Hub chain.
- * Resolves immediately if no resolver chain was ever created.
- */
-export function waitForResolverRelease(): Promise<void> {
-  if (!resolverChainCreated) {
-    return Promise.resolve();
+function getResolverAssetHubChain(): Promise<SmoldotChain> {
+  resolverAssetHubPromise ??= createAssetHubChain(getRelayChain()).catch(
+    (error: unknown) => {
+      resolverAssetHubPromise = null;
+      throw error;
+    },
+  );
+  return resolverAssetHubPromise;
+}
+
+export function getResolverAssetHubProvider(): JsonRpcProvider {
+  if (resolverAssetHubProviderOverride !== null) {
+    return resolverAssetHubProviderOverride;
   }
-  return resolverDone;
+  resolverAssetHubProvider ??= getSmProvider(getResolverAssetHubChain());
+  return resolverAssetHubProvider;
 }
 
 /**
- * Whether the resolver mutex has been released (shared chain may exist).
+ * Return a raw smoldot provider for the shared Asset Hub chain.
+ *
+ * Unlike `getResolverAssetHubProvider()`, this always returns a fresh
+ * `getSmProvider()` instance from the shared chain — it never returns
+ * the broker override. Used by `createChainProvider()` in chains.ts
+ * so the broker can wrap this provider with session isolation.
  */
-export function isResolverDone(): boolean {
-  return mutexReleased;
+export function getSharedAssetHubProvider(): JsonRpcProvider {
+  return getSmProvider(getResolverAssetHubChain());
+}
+
+/**
+ * Override the resolver's Asset Hub provider.
+ * Used by the shared protocol broker so the resolver and remote dApps
+ * can share one upstream JSON-RPC loop.
+ */
+export function setResolverAssetHubProviderOverride(
+  provider: JsonRpcProvider | null,
+): void {
+  resolverAssetHubProviderOverride = provider;
 }

@@ -49,7 +49,7 @@ export function getTestSigner(): ReturnType<typeof getPolkadotSigner> {
   const derive = sr25519CreateDerive(miniSecret);
   const alice = derive("//Alice");
 
-  return getPolkadotSigner(alice.publicKey, "Sr25519", (input) =>
+  return getPolkadotSigner(alice.publicKey, "Sr25519", (input: Uint8Array) =>
     alice.sign(input),
   );
 }

@@ -96,6 +96,7 @@ export async function extractAndSaveChainDb(
   maxSize: number,
   logFn: (...args: unknown[]) => void,
   prefix: string,
+  chainName = "paseo",
 ): Promise<void> {
   const id = ++dbSaveId;
   try {
@@ -110,9 +111,9 @@ export async function extractAndSaveChainDb(
     const raw = await chain.nextJsonRpcResponse();
     const resp = JSON.parse(raw) as { id?: number; result?: string };
     if (resp.id === id && typeof resp.result === "string") {
-      await saveChainDb("paseo", resp.result);
+      await saveChainDb(chainName, resp.result);
       logFn(
-        `${prefix} Saved relay chain DB (${String(Math.round(resp.result.length / 1024))} KB)`,
+        `${prefix} Saved ${chainName} DB (${String(Math.round(resp.result.length / 1024))} KB)`,
       );
     }
   } catch {

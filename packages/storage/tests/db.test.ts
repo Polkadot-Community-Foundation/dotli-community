@@ -40,7 +40,7 @@ describe("extractAndSaveChainDb", () => {
     // Verify log was called
     expect(logFn).toHaveBeenCalledOnce();
     expect(logFn.mock.calls[0][0]).toContain("[test]");
-    expect(logFn.mock.calls[0][0]).toContain("Saved relay chain DB");
+    expect(logFn.mock.calls[0][0]).toContain("Saved paseo DB");
   });
 
   it("does not throw on JSON-RPC failure", async () => {

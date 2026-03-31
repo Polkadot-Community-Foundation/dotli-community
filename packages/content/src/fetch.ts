@@ -495,7 +495,8 @@ async function fetchViaGateway(
 
 /**
  * Fetch content by CID.
- * Tries P2P first (Helia/bitswap), falls back to IPFS gateway on failure.
+ * Tries P2P first. If P2P hasn't resolved after P2P_RACE_GATEWAY_DELAY,
+ * starts a gateway fetch in parallel and takes whichever resolves first.
  */
 export async function fetchArchive(
   cidString: string,
@@ -503,14 +504,30 @@ export async function fetchArchive(
 ): Promise<FetchResult> {
   performance.mark("dotli:fetch:start");
 
-  // Try P2P first
+  // Try P2P, race with gateway after a delay
+  let gatewayTimer: ReturnType<typeof setTimeout> | undefined;
+
   try {
-    const result = await fetchViaP2P(cidString, onStatus);
+    const result = await Promise.race([
+      fetchViaP2P(cidString, onStatus),
+      new Promise<FetchResult>((_resolve, reject) => {
+        gatewayTimer = setTimeout(() => {
+          log.warn(
+            `[dot.li fetch] P2P still running after ${String(TIMEOUTS.P2P_RACE_GATEWAY_DELAY / 1000)}s, racing gateway...`,
+          );
+          onStatus?.("Still loading — trying gateway in parallel...");
+          fetchViaGateway(cidString, onStatus).then(_resolve, reject);
+        }, TIMEOUTS.P2P_RACE_GATEWAY_DELAY);
+      }),
+    ]);
+    clearTimeout(gatewayTimer);
     performance.mark("dotli:fetch:end");
+    log.warn("[dot.li fetch] Content fetched successfully");
     return result;
-  } catch (p2pErr) {
+  } catch (p2pErr: unknown) {
+    clearTimeout(gatewayTimer);
     if (p2pErr instanceof AggregateError && Array.isArray(p2pErr.errors)) {
-      const reasons = p2pErr.errors
+      const reasons = (p2pErr.errors as unknown[])
         .map((e) => (e instanceof Error ? e.message : String(e)))
         .join("; ");
       log.error(
@@ -519,11 +536,11 @@ export async function fetchArchive(
     } else if (p2pErr instanceof Error) {
       log.error(`[dot.li fetch] P2P failed: ${p2pErr.message}`);
     }
-    log.warn(`[dot.li fetch] Falling back to IPFS gateway...`);
-    onStatus?.("P2P unavailable, trying IPFS gateway...");
   }
 
-  // Fallback to gateway
+  // Full fallback: both P2P and raced gateway failed (or gateway wasn't started)
+  log.warn("[dot.li fetch] Falling back to IPFS gateway...");
+  onStatus?.("P2P unavailable, trying IPFS gateway...");
   try {
     const result = await fetchViaGateway(cidString, onStatus);
     performance.mark("dotli:fetch:end");

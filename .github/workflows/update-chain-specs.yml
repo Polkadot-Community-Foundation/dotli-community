@@ -18,6 +18,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Fetch fresh chain specs
         run: bash scripts/update-chain-specs.sh
 

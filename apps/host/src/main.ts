@@ -1,6 +1,15 @@
 // dot.li — Host entry point
 //
 // Flow: parse URL → resolve .dot name via smoldot → iframe to cid.app.dot.li
+
+// Reload once on chunk load failure (stale HTML referencing deleted assets).
+window.addEventListener("vite:preloadError", () => {
+  if (sessionStorage.getItem("dotli:chunk-reload") === null) {
+    sessionStorage.setItem("dotli:chunk-reload", "1");
+    window.location.reload();
+  }
+});
+
 // Polyfill for Safari < 18.4 which lacks requestIdleCallback
 if (typeof globalThis.requestIdleCallback !== "function") {
   globalThis.requestIdleCallback = (cb: IdleRequestCallback): number =>
