@@ -11,7 +11,11 @@
 
 import { startFromWorker } from "polkadot-api/smoldot/from-worker";
 import SmWorker from "polkadot-api/smoldot/worker?worker";
-import { getPaseoChainSpec, getAssetHubPaseoChainSpec } from "./chain-specs";
+import {
+  getPaseoChainSpec,
+  getAssetHubPaseoChainSpec,
+  getBulletinPaseoChainSpec,
+} from "./chain-specs";
 import { loadChainDb, extractAndSaveChainDb } from "@dotli/storage/db";
 import { FINALIZED_DB_MAX_SIZE } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
@@ -98,6 +102,28 @@ export async function createResolverAssetHubChain(): Promise<SmoldotChain> {
     chainSpec,
     potentialRelayChains: [relayChain],
   });
+}
+
+// ── Bulletin Paseo chain (for preimage operations) ───────────
+// Long-lived singleton — no mutex conflict with Asset Hub.
+
+let bulletinChainPromise: Promise<SmoldotChain> | null = null;
+
+/**
+ * Get or create the Bulletin Paseo parachain singleton.
+ * Used for preimage submission via TransactionStorage.
+ */
+export function getBulletinChain(): Promise<SmoldotChain> {
+  bulletinChainPromise ??= Promise.all([
+    getRelayChain(),
+    getBulletinPaseoChainSpec(),
+  ]).then(([relayChain, chainSpec]) =>
+    getSmoldot().addChain({
+      chainSpec,
+      potentialRelayChains: [relayChain],
+    }),
+  );
+  return bulletinChainPromise;
 }
 
 // ── Shared Asset Hub Paseo chain (for dApp connections) ──────

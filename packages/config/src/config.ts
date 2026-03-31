@@ -36,6 +36,8 @@ export const PASEO_RELAY_GENESIS =
   "0x77afd6190f1554ad45fd0d31aee62aacc33c6db0ea801129acb813f913e0764f" as const;
 export const ASSET_HUB_PASEO_GENESIS =
   "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2" as const;
+export const BULLETIN_PASEO_GENESIS =
+  "0x744960c32e3a3df5440e1ecd4d34096f1ce2230d7016a5ada8a765d5a622b4ea" as const;
 
 // --- dotNS Contracts on Asset Hub Paseo (Revive EVM pallet) ---
 

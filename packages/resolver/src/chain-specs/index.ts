@@ -12,10 +12,12 @@
 
 import paseoUrl from "./paseo.json?url";
 import assetHubPaseoUrl from "./asset-hub-paseo.json?url";
+import bulletinPaseoUrl from "./bulletin-paseo.json?url";
 
 // Lazy getters that retry on failure instead of caching a rejected promise.
 let paseoPromise: Promise<string> | null = null;
 let assetHubPromise: Promise<string> | null = null;
+let bulletinPaseoPromise: Promise<string> | null = null;
 
 export function getPaseoChainSpec(): Promise<string> {
   if (paseoPromise === null) {
@@ -35,4 +37,14 @@ export function getAssetHubPaseoChainSpec(): Promise<string> {
     });
   }
   return assetHubPromise;
+}
+
+export function getBulletinPaseoChainSpec(): Promise<string> {
+  if (bulletinPaseoPromise === null) {
+    bulletinPaseoPromise = fetch(bulletinPaseoUrl).then((r) => r.text());
+    bulletinPaseoPromise.catch(() => {
+      bulletinPaseoPromise = null;
+    });
+  }
+  return bulletinPaseoPromise;
 }

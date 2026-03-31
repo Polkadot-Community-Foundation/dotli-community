@@ -10,6 +10,7 @@
 import {
   createDefaultLogger,
   GenericError,
+  PreimageSubmitErr,
   RequestCredentialsErr,
   SigningErr,
   StatementProofErr,
@@ -43,7 +44,16 @@ import {
   isRemoteChainSupported,
 } from "@dotli/protocol/client";
 import { log } from "@dotli/shared/log";
+import { computePreimageKey, hashToCid } from "@dotli/content/preimage";
+import { ensureHelia } from "@dotli/content/fetch";
+import { fetchFromIpfs } from "@dotli/content/ipfs";
+import {
+  ensureBulletinClient,
+  submitPreimageTransaction,
+  getTestSigner,
+} from "@dotli/resolver/bulletin";
 import { showPushNotification } from "./notification";
+import { showPreimageSubmitModal } from "./preimage-modal";
 import {
   mapFromHostSignedStatement,
   mapFromHostStatement,
@@ -352,6 +362,143 @@ function wireContainerHandlers(
           .mapErr((e) => new StatementProofErr.Unknown({ reason: e.message })),
       )
       .map((signed) => mapSdkProof(signed.proof));
+  });
+
+  // ── Preimage ──────────────────────────────────────────────
+  //
+  // Submit stores data on Bulletin Paseo via TransactionStorage.store()
+  // using smoldot, returns the Blake2b-256 hash key.
+  // Lookup retrieves data by hash via Helia P2P (IPFS gateway fallback).
+
+  const preimageCache = new Map<string, Uint8Array>();
+  const preimageLimiter = createSubmitRateLimiter();
+
+  // Eagerly start Bulletin chain sync so it's ready by the time
+  // a product calls remote_preimage_submit.
+  void ensureBulletinClient();
+
+  container.handlePreimageSubmit((value, { err }) => {
+    log.warn(
+      `[${label}] Preimage submit request, size: ${String(value.byteLength)}`,
+    );
+
+    if (!preimageLimiter.allow()) {
+      return err(new PreimageSubmitErr.Unknown({ reason: "Rate limited" }));
+    }
+
+    return fromPromise(showPreimageSubmitModal(value.byteLength), (e) =>
+      e instanceof Error ? e.message : "User denied preimage submit",
+    )
+      .andThen(() => {
+        const key = computePreimageKey(value);
+        return fromPromise(
+          submitPreimageTransaction(value, getTestSigner()),
+          (e) => (e instanceof Error ? e.message : String(e)),
+        ).map(() => {
+          preimageCache.set(key, value);
+          log.warn(`[${label}] Preimage stored, key: ${key}`);
+          return key;
+        });
+      })
+      .mapErr((reason) => new PreimageSubmitErr.Unknown({ reason }));
+  });
+
+  container.handlePreimageLookupSubscribe((key, send, interrupt) => {
+    log.warn(`[${label}] Preimage lookup subscribe, key: ${key}`);
+
+    let stopped = false;
+    let consecutiveFailures = 0;
+
+    // Check local cache first
+    const cached = preimageCache.get(key);
+    if (cached) {
+      send(cached);
+    } else {
+      send(null);
+    }
+
+    // Poll: Helia P2P first, IPFS gateway fallback
+    const poll = async (): Promise<void> => {
+      if (stopped) {
+        return;
+      }
+
+      // Re-check cache (may have been populated by a submit)
+      const cachedValue = preimageCache.get(key);
+      if (cachedValue) {
+        send(cachedValue);
+        consecutiveFailures = 0;
+        return;
+      }
+
+      const cid = hashToCid(key);
+      const cidString = cid.toString();
+
+      // Try Helia P2P
+      try {
+        const helia = await ensureHelia();
+        const chunks: Uint8Array[] = [];
+        const blockData = helia.blockstore.get(cid);
+        if (blockData instanceof Uint8Array) {
+          chunks.push(blockData);
+        } else if (
+          typeof blockData === "object" &&
+          Symbol.asyncIterator in Object(blockData)
+        ) {
+          for await (const chunk of blockData as AsyncIterable<Uint8Array>) {
+            chunks.push(chunk);
+          }
+        }
+        if (chunks.length > 0) {
+          const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+          const data = new Uint8Array(totalLen);
+          let offset = 0;
+          for (const chunk of chunks) {
+            data.set(chunk, offset);
+            offset += chunk.length;
+          }
+          if (data.length > 0) {
+            preimageCache.set(key, data);
+            send(data);
+            consecutiveFailures = 0;
+            return;
+          }
+        }
+      } catch {
+        // Helia failed, try gateway
+      }
+
+      // Fallback: IPFS gateway
+      try {
+        const result = await fetchFromIpfs(cidString);
+        if (result.data.length > 0) {
+          preimageCache.set(key, result.data);
+          send(result.data);
+          consecutiveFailures = 0;
+          return;
+        }
+      } catch {
+        // Both failed
+      }
+
+      consecutiveFailures++;
+      if (consecutiveFailures >= 3) {
+        log.error(
+          `[${label}] Preimage lookup: 3 consecutive failures, interrupting`,
+        );
+        interrupt();
+      }
+    };
+
+    const POLL_INTERVAL_MS = 10_000;
+    const intervalId = setInterval(() => void poll(), POLL_INTERVAL_MS);
+    const initialTimeoutId = setTimeout(() => void poll(), 1000);
+
+    return () => {
+      stopped = true;
+      clearInterval(intervalId);
+      clearTimeout(initialTimeoutId);
+    };
   });
 }
 
