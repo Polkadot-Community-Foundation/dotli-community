@@ -75,11 +75,18 @@ function bindMessageListener(): void {
       }
       case "chain-message": {
         const conn = chainConnections.get(msg.connectionId);
-        if (conn) {
-          conn.onMessage(msg.message);
-        } else {
+        if (!conn) {
           log.warn(
             `[dot.li protocol] chain-message for unknown connectionId: ${msg.connectionId} (known: ${[...chainConnections.keys()].join(", ")})`,
+          );
+          return;
+        }
+        try {
+          conn.onMessage(msg.message);
+        } catch (err: unknown) {
+          log.error(
+            `[dot.li protocol] onMessage threw (conn=${msg.connectionId.slice(-8)}):`,
+            err instanceof Error ? err.message : err,
           );
         }
         return;

@@ -15,7 +15,7 @@ import {
 } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 
-import { getRelayChain, getSharedAssetHubProvider } from "./smoldot";
+import { getDappAssetHubProvider, getRelayChain } from "./smoldot";
 
 const SUPPORTED_GENESIS = new Set([
   PASEO_RELAY.toLowerCase(),
@@ -41,9 +41,9 @@ export function createChainProvider(
 
   if (key === ASSET_HUB_PASEO.toLowerCase()) {
     log.warn(
-      "[dot.li chains] Returning shared Asset Hub provider (same chain as resolver)",
+      "[dot.li chains] Returning dApp Asset Hub provider (fresh chain, no shared history)",
     );
-    return getSharedAssetHubProvider();
+    return getDappAssetHubProvider();
   }
 
   if (key === PASEO_RELAY.toLowerCase()) {

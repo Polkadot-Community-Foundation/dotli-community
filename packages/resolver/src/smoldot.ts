@@ -193,3 +193,59 @@ export function setResolverAssetHubProviderOverride(
 ): void {
   resolverAssetHubProviderOverride = provider;
 }
+
+// ── dApp Asset Hub chain (fresh, no shared history) ─────────────
+//
+// After the resolver finishes dotNS resolution, its chain can be released.
+// dApp connections then use a FRESH chain that has no "announced blocks"
+// history, avoiding smoldot's per-connection block deduplication.
+
+let dappAssetHubPromise: Promise<SmoldotChain> | null = null;
+
+/**
+ * Release the resolver's Asset Hub chain so a fresh chain can be created
+ * for dApp connections. After calling this, the resolver's polkadot-api
+ * client is no longer usable (CID is already cached).
+ */
+export function releaseResolverAssetHubChain(): void {
+  if (resolverAssetHubPromise === null) {
+    return;
+  }
+  log.warn("[dot.li smoldot] Releasing resolver Asset Hub chain");
+  void resolverAssetHubPromise
+    .then((chain) => {
+      chain.remove();
+      log.warn("[dot.li smoldot] Resolver Asset Hub chain removed");
+    })
+    .catch(() => {
+      /* already dead or not yet created */
+    });
+  resolverAssetHubPromise = null;
+  resolverAssetHubProvider = null;
+  resolverAssetHubProviderOverride = null;
+}
+
+/**
+ * Get or create a fresh Asset Hub chain for dApp connections.
+ *
+ * This chain is separate from the resolver's chain and has no
+ * "announced blocks" history — smoldot will send complete newBlock
+ * events for all non-finalized blocks on new subscriptions.
+ */
+export function getDappAssetHubChain(): Promise<SmoldotChain> {
+  dappAssetHubPromise ??= createAssetHubChain(getRelayChain()).catch(
+    (error: unknown) => {
+      dappAssetHubPromise = null;
+      throw error;
+    },
+  );
+  return dappAssetHubPromise;
+}
+
+/**
+ * Return a provider backed by the dApp's fresh Asset Hub chain.
+ * Used by `createChainProvider()` for remote dApp connections.
+ */
+export function getDappAssetHubProvider(): JsonRpcProvider {
+  return getSmProvider(getDappAssetHubChain());
+}

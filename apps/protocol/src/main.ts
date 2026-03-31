@@ -16,7 +16,6 @@ window.addEventListener("vite:preloadError", () => {
 import * as Sentry from "@sentry/browser";
 import type { JsonRpcConnection } from "@polkadot-api/json-rpc-provider";
 import {
-  ASSET_HUB_PASEO_GENESIS,
   BASE_DOMAIN,
   MAX_CONNECTIONS_PER_ORIGIN,
   TIMEOUTS,
@@ -28,10 +27,7 @@ import {
   resolveDotName,
   resolveOwner,
 } from "@dotli/resolver/resolve";
-import {
-  setResolverAssetHubProviderOverride,
-  terminateSmoldot,
-} from "@dotli/resolver/smoldot";
+import { terminateSmoldot } from "@dotli/resolver/smoldot";
 import { log } from "@dotli/shared/log";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
 import {
@@ -205,9 +201,6 @@ async function initSharedWorkerMode(): Promise<void> {
       return;
     }
 
-    log.warn(
-      `[dot.li protocol] Relaying ${data.method} (id=${data.id}) to SharedWorker`,
-    );
     const msg: SWRelayRequest = {
       type: "relay-request",
       envelope: data,
@@ -217,28 +210,10 @@ async function initSharedWorkerMode(): Promise<void> {
   });
 
   // Relay: SharedWorker → parent
-  let chainMsgRelayCount = 0;
   port.addEventListener("message", (event: MessageEvent) => {
     const data = event.data as SWOutbound | null;
     if (data?.type === "relay-response" && window.parent !== window) {
-      const env = data.envelope;
-      if (env.kind === "response") {
-        log.warn(
-          `[dot.li protocol] Relaying response (id=${env.id}, ok=${String(env.ok)}) to parent`,
-        );
-      } else if (env.kind === "chain-message") {
-        chainMsgRelayCount++;
-        if (chainMsgRelayCount <= 5 || chainMsgRelayCount % 100 === 0) {
-          log.warn(
-            `[dot.li protocol] Relaying chain-message #${String(chainMsgRelayCount)} (conn=${env.connectionId}) to parent`,
-          );
-        }
-      } else if (env.kind === "progress") {
-        log.warn(
-          `[dot.li protocol] Relaying progress (id=${env.id}) to parent`,
-        );
-      }
-      window.parent.postMessage(env, "*");
+      window.parent.postMessage(data.envelope, "*");
     }
   });
 
@@ -534,9 +509,6 @@ function createEngine(): ProtocolEngine {
   const connections = new Map<string, JsonRpcConnection>();
   const originConns = new Map<string, Set<string>>();
   const broker = createChainBrokerManager(createChainProvider);
-  const ahProvider = broker.getLocalProvider(ASSET_HUB_PASEO_GENESIS) ?? null;
-
-  setResolverAssetHubProviderOverride(ahProvider);
   getSmoldot();
 
   function assertStr(value: unknown, name: string): asserts value is string {
@@ -701,7 +673,6 @@ function createEngine(): ProtocolEngine {
     connections.clear();
     originConns.clear();
     broker.disconnectAll();
-    setResolverAssetHubProviderOverride(null);
     terminateSmoldot();
   }
 

@@ -11,10 +11,7 @@
 declare const self: SharedWorkerGlobalScope;
 
 import type { JsonRpcConnection } from "@polkadot-api/json-rpc-provider";
-import {
-  ASSET_HUB_PASEO_GENESIS,
-  MAX_CONNECTIONS_PER_ORIGIN,
-} from "@dotli/config/config";
+import { MAX_CONNECTIONS_PER_ORIGIN } from "@dotli/config/config";
 import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
 import {
   getRelayChain,
@@ -23,7 +20,7 @@ import {
   resolveOwner,
 } from "@dotli/resolver/resolve";
 import {
-  setResolverAssetHubProviderOverride,
+  releaseResolverAssetHubChain,
   terminateSmoldot,
 } from "@dotli/resolver/smoldot";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
@@ -79,6 +76,7 @@ const connectionPorts = new Map<string, MessagePort>();
 const ports = new Set<MessagePort>();
 const pendingPorts: MessagePort[] = [];
 let engineReady = false;
+let resolverChainReleased = false;
 
 // Placeholder — set after pre-sync
 let chainBrokerManager: ReturnType<typeof createChainBrokerManager>;
@@ -109,18 +107,10 @@ async function presync(): Promise<void> {
         `Relay chain added (${String(Math.round(performance.now() - t0))}ms)`,
       );
 
-      // 3. Create broker and Asset Hub provider (triggers parachain add)
-      swLog("Creating chain broker + Asset Hub provider...");
-      chainBrokerManager = createChainBrokerManager(createChainProvider);
-      const resolverProvider =
-        chainBrokerManager.getLocalProvider(ASSET_HUB_PASEO_GENESIS) ?? null;
-      setResolverAssetHubProviderOverride(resolverProvider);
-
-      // 4. Wait for Asset Hub to sync to a finalized block.
-      // Trigger ensureClient() by calling resolveDotName with a dummy label.
-      // This internally calls getFinalizedBlock() which waits for the chain
-      // to sync. The resolve itself will return null (label doesn't matter),
-      // but it proves the chain is synced and polkadot-api is healthy.
+      // 3. Wait for Asset Hub to sync to a finalized block.
+      // The resolver uses its own chain (getResolverAssetHubChain singleton).
+      // We do NOT set a provider override — the resolver creates its chain
+      // directly via getResolverAssetHubProvider().
       swLog("Waiting for Asset Hub to reach finalized block...");
       await resolveDotName("__presync__", (msg) => {
         swLog(`Pre-sync status: ${msg}`);
@@ -128,6 +118,11 @@ async function presync(): Promise<void> {
       swLog(
         `Asset Hub synced (${String(Math.round(performance.now() - t0))}ms total)`,
       );
+
+      // 4. Create the broker. The resolver's Asset Hub chain is released
+      // lazily on the first dApp chainConnect (see handleRequest below),
+      // NOT here — the host still needs it for resolveDotName/resolveOwner.
+      chainBrokerManager = createChainBrokerManager(createChainProvider);
 
       // 5. Success — mark ready
       swLog("Pre-sync complete, engine ready");
@@ -218,7 +213,6 @@ async function handleRequest(
   request: ProtocolRequestEnvelope,
   origin: string,
 ): Promise<void> {
-  swLog(`Request: ${request.method} id=${request.id} from=${origin}`);
   const t = performance.now();
 
   switch (request.method) {
@@ -296,6 +290,17 @@ async function handleRequest(
       }
       if (!isChainSupported(payload.genesisHash)) {
         throw new Error(`Unsupported chain: ${payload.genesisHash}`);
+      }
+      // Release the resolver's Asset Hub chain on the first dApp connection.
+      // By this point the host has already resolved the CID. Releasing frees
+      // the chain so the dApp gets a FRESH chain with no "announced blocks"
+      // history (avoids smoldot's per-connection block deduplication).
+      if (!resolverChainReleased) {
+        resolverChainReleased = true;
+        swLog(
+          "First dApp chain connection — releasing resolver Asset Hub chain",
+        );
+        releaseResolverAssetHubChain();
       }
       let chainMsgCount = 0;
       const connection = chainBrokerManager.connectRemote(

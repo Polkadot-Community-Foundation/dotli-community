@@ -32,7 +32,7 @@
     "@dotli/storage": "workspace:*",
     "@dotli/resolver": "workspace:*",
     "@dotli/ui": "workspace:*",
-    "@sentry/browser": "^10.46.0",
+    "@sentry/browser": "^10.47.0",
     "@sentry/vite-plugin": "^5.1.1"
   }
 }
