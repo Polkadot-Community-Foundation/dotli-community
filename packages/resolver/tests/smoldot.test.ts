@@ -38,6 +38,7 @@ let getRelayChain: typeof import("@dotli/resolver/smoldot").getRelayChain;
 let releaseResolverMutex: typeof import("@dotli/resolver/smoldot").releaseResolverMutex;
 let waitForResolverRelease: typeof import("@dotli/resolver/smoldot").waitForResolverRelease;
 let makeNonRemovingChain: typeof import("@dotli/resolver/smoldot").makeNonRemovingChain;
+let createResolverAssetHubChain: typeof import("@dotli/resolver/smoldot").createResolverAssetHubChain;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -47,6 +48,7 @@ beforeEach(async () => {
   releaseResolverMutex = mod.releaseResolverMutex;
   waitForResolverRelease = mod.waitForResolverRelease;
   makeNonRemovingChain = mod.makeNonRemovingChain;
+  createResolverAssetHubChain = mod.createResolverAssetHubChain;
 });
 
 describe("getSmoldot", () => {
@@ -77,13 +79,28 @@ describe("getRelayChain", () => {
 });
 
 describe("releaseResolverMutex / waitForResolverRelease", () => {
-  it("waitForResolverRelease resolves after releaseResolverMutex", async () => {
+  it("localhost mode: skips mutex when no .dot name resolution happened", async () => {
+    // In localhost mode, no resolver chain is created — the mutex
+    // should not block dApp chainConnect requests for Asset Hub.
+    let resolved = false;
+    waitForResolverRelease().then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    expect(resolved).toBe(true);
+  });
+
+  it(".dot domain: blocks until resolution completes and releases mutex", async () => {
+    // When resolving a .dot name, a temporary Asset Hub chain is created.
+    // The mutex must block until that chain is destroyed to prevent
+    // smoldot from panicking on duplicate chains.
+    await createResolverAssetHubChain();
+
     let resolved = false;
     const waiting = waitForResolverRelease().then(() => {
       resolved = true;
     });
 
-    // Should not be resolved yet
     await Promise.resolve();
     expect(resolved).toBe(false);
 

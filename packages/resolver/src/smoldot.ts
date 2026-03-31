@@ -84,6 +84,7 @@ export function getRelayChain(): Promise<SmoldotChain> {
  * Must NOT be called after the shared chain exists (smoldot panics).
  */
 export async function createResolverAssetHubChain(): Promise<SmoldotChain> {
+  resolverChainCreated = true;
   if (mutexReleased) {
     throw new Error(
       "Cannot create resolver chain: shared chain may already exist",
@@ -140,7 +141,10 @@ export function makeNonRemovingChain(chain: SmoldotChain): SmoldotChain {
 // ── Resolver mutex ───────────────────────────────────────────
 // Ensures the resolver chain is fully removed before the shared
 // chain is created (smoldot panics on duplicate chains).
+// If no resolver chain is ever created (e.g. localhost mode),
+// waitForResolverRelease() resolves immediately.
 
+let resolverChainCreated = false;
 let mutexReleased = false;
 let resolverRelease: () => void;
 const resolverDone: Promise<void> = new Promise<void>((r) => {
@@ -158,8 +162,12 @@ export function releaseResolverMutex(): void {
 
 /**
  * Wait until the resolver has released the Asset Hub chain.
+ * Resolves immediately if no resolver chain was ever created.
  */
 export function waitForResolverRelease(): Promise<void> {
+  if (!resolverChainCreated) {
+    return Promise.resolve();
+  }
   return resolverDone;
 }
 
