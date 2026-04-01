@@ -16,3 +16,38 @@ jobs:
       app_env: production
       ref: ${{ github.event.release.tag_name }}
     secrets: inherit
+
+  notify:
+    name: Matrix Notification
+    needs: deploy
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Collect release info
+        id: release_info
+        run: |
+          CHANGELOG=$(git log --no-merges --pretty=format:"- %s" -20 | sed 's|(#\([0-9]*\))|(<a href="https://github.com/${{ github.repository }}/pull/\1">#\1</a>)|g')
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            echo "$CHANGELOG"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Matrix notification
+        uses: s3krit/matrix-message-action@70ad3fb812ee0e45ff8999d6af11cafad11a6ecf # v0.0.3
+        with:
+          room_id: ${{ vars.MATRIX_ROOM_ID }}
+          access_token: ${{ secrets.MATRIX_ACCESS_TOKEN }}
+          server: ${{ vars.MATRIX_SERVER }}
+          message: |
+            <b>dot.li ${{ github.event.release.tag_name }} deployed to production!</b><br/>
+            <br/>
+            <i>Changelog:</i><br/>
+            ${{ steps.release_info.outputs.changelog }}<br/>
+            <br/>
+            <b>Release:</b> ${{ github.event.release.html_url }}
