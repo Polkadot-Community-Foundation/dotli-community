@@ -94,10 +94,10 @@ describe("Asset Hub provider ownership", () => {
     expect(a).toBe(b);
   });
 
-  it("getSharedAssetHubProvider returns a fresh provider each call", () => {
+  it("getSharedAssetHubProvider returns the same cached provider", () => {
     const a = getSharedAssetHubProvider();
     const b = getSharedAssetHubProvider();
-    expect(a).not.toBe(b);
+    expect(a).toBe(b);
   });
 
   it("uses the override provider when one is set", () => {

@@ -222,7 +222,7 @@ export function releaseResolverAssetHubChain(): void {
       /* already dead or not yet created */
     });
   resolverAssetHubPromise = null;
-  resolverAssetHubProvider = null;
+  assetHubProvider = null;
   resolverAssetHubProviderOverride = null;
 }
 

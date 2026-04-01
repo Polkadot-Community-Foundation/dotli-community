@@ -203,12 +203,20 @@ describe("createChainBrokerManager", () => {
     const manager = createChainBrokerManager(() => harness.provider);
     const messagesA: string[] = [];
     const messagesB: string[] = [];
-    const connectionA = manager.connectRemote("asset-hub", "conn-a", (message) => {
-      messagesA.push(message);
-    });
-    const connectionB = manager.connectRemote("asset-hub", "conn-b", (message) => {
-      messagesB.push(message);
-    });
+    const connectionA = manager.connectRemote(
+      "asset-hub",
+      "conn-a",
+      (message) => {
+        messagesA.push(message);
+      },
+    );
+    const connectionB = manager.connectRemote(
+      "asset-hub",
+      "conn-b",
+      (message) => {
+        messagesB.push(message);
+      },
+    );
 
     connectionA?.send(
       JSON.stringify({
