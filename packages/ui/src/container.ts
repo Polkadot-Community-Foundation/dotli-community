@@ -119,9 +119,14 @@ function wireContainerHandlers(
 
   // ── Chain connection ───────────────────────────────────
 
-  container.handleChainConnection((genesisHash: string) => {
-    warnOnRawChainConnection(genesisHash);
-    return createRemoteChainProvider(genesisHash);
+  container.handleChainConnection({
+    factory(genesisHash) {
+      warnOnRawChainConnection(genesisHash);
+      return createRemoteChainProvider(genesisHash);
+    },
+    submitPermission() {
+      return true;
+    },
   });
 
   // ── Accounts ───────────────────────────────────────────

@@ -24,11 +24,11 @@
   "dependencies": {
     "@dotli/config": "workspace:*",
     "@dotli/shared": "workspace:*",
-    "@novasamatech/host-api": "^0.6.10",
-    "@novasamatech/host-papp": "^0.6.10",
+    "@novasamatech/host-api": "^0.6.13",
+    "@novasamatech/host-papp": "^0.6.13",
     "@novasamatech/sdk-statement": "^0.5.0",
-    "@novasamatech/statement-store": "^0.6.10",
-    "@novasamatech/storage-adapter": "^0.6.10",
+    "@novasamatech/statement-store": "^0.6.13",
+    "@novasamatech/storage-adapter": "^0.6.13",
     "@scure/sr25519": "^1.0.0",
     "polkadot-api": "^1.23.3",
     "scale-ts": "^1.6.1"
