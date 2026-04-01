@@ -130,22 +130,16 @@ describe("createChainBrokerManager", () => {
       }),
     );
 
-    const upstreamA = JSON.parse(harness.sent[0] ?? "{}") as { id: string };
-    const upstreamB = JSON.parse(harness.sent[1] ?? "{}") as { id: string };
-
-    harness.emit({ jsonrpc: "2.0", id: upstreamA.id, result: "up-a" });
-    harness.emit({ jsonrpc: "2.0", id: upstreamB.id, result: "up-b" });
+    expect(harness.sent).toHaveLength(1);
+    const upstream = JSON.parse(harness.sent[0] ?? "{}") as { id: string };
+    harness.emit({ jsonrpc: "2.0", id: upstream.id, result: "up-a" });
 
     const localTokenA = (JSON.parse(messagesA[0] ?? "{}") as { result: string })
       .result;
     const localTokenB = (JSON.parse(messagesB[0] ?? "{}") as { result: string })
       .result;
+    expect(localTokenA).not.toBe(localTokenB);
 
-    harness.emit({
-      jsonrpc: "2.0",
-      method: "chainHead_v1_followEvent",
-      params: { subscription: "up-b", result: { event: "bestBlockChanged" } },
-    });
     harness.emit({
       jsonrpc: "2.0",
       method: "chainHead_v1_followEvent",
@@ -202,6 +196,139 @@ describe("createChainBrokerManager", () => {
     expect(release.method).toBe("chainHead_v1_unfollow");
     expect(release.params[0]).toBe("up-a");
     expect(harness.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays a coherent cached follow snapshot to later subscribers", () => {
+    const harness = createProviderHarness();
+    const manager = createChainBrokerManager(() => harness.provider);
+    const messagesA: string[] = [];
+    const messagesB: string[] = [];
+    const connectionA = manager.connectRemote("asset-hub", "conn-a", (message) => {
+      messagesA.push(message);
+    });
+    const connectionB = manager.connectRemote("asset-hub", "conn-b", (message) => {
+      messagesB.push(message);
+    });
+
+    connectionA?.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "chainHead_v1_follow",
+        params: [true],
+      }),
+    );
+
+    const upstream = JSON.parse(harness.sent[0] ?? "{}") as { id: string };
+    harness.emit({ jsonrpc: "2.0", id: upstream.id, result: "up-a" });
+    harness.emit({
+      jsonrpc: "2.0",
+      method: "chainHead_v1_followEvent",
+      params: {
+        subscription: "up-a",
+        result: {
+          event: "initialized",
+          finalizedBlockHashes: ["0xfinal"],
+          finalizedBlockRuntime: { type: "valid" },
+        },
+      },
+    });
+    harness.emit({
+      jsonrpc: "2.0",
+      method: "chainHead_v1_followEvent",
+      params: {
+        subscription: "up-a",
+        result: {
+          event: "newBlock",
+          blockHash: "0xblock-1",
+          parentBlockHash: "0xfinal",
+        },
+      },
+    });
+    harness.emit({
+      jsonrpc: "2.0",
+      method: "chainHead_v1_followEvent",
+      params: {
+        subscription: "up-a",
+        result: {
+          event: "newBlock",
+          blockHash: "0xblock-2",
+          parentBlockHash: "0xblock-1",
+        },
+      },
+    });
+    harness.emit({
+      jsonrpc: "2.0",
+      method: "chainHead_v1_followEvent",
+      params: {
+        subscription: "up-a",
+        result: {
+          event: "bestBlockChanged",
+          bestBlockHash: "0xblock-2",
+        },
+      },
+    });
+
+    connectionB?.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "chainHead_v1_follow",
+        params: [true],
+      }),
+    );
+
+    const localTokenB = (JSON.parse(messagesB[0] ?? "{}") as { result: string })
+      .result;
+    expect(messagesB.slice(1)).toEqual([
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "chainHead_v1_followEvent",
+        params: {
+          subscription: localTokenB,
+          result: {
+            event: "initialized",
+            finalizedBlockHashes: ["0xfinal"],
+            finalizedBlockRuntime: { type: "valid" },
+          },
+        },
+      }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "chainHead_v1_followEvent",
+        params: {
+          subscription: localTokenB,
+          result: {
+            event: "newBlock",
+            blockHash: "0xblock-1",
+            parentBlockHash: "0xfinal",
+          },
+        },
+      }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "chainHead_v1_followEvent",
+        params: {
+          subscription: localTokenB,
+          result: {
+            event: "newBlock",
+            blockHash: "0xblock-2",
+            parentBlockHash: "0xblock-1",
+          },
+        },
+      }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "chainHead_v1_followEvent",
+        params: {
+          subscription: localTokenB,
+          result: {
+            event: "bestBlockChanged",
+            bestBlockHash: "0xblock-2",
+          },
+        },
+      }),
+    ]);
   });
 
   it("provides a local provider that uses the same upstream broker", () => {

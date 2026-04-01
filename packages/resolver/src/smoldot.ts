@@ -73,7 +73,7 @@ export function terminateSmoldot(): void {
   smoldotInstance = null;
   relayChainPromise = null;
   resolverAssetHubPromise = null;
-  resolverAssetHubProvider = null;
+  assetHubProvider = null;
 }
 
 export function getRelayChain(): Promise<SmoldotChain> {
@@ -134,7 +134,7 @@ export function makeNonRemovingChain(chain: SmoldotChain): SmoldotChain {
 // ── Dedicated provider factories ─────────────────────────────
 
 let resolverAssetHubPromise: Promise<SmoldotChain> | null = null;
-let resolverAssetHubProvider: JsonRpcProvider | null = null;
+let assetHubProvider: JsonRpcProvider | null = null;
 let resolverAssetHubProviderOverride: JsonRpcProvider | null = null;
 
 function createAssetHubChain(
@@ -167,20 +167,21 @@ export function getResolverAssetHubProvider(): JsonRpcProvider {
   if (resolverAssetHubProviderOverride !== null) {
     return resolverAssetHubProviderOverride;
   }
-  resolverAssetHubProvider ??= getSmProvider(getResolverAssetHubChain());
-  return resolverAssetHubProvider;
+  assetHubProvider ??= getSmProvider(getResolverAssetHubChain());
+  return assetHubProvider;
 }
 
 /**
- * Return a raw smoldot provider for the shared Asset Hub chain.
+ * Return the direct smoldot provider for the shared Asset Hub chain.
  *
- * Unlike `getResolverAssetHubProvider()`, this always returns a fresh
- * `getSmProvider()` instance from the shared chain — it never returns
- * the broker override. Used by `createChainProvider()` in chains.ts
- * so the broker can wrap this provider with session isolation.
+ * `@polkadot-api/sm-provider` expects exclusive ownership of a chain's
+ * JSON-RPC response stream, so multiple providers must not share the
+ * same smoldot chain. The broker multiplexes this single upstream
+ * provider into isolated sessions for remote clients.
  */
 export function getSharedAssetHubProvider(): JsonRpcProvider {
-  return getSmProvider(getResolverAssetHubChain());
+  assetHubProvider ??= getSmProvider(getResolverAssetHubChain());
+  return assetHubProvider;
 }
 
 /**
