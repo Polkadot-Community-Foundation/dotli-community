@@ -30,7 +30,7 @@ import { createChainBrokerManager } from "@dotli/protocol/broker";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN_WORKER as string | undefined,
-  tunnel: "/t",
+  tunnel: "/t/worker",
   environment:
     (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
   release: import.meta.env.VITE_COMMIT_SHA as string | undefined,

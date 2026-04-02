@@ -40,7 +40,7 @@ import type { SWRelayRequest, SWOutbound } from "./protocol-shared-worker";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN_HOST as string | undefined,
-  tunnel: "/t",
+  tunnel: "/t/host",
   environment:
     (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
   release: import.meta.env.VITE_COMMIT_SHA as string | undefined,

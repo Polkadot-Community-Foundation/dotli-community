@@ -22,7 +22,7 @@ import { log } from "@dotli/shared/log";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN_SANDBOX as string | undefined,
-  tunnel: "/t",
+  tunnel: "/t/sandbox",
   environment:
     (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
   release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
