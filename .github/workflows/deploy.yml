@@ -63,6 +63,7 @@ jobs:
           VITE_COMMIT_SHA: ${{ github.sha }}
           VITE_SENTRY_DSN_HOST: ${{ secrets.SENTRY_DSN_HOST }}
           VITE_SENTRY_DSN_SANDBOX: ${{ secrets.SENTRY_DSN_SANDBOX }}
+          VITE_SENTRY_DSN_WORKER: ${{ secrets.SENTRY_DSN_WORKER }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - uses: webfactory/ssh-agent@v0.10.0
