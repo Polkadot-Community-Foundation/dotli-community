@@ -26,7 +26,7 @@
     "@dotli/shared": "workspace:*",
     "@novasamatech/host-api": "^0.6.13",
     "@novasamatech/host-container": "^0.6.13",
-    "@novasamatech/host-papp": "^0.6.13",
+    "@novasamatech/host-papp": "^0.6.15",
     "@novasamatech/sdk-statement": "^0.5.0",
     "@novasamatech/statement-store": "^0.6.13",
     "neverthrow": "^8.2.0",
