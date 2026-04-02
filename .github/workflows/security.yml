@@ -11,4 +11,4 @@ jobs:
       dev_command: 'bun run preview'
       dev_port: '5173'
     secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      SHANNON_CLAUDE_TOKEN: ${{ secrets.SHANNON_CLAUDE_TOKEN }}
