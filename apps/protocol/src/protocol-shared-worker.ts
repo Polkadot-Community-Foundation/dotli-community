@@ -10,6 +10,7 @@
 /// <reference lib="webworker" />
 declare const self: SharedWorkerGlobalScope;
 
+import * as Sentry from "@sentry/browser";
 import type { JsonRpcConnection } from "@polkadot-api/json-rpc-provider";
 import { MAX_CONNECTIONS_PER_ORIGIN } from "@dotli/config/config";
 import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
@@ -23,7 +24,20 @@ import {
   releaseResolverAssetHubChain,
   terminateSmoldot,
 } from "@dotli/resolver/smoldot";
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
+
+Sentry.init({
+  dsn: import.meta.env.VITE_SENTRY_DSN_WORKER as string | undefined,
+  tunnel: "/t",
+  environment:
+    (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
+  release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
+  sendDefaultPii: false,
+});
+
+m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
 import type {
   ProtocolRequestEnvelope,
   ProtocolRequestMap,
@@ -91,18 +105,22 @@ async function presync(): Promise<void> {
     swLog(
       `Pre-sync attempt ${String(attempt)}/${String(MAX_PRESYNC_RETRIES)}...`,
     );
+    m.gauge(S.SMOLDOT_PRESYNC_ATTEMPTS, attempt);
 
     try {
       // 1. Create smoldot (current thread, no Worker needed)
       swLog("Creating smoldot via getSmoldotDirect()...");
       getSmoldotDirect();
+      m.measure(S.SMOLDOT_CREATE, performance.now() - t0);
       swLog(
         `Smoldot client created (${String(Math.round(performance.now() - t0))}ms)`,
       );
 
       // 2. Add relay chain
       swLog("Adding relay chain...");
+      const relayT0 = performance.now();
       await getRelayChain();
+      m.measure(S.SMOLDOT_RELAY_CHAIN, performance.now() - relayT0);
       swLog(
         `Relay chain added (${String(Math.round(performance.now() - t0))}ms)`,
       );
@@ -115,9 +133,10 @@ async function presync(): Promise<void> {
       await resolveDotName("__presync__", (msg) => {
         swLog(`Pre-sync status: ${msg}`);
       });
-      swLog(
-        `Asset Hub synced (${String(Math.round(performance.now() - t0))}ms total)`,
-      );
+      const totalMs = performance.now() - t0;
+      m.measure(S.SMOLDOT_PRESYNC, totalMs);
+      m.distribution(S.SMOLDOT_PRESYNC, totalMs);
+      swLog(`Asset Hub synced (${String(Math.round(totalMs))}ms total)`);
 
       // 4. Create the broker. The resolver's Asset Hub chain is released
       // lazily on the first dApp chainConnect (see handleRequest below),
@@ -138,6 +157,7 @@ async function presync(): Promise<void> {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       swError(`Pre-sync attempt ${String(attempt)} failed: ${msg}`);
+      m.count(S.SMOLDOT_PRESYNC_FAILURE, { attempt: String(attempt) });
 
       if (attempt < MAX_PRESYNC_RETRIES) {
         // Terminate and restart smoldot for a clean retry
@@ -155,6 +175,7 @@ async function presync(): Promise<void> {
 
   // All retries exhausted — signal error to waiting ports
   swError(`Pre-sync failed after ${String(MAX_PRESYNC_RETRIES)} attempts`);
+  m.count(S.SMOLDOT_PRESYNC_FAILURE, { attempt: "exhausted" });
   for (const port of pendingPorts) {
     const errorMsg: SWError = {
       type: "error",

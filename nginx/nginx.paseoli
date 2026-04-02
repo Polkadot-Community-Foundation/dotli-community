@@ -52,6 +52,8 @@ server {
     root /var/www/dotli/host;
     index index.html;
 
+    include /etc/nginx/snippets/sentry-tunnel.conf;
+
     location / {
         try_files $uri $uri/ /index.html;
     }
@@ -87,6 +89,8 @@ server {
 
     root /var/www/dotli/app;
     index index.html;
+
+    include /etc/nginx/snippets/sentry-tunnel.conf;
 
     # Static assets — long cache, immutable hashes
     location /assets/ {
@@ -148,6 +152,8 @@ server {
     root /var/www/dotli/protocol;
     index index.html;
 
+    include /etc/nginx/snippets/sentry-tunnel.conf;
+
     location /assets/ {
         try_files $uri =404;
 
@@ -194,6 +200,8 @@ server {
     gzip_static on;
 
     root /var/www/dotli/host;
+
+    include /etc/nginx/snippets/sentry-tunnel.conf;
 
     # Static assets — long cache, immutable hashes
     location /assets/ {

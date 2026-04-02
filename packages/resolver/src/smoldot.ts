@@ -19,6 +19,8 @@ import {
   getBulletinPaseoChainSpec,
 } from "./chain-specs";
 import { log } from "@dotli/shared/log";
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
 
 /** The smoldot Client type (shared by `start()` and `startFromWorker()`). */
 export type SmoldotClient = ReturnType<typeof startFromWorker>;
@@ -80,10 +82,12 @@ export function getRelayChain(): Promise<SmoldotChain> {
   relayChainPromise ??= getPaseoChainSpec()
     .then((chainSpec) => {
       log.warn("[dot.li smoldot] Adding relay chain...");
+      m.breadcrumb("Adding relay chain");
       return getSmoldot().addChain({ chainSpec });
     })
     .catch((error: unknown) => {
       relayChainPromise = null;
+      m.count(S.BOOTNODE_ERROR, { chain: "relay" });
       throw error;
     });
   return relayChainPromise;
@@ -140,15 +144,23 @@ let resolverAssetHubProviderOverride: JsonRpcProvider | null = null;
 function createAssetHubChain(
   relay: Promise<SmoldotChain>,
 ): Promise<SmoldotChain> {
+  const t0 = performance.now();
   return Promise.all([relay, getAssetHubPaseoChainSpec()])
     .then(([relayChain, chainSpec]) => {
       log.warn("[dot.li smoldot] Adding Asset Hub parachain...");
+      m.breadcrumb("Adding Asset Hub parachain");
       return getSmoldot().addChain({
         chainSpec,
         potentialRelayChains: [relayChain],
       });
     })
+    .then((chain) => {
+      m.measure(S.SMOLDOT_ASSET_HUB, performance.now() - t0);
+      m.distribution(S.SMOLDOT_ASSET_HUB, performance.now() - t0);
+      return chain;
+    })
     .catch((error: unknown) => {
+      m.count(S.BOOTNODE_ERROR, { chain: "asset_hub" });
       throw error;
     });
 }

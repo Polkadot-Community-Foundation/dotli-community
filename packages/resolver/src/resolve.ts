@@ -21,6 +21,8 @@ import {
   getRelayChain,
   getResolverAssetHubProvider,
 } from "./smoldot";
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
 
 export { getSmoldot, getSmoldotDirect, getRelayChain } from "./smoldot";
 
@@ -48,13 +50,18 @@ function ensureClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
 
 async function doCreateClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
   const initStart = performance.now();
+  const stopPresync = m.timer(S.SMOLDOT_PRESYNC);
+
   onStatus?.("Starting light client...");
-  getSmoldot();
+  m.span(S.SMOLDOT_CREATE, () => {
+    getSmoldot();
+  });
   log.warn(`[dot.li resolve] Smoldot instance created (${dur(initStart)})`);
 
   onStatus?.("Adding Paseo relay chain...");
   const relayStart = performance.now();
-  await getRelayChain();
+  await m.span(S.SMOLDOT_RELAY_CHAIN, () => getRelayChain());
+  m.measure(S.SMOLDOT_RELAY_CHAIN, performance.now() - relayStart);
   log.warn(`[dot.li resolve] Relay chain added (${dur(relayStart)})`);
 
   onStatus?.("Connecting to Asset Hub Paseo...");
@@ -64,12 +71,20 @@ async function doCreateClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
 
   onStatus?.("Syncing with Asset Hub Paseo...");
   const syncStart = performance.now();
-  const block = await clientInstance.getFinalizedBlock();
+  // clientInstance is guaranteed non-null — assigned on the line above
+  const client = clientInstance;
+  const block = await m.span(S.SMOLDOT_FINALIZED_BLOCK, () =>
+    client.getFinalizedBlock(),
+  );
+  const syncMs = performance.now() - syncStart;
+  m.measure(S.SMOLDOT_FINALIZED_BLOCK, syncMs);
+  m.distribution(S.SMOLDOT_FINALIZED_BLOCK, syncMs);
   log.warn(
     `[dot.li resolve] Synced to finalized block #${String(block.number)} (${dur(syncStart)})`,
   );
 
   apiInstance = clientInstance.getUnsafeApi();
+  stopPresync();
   log.warn(`[dot.li resolve] Ready (${dur(initStart)} total)`);
   onStatus?.("Connected to Asset Hub Paseo");
   return apiInstance;
@@ -182,12 +197,15 @@ export async function resolveDotName(
   onStatus?.(`Resolving content for "${domain}"...`);
   const contentStart = performance.now();
 
-  const contenthashBytes = await readMappingBytes(
-    api,
-    CONTRACTS.DOTNS_CONTENT_RESOLVER,
-    node,
-    STORAGE_SLOTS.CONTENTHASH,
+  const contenthashBytes = await m.span(S.RESOLVE_STORAGE_READ, () =>
+    readMappingBytes(
+      api,
+      CONTRACTS.DOTNS_CONTENT_RESOLVER,
+      node,
+      STORAGE_SLOTS.CONTENTHASH,
+    ),
   );
+  m.measure(S.RESOLVE_STORAGE_READ, performance.now() - contentStart);
   log.warn(`[dot.li resolve] get_storage contenthash: ${dur(contentStart)}`);
 
   if (contenthashBytes === null) {

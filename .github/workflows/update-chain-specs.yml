@@ -20,7 +20,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.3.6"
 
       - name: Fetch fresh chain specs
         run: bash scripts/update-chain-specs.sh

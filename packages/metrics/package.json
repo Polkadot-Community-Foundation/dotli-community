@@ -1,5 +1,5 @@
 {
-  "name": "@dotli/auth",
+  "name": "@dotli/metrics",
   "private": true,
   "version": "0.2.2",
   "type": "module",
@@ -14,23 +14,18 @@
   "devDependencies": {
     "@dotli/eslint-config": "workspace:*",
     "@dotli/typescript-config": "workspace:*",
-    "@scure/sr25519": "^1.0.0",
     "eslint": "^10.1.0",
     "happy-dom": "^20.8.8",
     "typescript": "~6.0.2",
     "vite": "^8.0.3",
     "vitest": "^4.1.1"
   },
-  "dependencies": {
-    "@dotli/config": "workspace:*",
-    "@dotli/shared": "workspace:*",
-    "@novasamatech/host-api": "^0.6.15",
-    "@novasamatech/host-papp": "^0.6.15",
-    "@novasamatech/sdk-statement": "^0.5.0",
-    "@novasamatech/statement-store": "^0.6.15",
-    "@novasamatech/storage-adapter": "^0.6.15",
-    "@scure/sr25519": "^1.0.0",
-    "polkadot-api": "^1.23.3",
-    "scale-ts": "^1.6.1"
+  "peerDependencies": {
+    "@sentry/browser": ">=10.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@sentry/browser": {
+      "optional": true
+    }
   }
 }

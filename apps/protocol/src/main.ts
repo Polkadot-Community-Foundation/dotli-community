@@ -40,11 +40,16 @@ import type { SWRelayRequest, SWOutbound } from "./protocol-shared-worker";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN_HOST as string | undefined,
+  tunnel: "/t",
   environment:
     (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
   release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
   sendDefaultPii: false,
 });
+
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
+m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
 
 // ── Origin validation (shared across all modes) ──────────────
 
@@ -104,6 +109,8 @@ function signalReady(): void {
 // ── Mode detection + initialization ──────────────────────────
 
 async function init(): Promise<void> {
+  const stopInit = m.timer(S.PROTOCOL_INIT);
+
   log.warn("[dot.li protocol] Detecting best coordination mode...");
   log.warn(
     `[dot.li protocol]   SharedWorker: ${typeof SharedWorker !== "undefined" ? "available" : "unavailable"}`,
@@ -120,8 +127,15 @@ async function init(): Promise<void> {
     try {
       log.warn("[dot.li protocol] Attempting SharedWorker mode...");
       await initSharedWorkerMode();
+      m.tag("protocol_mode", "shared_worker");
+      m.count(S.PROTOCOL_MODE, { mode: "shared_worker" });
+      stopInit();
       return;
     } catch (err) {
+      m.count(S.PROTOCOL_SW_TIMEOUT);
+      m.breadcrumb("SharedWorker failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       log.warn(
         "[dot.li protocol] SharedWorker failed, falling back:",
         err instanceof Error ? err.message : err,
@@ -136,6 +150,9 @@ async function init(): Promise<void> {
   ) {
     log.warn("[dot.li protocol] Using leader election mode...");
     await initLeaderElectionMode();
+    m.tag("protocol_mode", "leader_election");
+    m.count(S.PROTOCOL_MODE, { mode: "leader_election" });
+    stopInit();
     return;
   }
 
@@ -144,11 +161,16 @@ async function init(): Promise<void> {
     "[dot.li protocol] No coordination APIs available, using direct mode",
   );
   initDirectMode();
+  m.tag("protocol_mode", "direct");
+  m.count(S.PROTOCOL_MODE, { mode: "direct" });
+  stopInit();
 }
 
 // ── Mode 1: SharedWorker relay ───────────────────────────────
 
 async function initSharedWorkerMode(): Promise<void> {
+  const swStartTime = performance.now();
+
   const worker = new SharedWorker(
     new URL("./protocol-shared-worker.ts", import.meta.url),
     { type: "module", name: "dotli-protocol" },
@@ -158,11 +180,16 @@ async function initSharedWorkerMode(): Promise<void> {
   // Listen for SharedWorker errors (e.g. if the script fails to load)
   worker.addEventListener("error", (event) => {
     log.error("[dot.li protocol] SharedWorker error event:", event);
+    m.count(S.BOOTNODE_ERROR, { source: "shared_worker" });
   });
 
   // Wait for SharedWorker to signal ready (or error)
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
+      const waitMs = performance.now() - swStartTime;
+      m.distribution(S.PROTOCOL_SW_READY, waitMs, "millisecond", {
+        outcome: "timeout",
+      });
       reject(new Error("SharedWorker did not signal ready within timeout"));
     }, TIMEOUTS.SHARED_WORKER_READY);
 
@@ -171,10 +198,19 @@ async function initSharedWorkerMode(): Promise<void> {
       if (data?.type === "ready") {
         clearTimeout(timer);
         port.removeEventListener("message", onMessage);
+        const readyMs = performance.now() - swStartTime;
+        m.measure(S.PROTOCOL_SW_READY, readyMs);
+        m.distribution(S.PROTOCOL_SW_READY, readyMs, "millisecond", {
+          outcome: "success",
+        });
         resolve();
       } else if (data?.type === "error") {
         clearTimeout(timer);
         port.removeEventListener("message", onMessage);
+        const failMs = performance.now() - swStartTime;
+        m.distribution(S.PROTOCOL_SW_READY, failMs, "millisecond", {
+          outcome: "error",
+        });
         reject(new Error(`SharedWorker error: ${data.message}`));
       }
     }

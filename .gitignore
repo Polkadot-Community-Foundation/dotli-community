@@ -13,11 +13,10 @@ dist
 coverage
 *.local
 
-# Lock files
+# Lock files (keep bun.lock committed for reproducible CI builds)
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
-bun.lock
 
 # Editor directories and files
 .vscode/*

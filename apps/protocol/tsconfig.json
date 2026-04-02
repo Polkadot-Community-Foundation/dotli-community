@@ -3,6 +3,7 @@
   "compilerOptions": {
     "paths": {
       "@dotli/config/*": ["../../packages/config/src/*"],
+      "@dotli/metrics/*": ["../../packages/metrics/src/*"],
       "@dotli/shared/*": ["../../packages/shared/src/*"],
       "@dotli/storage/*": ["../../packages/storage/src/*"],
       "@dotli/resolver/*": ["../../packages/resolver/src/*"],

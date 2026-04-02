@@ -53,11 +53,16 @@ if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN_HOST as string | undefined,
+  tunnel: "/t",
   environment:
     (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
   release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
   sendDefaultPii: false,
 });
+
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
+m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
 
 const T0 = performance.now();
 
@@ -438,11 +443,15 @@ async function main(): Promise<void> {
     // ── Fast path: CID cache hit → iframe to cid.app.dot.li ──
     const cachedCid = await getCachedCid(label);
     if (cachedCid !== null) {
+      m.count(S.CACHE_HIT);
       log.warn(`[dot.li perf] CID cache HIT: ${cachedCid} (${elapsed(T0)})`);
       setShieldState("validating");
       const { renderAppSubdomain } = await renderChunkPromise;
       await renderAppSubdomain(cachedCid, label);
 
+      const totalMs = performance.now() - T0;
+      m.measure(S.E2E_FAST, totalMs);
+      m.distribution(S.E2E_FAST, totalMs);
       performance.mark("dotli:main:end");
       log.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
 
@@ -451,6 +460,7 @@ async function main(): Promise<void> {
       verifyCachedCid(label, cachedCid, protocolChunkPromise);
       return;
     }
+    m.count(S.CACHE_MISS);
     log.warn(`[dot.li perf] CID cache MISS (${elapsed(T0)})`);
 
     // ── Full resolution path ──
@@ -465,9 +475,11 @@ async function main(): Promise<void> {
 
     performance.mark("dotli:resolve:start");
     const resolveStart = performance.now();
+    const stopResolve = m.timer(S.RESOLVE_TOTAL);
     const cid = await resolveDotNameRemote(label, (msg: string) => {
       showStatus(msg);
     });
+    stopResolve();
     performance.mark("dotli:resolve:end");
     log.warn(
       `[dot.li perf] Resolution done (${dur(resolveStart)}, ${elapsed(T0)}) → ${cid ?? "null"}`,
@@ -490,6 +502,10 @@ async function main(): Promise<void> {
     // Render: iframe to cid.app.dot.li
     const { renderAppSubdomain } = await renderChunkPromise;
     await renderAppSubdomain(cid, label);
+
+    const totalMs = performance.now() - T0;
+    m.measure(S.E2E_SLOW, totalMs);
+    m.distribution(S.E2E_SLOW, totalMs);
     performance.mark("dotli:main:end");
     log.warn(`[dot.li perf] === TOTAL: ${dur(T0)} ===`);
   } catch (err) {
