@@ -12,3 +12,4 @@ jobs:
       dev_port: '5173'
     secrets:
       SHANNON_CLAUDE_TOKEN: ${{ secrets.SHANNON_CLAUDE_TOKEN }}
+      SHANNON_REPORT_TOKEN: ${{ secrets.SHANNON_REPORT_TOKEN }}
