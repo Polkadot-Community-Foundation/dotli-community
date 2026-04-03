@@ -64,6 +64,21 @@ import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
 
+// Track WASM module load times via resource timing
+if (m.enabled && typeof PerformanceObserver !== "undefined") {
+  const wasmObserver = new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) {
+      if (entry.name.endsWith(".wasm")) {
+        const name = entry.name.split("/").pop() ?? "unknown";
+        m.distribution(S.WASM_LOAD, entry.duration, "millisecond", {
+          module: name,
+        });
+      }
+    }
+  });
+  wasmObserver.observe({ type: "resource", buffered: true });
+}
+
 const T0 = performance.now();
 
 /**

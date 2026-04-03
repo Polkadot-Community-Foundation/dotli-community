@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@dotli/config": "workspace:*",
+    "@dotli/metrics": "workspace:*",
     "@dotli/shared": "workspace:*",
     "@novasamatech/host-api": "^0.6.15",
     "@novasamatech/host-papp": "^0.6.15",

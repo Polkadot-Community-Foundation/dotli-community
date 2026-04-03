@@ -86,3 +86,82 @@ export const E2E_SLOW = "e2e.slow_path";
 
 /** Bootnode WebSocket connection failure */
 export const BOOTNODE_ERROR = "bootnode.error";
+
+// ── Content fetching ────────────────────────────────────────────
+
+/** Helia P2P client initialization (peer discovery + connect) */
+export const CONTENT_HELIA_INIT = "content.helia_init";
+
+/** P2P fetch timed out */
+export const CONTENT_P2P_TIMEOUT = "content.p2p_timeout";
+
+/** Gateway fallback activated (P2P too slow or failed) */
+export const CONTENT_GATEWAY_FALLBACK = "content.gateway_fallback";
+
+/** Fetched content size in bytes */
+export const CONTENT_SIZE = "content.size";
+
+// ── CID cache ──────────────────────────────────────────────────
+
+/** IndexedDB read latency for CID lookup */
+export const CACHE_READ_LATENCY = "cache.read_latency";
+
+/** IndexedDB write latency for CID store */
+export const CACHE_WRITE_LATENCY = "cache.write_latency";
+
+/** IndexedDB database open time */
+export const CACHE_DB_OPEN = "cache.db_open";
+
+// ── Chain spec loading ─────────────────────────────────────────
+
+/** Time to fetch Paseo relay chain spec */
+export const CHAINSPEC_PASEO = "chainspec.paseo";
+
+/** Time to fetch Asset Hub chain spec */
+export const CHAINSPEC_ASSETHUB = "chainspec.assethub";
+
+/** Time to fetch Bulletin chain spec */
+export const CHAINSPEC_BULLETIN = "chainspec.bulletin";
+
+// ── App context (sandbox) ──────────────────────────────────────
+
+/** Total sandbox app load time */
+export const APP_TOTAL = "app.total";
+
+/** Service worker registration time */
+export const APP_SW_REGISTER = "app.sw_register";
+
+/** Content render time in sandbox */
+export const APP_RENDER = "app.render";
+
+// ── Protocol client ────────────────────────────────────────────
+
+/** Protocol iframe creation + ready wait */
+export const PROTOCOL_IFRAME_READY = "protocol.iframe_ready";
+
+/** Protocol iframe creation retry */
+export const PROTOCOL_IFRAME_RETRY = "protocol.iframe_retry";
+
+/** Protocol request roundtrip time */
+export const PROTOCOL_REQUEST = "protocol.request";
+
+/** Protocol request timeout */
+export const PROTOCOL_REQUEST_TIMEOUT = "protocol.request_timeout";
+
+// ── Container bridge ───────────────────────────────────────────
+
+/** Container chunk dynamic import time */
+export const BRIDGE_CHUNK_LOAD = "bridge.chunk_load";
+
+/** Container bridge setup time */
+export const BRIDGE_SETUP = "bridge.setup";
+
+// ── Auth ───────────────────────────────────────────────────────
+
+/** Session restore from storage */
+export const AUTH_SESSION_RESTORE = "auth.session_restore";
+
+// ── WASM ───────────────────────────────────────────────────────
+
+/** WASM module load time (captured via PerformanceObserver) */
+export const WASM_LOAD = "wasm.load";

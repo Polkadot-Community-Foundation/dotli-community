@@ -6,13 +6,19 @@
 // out of the sandbox bundle.
 
 import { BASE_DOMAIN } from "@dotli/config/config";
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
 
 // Re-export sandbox-safe rendering functions
 export { renderContent, renderArchive, prepareIframe } from "./render";
 
 // Eagerly load the container bridge chunk — starts downloading when
 // this module is imported, so it's ready by the time we need it.
-const containerChunkPromise = import("./container");
+const chunkLoadStart = performance.now();
+const containerChunkPromise = import("./container").then((mod) => {
+  m.measure(S.BRIDGE_CHUNK_LOAD, performance.now() - chunkLoadStart);
+  return mod;
+});
 void containerChunkPromise.catch(() => {
   /* fire-and-forget */
 });
@@ -48,6 +54,7 @@ function getDeepPath(): string {
  * chain connections, and scoped storage.
  */
 export async function renderIframe(url: string, label: string): Promise<void> {
+  const stopSetup = m.timer(S.BRIDGE_SETUP);
   cleanup();
 
   const hasTopbar = document.getElementById("topbar") !== null;
@@ -87,6 +94,7 @@ export async function renderIframe(url: string, label: string): Promise<void> {
     currentPanelDispose = setupViolationPanel(iframe);
   }
 
+  stopSetup();
   document.title = `${label} — dot.li`;
 }
 
@@ -101,6 +109,7 @@ export async function renderAppSubdomain(
   cid: string,
   label: string,
 ): Promise<void> {
+  const stopSetup = m.timer(S.BRIDGE_SETUP);
   cleanup();
 
   const appOrigin = getAppOrigin(cid);
@@ -140,6 +149,7 @@ export async function renderAppSubdomain(
     currentPanelDispose = setupViolationPanel(iframe);
   }
 
+  stopSetup();
   document.title = `${label}.dot`;
 }
 

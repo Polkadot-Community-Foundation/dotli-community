@@ -67,6 +67,7 @@
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/content": "workspace:*",
+        "@dotli/metrics": "workspace:*",
         "@dotli/sandbox-checker": "workspace:*",
         "@dotli/shared": "workspace:*",
         "@dotli/storage": "workspace:*",
@@ -90,6 +91,7 @@
       "version": "0.2.2",
       "dependencies": {
         "@dotli/config": "workspace:*",
+        "@dotli/metrics": "workspace:*",
         "@dotli/shared": "workspace:*",
         "@novasamatech/host-api": "^0.6.15",
         "@novasamatech/host-papp": "^0.6.15",
@@ -131,6 +133,7 @@
         "@chainsafe/libp2p-noise": "^17.0.0",
         "@chainsafe/libp2p-yamux": "^8.0.1",
         "@dotli/config": "workspace:*",
+        "@dotli/metrics": "workspace:*",
         "@dotli/shared": "workspace:*",
         "@helia/block-brokers": "^5.1.2",
         "@helia/unixfs": "^7.0.4",
@@ -192,6 +195,7 @@
       "version": "0.2.2",
       "dependencies": {
         "@dotli/config": "workspace:*",
+        "@dotli/metrics": "workspace:*",
         "@dotli/resolver": "workspace:*",
         "@dotli/shared": "workspace:*",
         "@polkadot-api/json-rpc-provider": "^0.0.4",
@@ -266,6 +270,7 @@
       "version": "0.2.2",
       "dependencies": {
         "@dotli/config": "workspace:*",
+        "@dotli/metrics": "workspace:*",
         "@dotli/shared": "workspace:*",
       },
       "devDependencies": {
@@ -289,6 +294,7 @@
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/content": "workspace:*",
+        "@dotli/metrics": "workspace:*",
         "@dotli/protocol": "workspace:*",
         "@dotli/sandbox-checker": "workspace:*",
         "@dotli/shared": "workspace:*",

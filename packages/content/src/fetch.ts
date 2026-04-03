@@ -6,6 +6,8 @@
 import { TIMEOUTS, BULLETIN_PEERS } from "@dotli/config/config";
 import { dur } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
 import { createHelia, type Helia } from "helia";
 import { unixfs } from "@helia/unixfs";
 import { CID } from "multiformats/cid";
@@ -296,8 +298,11 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
   if (!c.isInitialized()) {
     onStatus?.("Initializing P2P client...");
     const initStart = performance.now();
+    const stopInit = m.timer(S.CONTENT_HELIA_INIT);
     const { connections } = await c.initialize();
+    stopInit();
     log.warn(`[dot.li fetch] ensureHelia() done (${dur(initStart)})`);
+    m.gauge("content.peer_connections", connections.length, "none");
     onStatus?.(`Connected to ${String(connections.length)} peer(s)`);
     if (connections.length === 0) {
       throw new Error("Could not connect to any Bulletin Chain peers");
@@ -334,6 +339,7 @@ async function fetchViaP2P(
   cidString: string,
   onStatus?: StatusCallback,
 ): Promise<FetchResult> {
+  const stopP2p = m.timer(S.CONTENT_P2P);
   const helia = await ensureHelia(onStatus);
   const cid = CID.parse(cidString);
 
@@ -344,6 +350,7 @@ async function fetchViaP2P(
     log.warn(
       `[dot.li fetch] P2P timeout after ${String(TIMEOUTS.P2P_FETCH / 1000)}s, aborting...`,
     );
+    m.count(S.CONTENT_P2P_TIMEOUT);
     controller.abort();
   }, TIMEOUTS.P2P_FETCH);
 
@@ -450,6 +457,7 @@ async function fetchViaP2P(
     );
     return { type: "single", content: fetchResult.data };
   } finally {
+    stopP2p();
     clearTimeout(timer);
   }
 }
@@ -465,6 +473,7 @@ async function fetchViaGateway(
   cidString: string,
   onStatus?: StatusCallback,
 ): Promise<FetchResult> {
+  const stopGw = m.timer(S.CONTENT_GATEWAY);
   // Try CAR format first (handles directories)
   try {
     onStatus?.("Fetching archive from IPFS gateway...");
@@ -476,6 +485,7 @@ async function fetchViaGateway(
     );
     onStatus?.("Parsing content...");
     const files = await parseIpfsResponse(carBuffer);
+    stopGw();
     return toFetchResult(files);
   } catch (carErr) {
     const carMsg = carErr instanceof Error ? carErr.message : String(carErr);
@@ -490,6 +500,7 @@ async function fetchViaGateway(
   log.warn(
     `[dot.li fetch] Gateway: fetched ${String(Math.round(data.length / 1024))} KB in ${dur(gatewayStart)}`,
   );
+  stopGw();
   return { type: "single", content: data };
 }
 
@@ -503,15 +514,18 @@ export async function fetchArchive(
   onStatus?: StatusCallback,
 ): Promise<FetchResult> {
   performance.mark("dotli:fetch:start");
+  const stopFetch = m.timer(S.CONTENT_FETCH);
 
   // Try P2P, race with gateway after a delay
   let gatewayTimer: ReturnType<typeof setTimeout> | undefined;
+  const raceState = { gatewayStarted: false };
 
   try {
     const result = await Promise.race([
       fetchViaP2P(cidString, onStatus),
       new Promise<FetchResult>((_resolve, reject) => {
         gatewayTimer = setTimeout(() => {
+          raceState.gatewayStarted = true;
           log.warn(
             `[dot.li fetch] P2P still running after ${String(TIMEOUTS.P2P_RACE_GATEWAY_DELAY / 1000)}s, racing gateway...`,
           );
@@ -523,6 +537,9 @@ export async function fetchArchive(
     clearTimeout(gatewayTimer);
     performance.mark("dotli:fetch:end");
     log.warn("[dot.li fetch] Content fetched successfully");
+    m.tag("content_method", raceState.gatewayStarted ? "gateway" : "p2p");
+    measureContentSize(result);
+    stopFetch();
     return result;
   } catch (p2pErr: unknown) {
     clearTimeout(gatewayTimer);
@@ -541,16 +558,33 @@ export async function fetchArchive(
   // Full fallback: both P2P and raced gateway failed (or gateway wasn't started)
   log.warn("[dot.li fetch] Falling back to IPFS gateway...");
   onStatus?.("P2P unavailable, trying IPFS gateway...");
+  m.count(S.CONTENT_GATEWAY_FALLBACK);
   try {
     const result = await fetchViaGateway(cidString, onStatus);
     performance.mark("dotli:fetch:end");
+    m.tag("content_method", "gateway");
+    measureContentSize(result);
+    stopFetch();
     return result;
   } catch (gwErr) {
     performance.mark("dotli:fetch:end");
+    stopFetch();
     if (gwErr instanceof Error) {
       log.error(`[dot.li fetch] Gateway also failed: ${gwErr.message}`);
     }
     throw gwErr;
+  }
+}
+
+function measureContentSize(result: FetchResult): void {
+  if (result.type === "single") {
+    m.distribution(S.CONTENT_SIZE, result.content.length, "byte");
+  } else {
+    const totalSize = Object.values(result.files).reduce(
+      (sum, buf) => sum + buf.length,
+      0,
+    );
+    m.distribution(S.CONTENT_SIZE, totalSize, "byte");
   }
 }
 

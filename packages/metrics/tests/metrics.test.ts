@@ -41,7 +41,7 @@ describe("metrics (disabled)", () => {
       startSpan: vi.fn(),
       setMeasurement: vi.fn(),
       metrics: {
-        increment: vi.fn(),
+        count: vi.fn(),
         distribution: vi.fn(),
         gauge: vi.fn(),
       },
@@ -51,6 +51,6 @@ describe("metrics (disabled)", () => {
     m.bind(fake);
     // Still disabled — bind doesn't enable metrics
     m.count("test");
-    expect(fake.metrics.increment).not.toHaveBeenCalled();
+    expect(fake.metrics.count).not.toHaveBeenCalled();
   });
 });

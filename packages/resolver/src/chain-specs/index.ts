@@ -13,6 +13,8 @@
 import paseoUrl from "./paseo.json?url";
 import assetHubPaseoUrl from "./asset-hub-paseo.json?url";
 import bulletinPaseoUrl from "./bulletin-paseo.json?url";
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
 
 // Lazy getters that retry on failure instead of caching a rejected promise.
 let paseoPromise: Promise<string> | null = null;
@@ -21,7 +23,13 @@ let bulletinPaseoPromise: Promise<string> | null = null;
 
 export function getPaseoChainSpec(): Promise<string> {
   if (paseoPromise === null) {
-    paseoPromise = fetch(paseoUrl).then((r) => r.text());
+    const stop = m.timer(S.CHAINSPEC_PASEO);
+    paseoPromise = fetch(paseoUrl)
+      .then((r) => r.text())
+      .then((text) => {
+        stop();
+        return text;
+      });
     paseoPromise.catch(() => {
       paseoPromise = null;
     });
@@ -31,7 +39,13 @@ export function getPaseoChainSpec(): Promise<string> {
 
 export function getAssetHubPaseoChainSpec(): Promise<string> {
   if (assetHubPromise === null) {
-    assetHubPromise = fetch(assetHubPaseoUrl).then((r) => r.text());
+    const stop = m.timer(S.CHAINSPEC_ASSETHUB);
+    assetHubPromise = fetch(assetHubPaseoUrl)
+      .then((r) => r.text())
+      .then((text) => {
+        stop();
+        return text;
+      });
     assetHubPromise.catch(() => {
       assetHubPromise = null;
     });
@@ -41,7 +55,13 @@ export function getAssetHubPaseoChainSpec(): Promise<string> {
 
 export function getBulletinPaseoChainSpec(): Promise<string> {
   if (bulletinPaseoPromise === null) {
-    bulletinPaseoPromise = fetch(bulletinPaseoUrl).then((r) => r.text());
+    const stop = m.timer(S.CHAINSPEC_BULLETIN);
+    bulletinPaseoPromise = fetch(bulletinPaseoUrl)
+      .then((r) => r.text())
+      .then((text) => {
+        stop();
+        return text;
+      });
     bulletinPaseoPromise.catch(() => {
       bulletinPaseoPromise = null;
     });

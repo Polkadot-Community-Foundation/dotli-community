@@ -23,6 +23,8 @@ import { toHex } from "@novasamatech/host-api";
 import { getWsProvider } from "polkadot-api/ws-provider";
 import { SITE_ID } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
 
 // ── Metadata file selection ────────────────────────────────
 
@@ -198,10 +200,13 @@ export function initAuth(): void {
   });
 
   // Check for the existing session
+  const stopRestore = m.timer(S.AUTH_SESSION_RESTORE);
   const sessions = adapter.sessions.sessions.read();
   if (sessions.length > 0) {
     void resolveIdentityAndSetAuth(sessions[0]);
   }
+  stopRestore();
+  m.breadcrumb("Auth module loaded");
 
   // Subscribe to session changes (handles reconnects)
   adapter.sessions.sessions.subscribe((sessions: UserSession[]) => {

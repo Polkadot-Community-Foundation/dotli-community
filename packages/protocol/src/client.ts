@@ -4,6 +4,8 @@ import type {
 } from "@polkadot-api/json-rpc-provider";
 import { BASE_DOMAIN } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
 import {
   isProtocolEnvelope,
   type ProtocolRequestEnvelope,
@@ -114,6 +116,7 @@ const IFRAME_READY_TIMEOUT_MS = 120_000;
 const IFRAME_MAX_RETRIES = 2;
 
 function createProtocolIframe(): Promise<void> {
+  const stopIframe = m.timer(S.PROTOCOL_IFRAME_READY);
   return new Promise<void>((resolve, reject) => {
     const iframe = document.createElement("iframe");
     iframe.src = getProtocolOrigin();
@@ -127,6 +130,7 @@ function createProtocolIframe(): Promise<void> {
       // Reject unconditionally — if the "ready" message was not received,
       // the protocol host is not listening and all requests would hang.
       iframe.remove();
+      stopIframe();
       reject(new Error("Shared protocol iframe timed out (no ready signal)"));
     }, IFRAME_READY_TIMEOUT_MS);
 
@@ -140,11 +144,13 @@ function createProtocolIframe(): Promise<void> {
       }
       cleanup();
       protocolIframe = iframe;
+      stopIframe();
       resolve();
     };
 
     const onError = (): void => {
       cleanup();
+      stopIframe();
       reject(new Error("Shared protocol iframe failed to load"));
     };
 
@@ -175,6 +181,7 @@ export async function ensureProtocolFrame(): Promise<void> {
         return;
       } catch (error: unknown) {
         lastError = error;
+        m.count(S.PROTOCOL_IFRAME_RETRY);
         log.warn(
           `[dot.li protocol] Iframe attempt ${String(attempt + 1)} failed, ${attempt < IFRAME_MAX_RETRIES ? "retrying..." : "giving up"}`,
         );
@@ -217,10 +224,13 @@ async function postRequest<M extends ProtocolRequestMethod>(
   };
 
   const timeoutMs = METHOD_TIMEOUTS[method] ?? DEFAULT_TIMEOUT_MS;
+  const stopReq = m.timer(S.PROTOCOL_REQUEST);
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pendingRequests.delete(id);
+      m.count(S.PROTOCOL_REQUEST_TIMEOUT, { method });
+      stopReq();
       reject(
         new Error(
           `Protocol request "${method}" timed out after ${String(timeoutMs)}ms`,
@@ -231,6 +241,7 @@ async function postRequest<M extends ProtocolRequestMethod>(
     pendingRequests.set(id, {
       resolve: (value) => {
         clearTimeout(timer);
+        stopReq();
         resolve(value);
       },
       reject: (reason?: unknown) => {

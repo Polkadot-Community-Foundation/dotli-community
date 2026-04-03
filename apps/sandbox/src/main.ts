@@ -29,6 +29,10 @@ Sentry.init({
   sendDefaultPii: false,
 });
 
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
+m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
+
 const T0 = performance.now();
 
 /**
@@ -212,6 +216,7 @@ async function maybeInjectSandboxChecker(html: string): Promise<string> {
 let destroyHeliaFn: (() => Promise<void>) | null = null;
 
 async function main(): Promise<void> {
+  const stopApp = m.timer(S.APP_TOTAL);
   performance.mark("dotli:app:start");
   log.warn(`[dot.li app] main() started (${elapsed(T0)})`);
 
@@ -221,6 +226,7 @@ async function main(): Promise<void> {
       "No CID",
       `This page requires a CID in the subdomain (e.g. bafyrei....app.${BASE_DOMAIN})`,
     );
+    stopApp();
     return;
   }
 
@@ -228,7 +234,11 @@ async function main(): Promise<void> {
   showStatus("Loading content...");
 
   // Register SW + pre-load chunks in parallel
-  const swReady = registerAppServiceWorker();
+  const stopSw = m.timer(S.APP_SW_REGISTER);
+  const swReady = registerAppServiceWorker().then((v) => {
+    stopSw();
+    return v;
+  });
   const renderChunkPromise = import("@dotli/ui/render");
   const fetchChunkPromise = import("@dotli/content/fetch");
 
@@ -267,6 +277,7 @@ async function main(): Promise<void> {
           `[dot.li app] Relay mode: writing cached content into window (${elapsed(T0)})`,
         );
         performance.mark("dotli:app:end");
+        stopApp();
         document.open();
         // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
         document.write(html);
@@ -276,10 +287,13 @@ async function main(): Promise<void> {
     }
 
     showStatus("Rendering (cached)...");
+    const stopRender = m.timer(S.APP_RENDER);
     const { renderArchive } = await renderChunkPromise;
     await renderArchive(cachedFiles, cid, cid);
+    stopRender();
     performance.mark("dotli:app:end");
     log.warn(`[dot.li app] Done — cached (${elapsed(T0)})`);
+    stopApp();
     return;
   }
 
@@ -321,6 +335,7 @@ async function main(): Promise<void> {
         `[dot.li app] Relay mode: writing content into window (${elapsed(T0)})`,
       );
       performance.mark("dotli:app:end");
+      stopApp();
       document.open();
       // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
       document.write(html);
@@ -331,15 +346,18 @@ async function main(): Promise<void> {
 
   // Render in sub-iframe (standalone mode or archive fallback)
   showStatus("Rendering...");
+  const stopRender = m.timer(S.APP_RENDER);
   const { renderArchive, renderContent } = await renderChunkPromise;
   if (result.type === "archive") {
     await renderArchive(result.files, cid, cid);
   } else {
     await renderContent(result.content, cid);
   }
+  stopRender();
 
   performance.mark("dotli:app:end");
   log.warn(`[dot.li app] Done (${elapsed(T0)})`);
+  stopApp();
 }
 
 // Cleanup on page unload

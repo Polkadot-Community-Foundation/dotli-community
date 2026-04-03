@@ -4,6 +4,8 @@
 // the cached CID instantly while smoldot validates in the background.
 
 import { getDb } from "./db";
+import { m } from "@dotli/metrics/metrics";
+import * as S from "@dotli/metrics/spans";
 
 const STORE = "cids";
 
@@ -14,6 +16,7 @@ interface CidEntry {
 }
 
 export async function getCachedCid(label: string): Promise<string | null> {
+  const stop = m.timer(S.CACHE_READ_LATENCY);
   try {
     const db = await getDb();
     return await new Promise((resolve) => {
@@ -21,13 +24,16 @@ export async function getCachedCid(label: string): Promise<string | null> {
       const req = tx.objectStore(STORE).get(label);
       req.onsuccess = () => {
         const entry = req.result as CidEntry | undefined;
+        stop();
         resolve(entry?.cid ?? null);
       };
       req.onerror = () => {
+        stop();
         resolve(null);
       };
     });
   } catch {
+    stop();
     return null;
   }
 }
@@ -63,6 +69,7 @@ export function addRecentLabel(label: string): Promise<void> {
 }
 
 export async function setCachedCid(label: string, cid: string): Promise<void> {
+  const stop = m.timer(S.CACHE_WRITE_LATENCY);
   try {
     const db = await getDb();
     const tx = db.transaction(STORE, "readwrite");
@@ -72,7 +79,9 @@ export async function setCachedCid(label: string, cid: string): Promise<void> {
       timestamp: Date.now(),
     };
     tx.objectStore(STORE).put(entry);
+    stop();
   } catch {
+    stop();
     // Cache write failure is non-critical
   }
 }

@@ -117,6 +117,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@dotli/config": resolve(PACKAGES, "config/src"),
+      "@dotli/metrics": resolve(PACKAGES, "metrics/src"),
       "@dotli/shared": resolve(PACKAGES, "shared/src"),
       "@dotli/storage": resolve(PACKAGES, "storage/src"),
       "@dotli/content": resolve(PACKAGES, "content/src"),

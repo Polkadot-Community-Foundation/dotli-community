@@ -21,6 +21,7 @@
   "dependencies": {
     "@dotli/config": "workspace:*",
     "@dotli/content": "workspace:*",
+    "@dotli/metrics": "workspace:*",
     "@dotli/protocol": "workspace:*",
     "@dotli/sandbox-checker": "workspace:*",
     "@dotli/shared": "workspace:*",

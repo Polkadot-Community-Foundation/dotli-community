@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@dotli/config": "workspace:*",
+    "@dotli/metrics": "workspace:*",
     "@dotli/shared": "workspace:*",
     "@dotli/storage": "workspace:*",
     "@dotli/content": "workspace:*",

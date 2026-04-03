@@ -10,6 +10,11 @@
 //   m.measure("smoldot.sync_duration", 2356);
 //   m.count("protocol.mode", { mode: "shared_worker" });
 
+interface MetricOptions {
+  unit?: string;
+  attributes?: Record<string, string>;
+}
+
 interface SentryLike {
   startSpan: <T>(
     opts: { op: string; name: string },
@@ -17,21 +22,9 @@ interface SentryLike {
   ) => T;
   setMeasurement: (name: string, value: number, unit: string) => void;
   metrics: {
-    increment: (
-      name: string,
-      value: number,
-      opts?: { tags?: Record<string, string>; unit?: string },
-    ) => void;
-    distribution: (
-      name: string,
-      value: number,
-      opts?: { tags?: Record<string, string>; unit?: string },
-    ) => void;
-    gauge: (
-      name: string,
-      value: number,
-      opts?: { tags?: Record<string, string>; unit?: string },
-    ) => void;
+    count: (name: string, value?: number, opts?: MetricOptions) => void;
+    distribution: (name: string, value: number, opts?: MetricOptions) => void;
+    gauge: (name: string, value: number, opts?: MetricOptions) => void;
   };
   setTag: (key: string, value: string) => void;
   addBreadcrumb: (breadcrumb: {
@@ -122,11 +115,11 @@ function measure(
 /**
  * Increment a counter metric. Counters track event frequency.
  */
-function count(name: string, tags?: Record<string, string>): void {
+function count(name: string, attributes?: Record<string, string>): void {
   if (!ENABLED) {
     return;
   }
-  sentry()?.metrics.increment(`dotli.${name}`, 1, { tags });
+  sentry()?.metrics.count(`dotli.${name}`, 1, { attributes });
 }
 
 /**
@@ -136,12 +129,15 @@ function distribution(
   name: string,
   value: number,
   unit = "millisecond",
-  tags?: Record<string, string>,
+  attributes?: Record<string, string>,
 ): void {
   if (!ENABLED) {
     return;
   }
-  sentry()?.metrics.distribution(`dotli.${name}`, value, { unit, tags });
+  sentry()?.metrics.distribution(`dotli.${name}`, value, {
+    unit,
+    attributes,
+  });
 }
 
 /**
@@ -151,12 +147,12 @@ function gauge(
   name: string,
   value: number,
   unit = "none",
-  tags?: Record<string, string>,
+  attributes?: Record<string, string>,
 ): void {
   if (!ENABLED) {
     return;
   }
-  sentry()?.metrics.gauge(`dotli.${name}`, value, { unit, tags });
+  sentry()?.metrics.gauge(`dotli.${name}`, value, { unit, attributes });
 }
 
 /**

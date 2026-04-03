@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@dotli/config": "workspace:*",
+    "@dotli/metrics": "workspace:*",
     "@dotli/resolver": "workspace:*",
     "@dotli/shared": "workspace:*",
     "@polkadot-api/json-rpc-provider": "^0.0.4"
