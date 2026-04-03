@@ -57,6 +57,7 @@ export async function renderIframe(url: string, label: string): Promise<void> {
 
   app.innerHTML = "";
   const iframe = document.createElement("iframe");
+  // TODO: Review sandbox default permissions
   iframe.sandbox.add(
     "allow-scripts",
     "allow-same-origin",
@@ -112,6 +113,7 @@ export async function renderAppSubdomain(
     "allow-same-origin",
     "allow-forms",
     "allow-pointer-lock",
+    "allow-popups",
   );
   iframe.allow = "clipboard-write";
   iframe.style.cssText =
