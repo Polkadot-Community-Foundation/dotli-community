@@ -44,6 +44,7 @@ import {
   isRemoteChainSupported,
 } from "@dotli/protocol/client";
 import { MAX_NESTED_BRIDGES } from "@dotli/config/config";
+import { dotNsUrl } from "@dotli/shared/dotns-url";
 import { log } from "@dotli/shared/log";
 import { computePreimageKey, hashToCid } from "@dotli/content/preimage";
 import { ensureHelia } from "@dotli/content/fetch";
@@ -259,21 +260,31 @@ function wireContainerHandlers(
   // ── Navigation ─────────────────────────────────────────
 
   container.handleNavigateTo((url, { ok }) => {
-    try {
-      const parsed = new URL(url);
-      const host = parsed.hostname;
-      if (host.endsWith(".dot")) {
-        const label = host.slice(0, -".dot".length);
-        const target = isLocalhost
-          ? `http://${label}.localhost:${window.location.port}${parsed.pathname}${parsed.search}${parsed.hash}`
-          : `${window.location.protocol}//${label}.${BASE_DOMAIN}${parsed.pathname}${parsed.search}${parsed.hash}`;
-        window.open(target, "_blank");
+    const dotUrl = dotNsUrl.parseDotNsDomain(url);
+
+    if (dotUrl && dotNsUrl.isDotDomain(dotUrl.identifier)) {
+      // .dot domain (including polkadot:// scheme)
+      window.open(
+        buildDotTargetUrl(
+          identifierToLabel(dotUrl.identifier),
+          dotUrl.pathname,
+        ),
+        "_blank",
+      );
+    } else {
+      const localhostUrl = dotNsUrl.parseLocalhostUrl(url);
+      if (localhostUrl) {
+        // localhost product → wrap in host URL
+        const suffix = localhostUrl.pathname ? "/" + localhostUrl.pathname : "";
+        window.open(
+          `${getHostOrigin()}/${localhostUrl.host}${suffix}`,
+          "_blank",
+        );
       } else {
-        window.open(url, "_blank");
+        window.open(dotNsUrl.normalizeUrl(url), "_blank");
       }
-    } catch {
-      window.open(url, "_blank");
     }
+
     return ok(undefined);
   });
 
@@ -548,6 +559,28 @@ function createSubmitRateLimiter(): { allow: () => boolean } {
 }
 
 // ── Helpers ────────────────────────────────────────────────
+
+/** Strip the `.dot` suffix to get the bare label (e.g. "mytestapp.dot" → "mytestapp"). */
+function identifierToLabel(identifier: string): string {
+  return identifier.slice(0, -".dot".length);
+}
+
+/** Build a full URL for a .dot product on the current environment. */
+function buildDotTargetUrl(label: string, pathname: string): string {
+  const suffix = pathname ? "/" + pathname : "";
+  if (isLocalhost) {
+    return `http://${label}.localhost:${window.location.port}${suffix}`;
+  }
+  return `${window.location.protocol}//${label}.${BASE_DOMAIN}${suffix}`;
+}
+
+/** Bare host origin without any product subdomain (e.g. `http://localhost:5173` or `https://dot.li`). */
+function getHostOrigin(): string {
+  if (isLocalhost) {
+    return `http://localhost:${window.location.port}`;
+  }
+  return `${window.location.protocol}//${BASE_DOMAIN}`;
+}
 
 /** Check if a value is a Uint8Array (or cross-realm equivalent). */
 function isUint8ArrayLike(data: unknown): data is Uint8Array {

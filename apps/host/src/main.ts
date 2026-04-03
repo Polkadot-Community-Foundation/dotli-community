@@ -375,6 +375,8 @@ async function main(): Promise<void> {
 
     const { renderIframe } = await import("@dotli/ui/bridge");
     await renderIframe(localhostUrl, host);
+    // Deep path was forwarded to the product iframe — strip it so the URL bar doesn't show a stale path
+    history.replaceState(null, "", "/" + host);
     document.title = `${host} — ${SITE_ID}`;
     performance.mark("dotli:main:end");
     return;
@@ -448,6 +450,8 @@ async function main(): Promise<void> {
       setShieldState("validating");
       const { renderAppSubdomain } = await renderChunkPromise;
       await renderAppSubdomain(cachedCid, label);
+      // Deep path was forwarded to the product iframe — strip it so the URL bar doesn't show a stale path
+      history.replaceState(null, "", "/");
 
       const totalMs = performance.now() - T0;
       m.measure(S.E2E_FAST, totalMs);
@@ -506,6 +510,8 @@ async function main(): Promise<void> {
     const totalMs = performance.now() - T0;
     m.measure(S.E2E_SLOW, totalMs);
     m.distribution(S.E2E_SLOW, totalMs);
+    // Deep path was forwarded to the product iframe — strip it so the URL bar doesn't show a stale path
+    history.replaceState(null, "", "/");
     performance.mark("dotli:main:end");
     log.warn(`[dot.li perf] === TOTAL: ${dur(T0)} ===`);
   } catch (err) {
