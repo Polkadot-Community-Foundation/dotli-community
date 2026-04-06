@@ -4,7 +4,7 @@
 // Provides a simple pub-sub interface for the top bar UI.
 
 import {
-  SS_STABLE_STAGE_ENDPOINTS,
+  SS_PASEO_STABLE_STAGE_ENDPOINTS,
   createPappAdapter,
   type PappAdapter,
   type PairingStatus,
@@ -180,7 +180,7 @@ export function initAuth(): void {
   const siteId = SITE_ID;
   const storage = createLocalStorageAdapter(siteId);
   const lazyClient = createLazyClient(
-    getWsProvider([...SS_STABLE_STAGE_ENDPOINTS], {
+    getWsProvider([...SS_PASEO_STABLE_STAGE_ENDPOINTS], {
       heartbeatTimeout: 120_000, // 2 minutes — default 40s is too aggressive through tunnels
     }),
   );
