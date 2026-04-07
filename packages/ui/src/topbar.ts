@@ -10,6 +10,14 @@
 import type { AuthState } from "@dotli/auth/auth";
 import type { Identity } from "@novasamatech/host-papp";
 import { log } from "@dotli/shared/log";
+import {
+  ALL_PERMISSIONS,
+  getPermissionStatus,
+  hasAnyGrant,
+  isDevicePermission,
+  resetPermission,
+  setPermissionStatus,
+} from "./permissions";
 
 // ── DOM refs ───────────────────────────────────────────────
 
@@ -30,6 +38,13 @@ let modalClose: HTMLElement;
 let userPopover: HTMLElement;
 let userPopoverUsername: HTMLElement;
 let userPopoverDisconnect: HTMLElement;
+
+let permissionsButton: HTMLElement;
+let permissionsPopover: HTMLElement;
+let permissionsPopoverList: HTMLElement;
+
+/** The label of the currently loaded product (set via dotli:product-loaded event). */
+let currentProductLabel: string | null = null;
 
 // Hexagon SVG for the logged-out state
 const HEXAGON_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
@@ -130,7 +145,7 @@ export function initTopBar(): void {
   // Disconnect button
   userPopoverDisconnect.addEventListener("click", handleDisconnect);
 
-  // Close popover when clicking outside
+  // Close popovers when clicking outside
   document.addEventListener("click", (e) => {
     if (
       userPopover.classList.contains("open") &&
@@ -138,6 +153,13 @@ export function initTopBar(): void {
       !authButton.contains(e.target as Node)
     ) {
       userPopover.classList.remove("open");
+    }
+    if (
+      permissionsPopover.classList.contains("open") &&
+      !permissionsPopover.contains(e.target as Node) &&
+      !permissionsButton.contains(e.target as Node)
+    ) {
+      permissionsPopover.classList.remove("open");
     }
   });
 
@@ -151,6 +173,9 @@ export function initTopBar(): void {
 
   // Theme toggle
   initThemeToggle();
+
+  // Permissions
+  initPermissions();
 
   // Show default logged-out state
   renderLoggedOut();
@@ -322,6 +347,144 @@ function handleDisconnect(): void {
     void authMod.disconnect();
   }
 }
+
+// ── Permissions ───────────────────────────────────────────
+
+const PERM_ICONS: Record<string, string> = {
+  Camera:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
+  Microphone:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>',
+  Location:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
+  Bluetooth:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/></svg>',
+  TransactionSubmit:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
+};
+
+function initPermissions(): void {
+  permissionsButton = getElement("permissions-button");
+  permissionsPopover = getElement("permissions-popover");
+  permissionsPopoverList = getElement("permissions-popover-list");
+
+  permissionsButton.addEventListener("click", () => {
+    permissionsPopover.classList.toggle("open");
+    if (permissionsPopover.classList.contains("open")) {
+      renderPermissionsPopover();
+    }
+  });
+
+  // Show button when a product is loaded
+  window.addEventListener("dotli:product-loaded", (e) => {
+    const { label } = (e as CustomEvent<{ label: string }>).detail;
+    currentProductLabel = label;
+    permissionsButton.style.display = "";
+    updatePermissionsButtonState();
+    if (permissionsPopover.classList.contains("open")) {
+      renderPermissionsPopover();
+    }
+  });
+
+  // Update after permission changes
+  window.addEventListener("dotli:device-permission-changed", () => {
+    updatePermissionsButtonState();
+    if (permissionsPopover.classList.contains("open")) {
+      renderPermissionsPopover();
+    }
+  });
+
+  window.addEventListener("dotli:permission-changed", () => {
+    updatePermissionsButtonState();
+    if (permissionsPopover.classList.contains("open")) {
+      renderPermissionsPopover();
+    }
+  });
+}
+
+/** Update the shield icon to reflect whether any permissions are active. */
+function updatePermissionsButtonState(): void {
+  if (currentProductLabel === null) {
+    return;
+  }
+  permissionsButton.classList.toggle(
+    "has-grants",
+    hasAnyGrant(currentProductLabel),
+  );
+}
+
+function renderPermissionsPopover(): void {
+  if (currentProductLabel === null) {
+    return;
+  }
+
+  permissionsPopoverList.innerHTML = "";
+
+  for (const perm of ALL_PERMISSIONS) {
+    const status = getPermissionStatus(currentProductLabel, perm.name);
+
+    const row = document.createElement("div");
+    row.className = "permissions-popover-row";
+
+    const icon = document.createElement("span");
+    icon.className = "permissions-popover-icon";
+    icon.innerHTML = PERM_ICONS[perm.name] ?? "";
+    row.appendChild(icon);
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "permissions-popover-name";
+    nameEl.textContent = perm.label;
+    row.appendChild(nameEl);
+
+    // Toggle switch
+    const toggle = document.createElement("button");
+    toggle.className = `permissions-popover-toggle ${status === "granted" ? "on" : ""}`;
+    toggle.setAttribute("role", "switch");
+    toggle.setAttribute("aria-checked", String(status === "granted"));
+    toggle.title =
+      status === "granted" ? "Revoke permission" : "Grant permission";
+
+    const track = document.createElement("span");
+    track.className = "permissions-toggle-track";
+    const knob = document.createElement("span");
+    knob.className = "permissions-toggle-knob";
+    track.appendChild(knob);
+    toggle.appendChild(track);
+
+    toggle.addEventListener("click", () => {
+      if (currentProductLabel === null) {
+        return;
+      }
+      if (status === "granted") {
+        resetPermission(currentProductLabel, perm.name);
+      } else {
+        setPermissionStatus(currentProductLabel, perm.name, "granted");
+      }
+      // Device permissions need iframe reload (allow attribute changes).
+      // Non-device permissions just update the UI.
+      const event = isDevicePermission(perm.name)
+        ? "dotli:device-permission-changed"
+        : "dotli:permission-changed";
+      window.dispatchEvent(
+        new CustomEvent(event, {
+          detail: { label: currentProductLabel, permission: perm.name },
+        }),
+      );
+      renderPermissionsPopover();
+    });
+
+    row.appendChild(toggle);
+    permissionsPopoverList.appendChild(row);
+  }
+
+  // Footer notice
+  const footer = document.createElement("div");
+  footer.className = "permissions-popover-footer";
+  footer.textContent = "Changing permissions will reload the app.";
+  permissionsPopoverList.appendChild(footer);
+}
+
+// ── Modal ─────────────────────────────────────────────────
 
 function openModal(): void {
   modalQr.innerHTML = `<div class="spinner"></div>`;

@@ -8,6 +8,7 @@
 import { BASE_DOMAIN } from "@dotli/config/config";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
+import { buildAllowAttribute } from "./permissions";
 
 // Re-export sandbox-safe rendering functions
 export { renderContent, renderArchive, prepareIframe } from "./render";
@@ -27,6 +28,30 @@ const app = document.getElementById("app") ?? document.body;
 
 let currentDispose: (() => void) | null = null;
 let currentPanelDispose: (() => void) | null = null;
+
+// Track current product state for permission-grant reloads
+let currentRenderMode: "iframe" | "subdomain" | null = null;
+let currentLabel: string | null = null;
+let currentUrl: string | null = null;
+let currentCid: string | null = null;
+
+// Listen for device permission grants — reload the iframe so the
+// updated `allow` attribute takes effect.
+window.addEventListener("dotli:device-permission-changed", () => {
+  if (
+    currentRenderMode === "iframe" &&
+    currentUrl !== null &&
+    currentLabel !== null
+  ) {
+    void renderIframe(currentUrl, currentLabel);
+  } else if (
+    currentRenderMode === "subdomain" &&
+    currentCid !== null &&
+    currentLabel !== null
+  ) {
+    void renderAppSubdomain(currentCid, currentLabel);
+  }
+});
 
 /**
  * Capture deep link path (pathname + search + hash) to forward into the iframe.
@@ -57,6 +82,11 @@ export async function renderIframe(url: string, label: string): Promise<void> {
   const stopSetup = m.timer(S.BRIDGE_SETUP);
   cleanup();
 
+  currentRenderMode = "iframe";
+  currentLabel = label;
+  currentUrl = url;
+  currentCid = null;
+
   const hasTopbar = document.getElementById("topbar") !== null;
   const iframeStyle = hasTopbar
     ? "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;"
@@ -71,7 +101,7 @@ export async function renderIframe(url: string, label: string): Promise<void> {
     "allow-forms",
     "allow-pointer-lock",
   );
-  iframe.allow = "clipboard-write";
+  iframe.allow = buildAllowAttribute(label);
   iframe.style.cssText = iframeStyle;
   document.body.style.margin = "0";
   document.body.style.overflow = "hidden";
@@ -96,6 +126,10 @@ export async function renderIframe(url: string, label: string): Promise<void> {
 
   stopSetup();
   document.title = `${label} — dot.li`;
+
+  window.dispatchEvent(
+    new CustomEvent("dotli:product-loaded", { detail: { label } }),
+  );
 }
 
 /**
@@ -112,6 +146,11 @@ export async function renderAppSubdomain(
   const stopSetup = m.timer(S.BRIDGE_SETUP);
   cleanup();
 
+  currentRenderMode = "subdomain";
+  currentLabel = label;
+  currentCid = cid;
+  currentUrl = null;
+
   const appOrigin = getAppOrigin(cid);
   const deepPath = getDeepPath();
   const url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
@@ -124,7 +163,7 @@ export async function renderAppSubdomain(
     "allow-pointer-lock",
     "allow-popups",
   );
-  iframe.allow = "clipboard-write";
+  iframe.allow = buildAllowAttribute(label);
   iframe.style.cssText =
     "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
   document.body.style.margin = "0";
@@ -151,6 +190,10 @@ export async function renderAppSubdomain(
 
   stopSetup();
   document.title = `${label}.dot`;
+
+  window.dispatchEvent(
+    new CustomEvent("dotli:product-loaded", { detail: { label } }),
+  );
 }
 
 function getAppOrigin(cid: string): string {

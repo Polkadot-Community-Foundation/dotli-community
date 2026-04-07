@@ -8,6 +8,7 @@
 // adds container bridge support for dApp ↔ host communication.
 
 import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
+import { buildAllowAttribute } from "./permissions";
 
 /**
  * Darken a CSS hex color by a given factor (0 = unchanged, 1 = black).
@@ -206,6 +207,8 @@ export function renderIframe(url: string, label: string): void {
     ? "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;"
     : "position:fixed;top:0;left:0;width:100%;height:100vh;border:none;margin:0;padding:0;";
 
+  const allowAttr = buildAllowAttribute(label);
+
   let iframe: HTMLIFrameElement;
   if (preparedIframe) {
     // Detach before clearing, then re-append
@@ -213,6 +216,7 @@ export function renderIframe(url: string, label: string): void {
     preparedIframe = null;
     iframe.remove();
     app.innerHTML = "";
+    iframe.allow = allowAttr;
     iframe.style.cssText = iframeStyle;
     iframe.style.visibility = "visible";
     app.appendChild(iframe);
@@ -226,7 +230,7 @@ export function renderIframe(url: string, label: string): void {
       "allow-forms",
       "allow-pointer-lock",
     );
-    iframe.allow = "clipboard-write";
+    iframe.allow = allowAttr;
     iframe.style.cssText = iframeStyle;
     document.body.style.margin = "0";
     document.body.style.overflow = "hidden";

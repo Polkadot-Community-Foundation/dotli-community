@@ -25,8 +25,10 @@ import {
   createSr25519Prover,
   type StatementStoreAdapter,
 } from "@novasamatech/statement-store";
-import { errAsync, fromPromise } from "neverthrow";
+import { errAsync, fromPromise, okAsync } from "neverthrow";
 import { isLocalhost, BASE_DOMAIN } from "@dotli/config/config";
+import { getPermissionStatus, setPermissionStatus } from "./permissions";
+import { showPermissionRequestModal } from "./permission-modal";
 
 import type { UserSession } from "@novasamatech/host-papp";
 import {
@@ -219,6 +221,16 @@ function wireContainerHandlers(
       genesisHash: payload.genesisHash,
       method: payload.method.slice(0, 40) + "...",
     });
+    if (getPermissionStatus(label, "TransactionSubmit") !== "granted") {
+      log.warn(`[${label}] handleSignPayload — TransactionSubmit not granted`);
+      showNotification({
+        label: `${label}.dot`,
+        text: 'Transaction blocked — enable "Sign Transactions" in the permissions menu.',
+        dismissMs: 6000,
+        browserNotification: false,
+      });
+      return err(new SigningErr.PermissionDenied(undefined));
+    }
     const session = getSession();
     if (!session) {
       log.error(`[${label}] handleSignPayload — no session, rejecting`);
@@ -338,12 +350,104 @@ function wireContainerHandlers(
 
   // ── Permissions ────────────────────────────────────────
 
-  container.handleDevicePermission((_permission, { ok }) => {
-    return ok(false);
+  const permissionLimiter = createSubmitRateLimiter();
+
+  container.handleDevicePermission((permission, { ok }) => {
+    if (!permissionLimiter.allow()) {
+      return okAsync(false);
+    }
+
+    const status = getPermissionStatus(label, permission);
+
+    if (status === "granted") {
+      return ok(true);
+    }
+
+    if (status === "denied") {
+      showNotification({
+        label: `${label}.dot`,
+        text: `${permission} access is blocked. Use the permissions menu in the top bar to change this.`,
+        dismissMs: 6000,
+        browserNotification: false,
+      });
+      return ok(false);
+    }
+
+    // status === 'ask' — show consent modal
+    return fromPromise(
+      showPermissionRequestModal(label, permission).then(() => {
+        setPermissionStatus(label, permission, "granted");
+        // Defer the reload to the next event loop tick so the
+        // container can finish sending the response before being
+        // disposed. Without this, cleanup() runs synchronously
+        // inside the dispatch, disposing the transport mid-response.
+        setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent("dotli:device-permission-changed", {
+              detail: { label, permission },
+            }),
+          );
+        }, 0);
+      }),
+      () => "denied" as const,
+    )
+      .map(() => {
+        // User allowed — but iframe reloads, so return false for now
+        return false;
+      })
+      .orElse(() => {
+        // User denied (rejected promise) or dialog dismissed
+        setPermissionStatus(label, permission, "denied");
+        return ok(false);
+      });
   });
 
-  container.handlePermission((_request, { ok }) => {
-    return ok(false);
+  // remote_permission — only TransactionSubmit is enforced;
+  // ExternalRequest has no enforcement mechanism in browser context.
+  container.handlePermission((request, { ok }) => {
+    if (request.tag !== "TransactionSubmit") {
+      return ok(false);
+    }
+
+    if (!permissionLimiter.allow()) {
+      return okAsync(false);
+    }
+
+    const status = getPermissionStatus(label, "TransactionSubmit");
+
+    if (status === "granted") {
+      return ok(true);
+    }
+
+    if (status === "denied") {
+      showNotification({
+        label: `${label}.dot`,
+        text: "Transaction signing is blocked. Use the permissions menu in the top bar to change this.",
+        dismissMs: 6000,
+        browserNotification: false,
+      });
+      return ok(false);
+    }
+
+    // status === 'ask' — show consent modal
+    return fromPromise(
+      showPermissionRequestModal(label, "TransactionSubmit").then(() => {
+        setPermissionStatus(label, "TransactionSubmit", "granted");
+        // No iframe reload needed — signing handlers read permission at call time.
+        // But dispatch event so topbar updates.
+        window.dispatchEvent(
+          new CustomEvent("dotli:permission-changed", {
+            detail: { label },
+          }),
+        );
+      }),
+      () => "denied" as const,
+    )
+      .map(() => true)
+      .orElse(() => {
+        setPermissionStatus(label, "TransactionSubmit", "denied");
+        return ok(false);
+      });
   });
 
   // ── Push notifications ─────────────────────────────────

@@ -405,3 +405,133 @@
   width: 18px;
   height: 18px;
 }
+
+/* ── Permissions Button State ───────────── */
+#permissions-button {
+  position: relative;
+}
+#permissions-button.has-grants::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+}
+
+/* ── Permissions Popover ───────────────── */
+.permissions-popover {
+  display: none;
+  position: fixed;
+  top: 44px;
+  right: 12px;
+  width: 260px;
+  background: #171717;
+  border: 1px solid #404040;
+  border-radius: 12px;
+  z-index: 1500;
+  overflow: hidden;
+}
+.permissions-popover.open {
+  display: block;
+}
+.permissions-popover-header {
+  padding: 10px 14px 6px;
+  font-size: 0.7rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.permissions-popover-list {
+  padding: 4px 0 8px;
+}
+.permissions-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  transition: background 0.1s;
+}
+.permissions-popover-row:hover {
+  background: #222;
+}
+.permissions-popover-icon {
+  display: flex;
+  align-items: center;
+  color: #888;
+  flex-shrink: 0;
+}
+.permissions-popover-name {
+  font-size: 0.8rem;
+  color: #e0e0e0;
+  flex: 1;
+}
+/* Toggle switch */
+.permissions-popover-toggle {
+  flex-shrink: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.permissions-toggle-track {
+  display: block;
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+  background: #333;
+  position: relative;
+  transition: background 0.15s;
+}
+.permissions-popover-toggle.on .permissions-toggle-track {
+  background: #4ade80;
+}
+.permissions-toggle-knob {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #888;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition:
+    transform 0.15s,
+    background 0.15s;
+}
+.permissions-popover-toggle.on .permissions-toggle-knob {
+  transform: translateX(12px);
+  background: #fff;
+}
+/* Footer */
+.permissions-popover-footer {
+  padding: 6px 14px 8px;
+  font-size: 0.65rem;
+  color: #555;
+  border-top: 1px solid #2a2a2a;
+  margin-top: 4px;
+}
+
+/* ── Permission modal additions ─────────── */
+.permission-modal-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #e6007a;
+  margin-bottom: 12px;
+}
+.permission-modal-notice {
+  font-size: 0.75rem;
+  color: #888;
+  margin-top: 4px;
+  font-style: italic;
+}
