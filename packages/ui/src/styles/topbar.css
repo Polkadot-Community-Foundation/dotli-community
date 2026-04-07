@@ -34,6 +34,18 @@
   color: #fff;
   letter-spacing: 0.02em;
 }
+.topbar-beta {
+  font-size: 0.55rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+  padding: 2px 5px;
+  border-radius: 3px;
+  line-height: 1;
+  align-self: center;
+}
 .topbar-url {
   flex: 1;
   display: flex;
