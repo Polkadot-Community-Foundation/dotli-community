@@ -56,6 +56,7 @@ import {
 } from "@dotli/resolver/bulletin";
 import { showPushNotification } from "./notification";
 import { showNotification } from "./notification";
+import { showAliasPermissionModal } from "./alias-permission-modal";
 import { showPreimageSubmitModal } from "./preimage-modal";
 import {
   mapFromHostSignedStatement,
@@ -161,6 +162,53 @@ function wireContainerHandlers(
     return subscribeSession((session) => {
       send(session ? "connected" : "disconnected");
     });
+  });
+
+  const aliasLimiter = createSubmitRateLimiter();
+
+  container.handleAccountGetAlias((productAccountId, { err }) => {
+    if (!aliasLimiter.allow()) {
+      return errAsync(
+        new RequestCredentialsErr.Unknown({ reason: "Rate limited" }),
+      );
+    }
+
+    const session = getSession();
+    if (!session) {
+      return err(new RequestCredentialsErr.NotConnected(undefined));
+    }
+
+    if (
+      !Array.isArray(productAccountId) ||
+      typeof productAccountId[0] !== "string" ||
+      !productAccountId[0].endsWith(".dot")
+    ) {
+      return err(new RequestCredentialsErr.DomainNotValid(undefined));
+    }
+
+    const identifier = label + ".dot";
+    const isOwnDomain = identifier === productAccountId[0];
+
+    if (isOwnDomain) {
+      return session
+        .getRingVrfAlias(productAccountId, identifier)
+        .mapErr(
+          (error) =>
+            new RequestCredentialsErr.Unknown({ reason: error.message }),
+        );
+    }
+
+    return fromPromise(
+      showAliasPermissionModal(identifier, productAccountId[0]),
+      () => new RequestCredentialsErr.Rejected(undefined),
+    ).andThen(() =>
+      session
+        .getRingVrfAlias(productAccountId, identifier)
+        .mapErr(
+          (error) =>
+            new RequestCredentialsErr.Unknown({ reason: error.message }),
+        ),
+    );
   });
 
   // ── Signing ────────────────────────────────────────────
