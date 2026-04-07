@@ -5,7 +5,7 @@ import { isEncrypted, decryptContent } from "@dotli/content/decrypt";
 // ── Helpers ──────────────────────────────────────────────────
 
 const MAGIC = new Uint8Array([
-  0x44, 0x4f, 0x54, 0x4c, 0x49, 0x5f, 0x45, 0x4e, 0x43, 0x02,
+  0x44, 0x4f, 0x54, 0x4c, 0x49, 0x5f, 0x45, 0x4e, 0x43, 0x01,
 ]);
 const SALT_LEN = 16;
 const NONCE_LEN = 12;
@@ -40,7 +40,7 @@ async function encrypt(
   );
   const key = new Uint8Array(keyBits);
 
-  const aead = chacha20poly1305(key, nonce);
+  const aead = chacha20poly1305(key, nonce, MAGIC);
   const ciphertext = aead.encrypt(plaintext);
 
   const result = new Uint8Array(

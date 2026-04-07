@@ -1,7 +1,7 @@
 // dot.li — Password-based decryption for encrypted SPAs
 //
 // Encrypted format (produced by external tooling):
-//   [10 bytes magic "DOTLI_ENC\x02"] [16 bytes salt] [12 bytes nonce] [ciphertext + Poly1305 tag]
+//   [10 bytes magic "DOTLI_ENC\x01"] [16 bytes salt] [12 bytes nonce] [ciphertext + Poly1305 tag]
 //
 // Key derivation: PBKDF2-SHA256 (100k iterations) from password + salt → 32-byte ChaCha20 key.
 // AEAD: ChaCha20-Poly1305 (via @noble/ciphers — Web Crypto does not support it natively).
@@ -18,7 +18,7 @@ const MAGIC = new Uint8Array([
   0x45,
   0x4e,
   0x43,
-  0x02, // "DOTLI_ENC\x02"
+  0x01, // "DOTLI_ENC\x01"
 ]);
 
 const SALT_LEN = 16;
@@ -84,6 +84,6 @@ export async function decryptContent(
   const ciphertext = data.slice(HEADER_LEN);
 
   const key = await deriveKey(password, salt);
-  const aead = chacha20poly1305(key, nonce);
+  const aead = chacha20poly1305(key, nonce, MAGIC);
   return aead.decrypt(ciphertext);
 }
