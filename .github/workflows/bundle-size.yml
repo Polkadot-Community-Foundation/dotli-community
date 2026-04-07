@@ -103,7 +103,7 @@ jobs:
 
       - name: Download baseline from main
         id: baseline
-        uses: dawidd6/action-download-artifact@v19
+        uses: dawidd6/action-download-artifact@v20
         with:
           name: bundle-size-baseline
           workflow: bundle-size.yml
