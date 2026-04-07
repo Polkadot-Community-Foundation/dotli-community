@@ -6,6 +6,7 @@
 import { TIMEOUTS, BULLETIN_PEERS } from "@dotli/config/config";
 import { dur } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
+import { serializeError } from "@dotli/shared/errors";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { createHelia, type Helia } from "helia";
@@ -171,10 +172,9 @@ export class HeliaClient {
       try {
         cid = CID.parse(cidOrString);
       } catch (error) {
-        throw new Error(
-          `Invalid CID: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error },
-        );
+        throw new Error(`Invalid CID: ${serializeError(error)}`, {
+          cause: error,
+        });
       }
     } else {
       cid = cidOrString;

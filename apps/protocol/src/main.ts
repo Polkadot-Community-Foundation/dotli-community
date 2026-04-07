@@ -29,6 +29,7 @@ import {
 } from "@dotli/resolver/resolve";
 import { terminateSmoldot } from "@dotli/resolver/smoldot";
 import { log } from "@dotli/shared/log";
+import { serializeError } from "@dotli/shared/errors";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
 import {
   isProtocolEnvelope,
@@ -355,7 +356,7 @@ function initLeaderMode(bc: BroadcastChannel): void {
           kind: "response",
           id: data.id,
           ok: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: serializeError(error),
         });
       });
   });
@@ -385,7 +386,7 @@ function initLeaderMode(bc: BroadcastChannel): void {
             kind: "response",
             id: msg.envelope.id,
             ok: false,
-            error: error instanceof Error ? error.message : String(error),
+            error: serializeError(error),
           },
         };
         bc.postMessage(reply);
@@ -515,7 +516,7 @@ function initDirectMode(): void {
           kind: "response",
           id: data.id,
           ok: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: serializeError(error),
         });
       });
   });

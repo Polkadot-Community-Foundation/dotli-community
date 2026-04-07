@@ -13,6 +13,7 @@ import {
   type ProtocolRequestMethod,
   SUPPORTED_GENESIS_HASHES,
 } from "./messages";
+import { serializeError } from "@dotli/shared/errors";
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -71,7 +72,9 @@ function bindMessageListener(): void {
         if (msg.ok) {
           pending.resolve(msg.result);
         } else {
-          pending.reject(new Error(msg.error));
+          const err = new Error(msg.error || "Unknown protocol error");
+          err.name = "ProtocolResponseError";
+          pending.reject(err);
         }
         return;
       }
@@ -332,8 +335,7 @@ export function createRemoteChainProvider(
         // Connection failed — send JSON-RPC error responses for all
         // pending messages so polkadot-api's client knows the connection
         // died instead of hanging on "Not connected" forever.
-        const reason =
-          error instanceof Error ? error.message : "Chain connection failed";
+        const reason = serializeError(error);
         log.error("[dot.li protocol] Failed to connect remote chain:", error);
         for (const pending of remote.pendingMessages) {
           const errResponse = buildJsonRpcError(pending, reason);
@@ -366,8 +368,7 @@ export function createRemoteChainProvider(
         }
         void postRequest("chainSend", { connectionId, message }).catch(
           (error: unknown) => {
-            const reason =
-              error instanceof Error ? error.message : "Chain send failed";
+            const reason = serializeError(error);
             log.error("[dot.li protocol] Remote chain send failed:", error);
             const errResponse = buildJsonRpcError(message, reason);
             if (errResponse !== null) {

@@ -194,6 +194,15 @@ export default defineConfig({
     modulePreload: { polyfill: false },
     outDir: OUT_DIR,
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("@novasamatech/scale")) {
+            return "nova-scale";
+          }
+        },
+      },
+    },
   },
   server: {
     headers: {

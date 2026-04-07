@@ -11,7 +11,8 @@
     "build:prod": {
       "dependsOn": ["^build:prod"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**"],
+      "env": ["SENTRY_AUTH_TOKEN"]
     },
     "test": {
       "dependsOn": ["build"]

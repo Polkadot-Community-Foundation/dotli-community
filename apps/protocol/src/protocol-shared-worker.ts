@@ -27,6 +27,7 @@ import {
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
+import { serializeError } from "@dotli/shared/errors";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN_WORKER as string | undefined,
@@ -457,7 +458,7 @@ self.addEventListener("connect", (event) => {
     const relayData = data as SWRelayRequest;
     const { envelope, origin } = relayData;
     void handleRequest(port, envelope, origin).catch((error: unknown) => {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = serializeError(error);
       swError(`Request ${envelope.method} failed:`, msg);
       sendToPort(port, {
         namespace: "dotli:protocol",
