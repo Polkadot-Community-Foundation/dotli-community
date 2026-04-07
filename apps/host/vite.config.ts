@@ -193,7 +193,7 @@ export default defineConfig({
     target: "esnext",
     modulePreload: { polyfill: false },
     outDir: OUT_DIR,
-    sourcemap: true,
+    sourcemap: "hidden",
     rollupOptions: {
       output: {
         manualChunks(id) {
