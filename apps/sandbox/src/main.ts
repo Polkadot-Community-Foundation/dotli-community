@@ -15,10 +15,13 @@ window.addEventListener("vite:preloadError", () => {
 import "@dotli/ui/styles.css";
 import * as Sentry from "@sentry/browser";
 import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
+import { isEncrypted, decryptContent } from "@dotli/content/decrypt";
 import { showStatus, showError } from "@dotli/ui/ui";
+import { showPasswordPrompt } from "@dotli/ui/password-prompt";
 import { TIMEOUTS, BASE_DOMAIN } from "@dotli/config/config";
 import { elapsed } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
+import { parseIpfsResponse } from "@dotli/content/archive";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN_SANDBOX as string | undefined,
@@ -212,6 +215,41 @@ async function maybeInjectSandboxChecker(html: string): Promise<string> {
   return injectSandboxChecker(html);
 }
 
+// Session-scoped decryption key cache: once a user decrypts a CID in this tab,
+// we store the password so SW-cache hits don't re-prompt.
+const decryptedPasswords = new Map<string, string>();
+
+/**
+ * If `data` is an encrypted blob, prompt for a password, decrypt, and parse.
+ * Returns null if the data is not encrypted (caller should handle normally).
+ */
+async function decryptIfNeeded(
+  data: Uint8Array,
+  cid: string,
+): Promise<ArchiveFiles | null> {
+  if (!isEncrypted(data)) {
+    return null;
+  }
+  log.warn(`[dot.li app] Content is encrypted, prompting for password...`);
+
+  // Re-use password from this session if available
+  let password = decryptedPasswords.get(cid);
+  let error: string | undefined;
+
+  for (;;) {
+    password ??= await showPasswordPrompt({ error });
+    try {
+      const plaintext = await decryptContent(data, password);
+      decryptedPasswords.set(cid, password);
+      // Parse the decrypted bytes as an archive or single file
+      return await parseIpfsResponse(plaintext);
+    } catch {
+      error = "Wrong password. Please try again.";
+      password = undefined;
+    }
+  }
+}
+
 // Module-level reference for cleanup
 let destroyHeliaFn: (() => Promise<void>) | null = null;
 
@@ -306,8 +344,17 @@ async function main(): Promise<void> {
   destroyHeliaFn = destroyHelia;
   await ensureHelia();
   log.warn(`[dot.li app] Helia P2P ready (${elapsed(T0)})`);
-  const result = await fetchArchive(cid, showStatus);
+  let result = await fetchArchive(cid, showStatus);
   log.warn(`[dot.li app] Content fetched → ${result.type} (${elapsed(T0)})`);
+
+  // Decrypt if the fetched content is an encrypted blob
+  if (result.type === "single") {
+    const decryptedFiles = await decryptIfNeeded(result.content, cid);
+    if (decryptedFiles !== null) {
+      log.warn(`[dot.li app] Content decrypted (${elapsed(T0)})`);
+      result = { type: "archive", files: decryptedFiles };
+    }
+  }
 
   if (isRelayMode) {
     // Write the dApp content directly into this window so it occupies

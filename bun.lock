@@ -144,6 +144,7 @@
         "@libp2p/websockets": "^10.1.5",
         "@multiformats/blake2": "^2.0.2",
         "@multiformats/multiaddr": "^13.0.1",
+        "@noble/ciphers": "^2.1.1",
         "@noble/hashes": "^2.0.1",
         "helia": "^6.0.20",
         "ipfs-unixfs": "^12.0.0",
