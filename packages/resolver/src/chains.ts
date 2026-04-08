@@ -12,14 +12,21 @@ import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 import {
   PASEO_RELAY_GENESIS as PASEO_RELAY,
   ASSET_HUB_PASEO_GENESIS as ASSET_HUB_PASEO,
+  BULLETIN_PASEO_GENESIS as BULLETIN_PASEO,
 } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 
-import { getDappAssetHubProvider, getRelayChain } from "./smoldot";
+import {
+  getDappAssetHubProvider,
+  getBulletinChain,
+  makeNonRemovingChain,
+  getRelayChain,
+} from "./smoldot";
 
 const SUPPORTED_GENESIS = new Set([
   PASEO_RELAY.toLowerCase(),
   ASSET_HUB_PASEO.toLowerCase(),
+  BULLETIN_PASEO.toLowerCase(),
 ]);
 
 export function isChainSupported(genesisHash: string): boolean {
@@ -49,6 +56,13 @@ export function createChainProvider(
   if (key === PASEO_RELAY.toLowerCase()) {
     log.warn("[dot.li chains] Returning shared relay chain provider");
     return getSmProvider(getRelayChain());
+  }
+
+  if (key === BULLETIN_PASEO.toLowerCase()) {
+    log.warn("[dot.li chains] Returning Bulletin Paseo provider (smoldot)");
+    return getSmProvider(
+      getBulletinChain().then((chain) => makeNonRemovingChain(chain)),
+    );
   }
 
   log.warn(`[dot.li chains] Unsupported chain: ${genesisHash}`);
