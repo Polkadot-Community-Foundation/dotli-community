@@ -28,12 +28,19 @@ jobs:
         env:
           BODY: ${{ github.event.release.body }}
         run: |
-          CHANGELOG=$(echo "$BODY" | sed \
+          NORMALIZED_BODY=$(printf '%s\n' "$BODY" | tr -d '\r')
+          RAW_NOTES=$(printf '%s\n' "$NORMALIZED_BODY" | sed '/^\*\*Full Changelog\*\*:/,$d')
+          FULL_CHANGELOG=$(printf '%s\n' "$NORMALIZED_BODY" | sed -n 's|^\*\*Full Changelog\*\*: \(.*\)|<b>Full Changelog:</b> \1|p')
+          CHANGELOG=$(printf '%s\n' "$RAW_NOTES" | sed \
+            -e '/^[[:space:]]*$/d' \
             -e 's|^## \(.*\)|<b>\1</b>|' \
             -e 's|^\* \(.*\)|• \1|' \
             -e 's|https://github.com/${{ github.repository }}/pull/\([0-9]*\)|<a href="https://github.com/${{ github.repository }}/pull/\1">#\1</a>|g' \
             -e 's|@\([a-zA-Z0-9_-]*\)|<a href="https://github.com/\1">@\1</a>|g' \
             -e 's|$|<br/>|')
+          if [ -n "$FULL_CHANGELOG" ]; then
+            CHANGELOG="${CHANGELOG}${FULL_CHANGELOG}<br/>"
+          fi
           {
             echo "changelog<<CHANGELOG_EOF"
             echo "$CHANGELOG"
@@ -49,5 +56,5 @@ jobs:
           message: |
             <b>dot.li ${{ github.event.release.tag_name }} deployed to production!</b><br/>
             <br/>
-            ${{ steps.release_info.outputs.changelog }}<br/>
+            ${{ steps.release_info.outputs.changelog }}
             <b>Release:</b> ${{ github.event.release.html_url }}
