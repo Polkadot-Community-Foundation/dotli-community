@@ -16,7 +16,7 @@ import "@dotli/ui/styles.css";
 import * as Sentry from "@sentry/browser";
 import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
 import { isEncrypted, decryptContent } from "@dotli/content/decrypt";
-import { showStatus, showError } from "@dotli/ui/ui";
+import { showStatus as showStatusLocal, showError } from "@dotli/ui/ui";
 import { showPasswordPrompt } from "@dotli/ui/password-prompt";
 import { TIMEOUTS, BASE_DOMAIN } from "@dotli/config/config";
 import { elapsed } from "@dotli/shared/perf";
@@ -37,6 +37,35 @@ import * as S from "@dotli/metrics/spans";
 m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
 
 const T0 = performance.now();
+
+// In relay mode (inside host iframe), post status to parent so the host's
+// unified loading UI stays active. Otherwise update our own DOM.
+const isRelayMode = window.self !== window.top;
+
+// In relay mode the host shows the loading UI — hide the sandbox's own copy.
+if (isRelayMode) {
+  const loading = document.querySelector<HTMLElement>("#app > .loading");
+  if (loading) {
+    loading.style.display = "none";
+  }
+}
+
+function showStatus(message: string): void {
+  if (isRelayMode) {
+    window.parent.postMessage({ type: "dotli:loading-status", message }, "*");
+  } else {
+    showStatusLocal(message);
+  }
+}
+
+function notifyLoadingDone(): void {
+  if (isRelayMode) {
+    window.parent.postMessage(
+      { type: "dotli:loading-status", done: true },
+      "*",
+    );
+  }
+}
 
 /**
  * Extract the CID from the hostname.
@@ -284,14 +313,6 @@ async function main(): Promise<void> {
   await swReady;
   log.warn(`[dot.li app] SW ready (${elapsed(T0)})`);
 
-  // Detect relay mode: APP is inside the HOST iframe.
-  // The HOST's container bridge targets this iframe directly.
-  // The dApp SDK uses window.top for postMessage, so the dApp must run
-  // at this iframe level (not nested further). In relay mode, we replace
-  // the document with the dApp's HTML via document.write() so the dApp
-  // occupies this window and can talk to the HOST's bridge via window.top.
-  const isRelayMode = window.self !== window.top;
-
   // Check SW cache first
   const cachedFiles = await getCachedArchive(cid, cid);
   if (cachedFiles) {
@@ -314,6 +335,7 @@ async function main(): Promise<void> {
         log.warn(
           `[dot.li app] Relay mode: writing cached content into window (${elapsed(T0)})`,
         );
+        notifyLoadingDone();
         performance.mark("dotli:app:end");
         stopApp();
         document.open();
@@ -329,6 +351,7 @@ async function main(): Promise<void> {
     const { renderArchive } = await renderChunkPromise;
     await renderArchive(cachedFiles, cid, cid);
     stopRender();
+    notifyLoadingDone();
     performance.mark("dotli:app:end");
     log.warn(`[dot.li app] Done — cached (${elapsed(T0)})`);
     stopApp();
@@ -381,6 +404,7 @@ async function main(): Promise<void> {
       log.warn(
         `[dot.li app] Relay mode: writing content into window (${elapsed(T0)})`,
       );
+      notifyLoadingDone();
       performance.mark("dotli:app:end");
       stopApp();
       document.open();
@@ -401,6 +425,7 @@ async function main(): Promise<void> {
     await renderContent(result.content, cid);
   }
   stopRender();
+  notifyLoadingDone();
 
   performance.mark("dotli:app:end");
   log.warn(`[dot.li app] Done (${elapsed(T0)})`);

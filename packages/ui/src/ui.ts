@@ -23,42 +23,318 @@ function dotUrl(label: string): string {
   return `https://${label}.${BASE_DOMAIN}`;
 }
 
-const STATUS_PHRASES = [
-  "Reaching out",
-  "Finding your way there",
-  "Loading from the network",
-  "Almost there",
-];
-let statusCallCount = 0;
+// ── Phase-based loading indicator ────────────────────────
+
+let phaseLabels: string[] = [];
+let currentPhase = -1;
 
 /**
- * Show a status message in the loading UI.
- * Updates the phrase, progress bar, and cycles underphrase.
+ * Initialize the stepped loading indicator.
+ * Call once before resolution/fetching begins.
  */
-export function showStatus(_message: string): void {
-  statusCallCount++;
+export function initPhases(labels: string[]): void {
+  phaseLabels = labels;
+  currentPhase = -1;
 
-  // Update main phrase based on call count
-  const phraseIdx = Math.min(
-    Math.floor(statusCallCount / 3),
-    STATUS_PHRASES.length - 1,
-  );
-  const textBlock = document.getElementById("loading-text");
+  const container = document.getElementById("loading-steps");
+  if (container === null) {
+    return;
+  }
+
+  let html = "";
+  for (let i = 0; i < labels.length; i++) {
+    if (i > 0) {
+      html += '<span class="step-line"></span>';
+    }
+    html += `<span class="step-dot" data-step="${String(i)}"></span>`;
+  }
+  container.innerHTML = html;
+}
+
+/**
+ * Advance to a specific phase (0-indexed).
+ * Updates the step dots and the headline text.
+ * No-ops if the phase is already active or past.
+ */
+export function advancePhase(index: number): void {
+  if (index <= currentPhase || index >= phaseLabels.length) {
+    return;
+  }
+  currentPhase = index;
+
+  // Update step dots
+  const container = document.getElementById("loading-steps");
+  if (container !== null) {
+    const dots = container.querySelectorAll<HTMLElement>(".step-dot");
+    const lines = container.querySelectorAll<HTMLElement>(".step-line");
+    dots.forEach((dot, i) => {
+      dot.classList.toggle("completed", i < currentPhase);
+      dot.classList.toggle("active", i === currentPhase);
+    });
+    lines.forEach((line, i) => {
+      line.classList.toggle("completed", i < currentPhase);
+    });
+  }
+
+  // Update headline
   const status = document.getElementById("status");
-  if (status !== null && textBlock !== null) {
-    textBlock.classList.add("fade-out");
-    setTimeout(() => {
-      status.textContent = STATUS_PHRASES[phraseIdx] ?? "Loading...";
-      textBlock.classList.remove("fade-out");
-    }, 350);
+  if (status !== null) {
+    status.textContent = phaseLabels[index] ?? "Loading...";
+  }
+}
+
+// ── Terminal-style status log ─────────────────────────────
+// Each line: [message] [dot leader] [status]
+// Dots animate while active, then freeze with "OK" / "✓" when done.
+
+const DOT_CHAR = "\u00B7"; // middle dot — subtler than period
+const MAX_DOTS = 24;
+
+interface LogLine {
+  el: HTMLElement;
+  msgEl: HTMLElement;
+  fillEl: HTMLElement;
+  statusEl: HTMLElement;
+}
+
+// Per-step timeout thresholds (seconds). If an active line exceeds its
+// limit, a "taking unusually long" warning appears with a contextual hint.
+const SLOW_THRESHOLDS: Record<string, { secs: number; hint: string }> = {
+  "Starting light client": {
+    secs: 8,
+    hint: "The smoldot light client is slow to initialize — could be a network issue",
+  },
+  "Adding Paseo relay chain": {
+    secs: 10,
+    hint: "Relay chain bootstrap is stalled — smoldot may be having trouble reaching bootnodes",
+  },
+  "Connecting to Asset Hub": {
+    secs: 12,
+    hint: "Parachain connection is taking long — the chain may be congested or peers unavailable",
+  },
+  Syncing: {
+    secs: 15,
+    hint: "Chain sync is slow — smoldot is catching up to the latest finalized block",
+  },
+  Resolving: {
+    secs: 10,
+    hint: "Smoldot is taking longer to sync — the light client is still catching up",
+  },
+  "Connecting to peers": {
+    secs: 10,
+    hint: "Helia P2P peer discovery is slow — WebRTC relay nodes may be unreachable",
+  },
+  "Fetching content via P2P": {
+    secs: 15,
+    hint: "P2P content transfer is slow — the content may have few seeders on the Bulletin network",
+  },
+  "Fetching directory via P2P": {
+    secs: 15,
+    hint: "Directory fetch is slow — multi-file archives take longer over P2P",
+  },
+  "Initializing P2P client": {
+    secs: 8,
+    hint: "Helia startup is stalled — WASM or WebRTC initialization may be blocked",
+  },
+};
+
+function getSlowThreshold(
+  message: string,
+): { secs: number; hint: string } | null {
+  for (const [key, value] of Object.entries(SLOW_THRESHOLDS)) {
+    if (message.startsWith(key) || message.includes(key.toLowerCase())) {
+      return value;
+    }
+  }
+  // Default fallback for unknown steps
+  return { secs: 20, hint: "This is taking longer than expected" };
+}
+
+let activeLine: LogLine | null = null;
+let dotInterval: ReturnType<typeof setInterval> | null = null;
+let dotCount = 0;
+let lastMessagePrefix = "";
+let slowTimer: ReturnType<typeof setTimeout> | null = null;
+let slowWarningEl: HTMLElement | null = null;
+
+function clearSlowWarning(): void {
+  if (slowTimer !== null) {
+    clearTimeout(slowTimer);
+    slowTimer = null;
+  }
+  if (slowWarningEl !== null) {
+    slowWarningEl.remove();
+    slowWarningEl = null;
+  }
+}
+
+function stopDots(): void {
+  if (dotInterval !== null) {
+    clearInterval(dotInterval);
+    dotInterval = null;
+  }
+  clearSlowWarning();
+}
+
+function makeLine(container: HTMLElement, className: string): LogLine {
+  const el = document.createElement("p");
+  el.className = `loading-log-line ${className}`;
+  const msgEl = document.createElement("span");
+  msgEl.className = "log-msg";
+  const fillEl = document.createElement("span");
+  fillEl.className = "log-fill";
+  const statusEl = document.createElement("span");
+  statusEl.className = "log-status";
+  el.appendChild(msgEl);
+  el.appendChild(fillEl);
+  el.appendChild(statusEl);
+  container.appendChild(el);
+  return { el, msgEl, fillEl, statusEl };
+}
+
+/**
+ * Finalize the currently active line — stop dots, set status marker.
+ */
+function finalizeLine(marker = "OK"): void {
+  if (activeLine === null) {
+    return;
+  }
+  stopDots();
+  activeLine.fillEl.textContent = DOT_CHAR.repeat(MAX_DOTS);
+  activeLine.statusEl.textContent = marker;
+  activeLine.el.classList.remove("log-active");
+  activeLine.el.classList.add("log-done");
+  activeLine = null;
+  dotCount = 0;
+}
+
+/**
+ * Start a new active line with accumulating dots.
+ * Schedules a "taking unusually long" warning if the step exceeds its threshold.
+ */
+function startLine(container: HTMLElement, message: string): void {
+  const line = makeLine(container, "log-active");
+  line.msgEl.textContent = message;
+  activeLine = line;
+  dotCount = 0;
+
+  dotInterval = setInterval(() => {
+    dotCount++;
+    if (activeLine !== null) {
+      activeLine.fillEl.textContent = DOT_CHAR.repeat(
+        Math.min(dotCount, MAX_DOTS),
+      );
+    }
+  }, 350);
+
+  // Schedule slow-step warning
+  const threshold = getSlowThreshold(message);
+  if (threshold !== null) {
+    slowTimer = setTimeout(() => {
+      if (activeLine === null) {
+        return;
+      }
+      activeLine.statusEl.textContent = "SLOW";
+      activeLine.el.classList.add("log-slow");
+      const warn = document.createElement("p");
+      warn.className = "loading-log-line log-warning";
+      warn.textContent = "\u26A0 " + threshold.hint;
+      container.appendChild(warn);
+      slowWarningEl = warn;
+    }, threshold.secs * 1000);
+  }
+}
+
+/**
+ * Append a status message to the terminal-style loading log.
+ *
+ * - Result messages (containing "→") finalize the previous line and
+ *   appear as a completed line with a checkmark.
+ * - Rapid-fire updates (Syncing #N) replace the current line in place.
+ * - Everything else finalizes the previous line with "OK" and starts
+ *   a new active line with accumulating dots.
+ */
+export function showStatus(message: string): void {
+  const container = document.getElementById("loading-subtitle");
+  if (container === null) {
+    return;
   }
 
-  // Update progress bar (incremental, max 90% until done)
-  const bar = document.getElementById("loading-bar-fill");
-  if (bar !== null) {
-    const progress = Math.min(90, statusCallCount * 12);
-    bar.style.width = `${String(progress)}%`;
+  // Result / completion messages — show as static line with checkmark
+  if (message.includes("→")) {
+    finalizeLine("OK");
+    const line = makeLine(container, "log-done");
+    line.msgEl.textContent = message;
+    line.fillEl.textContent = "";
+    line.statusEl.textContent = "\u2713";
+    return;
   }
+
+  // Rapid-fire updates (syncing blocks) — update the active line in place
+  const prefix = message.split("#")[0] ?? "";
+  const isUpdate =
+    activeLine !== null &&
+    prefix === lastMessagePrefix &&
+    prefix.length > 0 &&
+    (prefix.startsWith("Syncing ") || prefix.startsWith("Synced to"));
+
+  if (isUpdate && activeLine !== null) {
+    activeLine.msgEl.textContent = message;
+    lastMessagePrefix = prefix;
+    return;
+  }
+
+  lastMessagePrefix = prefix;
+
+  // New step: finalize previous line, start new one with dots
+  finalizeLine("OK");
+  startLine(container, message);
+}
+
+/**
+ * Stop the dot animation (call when loading is done).
+ */
+export function stopStatusTick(): void {
+  finalizeLine("OK");
+}
+
+/**
+ * Remove the loading overlay (logo, steps, log).
+ * Called when the app is fully loaded and the iframe is ready.
+ */
+export function dismissLoading(): void {
+  finalizeLine("OK");
+  const loading = document.querySelector<HTMLElement>("#app > .loading");
+  if (loading !== null) {
+    loading.style.transition = "opacity 0.3s ease";
+    loading.style.opacity = "0";
+    loading.style.pointerEvents = "none";
+    setTimeout(() => {
+      loading.remove();
+    }, 300);
+  }
+}
+
+/**
+ * Listen for status messages from the sandbox iframe.
+ * The sandbox posts { type: "dotli:loading-status", message } in relay mode.
+ */
+export function listenForSandboxStatus(): void {
+  window.addEventListener("message", (event: MessageEvent) => {
+    const data = event.data as Record<string, unknown> | null;
+    if (
+      data !== null &&
+      typeof data === "object" &&
+      data.type === "dotli:loading-status"
+    ) {
+      if (typeof data.message === "string") {
+        showStatus(data.message);
+      }
+      if (data.done === true) {
+        dismissLoading();
+      }
+    }
+  });
 }
 
 /**

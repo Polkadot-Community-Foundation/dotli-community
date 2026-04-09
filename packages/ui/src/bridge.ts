@@ -168,7 +168,15 @@ export async function renderAppSubdomain(
     "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
   document.body.style.margin = "0";
   document.body.style.overflow = "hidden";
+
+  // Keep the loading overlay visible — the sandbox will post status
+  // messages via dotli:loading-status and a final done=true to dismiss it.
+  // Only remove non-loading children from #app before appending the iframe.
+  const loading = app.querySelector(".loading");
   app.innerHTML = "";
+  if (loading) {
+    app.appendChild(loading);
+  }
   app.appendChild(iframe);
 
   const { setupContainer, setupNestedBridgeDetector } =

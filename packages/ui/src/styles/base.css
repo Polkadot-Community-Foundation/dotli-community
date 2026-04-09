@@ -41,7 +41,10 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 60px 24px;
+  padding: 60px 24px 0;
+  position: relative;
+  z-index: 10;
+  min-height: calc(100vh - 40px);
 }
 
 /* Loading logo spinner — rAF-driven via JS, CSS just sets transform-origin */
@@ -57,37 +60,53 @@ body {
   transform-origin: 128px 128px;
 }
 
-/* Progress bar */
-.loading-bar {
-  width: 120px;
-  height: 2px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 1px;
-  overflow: hidden;
+/* Step indicator */
+.loading-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin-bottom: 20px;
-  transition: opacity 0.8s ease;
+  height: 6px;
 }
-.loading-bar-fill {
-  height: 100%;
-  background: rgba(255, 255, 255, 0.35);
-  border-radius: 1px;
-  width: 0%;
-  transition: width 0.4s ease;
+.step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 0.4s ease, box-shadow 0.4s ease;
+  flex-shrink: 0;
+}
+.step-dot.completed {
+  background: rgba(255, 255, 255, 0.45);
+}
+.step-dot.active {
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.25);
+  animation: step-pulse 2s ease-in-out infinite;
+}
+@keyframes step-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(255, 255, 255, 0.25); }
+  50% { box-shadow: 0 0 10px rgba(255, 255, 255, 0.45); }
+}
+.step-line {
+  width: 20px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: background 0.4s ease;
+}
+.step-line.completed {
+  background: rgba(255, 255, 255, 0.3);
 }
 
-/* Text block — phrase + underphrase */
+/* Text block — phase label + terminal log */
 .loading-text {
-  min-height: 48px;
-  margin-bottom: 36px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  transition: opacity 350ms ease, transform 350ms ease;
-}
-.loading-text.fade-out {
-  opacity: 0;
-  transform: translateY(4px);
+  gap: 12px;
+  width: 100%;
+  max-width: 420px;
+  flex-shrink: 0;
 }
 #status {
   font-size: 13px;
@@ -98,14 +117,63 @@ body {
   line-height: 1.3;
   text-align: center;
 }
-.loading-subtitle {
-  font-size: 12px;
+/* Terminal-style status log */
+.loading-log {
+  text-align: left;
+  width: 420px;
+  max-width: calc(100vw - 48px);
+}
+.loading-log-line {
+  display: flex;
+  align-items: baseline;
+  font-family: "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
+  font-size: 11px;
   font-weight: 400;
   color: #fff;
-  opacity: 0.22;
-  letter-spacing: -0.005em;
-  text-align: center;
-  line-height: 1.4;
+  letter-spacing: 0;
+  line-height: 1.8;
+  opacity: 0.2;
+}
+.loading-log-line.log-active {
+  opacity: 0.45;
+}
+.loading-log-line.log-done {
+  opacity: 0.25;
+}
+.log-msg {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.log-fill {
+  flex: 1 1 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0.4;
+  margin: 0 4px;
+  min-width: 16px;
+}
+.log-status {
+  flex-shrink: 0;
+  white-space: nowrap;
+  min-width: 4ch;
+  text-align: right;
+}
+.loading-log-line.log-slow {
+  opacity: 0.5;
+}
+.loading-log-line.log-slow .log-status {
+  color: #eab308;
+  opacity: 1;
+}
+.loading-log-line.log-warning {
+  opacity: 0.4;
+  color: #eab308;
+  font-style: italic;
+  margin-top: -2px;
+  padding-left: 8px;
 }
 
 /* Gateway button */

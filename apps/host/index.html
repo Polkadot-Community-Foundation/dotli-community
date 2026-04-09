@@ -192,10 +192,10 @@
                         <path class="loading-petal" d="M209.058 172.038C199.766 192.192 196.547 210.553 201.89 213.01C207.233 215.468 219.114 201.124 228.406 180.969C237.731 160.815 240.917 142.453 235.607 139.996C235.209 139.797 234.778 139.731 234.28 139.731C228.472 139.731 217.654 153.411 209.058 172.038Z"/>
                     </svg>
                 </div>
-                <div class="loading-bar" id="loading-bar"><div class="loading-bar-fill" id="loading-bar-fill"></div></div>
+                <div class="loading-steps" id="loading-steps"></div>
                 <div class="loading-text" id="loading-text">
                     <p id="status">Reaching out</p>
-                    <p class="loading-subtitle" id="loading-subtitle">No middleman. Direct from the network.</p>
+                    <div class="loading-log" id="loading-subtitle"></div>
                 </div>
                 <button class="loading-gateway" id="loading-gateway" style="display:none">
                     <span>Load via gateway</span>
@@ -227,28 +227,6 @@
                 raf = requestAnimationFrame(tick);
                 // Stop when loading is replaced
                 window.__stopLoadingSpinner = function() { cancelAnimationFrame(raf); };
-            })();
-            // Underphrase cycling
-            (function(){
-                var phrases = [
-                    "No middleman. Direct from the network.",
-                    "Verified by peers, not a company.",
-                    "Hosted by people, not servers.",
-                    "Private by design.",
-                    "No single point of failure."
-                ];
-                var idx = 0;
-                var el = document.getElementById('loading-subtitle');
-                var textBlock = document.getElementById('loading-text');
-                if (!el || !textBlock) return;
-                setInterval(function(){
-                    textBlock.classList.add('fade-out');
-                    setTimeout(function(){
-                        idx = (idx + 1) % phrases.length;
-                        el.textContent = phrases[idx];
-                        textBlock.classList.remove('fade-out');
-                    }, 400);
-                }, 6000);
             })();
         </script>
         <script type="module" src="/src/main.ts"></script>

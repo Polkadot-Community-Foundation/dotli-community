@@ -20,7 +20,15 @@ if (typeof globalThis.requestIdleCallback !== "function") {
 
 import "@dotli/ui/styles.css";
 import * as Sentry from "@sentry/browser";
-import { showStatus, showError, showLanding } from "@dotli/ui/ui";
+import {
+  showStatus,
+  showError,
+  showLanding,
+  initPhases,
+  advancePhase,
+  stopStatusTick,
+  listenForSandboxStatus,
+} from "@dotli/ui/ui";
 import { initTopBar } from "@dotli/ui/topbar";
 import { getCachedCid, setCachedCid } from "@dotli/storage/cid-cache";
 import { dur, elapsed } from "@dotli/shared/perf";
@@ -454,7 +462,13 @@ async function main(): Promise<void> {
     domainPopover.classList.remove("open");
   });
 
-  showStatus(`Resolving ${label}.dot...`);
+  // Listen for status messages from the sandbox iframe so the loading
+  // UI continues seamlessly from resolution into content fetching.
+  listenForSandboxStatus();
+
+  initPhases(["Starting", "Connecting", "Syncing", "Resolving"]);
+  advancePhase(0);
+  showStatus(`Resolving ${label}.dot`);
 
   try {
     // ── Fast path: CID cache hit → iframe to cid.app.dot.li ──
@@ -496,8 +510,18 @@ async function main(): Promise<void> {
     const resolveStart = performance.now();
     const stopResolve = m.timer(S.RESOLVE_TOTAL);
     const cid = await resolveDotNameRemote(label, (msg: string) => {
+      if (msg.includes("Discovering") || msg.includes("peers")) {
+        advancePhase(1);
+      }
+      if (msg.startsWith("Syncing #") || msg.startsWith("Synced to")) {
+        advancePhase(2);
+      }
+      if (msg.includes("Resolving content")) {
+        advancePhase(3);
+      }
       showStatus(msg);
     });
+    stopStatusTick();
     stopResolve();
     performance.mark("dotli:resolve:end");
     log.warn(
