@@ -107,12 +107,8 @@ export function showPasswordPrompt(opts?: { error?: string }): Promise<string> {
       reject(new Error("User cancelled decryption"));
     });
 
-    backdrop.addEventListener("click", (e) => {
-      if (e.target === backdrop) {
-        cleanup();
-        reject(new Error("User dismissed decryption dialog"));
-      }
-    });
+    // Clicking the backdrop should not dismiss — the user must explicitly
+    // cancel or submit. Encrypted content has no fallback to show.
 
     // Focus the input after appending to DOM
     requestAnimationFrame(() => {

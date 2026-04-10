@@ -28,53 +28,95 @@ function dotUrl(label: string): string {
 let phaseLabels: string[] = [];
 let currentPhase = -1;
 
+// Progress bar state
+let progressFillEl: HTMLElement | null = null;
+let progressPctEl: HTMLElement | null = null;
+let currentProgress = 0;
+let targetProgress = 0;
+let progressInterval: ReturnType<typeof setInterval> | null = null;
+
+// Simulated percentage ranges per phase: [base, target].
+// The bar jumps to `base` on phase entry, then crawls toward `target`.
+const PHASE_PROGRESS: [number, number][] = [
+  [2, 15], // Starting
+  [18, 35], // Connecting
+  [38, 68], // Syncing
+  [72, 92], // Resolving
+];
+
+function setProgress(pct: number): void {
+  currentProgress = pct;
+  if (progressFillEl !== null) {
+    progressFillEl.style.width = `${String(pct)}%`;
+  }
+  if (progressPctEl !== null) {
+    progressPctEl.textContent = `${String(Math.round(pct))}%`;
+  }
+}
+
+function startProgressCrawl(): void {
+  stopProgressCrawl();
+  progressInterval = setInterval(() => {
+    if (currentProgress < targetProgress) {
+      const remaining = targetProgress - currentProgress;
+      const increment = Math.max(0.1, remaining * 0.04);
+      setProgress(Math.min(currentProgress + increment, targetProgress));
+    }
+  }, 200);
+}
+
+function stopProgressCrawl(): void {
+  if (progressInterval !== null) {
+    clearInterval(progressInterval);
+    progressInterval = null;
+  }
+}
+
 /**
- * Initialize the stepped loading indicator.
+ * Snap the progress bar to 100%.
+ * Called when loading is done, before the overlay fades out.
+ */
+export function completeProgress(): void {
+  stopProgressCrawl();
+  setProgress(100);
+}
+
+/**
+ * Initialize the loading progress bar.
  * Call once before resolution/fetching begins.
  */
 export function initPhases(labels: string[]): void {
   phaseLabels = labels;
   currentPhase = -1;
 
-  const container = document.getElementById("loading-steps");
-  if (container === null) {
-    return;
-  }
-
-  let html = "";
-  for (let i = 0; i < labels.length; i++) {
-    if (i > 0) {
-      html += '<span class="step-line"></span>';
-    }
-    html += `<span class="step-dot" data-step="${String(i)}"></span>`;
-  }
-  container.innerHTML = html;
+  progressFillEl = document.getElementById("loading-progress-fill");
+  progressPctEl = document.getElementById("loading-progress-pct");
 }
 
 /**
  * Advance to a specific phase (0-indexed).
- * Updates the step dots and the headline text.
+ * Jumps the progress bar to the phase's base percentage and begins
+ * crawling toward its target. Updates the headline text.
  * No-ops if the phase is already active or past.
  */
 export function advancePhase(index: number): void {
-  if (index <= currentPhase || index >= phaseLabels.length) {
+  if (
+    index <= currentPhase ||
+    index >= phaseLabels.length ||
+    index >= PHASE_PROGRESS.length
+  ) {
     return;
   }
   currentPhase = index;
 
-  // Update step dots
-  const container = document.getElementById("loading-steps");
-  if (container !== null) {
-    const dots = container.querySelectorAll<HTMLElement>(".step-dot");
-    const lines = container.querySelectorAll<HTMLElement>(".step-line");
-    dots.forEach((dot, i) => {
-      dot.classList.toggle("completed", i < currentPhase);
-      dot.classList.toggle("active", i === currentPhase);
-    });
-    lines.forEach((line, i) => {
-      line.classList.toggle("completed", i < currentPhase);
-    });
+  // Update progress bar
+  const range = PHASE_PROGRESS[index];
+  const [base, target] = range;
+  if (base > currentProgress) {
+    setProgress(base);
   }
+  targetProgress = target;
+  startProgressCrawl();
 
   // Update headline
   const status = document.getElementById("status");
@@ -83,22 +125,12 @@ export function advancePhase(index: number): void {
   }
 }
 
-// ── Terminal-style status log ─────────────────────────────
-// Each line: [message] [dot leader] [status]
-// Dots animate while active, then freeze with "OK" / "✓" when done.
+// ── Single-line status ───────────────────────────────────
+// Updates #status in place. Shows a slow-step hint when a step
+// exceeds its time threshold.
 
-const DOT_CHAR = "\u00B7"; // middle dot — subtler than period
-const MAX_DOTS = 24;
-
-interface LogLine {
-  el: HTMLElement;
-  msgEl: HTMLElement;
-  fillEl: HTMLElement;
-  statusEl: HTMLElement;
-}
-
-// Per-step timeout thresholds (seconds). If an active line exceeds its
-// limit, a "taking unusually long" warning appears with a contextual hint.
+// Per-step timeout thresholds (seconds). If a step exceeds its
+// limit, a contextual hint fades in below the status line.
 const SLOW_THRESHOLDS: Record<string, { secs: number; hint: string }> = {
   "Starting light client": {
     secs: 8,
@@ -146,164 +178,63 @@ function getSlowThreshold(
       return value;
     }
   }
-  // Default fallback for unknown steps
   return { secs: 20, hint: "This is taking longer than expected" };
 }
 
-let activeLine: LogLine | null = null;
-let dotInterval: ReturnType<typeof setInterval> | null = null;
-let dotCount = 0;
-let lastMessagePrefix = "";
 let slowTimer: ReturnType<typeof setTimeout> | null = null;
-let slowWarningEl: HTMLElement | null = null;
 
 function clearSlowWarning(): void {
   if (slowTimer !== null) {
     clearTimeout(slowTimer);
     slowTimer = null;
   }
-  if (slowWarningEl !== null) {
-    slowWarningEl.remove();
-    slowWarningEl = null;
+  const hint = document.getElementById("loading-hint");
+  if (hint !== null) {
+    hint.classList.remove("visible");
+    hint.textContent = "";
   }
 }
 
-function stopDots(): void {
-  if (dotInterval !== null) {
-    clearInterval(dotInterval);
-    dotInterval = null;
+/**
+ * Update the single status line below the progress bar.
+ * Replaces the previous message in place — no new DOM elements are created.
+ * Schedules a slow-step hint if the step exceeds its time threshold.
+ */
+export function showStatus(message: string): void {
+  const status = document.getElementById("status");
+  if (status !== null) {
+    status.textContent = message;
   }
+
   clearSlowWarning();
-}
 
-function makeLine(container: HTMLElement, className: string): LogLine {
-  const el = document.createElement("p");
-  el.className = `loading-log-line ${className}`;
-  const msgEl = document.createElement("span");
-  msgEl.className = "log-msg";
-  const fillEl = document.createElement("span");
-  fillEl.className = "log-fill";
-  const statusEl = document.createElement("span");
-  statusEl.className = "log-status";
-  el.appendChild(msgEl);
-  el.appendChild(fillEl);
-  el.appendChild(statusEl);
-  container.appendChild(el);
-  return { el, msgEl, fillEl, statusEl };
-}
-
-/**
- * Finalize the currently active line — stop dots, set status marker.
- */
-function finalizeLine(marker = "OK"): void {
-  if (activeLine === null) {
-    return;
-  }
-  stopDots();
-  activeLine.fillEl.textContent = DOT_CHAR.repeat(MAX_DOTS);
-  activeLine.statusEl.textContent = marker;
-  activeLine.el.classList.remove("log-active");
-  activeLine.el.classList.add("log-done");
-  activeLine = null;
-  dotCount = 0;
-}
-
-/**
- * Start a new active line with accumulating dots.
- * Schedules a "taking unusually long" warning if the step exceeds its threshold.
- */
-function startLine(container: HTMLElement, message: string): void {
-  const line = makeLine(container, "log-active");
-  line.msgEl.textContent = message;
-  activeLine = line;
-  dotCount = 0;
-
-  dotInterval = setInterval(() => {
-    dotCount++;
-    if (activeLine !== null) {
-      activeLine.fillEl.textContent = DOT_CHAR.repeat(
-        Math.min(dotCount, MAX_DOTS),
-      );
-    }
-  }, 350);
-
-  // Schedule slow-step warning
   const threshold = getSlowThreshold(message);
   if (threshold !== null) {
     slowTimer = setTimeout(() => {
-      if (activeLine === null) {
-        return;
+      const hint = document.getElementById("loading-hint");
+      if (hint !== null) {
+        hint.textContent = threshold.hint;
+        hint.classList.add("visible");
       }
-      activeLine.statusEl.textContent = "SLOW";
-      activeLine.el.classList.add("log-slow");
-      const warn = document.createElement("p");
-      warn.className = "loading-log-line log-warning";
-      warn.textContent = "\u26A0 " + threshold.hint;
-      container.appendChild(warn);
-      slowWarningEl = warn;
     }, threshold.secs * 1000);
   }
 }
 
 /**
- * Append a status message to the terminal-style loading log.
- *
- * - Result messages (containing "→") finalize the previous line and
- *   appear as a completed line with a checkmark.
- * - Rapid-fire updates (Syncing #N) replace the current line in place.
- * - Everything else finalizes the previous line with "OK" and starts
- *   a new active line with accumulating dots.
- */
-export function showStatus(message: string): void {
-  const container = document.getElementById("loading-subtitle");
-  if (container === null) {
-    return;
-  }
-
-  // Result / completion messages — show as static line with checkmark
-  if (message.includes("→")) {
-    finalizeLine("OK");
-    const line = makeLine(container, "log-done");
-    line.msgEl.textContent = message;
-    line.fillEl.textContent = "";
-    line.statusEl.textContent = "\u2713";
-    return;
-  }
-
-  // Rapid-fire updates (syncing blocks) — update the active line in place
-  const prefix = message.split("#")[0] ?? "";
-  const isUpdate =
-    activeLine !== null &&
-    prefix === lastMessagePrefix &&
-    prefix.length > 0 &&
-    (prefix.startsWith("Syncing ") || prefix.startsWith("Synced to"));
-
-  if (isUpdate && activeLine !== null) {
-    activeLine.msgEl.textContent = message;
-    lastMessagePrefix = prefix;
-    return;
-  }
-
-  lastMessagePrefix = prefix;
-
-  // New step: finalize previous line, start new one with dots
-  finalizeLine("OK");
-  startLine(container, message);
-}
-
-/**
- * Stop the dot animation (call when loading is done).
+ * Stop the progress crawl and clear any slow warning (call when loading is done).
  */
 export function stopStatusTick(): void {
-  finalizeLine("OK");
+  stopProgressCrawl();
+  clearSlowWarning();
 }
 
 /**
- * Remove the loading overlay (logo, steps, log).
+ * Remove the loading overlay (logo, progress bar, log).
  * Called when the app is fully loaded and the iframe is ready.
  */
 export function dismissLoading(): void {
-  finalizeLine("OK");
+  completeProgress();
+  clearSlowWarning();
   const loading = document.querySelector<HTMLElement>("#app > .loading");
   if (loading !== null) {
     loading.style.transition = "opacity 0.3s ease";

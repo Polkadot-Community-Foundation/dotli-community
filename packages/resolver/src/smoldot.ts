@@ -27,6 +27,64 @@ export type SmoldotClient = ReturnType<typeof startFromWorker>;
 
 export type SmoldotChain = Awaited<ReturnType<SmoldotClient["addChain"]>>;
 
+// ── Connection issue detection ───────────────────────────────
+//
+// Smoldot's logCallback fires for all internal events. We watch for
+// connection-related errors/warnings and notify subscribers so the UI
+// can surface bootnode issues to the user.
+
+type ConnectionIssueCallback = (message: string) => void;
+const connectionIssueListeners = new Set<ConnectionIssueCallback>();
+
+/**
+ * Subscribe to smoldot connection issues (bootnode drops, timeouts, etc.).
+ * Returns an unsubscribe function.
+ */
+export function onConnectionIssue(cb: ConnectionIssueCallback): () => void {
+  connectionIssueListeners.add(cb);
+  return () => {
+    connectionIssueListeners.delete(cb);
+  };
+}
+
+// Patterns that indicate a bootnode or peer connection problem.
+const CONNECTION_ISSUE_PATTERNS = [
+  "reset by remote",
+  "refused",
+  "closed",
+  "timeout",
+  "no longer reachable",
+  "handshake",
+  "all bootnodes",
+];
+
+function smoldotLogCallback(
+  level: number,
+  target: string,
+  message: string,
+): void {
+  // Level 1 = Error, 2 = Warn
+  if (level <= 2) {
+    log.warn(`[smoldot:${target}] ${message}`);
+  }
+
+  if (connectionIssueListeners.size === 0) {
+    return;
+  }
+
+  // Only surface connection-related messages
+  const lower = message.toLowerCase();
+  const isConnectionIssue =
+    CONNECTION_ISSUE_PATTERNS.some((p) => lower.includes(p)) ||
+    (level === 1 && target.includes("network"));
+
+  if (isConnectionIssue) {
+    for (const cb of connectionIssueListeners) {
+      cb(message);
+    }
+  }
+}
+
 // ── Shared smoldot instance ──────────────────────────────────
 
 let smoldotInstance: SmoldotClient | null = null;
@@ -45,7 +103,8 @@ export function getSmoldotDirect(): SmoldotClient {
   }
   log.warn("[dot.li smoldot] Creating smoldot via start() (current thread)");
   smoldotInstance = startSmoldotDirect({
-    maxLogLevel: 1,
+    maxLogLevel: 2,
+    logCallback: smoldotLogCallback,
   });
   log.warn("[dot.li smoldot] Smoldot client ready (direct mode)");
   return smoldotInstance;
@@ -57,7 +116,8 @@ export function getSmoldot(): SmoldotClient {
   }
   log.warn("[dot.li smoldot] Creating smoldot via startFromWorker()");
   smoldotInstance = startFromWorker(new SmWorker(), {
-    maxLogLevel: import.meta.env.DEV ? 3 : 1,
+    maxLogLevel: import.meta.env.DEV ? 3 : 2,
+    logCallback: smoldotLogCallback,
   });
   return smoldotInstance;
 }

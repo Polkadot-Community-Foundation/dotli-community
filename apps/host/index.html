@@ -192,10 +192,15 @@
                         <path class="loading-petal" d="M209.058 172.038C199.766 192.192 196.547 210.553 201.89 213.01C207.233 215.468 219.114 201.124 228.406 180.969C237.731 160.815 240.917 142.453 235.607 139.996C235.209 139.797 234.778 139.731 234.28 139.731C228.472 139.731 217.654 153.411 209.058 172.038Z"/>
                     </svg>
                 </div>
-                <div class="loading-steps" id="loading-steps"></div>
+                <div class="loading-progress" id="loading-progress">
+                    <div class="loading-progress-bar">
+                        <div class="loading-progress-fill" id="loading-progress-fill"></div>
+                    </div>
+                    <span class="loading-progress-pct" id="loading-progress-pct">0%</span>
+                </div>
                 <div class="loading-text" id="loading-text">
                     <p id="status">Reaching out</p>
-                    <div class="loading-log" id="loading-subtitle"></div>
+                    <p class="loading-hint" id="loading-hint"></p>
                 </div>
                 <button class="loading-gateway" id="loading-gateway" style="display:none">
                     <span>Load via gateway</span>

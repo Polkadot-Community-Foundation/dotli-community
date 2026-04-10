@@ -16,7 +16,11 @@ import "@dotli/ui/styles.css";
 import * as Sentry from "@sentry/browser";
 import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
 import { isEncrypted, decryptContent } from "@dotli/content/decrypt";
-import { showStatus as showStatusLocal, showError } from "@dotli/ui/ui";
+import {
+  showStatus as showStatusLocal,
+  showError,
+  dismissLoading,
+} from "@dotli/ui/ui";
 import { showPasswordPrompt } from "@dotli/ui/password-prompt";
 import { TIMEOUTS, BASE_DOMAIN } from "@dotli/config/config";
 import { elapsed } from "@dotli/shared/perf";
@@ -260,6 +264,12 @@ async function decryptIfNeeded(
     return null;
   }
   log.warn(`[dot.li app] Content is encrypted, prompting for password...`);
+
+  // Dismiss the loading overlay so it doesn't cover the password prompt.
+  // In relay mode this tells the host to remove its overlay; in standalone
+  // mode it removes the local one.
+  dismissLoading();
+  notifyLoadingDone();
 
   // Re-use password from this session if available
   let password = decryptedPasswords.get(cid);

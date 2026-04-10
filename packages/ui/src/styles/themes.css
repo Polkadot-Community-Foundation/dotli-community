@@ -113,42 +113,17 @@
 [data-theme="light"] #status {
   color: #666;
 }
-[data-theme="light"] .loading-log-line {
-  color: #333;
-  opacity: 0.3;
-}
-[data-theme="light"] .loading-log-line.log-active {
-  opacity: 0.6;
-}
-[data-theme="light"] .loading-log-line.log-done {
-  opacity: 0.35;
-}
-[data-theme="light"] .loading-log-line.log-slow .log-status {
+[data-theme="light"] .loading-hint {
   color: #b45309;
 }
-[data-theme="light"] .loading-log-line.log-warning {
-  color: #b45309;
-}
-[data-theme="light"] .step-dot {
-  background: rgba(0, 0, 0, 0.1);
-}
-[data-theme="light"] .step-dot.completed {
-  background: rgba(0, 0, 0, 0.35);
-}
-[data-theme="light"] .step-dot.active {
-  background: rgba(0, 0, 0, 0.6);
-  box-shadow: 0 0 6px rgba(0, 0, 0, 0.15);
-  animation: step-pulse-light 2s ease-in-out infinite;
-}
-@keyframes step-pulse-light {
-  0%, 100% { box-shadow: 0 0 6px rgba(0, 0, 0, 0.15); }
-  50% { box-shadow: 0 0 10px rgba(0, 0, 0, 0.3); }
-}
-[data-theme="light"] .step-line {
+[data-theme="light"] .loading-progress-bar {
   background: rgba(0, 0, 0, 0.06);
 }
-[data-theme="light"] .step-line.completed {
-  background: rgba(0, 0, 0, 0.2);
+[data-theme="light"] .loading-progress-fill {
+  background: rgba(0, 0, 0, 0.35);
+}
+[data-theme="light"] .loading-progress-pct {
+  color: #333;
 }
 [data-theme="light"] .spinner {
   border-color: #ddd;

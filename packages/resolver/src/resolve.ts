@@ -20,11 +20,13 @@ import {
   getSmoldot,
   getRelayChain,
   getResolverAssetHubProvider,
+  onConnectionIssue,
 } from "./smoldot";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 
 export { getSmoldot, getSmoldotDirect, getRelayChain } from "./smoldot";
+export { onConnectionIssue } from "./smoldot";
 
 export type StatusCallback = (status: string) => void;
 type UnsafeApi = ReturnType<PolkadotClient["getUnsafeApi"]>;
@@ -52,42 +54,53 @@ async function doCreateClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
   const initStart = performance.now();
   const stopPresync = m.timer(S.SMOLDOT_PRESYNC);
 
-  onStatus?.("Starting light client...");
-  m.span(S.SMOLDOT_CREATE, () => {
-    getSmoldot();
+  // Forward smoldot connection issues to the status callback so the
+  // loading UI can surface bootnode drops to the user.
+  const unsubConnectionIssue = onConnectionIssue((msg) => {
+    onStatus?.(`Bootnode connection issue — ${msg}`);
+    m.count(S.BOOTNODE_ERROR, { source: "log_callback" });
   });
-  log.warn(`[dot.li resolve] Smoldot instance created (${dur(initStart)})`);
 
-  onStatus?.("Adding Paseo relay chain...");
-  const relayStart = performance.now();
-  await m.span(S.SMOLDOT_RELAY_CHAIN, () => getRelayChain());
-  m.measure(S.SMOLDOT_RELAY_CHAIN, performance.now() - relayStart);
-  log.warn(`[dot.li resolve] Relay chain added (${dur(relayStart)})`);
+  try {
+    onStatus?.("Starting light client...");
+    m.span(S.SMOLDOT_CREATE, () => {
+      getSmoldot();
+    });
+    log.warn(`[dot.li resolve] Smoldot instance created (${dur(initStart)})`);
 
-  onStatus?.("Connecting to Asset Hub Paseo...");
-  const provider = getResolverAssetHubProvider();
-  log.warn("[dot.li resolve] Creating polkadot-api client...");
-  clientInstance = createClient(provider);
+    onStatus?.("Adding Paseo relay chain...");
+    const relayStart = performance.now();
+    await m.span(S.SMOLDOT_RELAY_CHAIN, () => getRelayChain());
+    m.measure(S.SMOLDOT_RELAY_CHAIN, performance.now() - relayStart);
+    log.warn(`[dot.li resolve] Relay chain added (${dur(relayStart)})`);
 
-  onStatus?.("Syncing with Asset Hub Paseo...");
-  const syncStart = performance.now();
-  // clientInstance is guaranteed non-null — assigned on the line above
-  const client = clientInstance;
-  const block = await m.span(S.SMOLDOT_FINALIZED_BLOCK, () =>
-    client.getFinalizedBlock(),
-  );
-  const syncMs = performance.now() - syncStart;
-  m.measure(S.SMOLDOT_FINALIZED_BLOCK, syncMs);
-  m.distribution(S.SMOLDOT_FINALIZED_BLOCK, syncMs);
-  log.warn(
-    `[dot.li resolve] Synced to finalized block #${String(block.number)} (${dur(syncStart)})`,
-  );
+    onStatus?.("Connecting to Asset Hub Paseo...");
+    const provider = getResolverAssetHubProvider();
+    log.warn("[dot.li resolve] Creating polkadot-api client...");
+    clientInstance = createClient(provider);
 
-  apiInstance = clientInstance.getUnsafeApi();
-  stopPresync();
-  log.warn(`[dot.li resolve] Ready (${dur(initStart)} total)`);
-  onStatus?.("Connected to Asset Hub Paseo");
-  return apiInstance;
+    onStatus?.("Syncing with Asset Hub Paseo...");
+    const syncStart = performance.now();
+    // clientInstance is guaranteed non-null — assigned on the line above
+    const client = clientInstance;
+    const block = await m.span(S.SMOLDOT_FINALIZED_BLOCK, () =>
+      client.getFinalizedBlock(),
+    );
+    const syncMs = performance.now() - syncStart;
+    m.measure(S.SMOLDOT_FINALIZED_BLOCK, syncMs);
+    m.distribution(S.SMOLDOT_FINALIZED_BLOCK, syncMs);
+    log.warn(
+      `[dot.li resolve] Synced to finalized block #${String(block.number)} (${dur(syncStart)})`,
+    );
+
+    apiInstance = clientInstance.getUnsafeApi();
+    stopPresync();
+    log.warn(`[dot.li resolve] Ready (${dur(initStart)} total)`);
+    onStatus?.("Connected to Asset Hub Paseo");
+    return apiInstance;
+  } finally {
+    unsubConnectionIssue();
+  }
 }
 
 // ── Storage reads ────────────────────────────────────────────
