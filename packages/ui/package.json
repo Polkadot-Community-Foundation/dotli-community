@@ -14,9 +14,9 @@
     "@dotli/eslint-config": "workspace:*",
     "@dotli/typescript-config": "workspace:*",
     "@types/qrcode": "^1.5.6",
-    "eslint": "^10.1.0",
+    "eslint": "^10.2.0",
     "typescript": "~6.0.2",
-    "vite": "^8.0.3"
+    "vite": "^8.0.8"
   },
   "dependencies": {
     "@dotli/config": "workspace:*",
@@ -25,11 +25,12 @@
     "@dotli/protocol": "workspace:*",
     "@dotli/sandbox-checker": "workspace:*",
     "@dotli/shared": "workspace:*",
-    "@novasamatech/host-api": "^0.6.17",
-    "@novasamatech/host-container": "^0.6.17",
-    "@novasamatech/host-papp": "^0.6.17",
+    "@novasamatech/host-api": "^0.7.0-0",
+    "@novasamatech/host-container": "^0.7.0-0",
+    "@novasamatech/host-papp": "^0.7.0-0",
+    "@noble/hashes": "^2.2.0",
     "@novasamatech/sdk-statement": "^0.5.0",
-    "@novasamatech/statement-store": "^0.6.17",
+    "@novasamatech/statement-store": "^0.7.0-0",
     "neverthrow": "^8.2.0",
     "qrcode": "^1.5.4"
   },

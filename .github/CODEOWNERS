@@ -7,9 +7,6 @@
 # Host
 /apps/host @lovelaced @piggydoughnut @BigTava @Cyr06130
 
-# Core
-/packages/core @ba1uev @BigTava @leonardocustodio @Cyr06130
-
 # Other packages
 /packages/sandbox-checker @TorstenStueber
 /packages/eslint-config @leonardocustodio @Cyr06130

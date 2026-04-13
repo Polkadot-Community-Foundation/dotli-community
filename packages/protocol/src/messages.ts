@@ -1,21 +1,11 @@
-import {
-  PASEO_RELAY_GENESIS,
-  ASSET_HUB_PASEO_GENESIS,
-  BULLETIN_PASEO_GENESIS,
-} from "@dotli/config/config";
-
-export { PASEO_RELAY_GENESIS, ASSET_HUB_PASEO_GENESIS, BULLETIN_PASEO_GENESIS };
-
-export const SUPPORTED_GENESIS_HASHES = new Set<string>([
-  PASEO_RELAY_GENESIS,
-  ASSET_HUB_PASEO_GENESIS,
-  BULLETIN_PASEO_GENESIS,
-]);
-
 export interface ProtocolRequestMap {
   warmup: Record<string, never>;
   resolveDotName: { label: string };
   resolveOwner: { label: string };
+  authHasSession: { siteId: string };
+  authStorageRead: { siteId: string; key: string };
+  authStorageWrite: { siteId: string; key: string; value: string };
+  authStorageClear: { siteId: string; key: string };
   chainConnect: { genesisHash: string; connectionId: string };
   chainSend: { connectionId: string; message: string };
   chainDisconnect: { connectionId: string };
@@ -74,6 +64,19 @@ export interface ProtocolReadyEnvelope {
   kind: "ready";
 }
 
+// Unsolicited notification from the host iframe to its parent window when a
+// sibling tab writes or clears a shared-auth storage key. Drives cross-tab
+// `StorageAdapter.subscribe` callbacks — see `@dotli/protocol/client`
+// `subscribeSharedAuthStorage` and `apps/protocol/src/main.ts`'s
+// BroadcastChannel relay.
+export interface ProtocolAuthStorageChangedEnvelope {
+  namespace: "dotli:protocol";
+  kind: "auth-storage-changed";
+  siteId: string;
+  key: string;
+  value: string | null;
+}
+
 export type ProtocolEnvelope =
   | ProtocolRequestEnvelope
   | ProtocolProgressEnvelope
@@ -81,7 +84,8 @@ export type ProtocolEnvelope =
   | ProtocolErrorEnvelope
   | ProtocolChainMessageEnvelope
   | ProtocolChainHaltEnvelope
-  | ProtocolReadyEnvelope;
+  | ProtocolReadyEnvelope
+  | ProtocolAuthStorageChangedEnvelope;
 
 const VALID_KINDS = new Set([
   "request",
@@ -90,6 +94,7 @@ const VALID_KINDS = new Set([
   "chain-message",
   "chain-halt",
   "ready",
+  "auth-storage-changed",
 ]);
 
 export function isProtocolEnvelope(value: unknown): value is ProtocolEnvelope {

@@ -7,7 +7,6 @@ export default defineConfig({
       "@dotli/protocol": resolve(import.meta.dirname, "src"),
       "@dotli/config": resolve(import.meta.dirname, "../config/src"),
       "@dotli/shared": resolve(import.meta.dirname, "../shared/src"),
-      "@dotli/resolver": resolve(import.meta.dirname, "../resolver/src"),
     },
   },
   test: {

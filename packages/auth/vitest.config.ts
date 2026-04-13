@@ -6,6 +6,7 @@ export default defineConfig({
     alias: {
       "@dotli/auth": resolve(import.meta.dirname, "src"),
       "@dotli/config": resolve(import.meta.dirname, "../config/src"),
+      "@dotli/protocol": resolve(import.meta.dirname, "../protocol/src"),
       "@dotli/shared": resolve(import.meta.dirname, "../shared/src"),
     },
   },

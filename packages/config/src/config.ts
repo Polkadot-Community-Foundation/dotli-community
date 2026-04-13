@@ -14,16 +14,21 @@ export const BASE_DOMAIN =
 
 // --- Site identity -------------------------------------------------------
 
-export type SiteId = "dot.li" | "paseo.li" | "local.li";
+// SiteId is the registrable root domain the shell is running on (e.g. "dot.li",
+// "paseo.li", "paseoli.dev"). It is a plain string — there is no closed union,
+// because the codebase is deployed on several root domains including ephemeral
+// ones, and a narrow union here would require an unsafe cast at the boundary.
+// Validation that a caller may only use the current shell's SiteId lives in
+// `@dotli/protocol/auth-storage#isSharedAuthSiteId`, which compares against the
+// running `SITE_ID` at runtime.
+export type SiteId = string;
 
 export const isLocalhost =
   hostname === "localhost" ||
   hostname.endsWith(".localhost") ||
   hostname === "127.0.0.1";
 
-export const SITE_ID: SiteId = isLocalhost
-  ? "local.li"
-  : (BASE_DOMAIN as SiteId);
+export const SITE_ID: SiteId = isLocalhost ? "local.li" : BASE_DOMAIN;
 
 // --- Debug logging -------------------------------------------------------
 
@@ -38,6 +43,12 @@ export const ASSET_HUB_PASEO_GENESIS =
   "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2" as const;
 export const BULLETIN_PASEO_GENESIS =
   "0x744960c32e3a3df5440e1ecd4d34096f1ce2230d7016a5ada8a765d5a622b4ea" as const;
+
+export const SUPPORTED_GENESIS_HASHES = new Set<string>([
+  PASEO_RELAY_GENESIS,
+  ASSET_HUB_PASEO_GENESIS,
+  BULLETIN_PASEO_GENESIS,
+]);
 
 // --- dotNS Contracts on Asset Hub Paseo (Revive EVM pallet) ---
 
@@ -95,16 +106,10 @@ export const BULLETIN_PEERS = [
   ...BULLETIN_PEERS_WESTEND,
 ];
 
-// --- IPFS Gateways (same as console-ui/src/lib/ipfs.ts) ---
-
-export const IPFS_GATEWAYS: Record<string, string> = {
-  local: "http://127.0.0.1:8283",
-  paseo: "https://paseo-ipfs.polkadot.io",
-  previewnet: "https://previewnet.substrate.dev",
-};
+// --- IPFS Gateway ---
 
 /** Gateway used for fallback when P2P fetch fails */
-export const IPFS_GATEWAY = IPFS_GATEWAYS.paseo;
+export const IPFS_GATEWAY = "https://paseo-ipfs.polkadot.io";
 
 // --- SW archive cache ---
 
@@ -128,10 +133,6 @@ export const TIMEOUTS = {
   P2P_FETCH: 30_000,
   /** Delay before starting gateway fetch in parallel with P2P */
   P2P_RACE_GATEWAY_DELAY: 5_000,
-  /** Delay between P2P retry attempts */
-  P2P_RETRY_DELAY: 3_000,
-  /** Maximum P2P fetch retry attempts (total attempts = 1 + retries) */
-  P2P_MAX_RETRIES: 2,
   /** SharedWorker readiness timeout (must cover full cold-start chain sync, up to ~60s) */
   SHARED_WORKER_READY: 90_000,
 } as const;

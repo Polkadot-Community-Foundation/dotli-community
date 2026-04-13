@@ -10,6 +10,7 @@
 import type { AuthState } from "@dotli/auth/auth";
 import type { Identity } from "@novasamatech/host-papp";
 import { log } from "@dotli/shared/log";
+import { SITE_ID } from "@dotli/config/config";
 import {
   ALL_PERMISSIONS,
   getPermissionStatus,
@@ -180,21 +181,22 @@ export function initTopBar(): void {
   // Show default logged-out state
   renderLoggedOut();
 
-  // If there's a persisted session, lazy-load auth to restore it.
-  // Deferred to idle to avoid competing with critical-path bandwidth.
-  // The storage adapter prefixes keys with "PAPP_<siteId>_", so check
-  // for any key with that prefix to detect a persisted session.
-  const hasPersistedSession = Object.keys(localStorage).some(
-    (k) =>
-      k.startsWith("PAPP_dot.li_") ||
-      k.startsWith("PAPP_paseo.li_") ||
-      k.startsWith("PAPP_local.li_"),
-  );
-  if (hasPersistedSession) {
-    requestIdleCallback(() => {
-      void ensureAuth();
-    });
-  }
+  // Probe the shared auth storage on host.dot.li. Sessions now live on the
+  // shared host origin so sibling host shells can rehydrate after a
+  // cross-subdomain navigation without eagerly loading the auth bundle for
+  // every visitor.
+  requestIdleCallback(() => {
+    void (async () => {
+      try {
+        const { hasSharedAuthSession } = await import("@dotli/protocol/client");
+        if (await hasSharedAuthSession(SITE_ID)) {
+          await ensureAuth();
+        }
+      } catch (error) {
+        log.warn("[dot.li auth] Shared session probe failed:", error);
+      }
+    })();
+  });
 }
 
 // ── Render ─────────────────────────────────────────────────

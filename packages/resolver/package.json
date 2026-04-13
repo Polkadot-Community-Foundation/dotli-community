@@ -14,18 +14,18 @@
   "devDependencies": {
     "@dotli/eslint-config": "workspace:*",
     "@dotli/typescript-config": "workspace:*",
-    "eslint": "^10.1.0",
+    "eslint": "^10.2.0",
     "happy-dom": "^20.8.8",
     "typescript": "~6.0.2",
-    "vite": "^8.0.3",
-    "vitest": "^4.1.1"
+    "vite": "^8.0.8",
+    "vitest": "^4.1.4"
   },
   "dependencies": {
     "@dotli/config": "workspace:*",
     "@dotli/metrics": "workspace:*",
     "@dotli/shared": "workspace:*",
     "@dotli/storage": "workspace:*",
-    "@noble/hashes": "^2.0.1",
+    "@noble/hashes": "^2.2.0",
     "@ensdomains/content-hash": "^3.0.0",
     "@polkadot-api/json-rpc-provider": "^0.0.4",
     "@polkadot-api/json-rpc-provider-proxy": "^0.2.8",

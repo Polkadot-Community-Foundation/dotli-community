@@ -12,7 +12,7 @@ import {
   type Identity,
   type UserSession,
 } from "@novasamatech/host-papp";
-import { createLocalStorageAdapter } from "@novasamatech/storage-adapter";
+import { createSharedAuthStorageAdapter } from "./shared-storage";
 import {
   createLazyClient,
   createPapiStatementStoreAdapter,
@@ -178,7 +178,7 @@ export function initAuth(): void {
   initialized = true;
 
   const siteId = SITE_ID;
-  const storage = createLocalStorageAdapter(siteId);
+  const storage = createSharedAuthStorageAdapter(siteId);
   const lazyClient = createLazyClient(
     getWsProvider([...SS_PASEO_STABLE_STAGE_ENDPOINTS], {
       heartbeatTimeout: 120_000, // 2 minutes — default 40s is too aggressive through tunnels

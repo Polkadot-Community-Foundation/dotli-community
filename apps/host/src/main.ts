@@ -19,7 +19,7 @@ if (typeof globalThis.requestIdleCallback !== "function") {
 }
 
 import "@dotli/ui/styles.css";
-import * as Sentry from "@sentry/browser";
+import { initSentry } from "@dotli/metrics/sentry";
 import {
   showStatus,
   showError,
@@ -59,18 +59,10 @@ if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
   }
 }
 
-Sentry.init({
-  dsn: import.meta.env.VITE_SENTRY_DSN_HOST as string | undefined,
-  tunnel: "/t/host",
-  environment:
-    (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
-  release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
-  sendDefaultPii: false,
-});
+initSentry("host");
 
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
-m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
 
 // Track WASM module load times via resource timing
 if (m.enabled && typeof PerformanceObserver !== "undefined") {

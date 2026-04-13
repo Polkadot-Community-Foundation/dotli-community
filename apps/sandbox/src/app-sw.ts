@@ -109,7 +109,6 @@ async function loadArchiveFromDBByDomain(
 
 let archivePacked: ArrayBuffer | null = null;
 let archiveFileIndex: Map<string, { o: number; l: number }> | null = null;
-let archiveLegacy: Record<string, ArrayBuffer | undefined> | null = null;
 
 const archiveCache = new Map<string, ArchiveEntry>();
 
@@ -135,18 +134,18 @@ function archiveCacheGet(key: string): ArchiveEntry | undefined {
 }
 
 function hasArchive(): boolean {
-  return archivePacked !== null || archiveLegacy !== null;
+  return archivePacked !== null;
 }
 
 function getFile(path: string): ArrayBuffer | Uint8Array | undefined {
-  if (archiveFileIndex !== null && archivePacked !== null) {
-    const entry = archiveFileIndex.get(path);
-    if (entry !== undefined) {
-      return new Uint8Array(archivePacked, entry.o, entry.l);
-    }
+  if (archiveFileIndex === null || archivePacked === null) {
     return undefined;
   }
-  return archiveLegacy?.[path];
+  const entry = archiveFileIndex.get(path);
+  if (entry === undefined) {
+    return undefined;
+  }
+  return new Uint8Array(archivePacked, entry.o, entry.l);
 }
 
 // ── SW Lifecycle ─────────────────────────────────────────────
@@ -176,15 +175,15 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
     const packed = data.packed as ArrayBuffer | undefined;
     const idx = data.index as { p: string; o: number; l: number }[] | undefined;
 
-    if (packed !== undefined && idx !== undefined) {
-      archivePacked = packed;
-      archiveFileIndex = new Map(idx.map((e) => [e.p, { o: e.o, l: e.l }]));
-      archiveLegacy = null;
-    } else {
-      archiveLegacy = data.files as Record<string, ArrayBuffer | undefined>;
-      archivePacked = null;
-      archiveFileIndex = null;
+    if (packed === undefined || idx === undefined) {
+      if (event.source) {
+        (event.source as Client).postMessage({ type: "ARCHIVE_READY" });
+      }
+      return;
     }
+
+    archivePacked = packed;
+    archiveFileIndex = new Map(idx.map((e) => [e.p, { o: e.o, l: e.l }]));
 
     const domain = data.domain as string | undefined;
     const cid = data.cid as string | undefined;
@@ -194,26 +193,19 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
       cid !== undefined &&
       cid !== ""
     ) {
-      if (packed !== undefined && idx !== undefined) {
-        const p = packed;
-        const i = idx;
-        const d = domain;
-        const c = cid;
-        setTimeout(() => {
-          const files: Record<string, ArrayBuffer> = {};
-          for (const entry of i) {
-            files[entry.p] = p.slice(entry.o, entry.o + entry.l);
-          }
-          const archiveEntry = { domain: d, cid: c, files };
-          archiveCacheSet(d, archiveEntry);
-          void saveArchiveToDB(archiveEntry);
-        }, 0);
-      } else {
-        const files = (archiveLegacy ?? {}) as Record<string, ArrayBuffer>;
-        const entry = { domain, cid, files };
-        archiveCacheSet(domain, entry);
-        void saveArchiveToDB(entry);
-      }
+      const p = packed;
+      const i = idx;
+      const d = domain;
+      const c = cid;
+      setTimeout(() => {
+        const files: Record<string, ArrayBuffer> = {};
+        for (const entry of i) {
+          files[entry.p] = p.slice(entry.o, entry.o + entry.l);
+        }
+        const archiveEntry = { domain: d, cid: c, files };
+        archiveCacheSet(d, archiveEntry);
+        void saveArchiveToDB(archiveEntry);
+      }, 0);
     }
     if (event.source) {
       (event.source as Client).postMessage({ type: "ARCHIVE_READY" });

@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
-  isProtocolEnvelope,
   SUPPORTED_GENESIS_HASHES,
   PASEO_RELAY_GENESIS,
   ASSET_HUB_PASEO_GENESIS,
   BULLETIN_PASEO_GENESIS,
+} from "@dotli/config/config";
+import {
+  isProtocolEnvelope,
   type ProtocolRequestEnvelope,
   type ProtocolResponseEnvelope,
   type ProtocolErrorEnvelope,

@@ -47,8 +47,6 @@ vi.mock("@dotli/resolver/chain-specs", () => ({
 let getSmoldot: typeof import("@dotli/resolver/smoldot").getSmoldot;
 let getRelayChain: typeof import("@dotli/resolver/smoldot").getRelayChain;
 let getResolverAssetHubProvider: typeof import("@dotli/resolver/smoldot").getResolverAssetHubProvider;
-let getSharedAssetHubProvider: typeof import("@dotli/resolver/smoldot").getSharedAssetHubProvider;
-let setResolverAssetHubProviderOverride: typeof import("@dotli/resolver/smoldot").setResolverAssetHubProviderOverride;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -56,8 +54,6 @@ beforeEach(async () => {
   getSmoldot = mod.getSmoldot;
   getRelayChain = mod.getRelayChain;
   getResolverAssetHubProvider = mod.getResolverAssetHubProvider;
-  getSharedAssetHubProvider = mod.getSharedAssetHubProvider;
-  setResolverAssetHubProviderOverride = mod.setResolverAssetHubProviderOverride;
 });
 
 describe("getSmoldot", () => {
@@ -92,19 +88,5 @@ describe("Asset Hub provider ownership", () => {
     const a = getResolverAssetHubProvider();
     const b = getResolverAssetHubProvider();
     expect(a).toBe(b);
-  });
-
-  it("getSharedAssetHubProvider returns the same cached provider", () => {
-    const a = getSharedAssetHubProvider();
-    const b = getSharedAssetHubProvider();
-    expect(a).toBe(b);
-  });
-
-  it("uses the override provider when one is set", () => {
-    const override = vi.fn() as unknown as ReturnType<
-      typeof getResolverAssetHubProvider
-    >;
-    setResolverAssetHubProviderOverride(override);
-    expect(getResolverAssetHubProvider()).toBe(override);
   });
 });

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "paths": {
+      "@dotli/auth/*": ["../auth/src/*"],
+      "@dotli/config/*": ["../config/src/*"],
+      "@dotli/content/*": ["../content/src/*"],
+      "@dotli/metrics/*": ["../metrics/src/*"],
+      "@dotli/protocol/*": ["../protocol/src/*"],
+      "@dotli/resolver/*": ["../resolver/src/*"],
+      "@dotli/sandbox-checker/*": ["../sandbox-checker/src/*"],
+      "@dotli/shared/*": ["../shared/src/*"],
+      "@dotli/storage/*": ["../storage/src/*"],
+      "@dotli/ui/*": ["../ui/src/*"]
+    }
+  }
+}

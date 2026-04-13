@@ -7,6 +7,7 @@ import { CarReader } from "@ipld/car";
 import * as dagPb from "@ipld/dag-pb";
 import { UnixFS } from "ipfs-unixfs";
 import type { CID } from "multiformats/cid";
+import { concatBytes } from "@noble/hashes/utils.js";
 
 export type ArchiveFiles = Record<string, Uint8Array>;
 
@@ -52,17 +53,6 @@ export function isCarFile(buffer: Uint8Array): boolean {
 }
 
 // ── CAR parsing ────────────────────────────────────────────
-
-function concatBytes(chunks: Uint8Array[]): Uint8Array {
-  const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return result;
-}
 
 function joinPath(base: string, name: string): string {
   return base ? `${base}/${name}` : name;
@@ -123,9 +113,9 @@ export async function parseCarFile(buffer: Uint8Array): Promise<ArchiveFiles> {
           node.Links.length === 0
             ? (uf?.data ?? new Uint8Array(0))
             : concatBytes(
-                await Promise.all(
+                ...(await Promise.all(
                   node.Links.map((link) => getChunkData(link.Hash)),
-                ),
+                )),
               );
 
         files[path] = content;

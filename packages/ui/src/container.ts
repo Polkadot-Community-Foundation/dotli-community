@@ -48,6 +48,7 @@ import {
 import { MAX_NESTED_BRIDGES } from "@dotli/config/config";
 import { dotNsUrl } from "@dotli/shared/dotns-url";
 import { log } from "@dotli/shared/log";
+import { concatBytes } from "@noble/hashes/utils.js";
 import { computePreimageKey, hashToCid } from "@dotli/content/preimage";
 import { ensureHelia } from "@dotli/content/fetch";
 import { fetchFromIpfs } from "@dotli/content/ipfs";
@@ -217,9 +218,9 @@ function wireContainerHandlers(
 
   container.handleSignPayload((payload, { ok, err }) => {
     log.warn(`[${label}] handleSignPayload invoked:`, {
-      address: payload.address,
-      genesisHash: payload.genesisHash,
-      method: payload.method.slice(0, 40) + "...",
+      account: payload.account,
+      genesisHash: payload.payload.genesisHash,
+      method: payload.payload.method.slice(0, 40) + "...",
     });
     if (getPermissionStatus(label, "TransactionSubmit") !== "granted") {
       log.warn(`[${label}] handleSignPayload — TransactionSubmit not granted`);
@@ -256,8 +257,8 @@ function wireContainerHandlers(
 
   container.handleSignRaw((payload, { ok, err }) => {
     log.warn(`[${label}] handleSignRaw invoked:`, {
-      address: payload.address,
-      dataTag: payload.data.tag,
+      account: payload.account,
+      dataTag: payload.payload.tag,
     });
     const session = getSession();
     if (!session) {
@@ -636,13 +637,7 @@ function wireContainerHandlers(
           }
         }
         if (chunks.length > 0) {
-          const totalLen = chunks.reduce((s, c) => s + c.length, 0);
-          const data = new Uint8Array(totalLen);
-          let offset = 0;
-          for (const chunk of chunks) {
-            data.set(chunk, offset);
-            offset += chunk.length;
-          }
+          const data = concatBytes(...chunks);
           if (data.length > 0) {
             preimageCache.set(key, data);
             send(data);

@@ -199,7 +199,6 @@ export function makeNonRemovingChain(chain: SmoldotChain): SmoldotChain {
 
 let resolverAssetHubPromise: Promise<SmoldotChain> | null = null;
 let assetHubProvider: JsonRpcProvider | null = null;
-let resolverAssetHubProviderOverride: JsonRpcProvider | null = null;
 
 function createAssetHubChain(
   relay: Promise<SmoldotChain>,
@@ -236,35 +235,8 @@ function getResolverAssetHubChain(): Promise<SmoldotChain> {
 }
 
 export function getResolverAssetHubProvider(): JsonRpcProvider {
-  if (resolverAssetHubProviderOverride !== null) {
-    return resolverAssetHubProviderOverride;
-  }
   assetHubProvider ??= getSmProvider(getResolverAssetHubChain());
   return assetHubProvider;
-}
-
-/**
- * Return the direct smoldot provider for the shared Asset Hub chain.
- *
- * `@polkadot-api/sm-provider` expects exclusive ownership of a chain's
- * JSON-RPC response stream, so multiple providers must not share the
- * same smoldot chain. The broker multiplexes this single upstream
- * provider into isolated sessions for remote clients.
- */
-export function getSharedAssetHubProvider(): JsonRpcProvider {
-  assetHubProvider ??= getSmProvider(getResolverAssetHubChain());
-  return assetHubProvider;
-}
-
-/**
- * Override the resolver's Asset Hub provider.
- * Used by the shared protocol broker so the resolver and remote dApps
- * can share one upstream JSON-RPC loop.
- */
-export function setResolverAssetHubProviderOverride(
-  provider: JsonRpcProvider | null,
-): void {
-  resolverAssetHubProviderOverride = provider;
 }
 
 // ── dApp Asset Hub chain (fresh, no shared history) ─────────────
@@ -295,7 +267,6 @@ export function releaseResolverAssetHubChain(): void {
     });
   resolverAssetHubPromise = null;
   assetHubProvider = null;
-  resolverAssetHubProviderOverride = null;
 }
 
 /**

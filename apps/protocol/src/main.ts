@@ -13,12 +13,14 @@ window.addEventListener("vite:preloadError", () => {
   }
 });
 
-import * as Sentry from "@sentry/browser";
+import { initSentry } from "@dotli/metrics/sentry";
 import type { JsonRpcConnection } from "@polkadot-api/json-rpc-provider";
 import {
   BASE_DOMAIN,
   MAX_CONNECTIONS_PER_ORIGIN,
+  SITE_ID,
   TIMEOUTS,
+  type SiteId,
 } from "@dotli/config/config";
 import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
 import {
@@ -32,6 +34,15 @@ import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
 import {
+  buildSharedAuthStorageKey,
+  hasStoredSharedAuthSession,
+  isSharedAuthOriginAllowed,
+  isSharedAuthRequestMethod,
+  isSharedAuthSiteId,
+  isSharedAuthStorageKey,
+  SHARED_AUTH_SESSION_KEY,
+} from "@dotli/protocol/auth-storage";
+import {
   isProtocolEnvelope,
   type ProtocolEnvelope,
   type ProtocolRequestEnvelope,
@@ -39,18 +50,10 @@ import {
 } from "@dotli/protocol/messages";
 import type { SWRelayRequest, SWOutbound } from "./protocol-shared-worker";
 
-Sentry.init({
-  dsn: import.meta.env.VITE_SENTRY_DSN_HOST as string | undefined,
-  tunnel: "/t/host",
-  environment:
-    (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
-  release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
-  sendDefaultPii: false,
-});
+initSentry("host");
 
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
-m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
 
 // ── Origin validation (shared across all modes) ──────────────
 
@@ -96,6 +99,176 @@ function postToSource(
     return;
   }
   (source as Window).postMessage(message, origin);
+}
+
+// ── Shared-auth cross-tab broadcast ──────────────────────────
+//
+// The shared-auth path is intentionally handled on the host window (not in the
+// SharedWorker) because it only needs `localStorage` — no smoldot, no chain.
+// Each tab embeds its own host iframe, so when tab A writes a session, tab B's
+// adapter subscribers need to be notified. We bridge tabs with a
+// `BroadcastChannel` scoped to the host origin:
+//
+//   1. Tab A's host iframe receives an `authStorageWrite` request from its
+//      parent and writes to localStorage.
+//   2. Tab A's host iframe posts `{ siteId, key, value }` on the
+//      `dotli:shared-auth` BroadcastChannel.
+//   3. Tab B's host iframe (different window, same origin) receives the
+//      broadcast and forwards it to *its* parent window via `postMessage` as
+//      an `auth-storage-changed` envelope.
+//   4. The parent window's protocol client dispatches to local subscribers.
+//
+// The originating tab does NOT receive its own BroadcastChannel message (per
+// spec), so tab A's local subscribers fire via the in-process `emit` in
+// `createSharedAuthStorageAdapter`'s `.map(() => emit(...))` chain — there is
+// no double-dispatch.
+
+const SHARED_AUTH_BROADCAST_CHANNEL = "dotli:shared-auth";
+
+interface SharedAuthBroadcastMessage {
+  siteId: SiteId;
+  key: string;
+  value: string | null;
+}
+
+const sharedAuthChannel: BroadcastChannel | null =
+  typeof BroadcastChannel !== "undefined"
+    ? new BroadcastChannel(SHARED_AUTH_BROADCAST_CHANNEL)
+    : null;
+
+// The origin of the parent window embedding this host iframe. Populated from
+// `document.referrer` at module load (best-effort — may be blank under strict
+// referrer policies) and refreshed on every validated shared-auth request.
+// Broadcasts are only forwarded to the parent when we know its origin, so
+// unrelated embedders never receive a shared-auth change notification.
+let parentOrigin: string | null = initialParentOriginFromReferrer();
+
+function initialParentOriginFromReferrer(): string | null {
+  try {
+    const ref = document.referrer;
+    if (ref === "") {
+      return null;
+    }
+    const origin = new URL(ref).origin;
+    return isAllowedOrigin(origin) ? origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function broadcastSharedAuthChange(
+  siteId: SiteId,
+  key: string,
+  value: string | null,
+): void {
+  if (sharedAuthChannel === null) {
+    return;
+  }
+  try {
+    const msg: SharedAuthBroadcastMessage = { siteId, key, value };
+    sharedAuthChannel.postMessage(msg);
+  } catch (error: unknown) {
+    log.warn("[dot.li protocol] Shared auth broadcast failed:", error);
+  }
+}
+
+function isSharedAuthBroadcastMessage(
+  value: unknown,
+): value is SharedAuthBroadcastMessage {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const obj = value as {
+    siteId?: unknown;
+    key?: unknown;
+    value?: unknown;
+  };
+  return (
+    typeof obj.siteId === "string" &&
+    typeof obj.key === "string" &&
+    (obj.value === null || typeof obj.value === "string")
+  );
+}
+
+function bindSharedAuthBroadcastRelay(): void {
+  if (sharedAuthChannel === null) {
+    return;
+  }
+  sharedAuthChannel.addEventListener("message", (event: MessageEvent) => {
+    const data: unknown = event.data;
+    if (!isSharedAuthBroadcastMessage(data)) {
+      return;
+    }
+    // Only the current host's SiteId is valid (see `isSharedAuthSiteId`). We
+    // still defensively filter here so stale broadcasts from a different
+    // root domain (which shouldn't happen — the channel is origin-scoped)
+    // cannot leak across trust boundaries.
+    if (data.siteId !== SITE_ID) {
+      return;
+    }
+    if (parentOrigin === null || window.parent === window) {
+      return;
+    }
+    try {
+      window.parent.postMessage(
+        {
+          namespace: "dotli:protocol",
+          kind: "auth-storage-changed",
+          siteId: data.siteId,
+          key: data.key,
+          value: data.value,
+        } as const,
+        parentOrigin,
+      );
+    } catch (error: unknown) {
+      log.warn(
+        "[dot.li protocol] Failed to forward shared auth change to parent:",
+        error,
+      );
+    }
+  });
+}
+
+function bindSharedAuthListener(): void {
+  window.addEventListener("message", (event: MessageEvent) => {
+    const data: unknown = event.data;
+    if (
+      !isProtocolEnvelope(data) ||
+      data.kind !== "request" ||
+      !isSharedAuthRequestMethod(data.method)
+    ) {
+      return;
+    }
+    // First gate: the broad protocol origin allowlist (`*.<BASE_DOMAIN>` +
+    // localhost). The narrower shared-auth allowlist — which additionally
+    // rejects `app.<BASE_DOMAIN>` and sandboxed SPA subdomains — runs inside
+    // `handleSharedAuthRequest` via `assertSharedAuthOrigin`.
+    if (!isAllowedOrigin(event.origin)) {
+      log.warn(
+        `[dot.li protocol] Rejected shared-auth request from disallowed origin: ${event.origin}`,
+      );
+      return;
+    }
+    // Remember the parent origin so cross-tab broadcast forwards target a
+    // known origin rather than `*`. This runs on every request, not just the
+    // first, so we tolerate (unlikely) parent navigations that replace the
+    // embedding page.
+    parentOrigin = event.origin;
+
+    try {
+      handleSharedAuthRequest(data, event.origin, (response) => {
+        postToSource(event.source, event.origin, response);
+      });
+    } catch (error: unknown) {
+      postToSource(event.source, event.origin, {
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: data.id,
+        ok: false,
+        error: serializeError(error),
+      });
+    }
+  });
 }
 
 function signalReady(): void {
@@ -231,6 +404,9 @@ async function initSharedWorkerMode(): Promise<void> {
     if (!isProtocolEnvelope(data) || data.kind !== "request") {
       return;
     }
+    if (isSharedAuthRequestMethod(data.method)) {
+      return;
+    }
     if (!isAllowedOrigin(event.origin)) {
       log.warn(
         `[dot.li protocol] Rejected request from disallowed origin: ${event.origin}`,
@@ -342,6 +518,9 @@ function initLeaderMode(bc: BroadcastChannel): void {
     if (!isProtocolEnvelope(data) || data.kind !== "request") {
       return;
     }
+    if (isSharedAuthRequestMethod(data.method)) {
+      return;
+    }
     if (!isAllowedOrigin(event.origin)) {
       return;
     }
@@ -417,6 +596,9 @@ function initFollowerMode(bc: BroadcastChannel): void {
   window.addEventListener("message", (event: MessageEvent) => {
     const data: unknown = event.data;
     if (!isProtocolEnvelope(data) || data.kind !== "request") {
+      return;
+    }
+    if (isSharedAuthRequestMethod(data.method)) {
       return;
     }
     if (!isAllowedOrigin(event.origin)) {
@@ -498,6 +680,9 @@ function initDirectMode(): void {
     if (!isProtocolEnvelope(data) || data.kind !== "request") {
       return;
     }
+    if (isSharedAuthRequestMethod(data.method)) {
+      return;
+    }
     if (!isAllowedOrigin(event.origin)) {
       log.warn(
         `[dot.li protocol] Rejected request from disallowed origin: ${event.origin}`,
@@ -532,6 +717,110 @@ function initDirectMode(): void {
 
 type ResponseCallback = (envelope: ProtocolEnvelope) => void;
 
+function assertSharedAuthSiteId(value: unknown): asserts value is SiteId {
+  if (typeof value !== "string" || !isSharedAuthSiteId(value)) {
+    throw new Error(`Invalid siteId: ${String(value)}`);
+  }
+}
+
+function assertSharedAuthKey(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !isSharedAuthStorageKey(value)) {
+    throw new Error(`Invalid shared auth key: ${String(value)}`);
+  }
+}
+
+function assertSharedAuthOrigin(origin: string): void {
+  if (!isSharedAuthOriginAllowed(origin)) {
+    throw new Error(`Shared auth request denied from origin: ${origin}`);
+  }
+}
+
+function handleSharedAuthRequest(
+  request: ProtocolRequestEnvelope,
+  origin: string,
+  respond: ResponseCallback,
+): void {
+  if (!isSharedAuthRequestMethod(request.method)) {
+    throw new Error(`Not a shared auth request: ${request.method as string}`);
+  }
+
+  assertSharedAuthOrigin(origin);
+
+  switch (request.method) {
+    case "authHasSession": {
+      const payload = request.payload as ProtocolRequestMap["authHasSession"];
+      assertSharedAuthSiteId(payload.siteId);
+      const value = localStorage.getItem(
+        buildSharedAuthStorageKey(payload.siteId, SHARED_AUTH_SESSION_KEY),
+      );
+      respond({
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: request.id,
+        ok: true,
+        result: hasStoredSharedAuthSession(value),
+      });
+      return;
+    }
+
+    case "authStorageRead": {
+      const payload = request.payload as ProtocolRequestMap["authStorageRead"];
+      assertSharedAuthSiteId(payload.siteId);
+      assertSharedAuthKey(payload.key);
+      respond({
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: request.id,
+        ok: true,
+        result: localStorage.getItem(
+          buildSharedAuthStorageKey(payload.siteId, payload.key),
+        ),
+      });
+      return;
+    }
+
+    case "authStorageWrite": {
+      const payload = request.payload as ProtocolRequestMap["authStorageWrite"];
+      assertSharedAuthSiteId(payload.siteId);
+      assertSharedAuthKey(payload.key);
+      if (typeof payload.value !== "string") {
+        throw new Error("Invalid shared auth value");
+      }
+      localStorage.setItem(
+        buildSharedAuthStorageKey(payload.siteId, payload.key),
+        payload.value,
+      );
+      broadcastSharedAuthChange(payload.siteId, payload.key, payload.value);
+      respond({
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: request.id,
+        ok: true,
+        result: true,
+      });
+      return;
+    }
+
+    case "authStorageClear": {
+      const payload = request.payload as ProtocolRequestMap["authStorageClear"];
+      assertSharedAuthSiteId(payload.siteId);
+      assertSharedAuthKey(payload.key);
+      localStorage.removeItem(
+        buildSharedAuthStorageKey(payload.siteId, payload.key),
+      );
+      broadcastSharedAuthChange(payload.siteId, payload.key, null);
+      respond({
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: request.id,
+        ok: true,
+        result: true,
+      });
+      return;
+    }
+  }
+}
+
 interface ProtocolEngine {
   handleRequest: (
     request: ProtocolRequestEnvelope,
@@ -559,6 +848,11 @@ function createEngine(): ProtocolEngine {
     origin: string,
     respond: ResponseCallback,
   ): Promise<void> {
+    if (isSharedAuthRequestMethod(request.method)) {
+      handleSharedAuthRequest(request, origin, respond);
+      return;
+    }
+
     switch (request.method) {
       case "warmup": {
         getSmoldot();
@@ -717,6 +1011,9 @@ function createEngine(): ProtocolEngine {
 }
 
 // ── Boot ─────────────────────────────────────────────────────
+
+bindSharedAuthListener();
+bindSharedAuthBroadcastRelay();
 
 void init().catch((err: unknown) => {
   log.error("[dot.li protocol] Init failed, falling back to direct mode:", err);

@@ -2,7 +2,11 @@ import type {
   JsonRpcConnection,
   JsonRpcProvider,
 } from "@polkadot-api/json-rpc-provider";
-import { BASE_DOMAIN } from "@dotli/config/config";
+import {
+  BASE_DOMAIN,
+  SUPPORTED_GENESIS_HASHES,
+  type SiteId,
+} from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
@@ -11,8 +15,8 @@ import {
   type ProtocolRequestEnvelope,
   type ProtocolRequestMap,
   type ProtocolRequestMethod,
-  SUPPORTED_GENESIS_HASHES,
 } from "./messages";
+import { isSharedAuthRequestMethod } from "./auth-storage";
 import { serializeError } from "@dotli/shared/errors";
 
 interface PendingRequest {
@@ -27,11 +31,25 @@ interface RemoteChainConnection {
   connected: boolean;
 }
 
+export interface SharedAuthStorageChange {
+  siteId: SiteId;
+  key: string;
+  value: string | null;
+}
+
+export type SharedAuthStorageListener = (
+  change: SharedAuthStorageChange,
+) => void;
+
 let protocolIframe: HTMLIFrameElement | null = null;
+let hostFramePromise: Promise<void> | null = null;
 let protocolReadyPromise: Promise<void> | null = null;
 const pendingRequests = new Map<string, PendingRequest>();
 const chainConnections = new Map<string, RemoteChainConnection>();
+const sharedAuthListeners = new Set<SharedAuthStorageListener>();
 let listenerBound = false;
+let protocolReady = false;
+let pendingReadyResolvers: (() => void)[] = [];
 
 function getProtocolOrigin(): string {
   const hostname = window.location.hostname;
@@ -41,6 +59,27 @@ function getProtocolOrigin(): string {
     return `http://host.localhost:${port}`;
   }
   return `https://host.${BASE_DOMAIN}`;
+}
+
+function resolveProtocolReady(): void {
+  if (protocolReady) {
+    return;
+  }
+  protocolReady = true;
+  const resolvers = pendingReadyResolvers;
+  pendingReadyResolvers = [];
+  for (const resolve of resolvers) {
+    resolve();
+  }
+}
+
+function resetProtocolFrameState(): void {
+  protocolIframe?.remove();
+  protocolIframe = null;
+  hostFramePromise = null;
+  protocolReadyPromise = null;
+  protocolReady = false;
+  pendingReadyResolvers = [];
 }
 
 function bindMessageListener(): void {
@@ -55,6 +94,15 @@ function bindMessageListener(): void {
     }
 
     if (event.origin !== getProtocolOrigin()) {
+      return;
+    }
+
+    const frameWindow = protocolIframe?.contentWindow;
+    if (
+      frameWindow !== null &&
+      frameWindow !== undefined &&
+      event.source !== frameWindow
+    ) {
       return;
     }
 
@@ -103,8 +151,26 @@ function bindMessageListener(): void {
         // Ignore inbound requests on the client side
         return;
       case "ready":
-        // Handled by ensureProtocolFrame's onReady listener
+        resolveProtocolReady();
         return;
+      case "auth-storage-changed": {
+        const change: SharedAuthStorageChange = {
+          siteId: msg.siteId,
+          key: msg.key,
+          value: msg.value,
+        };
+        for (const listener of sharedAuthListeners) {
+          try {
+            listener(change);
+          } catch (err: unknown) {
+            log.error(
+              "[dot.li protocol] Shared auth listener threw:",
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
+        return;
+      }
     }
   });
 }
@@ -113,13 +179,13 @@ function createRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+const IFRAME_LOAD_TIMEOUT_MS = 30_000;
 // The iframe signals "ready" only after the SharedWorker pre-syncs the chain.
 // Cold-start chain sync can take up to ~60s, so allow enough time.
 const IFRAME_READY_TIMEOUT_MS = 120_000;
 const IFRAME_MAX_RETRIES = 2;
 
-function createProtocolIframe(): Promise<void> {
-  const stopIframe = m.timer(S.PROTOCOL_IFRAME_READY);
+function createHostIframe(): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const iframe = document.createElement("iframe");
     iframe.src = getProtocolOrigin();
@@ -130,47 +196,100 @@ function createProtocolIframe(): Promise<void> {
 
     const timer = setTimeout(() => {
       cleanup();
-      // Reject unconditionally — if the "ready" message was not received,
-      // the protocol host is not listening and all requests would hang.
       iframe.remove();
-      stopIframe();
-      reject(new Error("Shared protocol iframe timed out (no ready signal)"));
-    }, IFRAME_READY_TIMEOUT_MS);
+      reject(new Error("Shared host iframe timed out while loading"));
+    }, IFRAME_LOAD_TIMEOUT_MS);
 
-    const onReady = (event: MessageEvent): void => {
-      if (
-        event.source !== iframe.contentWindow ||
-        !isProtocolEnvelope(event.data) ||
-        event.data.kind !== "ready"
-      ) {
-        return;
-      }
+    const onLoad = (): void => {
       cleanup();
       protocolIframe = iframe;
-      stopIframe();
       resolve();
     };
 
     const onError = (): void => {
       cleanup();
-      stopIframe();
-      reject(new Error("Shared protocol iframe failed to load"));
+      iframe.remove();
+      reject(new Error("Shared host iframe failed to load"));
     };
 
     function cleanup(): void {
       clearTimeout(timer);
-      window.removeEventListener("message", onReady);
+      iframe.removeEventListener("load", onLoad);
       iframe.removeEventListener("error", onError);
     }
 
-    window.addEventListener("message", onReady);
+    iframe.addEventListener("load", onLoad, { once: true });
     iframe.addEventListener("error", onError, { once: true });
     document.body.appendChild(iframe);
   });
 }
 
-export async function ensureProtocolFrame(): Promise<void> {
+async function ensureHostFrame(): Promise<void> {
   bindMessageListener();
+
+  if (protocolIframe?.contentWindow) {
+    return;
+  }
+
+  if (hostFramePromise) {
+    return hostFramePromise;
+  }
+
+  hostFramePromise = (async () => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= IFRAME_MAX_RETRIES; attempt++) {
+      try {
+        await createHostIframe();
+        return;
+      } catch (error: unknown) {
+        lastError = error;
+        m.count(S.PROTOCOL_IFRAME_RETRY);
+        log.warn(
+          `[dot.li protocol] Host iframe attempt ${String(attempt + 1)} failed, ${attempt < IFRAME_MAX_RETRIES ? "retrying..." : "giving up"}`,
+        );
+        resetProtocolFrameState();
+      }
+    }
+    hostFramePromise = null;
+    throw lastError;
+  })();
+
+  return hostFramePromise;
+}
+
+function waitForProtocolReady(): Promise<void> {
+  const stopIframe = m.timer(S.PROTOCOL_IFRAME_READY);
+  return new Promise<void>((resolve, reject) => {
+    if (protocolReady) {
+      stopIframe();
+      resolve();
+      return;
+    }
+
+    const onReady = (): void => {
+      clearTimeout(timer);
+      stopIframe();
+      resolve();
+    };
+
+    const timer = setTimeout(() => {
+      pendingReadyResolvers = pendingReadyResolvers.filter(
+        (callback) => callback !== onReady,
+      );
+      stopIframe();
+      reject(new Error("Shared protocol iframe timed out (no ready signal)"));
+    }, IFRAME_READY_TIMEOUT_MS);
+
+    pendingReadyResolvers.push(onReady);
+  });
+}
+
+export async function ensureProtocolFrame(): Promise<void> {
+  await ensureHostFrame();
+
+  if (protocolReady) {
+    return;
+  }
 
   if (protocolReadyPromise) {
     return protocolReadyPromise;
@@ -180,14 +299,16 @@ export async function ensureProtocolFrame(): Promise<void> {
     let lastError: unknown;
     for (let attempt = 0; attempt <= IFRAME_MAX_RETRIES; attempt++) {
       try {
-        await createProtocolIframe();
+        await waitForProtocolReady();
         return;
       } catch (error: unknown) {
         lastError = error;
         m.count(S.PROTOCOL_IFRAME_RETRY);
         log.warn(
-          `[dot.li protocol] Iframe attempt ${String(attempt + 1)} failed, ${attempt < IFRAME_MAX_RETRIES ? "retrying..." : "giving up"}`,
+          `[dot.li protocol] Ready wait attempt ${String(attempt + 1)} failed, ${attempt < IFRAME_MAX_RETRIES ? "retrying..." : "giving up"}`,
         );
+        resetProtocolFrameState();
+        await ensureHostFrame();
       }
     }
     protocolReadyPromise = null;
@@ -209,9 +330,9 @@ async function postRequest<M extends ProtocolRequestMethod>(
   method: M,
   payload: ProtocolRequestMap[M],
   onProgress?: (message: string) => void,
+  needsProtocolReady = !isSharedAuthRequestMethod(method),
 ): Promise<unknown> {
-  await ensureProtocolFrame();
-
+  await (needsProtocolReady ? ensureProtocolFrame() : ensureHostFrame());
   const frameWindow = protocolIframe?.contentWindow;
   if (!frameWindow) {
     throw new Error("Shared protocol iframe is unavailable");
@@ -275,6 +396,64 @@ export async function resolveOwnerRemote(
   label: string,
 ): Promise<string | null> {
   return (await postRequest("resolveOwner", { label })) as string | null;
+}
+
+export async function hasSharedAuthSession(siteId: SiteId): Promise<boolean> {
+  return (await postRequest("authHasSession", { siteId })) as boolean;
+}
+
+export async function readSharedAuthStorage(
+  siteId: SiteId,
+  key: string,
+): Promise<string | null> {
+  return (await postRequest("authStorageRead", { siteId, key })) as
+    | string
+    | null;
+}
+
+export async function writeSharedAuthStorage(
+  siteId: SiteId,
+  key: string,
+  value: string,
+): Promise<void> {
+  await postRequest("authStorageWrite", { siteId, key, value });
+}
+
+export async function clearSharedAuthStorage(
+  siteId: SiteId,
+  key: string,
+): Promise<void> {
+  await postRequest("authStorageClear", { siteId, key });
+}
+
+/**
+ * Subscribe to cross-tab shared auth storage changes.
+ *
+ * Writes and clears performed by *sibling tabs* of the same root domain (e.g.
+ * another `*.dot.li` tab) arrive here as notifications. The originating tab
+ * does NOT receive its own writes via this channel — it already emits to local
+ * listeners inline when its own `write`/`clear` resolves.
+ *
+ * Ensures the host iframe is created so it can relay `BroadcastChannel`
+ * notifications from sibling host iframes. The returned function unsubscribes.
+ */
+export function subscribeSharedAuthStorage(
+  listener: SharedAuthStorageListener,
+): () => void {
+  sharedAuthListeners.add(listener);
+  // Best-effort iframe warm-up so the relay path is live. We intentionally
+  // don't await or surface errors — the caller's subscribe contract is
+  // synchronous, and the iframe will be lazily (re)created on the next
+  // explicit request if this warm-up fails.
+  void ensureHostFrame().catch((error: unknown) => {
+    log.warn(
+      "[dot.li protocol] Failed to ensure host frame for shared auth subscription:",
+      error,
+    );
+  });
+  return () => {
+    sharedAuthListeners.delete(listener);
+  };
 }
 
 export function isRemoteChainSupported(genesisHash: string): boolean {

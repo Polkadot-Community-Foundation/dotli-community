@@ -17,6 +17,7 @@ import { blake2b256 } from "@multiformats/blake2/blake2b";
 import { sha256 } from "multiformats/hashes/sha2";
 import { from as hasherFrom } from "multiformats/hashes/hasher";
 import { keccak_256 } from "@noble/hashes/sha3.js";
+import { concatBytes } from "@noble/hashes/utils.js";
 export type StatusCallback = (status: string) => void;
 import { isCarFile, parseIpfsResponse, type ArchiveFiles } from "./archive";
 import { fetchFromIpfs, fetchCarFromIpfs } from "./ipfs";
@@ -223,13 +224,7 @@ export class HeliaClient {
         throw new Error("No data received from peer");
       }
 
-      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-      data = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        data.set(chunk, offset);
-        offset += chunk.length;
-      }
+      data = concatBytes(...chunks);
     } else {
       throw new Error(`Unexpected block data type: ${typeof blockData}`);
     }
@@ -317,17 +312,6 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
 
 // ── Content fetching ─────────────────────────────────────
 
-function concatChunks(chunks: Uint8Array[]): Uint8Array {
-  const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return result;
-}
-
 export type FetchResult =
   | { type: "single"; content: Uint8Array }
   | { type: "archive"; files: ArchiveFiles };
@@ -376,7 +360,7 @@ async function fetchViaP2P(
             `[dot.li fetch] P2P: received chunk ${String(chunks.length)} (${String(chunk.length)} bytes)`,
           );
         }
-        const content = concatChunks(chunks);
+        const content = concatBytes(...chunks);
         log.warn(
           `[dot.li fetch] P2P: fetched file ${String(Math.round(content.length / 1024))} KB in ${dur(p2pStart)}`,
         );
@@ -422,7 +406,7 @@ async function fetchViaP2P(
               for await (const chunk of fs.cat(entry.cid, { signal })) {
                 chunks.push(chunk);
               }
-              files[entry.path] = concatChunks(chunks);
+              files[entry.path] = concatBytes(...chunks);
               log.debug(
                 `[dot.li fetch] P2P: fetched ${entry.path} (${String(files[entry.path].length)} bytes)`,
               );

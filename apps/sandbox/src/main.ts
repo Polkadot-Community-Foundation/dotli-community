@@ -13,7 +13,7 @@ window.addEventListener("vite:preloadError", () => {
 });
 
 import "@dotli/ui/styles.css";
-import * as Sentry from "@sentry/browser";
+import { initSentry } from "@dotli/metrics/sentry";
 import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
 import { isEncrypted, decryptContent } from "@dotli/content/decrypt";
 import {
@@ -27,18 +27,10 @@ import { elapsed } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
 import { parseIpfsResponse } from "@dotli/content/archive";
 
-Sentry.init({
-  dsn: import.meta.env.VITE_SENTRY_DSN_SANDBOX as string | undefined,
-  tunnel: "/t/sandbox",
-  environment:
-    (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
-  release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
-  sendDefaultPii: false,
-});
+initSentry("sandbox");
 
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
-m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
 
 const T0 = performance.now();
 

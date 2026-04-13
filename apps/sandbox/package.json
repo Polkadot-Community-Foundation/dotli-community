@@ -12,11 +12,11 @@
   "devDependencies": {
     "@dotli/eslint-config": "workspace:*",
     "@dotli/typescript-config": "workspace:*",
-    "@types/node": "^25.3.5",
-    "eslint": "^10.1.0",
-    "prettier": "^3.8.1",
+    "@types/node": "^25.6.0",
+    "eslint": "^10.2.0",
+    "prettier": "^3.8.2",
     "typescript": "~6.0.2",
-    "vite": "^8.0.3",
+    "vite": "^8.0.8",
     "vite-plugin-wasm": "^3.5.0"
   },
   "dependencies": {
@@ -27,7 +27,7 @@
     "@dotli/content": "workspace:*",
     "@dotli/ui": "workspace:*",
     "@dotli/sandbox-checker": "workspace:*",
-    "@sentry/browser": "^10.47.0",
-    "@sentry/vite-plugin": "^5.1.1"
+    "@sentry/browser": "^10.48.0",
+    "@sentry/vite-plugin": "^5.2.0"
   }
 }

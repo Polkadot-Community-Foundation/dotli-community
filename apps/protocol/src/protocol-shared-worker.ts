@@ -10,7 +10,6 @@
 /// <reference lib="webworker" />
 declare const self: SharedWorkerGlobalScope;
 
-import * as Sentry from "@sentry/browser";
 import type { JsonRpcConnection } from "@polkadot-api/json-rpc-provider";
 import { MAX_CONNECTIONS_PER_ORIGIN } from "@dotli/config/config";
 import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
@@ -26,19 +25,12 @@ import {
 } from "@dotli/resolver/smoldot";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
+import { initSentry } from "@dotli/metrics/sentry";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
 import { serializeError } from "@dotli/shared/errors";
 
-Sentry.init({
-  dsn: import.meta.env.VITE_SENTRY_DSN_WORKER as string | undefined,
-  tunnel: "/t/worker",
-  environment:
-    (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development",
-  release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
-  sendDefaultPii: false,
-});
-
-m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
+initSentry("worker");
+import { isSharedAuthRequestMethod } from "@dotli/protocol/auth-storage";
 import type {
   ProtocolRequestEnvelope,
   ProtocolRequestMap,
@@ -236,6 +228,11 @@ async function handleRequest(
   origin: string,
 ): Promise<void> {
   const t = performance.now();
+  if (isSharedAuthRequestMethod(request.method)) {
+    throw new Error(
+      `Shared auth requests must be handled on host.dot.li, not the SharedWorker: ${request.method}`,
+    );
+  }
 
   switch (request.method) {
     case "warmup": {
