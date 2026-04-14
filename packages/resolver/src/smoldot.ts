@@ -275,14 +275,28 @@ export function releaseResolverAssetHubChain(): void {
  * This chain is separate from the resolver's chain and has no
  * "announced blocks" history — smoldot will send complete newBlock
  * events for all non-finalized blocks on new subscriptions.
+ *
+ * The returned chain wraps `remove()` to clear the cached promise,
+ * so the next call creates a fresh chain. This is necessary because
+ * `getSmProvider` calls `chain.remove()` on disconnect — without
+ * cache invalidation, subsequent providers would reference a
+ * destroyed chain.
  */
 export function getDappAssetHubChain(): Promise<SmoldotChain> {
-  dappAssetHubPromise ??= createAssetHubChain(getRelayChain()).catch(
-    (error: unknown) => {
+  dappAssetHubPromise ??= createAssetHubChain(getRelayChain())
+    .then((chain) => ({
+      sendJsonRpc: chain.sendJsonRpc.bind(chain),
+      nextJsonRpcResponse: chain.nextJsonRpcResponse.bind(chain),
+      jsonRpcResponses: chain.jsonRpcResponses,
+      remove() {
+        dappAssetHubPromise = null;
+        chain.remove();
+      },
+    }))
+    .catch((error: unknown) => {
       dappAssetHubPromise = null;
       throw error;
-    },
-  );
+    });
   return dappAssetHubPromise;
 }
 
