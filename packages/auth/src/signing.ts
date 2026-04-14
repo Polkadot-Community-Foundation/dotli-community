@@ -45,7 +45,7 @@ export interface ContainerSignRawRequest {
 }
 
 /** Timeout for the wallet to respond (ms). Covers WS drops and unresponsive wallets. */
-const SIGN_TIMEOUT_MS = 90_000; // 90 seconds
+const SIGN_TIMEOUT_MS = 300_000; // 300 seconds
 
 class SignTimeoutError extends Error {
   constructor() {
