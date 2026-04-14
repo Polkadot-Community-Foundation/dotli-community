@@ -463,26 +463,6 @@ function wireContainerHandlers(
     return ok(undefined);
   });
 
-  // ── Theme ─────────────────────────────────────────────
-
-  container.handleThemeSubscribe((_params, send) => {
-    const readTheme = (): "light" | "dark" =>
-      document.documentElement.getAttribute("data-theme") === "light"
-        ? "light"
-        : "dark";
-
-    send(readTheme());
-
-    const listener = (): void => {
-      send(readTheme());
-    };
-    window.addEventListener("dotli:theme-changed", listener);
-
-    return () => {
-      window.removeEventListener("dotli:theme-changed", listener);
-    };
-  });
-
   // ── Statement Store ───────────────────────────────────
   //
   // Handlers resolve getStatementStore() lazily (at call time, not setup time)
