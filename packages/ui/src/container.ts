@@ -218,9 +218,9 @@ function wireContainerHandlers(
 
   container.handleSignPayload((payload, { ok, err }) => {
     log.warn(`[${label}] handleSignPayload invoked:`, {
-      account: payload.account,
-      genesisHash: payload.payload.genesisHash,
-      method: payload.payload.method.slice(0, 40) + "...",
+      address: payload.address,
+      genesisHash: payload.genesisHash,
+      method: payload.method.slice(0, 40) + "...",
     });
     if (getPermissionStatus(label, "TransactionSubmit") !== "granted") {
       log.warn(`[${label}] handleSignPayload — TransactionSubmit not granted`);
@@ -239,7 +239,7 @@ function wireContainerHandlers(
     }
 
     return fromPromise(
-      showSignPayloadModal(session, payload),
+      showSignPayloadModal(session, payload, label),
       (e) => e as never,
     )
       .andThen((result) => {
@@ -257,8 +257,8 @@ function wireContainerHandlers(
 
   container.handleSignRaw((payload, { ok, err }) => {
     log.warn(`[${label}] handleSignRaw invoked:`, {
-      account: payload.account,
-      dataTag: payload.payload.tag,
+      address: payload.address,
+      dataTag: payload.data.tag,
     });
     const session = getSession();
     if (!session) {
@@ -266,7 +266,10 @@ function wireContainerHandlers(
       return err(new SigningErr.PermissionDenied(undefined));
     }
 
-    return fromPromise(showSignRawModal(session, payload), (e) => e as never)
+    return fromPromise(
+      showSignRawModal(session, payload, label),
+      (e) => e as never,
+    )
       .andThen((result) => {
         log.warn(`[${label}] handleSignRaw — resolved OK`);
         return ok({
