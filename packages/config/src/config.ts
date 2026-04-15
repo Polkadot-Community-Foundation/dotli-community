@@ -111,6 +111,19 @@ export const BULLETIN_PEERS = [
 /** Gateway used for fallback when P2P fetch fails */
 export const IPFS_GATEWAY = "https://paseo-ipfs.polkadot.io";
 
+// --- Asset Hub Paseo JSON-RPC endpoints (trusted fallback) ---
+//
+// Used when the user opts out of smoldot/light-client resolution via the
+// "Use gateway instead" button. Direct WSS JSON-RPC to a known RPC node —
+// faster but introduces a trust assumption on the operator.
+
+export const ASSET_HUB_PASEO_RPC_ENDPOINTS = [
+  "wss://sys.ibp.network/asset-hub-paseo",
+  "wss://asset-hub-paseo-rpc.n.dwellir.com",
+  "wss://asset-hub-paseo.dotters.network",
+  "wss://sys.turboflakes.io/asset-hub-paseo",
+];
+
 // --- SW archive cache ---
 
 /** Max number of domain archives kept in the SW in-memory LRU cache. */

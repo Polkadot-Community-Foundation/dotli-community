@@ -271,6 +271,54 @@ function bindSharedAuthListener(): void {
   });
 }
 
+// ── Smoldot "ever synced" flag ───────────────────────────────
+//
+// Stored in THIS iframe's localStorage (at `host.{BASE_DOMAIN}`) so it
+// lives in the same storage partition as smoldot's own chain DB and is
+// shared across every `*.{BASE_DOMAIN}` subdomain that embeds this frame
+// (in any browser that doesn't partition third-party iframe storage).
+
+const SMOLDOT_EVER_SYNCED_KEY = "dotli:smoldot-ever-synced";
+
+function hasSmoldotEverSynced(): boolean {
+  try {
+    return localStorage.getItem(SMOLDOT_EVER_SYNCED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markSmoldotEverSynced(): void {
+  try {
+    if (localStorage.getItem(SMOLDOT_EVER_SYNCED_KEY) !== "1") {
+      localStorage.setItem(SMOLDOT_EVER_SYNCED_KEY, "1");
+      log.warn(
+        "[dot.li protocol] Recorded first successful smoldot sync in this partition",
+      );
+    }
+  } catch {
+    /* storage may be blocked — the flag is purely an optimisation */
+  }
+}
+
+/**
+ * Fire the early `hello` envelope — lets the parent host learn the
+ * current `smoldotEverSynced` state without waiting for the full `ready`
+ * handshake (which is gated on smoldot presync completing).
+ */
+function signalHello(): void {
+  if (window.parent !== window) {
+    window.parent.postMessage(
+      {
+        namespace: "dotli:protocol",
+        kind: "hello",
+        smoldotEverSynced: hasSmoldotEverSynced(),
+      } as const,
+      "*",
+    );
+  }
+}
+
 function signalReady(): void {
   if (window.parent !== window) {
     window.parent.postMessage(
@@ -284,6 +332,11 @@ function signalReady(): void {
 
 async function init(): Promise<void> {
   const stopInit = m.timer(S.PROTOCOL_INIT);
+
+  // Fire the `hello` envelope immediately — before any mode detection
+  // or smoldot setup. This is what the host races against when deciding
+  // whether smoldot is warm enough to commit to.
+  signalHello();
 
   log.warn("[dot.li protocol] Detecting best coordination mode...");
   log.warn(
@@ -397,6 +450,13 @@ async function initSharedWorkerMode(): Promise<void> {
   log.warn(
     "[dot.li protocol] Smoldot runs in SharedWorker, persists across navigations",
   );
+
+  // SharedWorker only signals ready after its own presync completes,
+  // which includes one successful `resolveDotName` run against the live
+  // chain — so at this point smoldot has at least one successful sync
+  // on record in this storage partition. Persist that so the next page
+  // load can commit to the smoldot path synchronously.
+  markSmoldotEverSynced();
 
   // Relay: parent postMessage → SharedWorker
   window.addEventListener("message", (event: MessageEvent) => {
@@ -878,6 +938,10 @@ function createEngine(): ProtocolEngine {
             message,
           });
         });
+        // Successful resolveDotName in direct/leader mode means smoldot
+        // successfully reached the chain in this partition — persist
+        // the flag so next visit can take the smoldot path synchronously.
+        markSmoldotEverSynced();
         respond({
           namespace: "dotli:protocol",
           kind: "response",

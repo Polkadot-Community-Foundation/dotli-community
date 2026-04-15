@@ -490,15 +490,42 @@ async function fetchViaGateway(
 
 /**
  * Fetch content by CID.
- * Tries P2P first. If P2P hasn't resolved after P2P_RACE_GATEWAY_DELAY,
+ *
+ * Default: tries P2P first. If P2P hasn't resolved after P2P_RACE_GATEWAY_DELAY,
  * starts a gateway fetch in parallel and takes whichever resolves first.
+ *
+ * When `options.preferGateway` is true, skips P2P entirely and goes straight
+ * to the IPFS gateway — used by the host's "Use gateway instead" opt-out
+ * when the user is OK with fetching content from a trusted IPFS endpoint
+ * rather than resolving it over the P2P network.
  */
 export async function fetchArchive(
   cidString: string,
   onStatus?: StatusCallback,
+  options?: { preferGateway?: boolean },
 ): Promise<FetchResult> {
   performance.mark("dotli:fetch:start");
   const stopFetch = m.timer(S.CONTENT_FETCH);
+
+  // Gateway-only path (user opted in on the host page).
+  if (options?.preferGateway === true) {
+    try {
+      const result = await fetchViaGateway(cidString, onStatus);
+      performance.mark("dotli:fetch:end");
+      m.tag("content_method", "gateway");
+      m.count("content.gateway_prefer");
+      measureContentSize(result);
+      stopFetch();
+      return result;
+    } catch (gwErr) {
+      performance.mark("dotli:fetch:end");
+      stopFetch();
+      if (gwErr instanceof Error) {
+        log.error(`[dot.li fetch] Gateway (prefer) failed: ${gwErr.message}`);
+      }
+      throw gwErr;
+    }
+  }
 
   // Try P2P, race with gateway after a delay
   let gatewayTimer: ReturnType<typeof setTimeout> | undefined;

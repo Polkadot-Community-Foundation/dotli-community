@@ -34,6 +34,7 @@ let currentRenderMode: "iframe" | "subdomain" | null = null;
 let currentLabel: string | null = null;
 let currentUrl: string | null = null;
 let currentCid: string | null = null;
+let currentPreferGateway = false;
 
 // Listen for device permission grants — reload the iframe so the
 // updated `allow` attribute takes effect.
@@ -49,7 +50,9 @@ window.addEventListener("dotli:device-permission-changed", () => {
     currentCid !== null &&
     currentLabel !== null
   ) {
-    void renderAppSubdomain(currentCid, currentLabel);
+    void renderAppSubdomain(currentCid, currentLabel, {
+      preferGateway: currentPreferGateway,
+    });
   }
 });
 
@@ -142,18 +145,31 @@ export async function renderIframe(url: string, label: string): Promise<void> {
 export async function renderAppSubdomain(
   cid: string,
   label: string,
+  options?: { preferGateway?: boolean },
 ): Promise<void> {
   const stopSetup = m.timer(S.BRIDGE_SETUP);
   cleanup();
 
+  const preferGateway = options?.preferGateway === true;
   currentRenderMode = "subdomain";
   currentLabel = label;
   currentCid = cid;
   currentUrl = null;
+  currentPreferGateway = preferGateway;
 
   const appOrigin = getAppOrigin(cid);
   const deepPath = getDeepPath();
-  const url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
+  let url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
+  if (preferGateway) {
+    // Signal the sandbox app to skip P2P and go straight to the IPFS gateway.
+    try {
+      const parsed = new URL(url);
+      parsed.searchParams.set("gateway", "1");
+      url = parsed.toString();
+    } catch {
+      url += (url.includes("?") ? "&" : "?") + "gateway=1";
+    }
+  }
 
   const iframe = document.createElement("iframe");
   iframe.sandbox.add(

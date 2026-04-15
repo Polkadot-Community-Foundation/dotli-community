@@ -31,7 +31,6 @@
         <link rel="preconnect" href="https://paseo-bulletin-rpc-node-0.polkadot.io" />
         <link rel="preconnect" href="https://paseo-bulletin-rpc-node-1.polkadot.io" />
         <link rel="preconnect" href="https://paseo-ipfs.polkadot.io" />
-        <link rel="preconnect" href="https://asset-hub-paseo-rpc.polkadot.io" />
         <link rel="preconnect" href="https://sys.ibp.network" />
         <!-- Styles are loaded via src/styles.css (imported in main.ts) -->
     </head>
@@ -202,8 +201,8 @@
                     <p id="status">Reaching out</p>
                     <p class="loading-hint" id="loading-hint"></p>
                 </div>
-                <button class="loading-gateway" id="loading-gateway" style="display:none">
-                    <span>Load via gateway</span>
+                <button class="loading-gateway" id="loading-gateway" type="button" style="display:none" title="Skip light-client sync and resolve via a trusted Polkadot RPC node">
+                    <span>Use trusted source</span>
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
                 </button>
             </div>

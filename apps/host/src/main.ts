@@ -36,6 +36,28 @@ import { BASE_DOMAIN, SITE_ID } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { showNotification } from "@dotli/ui/notification";
 
+/** Session key: when set, the user has opted into the trusted RPC + gateway path. */
+const PREFER_GATEWAY_KEY = "dotli:prefer-gateway";
+
+/** Delay before revealing the "Use gateway instead" button during resolution. */
+const GATEWAY_BUTTON_REVEAL_MS = 2500;
+
+function isPreferGateway(): boolean {
+  try {
+    return sessionStorage.getItem(PREFER_GATEWAY_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setPreferGateway(): void {
+  try {
+    sessionStorage.setItem(PREFER_GATEWAY_KEY, "1");
+  } catch {
+    /* storage may be blocked — in-memory flag via the promise below is enough */
+  }
+}
+
 // ── Desktop download banner ──────────────────────────────
 if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
   const dismissed = localStorage.getItem("desktop-banner-dismissed");
@@ -263,12 +285,15 @@ function verifyCachedCid(
   cachedCid: string,
   protocolChunkPromise: Promise<ProtocolChunk>,
 ): void {
+  log.warn(
+    `[dot.li resolve] background: verifying cached CID for ${label}.dot via smoldot (trustless light-client)`,
+  );
   void protocolChunkPromise
     .then(async ({ resolveDotNameRemote }) => {
       const chainCid = await resolveDotNameRemote(label);
       if (chainCid !== null && chainCid !== cachedCid) {
         log.warn(
-          `[dot.li] CID mismatch: cached=${cachedCid}, chain=${chainCid}`,
+          `[dot.li resolve] background: smoldot returned different CID — cached=${cachedCid}, chain=${chainCid}`,
         );
         requestIdleCallback(() => {
           void setCachedCid(label, chainCid);
@@ -292,7 +317,9 @@ function verifyCachedCid(
           },
         });
       } else if (chainCid !== null) {
-        log.warn("[dot.li] Cached CID verified by chain");
+        log.warn(
+          `[dot.li resolve] background: smoldot confirmed cached CID matches chain for ${label}.dot`,
+        );
         setShieldState("verified");
       }
     })
@@ -348,6 +375,99 @@ import type * as RenderModule from "@dotli/ui/bridge";
 type RenderChunk = typeof RenderModule;
 import type * as ProtocolModule from "@dotli/protocol/client";
 type ProtocolChunk = typeof ProtocolModule;
+
+interface GatewayHandle {
+  /** Promise that resolves to a CID once the user picks the trusted-RPC path. */
+  resolvePromise: Promise<string | null>;
+  /** Hide the button (no-op if already hidden). */
+  hideButton: () => void;
+  /** Remove listeners and pending timers (safe to call multiple times). */
+  dispose: () => void;
+}
+
+/**
+ * Wire up the "Use gateway instead" button shown during the slow resolution
+ * path. Returns a promise that only resolves if the user explicitly opts
+ * into the trusted RPC path — otherwise it stays pending forever so a
+ * `Promise.race` with smoldot will never prematurely fall through.
+ */
+function installGatewayButton(label: string): GatewayHandle {
+  const btn = document.getElementById(
+    "loading-gateway",
+  ) as HTMLButtonElement | null;
+
+  let revealTimer: ReturnType<typeof setTimeout> | null = null;
+  let onClick: (() => void) | null = null;
+  let disposed = false;
+
+  const resolvePromise = new Promise<string | null>((resolve, reject) => {
+    if (btn === null) {
+      // No button in the DOM — this promise is never resolved.
+      return;
+    }
+
+    // Reveal after a short delay so a fast resolution doesn't flash it.
+    revealTimer = setTimeout(() => {
+      btn.style.display = "";
+    }, GATEWAY_BUTTON_REVEAL_MS);
+
+    onClick = () => {
+      // Freeze the button so repeated clicks can't fire twice.
+      btn.disabled = true;
+      btn.style.pointerEvents = "none";
+      const span = btn.querySelector("span");
+      if (span !== null) {
+        span.textContent = "Switching to trusted source…";
+      }
+
+      setPreferGateway();
+      m.count("host.gateway_opt_in");
+      log.warn("[dot.li perf] User opted into trusted RPC path");
+      showStatus("Switching to trusted source…");
+
+      void import("@dotli/resolver/rpc-resolve").then(
+        async ({ resolveDotNameViaRpc }) => {
+          try {
+            const result = await resolveDotNameViaRpc(label, (msg) => {
+              showStatus(msg);
+            });
+            resolve(result);
+          } catch (err: unknown) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        },
+        (err: unknown) => {
+          reject(err instanceof Error ? err : new Error(String(err)));
+        },
+      );
+    };
+
+    btn.addEventListener("click", onClick);
+  });
+
+  const hideButton = (): void => {
+    if (btn !== null) {
+      btn.style.display = "none";
+    }
+  };
+
+  const dispose = (): void => {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+    if (revealTimer !== null) {
+      clearTimeout(revealTimer);
+      revealTimer = null;
+    }
+    if (btn !== null && onClick !== null) {
+      btn.removeEventListener("click", onClick);
+    }
+    hideButton();
+  };
+
+  return { resolvePromise, hideButton, dispose };
+}
 
 // ── Main ─────────────────────────────────────────────────────
 
@@ -467,10 +587,14 @@ async function main(): Promise<void> {
     const cachedCid = await getCachedCid(label);
     if (cachedCid !== null) {
       m.count(S.CACHE_HIT);
-      log.warn(`[dot.li perf] CID cache HIT: ${cachedCid} (${elapsed(T0)})`);
+      log.warn(
+        `[dot.li resolve] path=cache (local CID cache hit, no chain query yet) (${elapsed(T0)}) -> ${cachedCid}`,
+      );
       setShieldState("validating");
       const { renderAppSubdomain } = await renderChunkPromise;
-      await renderAppSubdomain(cachedCid, label);
+      await renderAppSubdomain(cachedCid, label, {
+        preferGateway: isPreferGateway(),
+      });
       // Deep path was forwarded to the product iframe — strip it so the URL bar doesn't show a stale path
       history.replaceState(null, "", "/");
 
@@ -489,36 +613,123 @@ async function main(): Promise<void> {
     log.warn(`[dot.li perf] CID cache MISS (${elapsed(T0)})`);
 
     // ── Full resolution path ──
+    //
+    // Two possible resolvers:
+    //   A) smoldot/light-client via the protocol SharedWorker (trustless)
+    //   B) direct JSON-RPC to a trusted Polkadot RPC node (faster, trusted)
+    //
+    // Decision: read the `smoldotEverSynced` flag that lives in the
+    // protocol iframe's localStorage at `host.{BASE_DOMAIN}` (shared
+    // across every `*.{BASE_DOMAIN}` subdomain since the iframe origin
+    // is the same). The iframe posts it via a `hello` envelope at the
+    // very top of its init — before any smoldot work — so the wait is
+    // effectively just "iframe JS loaded".
+    //
+    //   flag === true  → path A: smoldot, wait as long as needed
+    //                    (the "Use trusted source" button stays as an
+    //                    escape hatch the user can click at any point).
+    //   flag === false → path B: go straight to JSON-RPC.
 
     log.warn(`[dot.li perf] Awaiting protocol chunk... (${elapsed(T0)})`);
-    const { resolveDotNameRemote, resolveOwnerRemote } =
-      await protocolChunkPromise;
+    const {
+      resolveDotNameRemote,
+      resolveOwnerRemote,
+      waitForSmoldotEverSynced,
+      getProtocolOrigin,
+    } = await protocolChunkPromise;
     log.warn(
       `[dot.li perf] Protocol chunk loaded (${dur(protocolChunkStart)}, ${elapsed(T0)})`,
     );
-    populateOwner(resolveOwnerRemote, label);
+
+    let smoldotWarm = false;
+    try {
+      smoldotWarm = await waitForSmoldotEverSynced();
+      log.warn(
+        `[dot.li resolve] smoldot-ever-synced flag (from ${getProtocolOrigin()}): ${String(smoldotWarm)} (${elapsed(T0)})`,
+      );
+    } catch (err: unknown) {
+      log.warn(
+        `[dot.li resolve] could not read smoldot-ever-synced flag — assuming cold: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    const preferRpc = isPreferGateway() || !smoldotWarm;
 
     performance.mark("dotli:resolve:start");
     const resolveStart = performance.now();
     const stopResolve = m.timer(S.RESOLVE_TOTAL);
-    const cid = await resolveDotNameRemote(label, (msg: string) => {
-      if (msg.includes("Discovering") || msg.includes("peers")) {
-        advancePhase(1);
+    let cid: string | null;
+    let resolvedVia: "smoldot" | "rpc";
+
+    if (preferRpc) {
+      const reason = isPreferGateway() ? "user opted in" : "smoldot cold";
+      log.warn(
+        `[dot.li resolve] path=json-rpc (trusted node, reason: ${reason}) (${elapsed(T0)})`,
+      );
+      m.count("host.resolve_prefer_rpc", {
+        reason: isPreferGateway() ? "opt_in" : "smoldot_cold",
+      });
+      // Populate owner via RPC too so the popover still fills in. The
+      // smoldot-based owner lookup would otherwise require warming up the
+      // light client we are explicitly trying to avoid.
+      const { resolveDotNameViaRpc, resolveOwnerViaRpc } =
+        await import("@dotli/resolver/rpc-resolve");
+      populateOwner(resolveOwnerViaRpc, label);
+      cid = await resolveDotNameViaRpc(label, (msg: string) => {
+        showStatus(msg);
+      });
+      resolvedVia = "rpc";
+    } else {
+      log.warn(
+        `[dot.li resolve] path=smoldot (trustless light-client) (${elapsed(T0)})`,
+      );
+      populateOwner(resolveOwnerRemote, label);
+
+      const gateway = installGatewayButton(label);
+
+      // Tag each promise so we can log which source actually won the race.
+      // The iframe records the "ever synced" flag on its own side, so we
+      // don't need to mirror it from here.
+      const smoldotTagged = resolveDotNameRemote(label, (msg: string) => {
+        if (msg.includes("Discovering") || msg.includes("peers")) {
+          advancePhase(1);
+        }
+        if (msg.startsWith("Syncing #") || msg.startsWith("Synced to")) {
+          advancePhase(2);
+        }
+        if (msg.includes("Resolving content")) {
+          advancePhase(3);
+        }
+        showStatus(msg);
+      }).then((value) => ({ via: "smoldot" as const, value }));
+      const gatewayTagged = gateway.resolvePromise.then((value) => ({
+        via: "rpc" as const,
+        value,
+      }));
+
+      const winner = await Promise.race([smoldotTagged, gatewayTagged]);
+      gateway.dispose();
+      cid = winner.value;
+      resolvedVia = winner.via;
+
+      if (resolvedVia === "rpc") {
+        log.warn(
+          `[dot.li resolve] user clicked "Use trusted source" mid-resolution — switching to JSON-RPC (${elapsed(T0)})`,
+        );
       }
-      if (msg.startsWith("Syncing #") || msg.startsWith("Synced to")) {
-        advancePhase(2);
-      }
-      if (msg.includes("Resolving content")) {
-        advancePhase(3);
-      }
-      showStatus(msg);
-    });
+    }
+
     stopStatusTick();
     stopResolve();
     performance.mark("dotli:resolve:end");
+    const sourceLabel =
+      resolvedVia === "rpc"
+        ? "JSON-RPC (trusted node)"
+        : "smoldot (trustless light-client)";
     log.warn(
-      `[dot.li perf] Resolution done (${dur(resolveStart)}, ${elapsed(T0)}) → ${cid ?? "null"}`,
+      `[dot.li resolve] RESOLVED ${label}.dot via ${sourceLabel} in ${dur(resolveStart)} (total ${elapsed(T0)}) -> ${cid ?? "null"}`,
     );
+    m.tag("resolve_source", resolvedVia);
 
     if (cid === null) {
       showError(
@@ -532,11 +743,21 @@ async function main(): Promise<void> {
       void setCachedCid(label, cid);
     });
 
-    setShieldState("verified");
+    if (resolvedVia === "rpc") {
+      // RPC is a trusted (not trustless) source. Keep the shield yellow
+      // until smoldot can independently confirm the on-chain CID, then
+      // verifyCachedCid() will flip it to green (or red + banner on mismatch).
+      setShieldState("validating");
+      verifyCachedCid(label, cid, protocolChunkPromise);
+    } else {
+      setShieldState("verified");
+    }
 
     // Render: iframe to cid.app.dot.li
     const { renderAppSubdomain } = await renderChunkPromise;
-    await renderAppSubdomain(cid, label);
+    await renderAppSubdomain(cid, label, {
+      preferGateway: isPreferGateway(),
+    });
 
     const totalMs = performance.now() - T0;
     m.measure(S.E2E_SLOW, totalMs);

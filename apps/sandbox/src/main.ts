@@ -360,16 +360,28 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Fetch via P2P
-  log.warn(
-    `[dot.li app] SW archive cache MISS — fetching via P2P (${elapsed(T0)})`,
-  );
-  showStatus("Connecting to peers...");
+  // Honor `?gateway=1` from the host (user opted into trusted IPFS gateway).
+  const preferGateway =
+    new URL(window.location.href).searchParams.get("gateway") === "1";
+
   const { fetchArchive, ensureHelia, destroyHelia } = await fetchChunkPromise;
   destroyHeliaFn = destroyHelia;
-  await ensureHelia();
-  log.warn(`[dot.li app] Helia P2P ready (${elapsed(T0)})`);
-  let result = await fetchArchive(cid, showStatus);
+
+  if (preferGateway) {
+    log.warn(
+      `[dot.li app] SW archive cache MISS — user opted for IPFS gateway (${elapsed(T0)})`,
+    );
+    showStatus("Fetching via IPFS gateway...");
+  } else {
+    log.warn(
+      `[dot.li app] SW archive cache MISS — fetching via P2P (${elapsed(T0)})`,
+    );
+    showStatus("Connecting to peers...");
+    await ensureHelia();
+    log.warn(`[dot.li app] Helia P2P ready (${elapsed(T0)})`);
+  }
+
+  let result = await fetchArchive(cid, showStatus, { preferGateway });
   log.warn(`[dot.li app] Content fetched → ${result.type} (${elapsed(T0)})`);
 
   // Decrypt if the fetched content is an encrypted blob
