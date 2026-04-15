@@ -5,6 +5,7 @@
 
 import { getRecentLabels, addRecentLabel } from "@dotli/storage/cid-cache";
 import { BASE_DOMAIN, SITE_ID } from "@dotli/config/config";
+import { escapeHtml, isValidDotLabel } from "@dotli/shared/html";
 
 const app = document.getElementById("app") ?? document.body;
 
@@ -279,8 +280,8 @@ export function showError(
   app.innerHTML = `
     <div class="error-page">
       <div class="error-page-inner">
-        <h1 class="error-page-title">${title}</h1>
-        <p class="error-page-detail">${detail}</p>
+        <h1 class="error-page-title">${escapeHtml(title)}</h1>
+        <p class="error-page-detail">${escapeHtml(detail)}</p>
         ${onRetry !== undefined ? '<button class="error-page-retry" id="error-retry-btn">Retry</button>' : ""}
         <div class="error-page-tags">
           <span class="error-page-tag">${SITE_ID}</span>
@@ -392,7 +393,7 @@ export function showLanding(): void {
       .trim()
       .toLowerCase()
       .replace(/\.dot$/, "");
-    if (!name) {
+    if (!name || !isValidDotLabel(name)) {
       return;
     }
     const url = dotUrl(name);
@@ -422,8 +423,8 @@ export function showLanding(): void {
       container.removeAttribute("hidden");
       const items = labels
         .map((label) => {
-          return `<a href="${dotUrl(label)}" class="landing-recent-pill">
-            <span class="landing-recent-label">${label}<span class="landing-tld">.dot</span></span>
+          return `<a href="${escapeHtml(dotUrl(label))}" class="landing-recent-pill">
+            <span class="landing-recent-label">${escapeHtml(label)}<span class="landing-tld">.dot</span></span>
           </a>`;
         })
         .join("");

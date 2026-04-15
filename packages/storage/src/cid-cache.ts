@@ -6,6 +6,7 @@
 import { getDb } from "./db";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
+import { isValidDotLabel } from "@dotli/shared/html";
 
 const STORE = "cids";
 
@@ -47,14 +48,22 @@ export function getRecentLabels(): string[] {
     if (raw === null || raw === "") {
       return [];
     }
-    const labels = JSON.parse(raw) as string[];
-    return Array.isArray(labels) ? labels.slice(0, MAX_RECENT) : [];
+    const parsed = JSON.parse(raw) as unknown[];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((l): l is string => typeof l === "string" && isValidDotLabel(l))
+      .slice(0, MAX_RECENT);
   } catch {
     return [];
   }
 }
 
 export function addRecentLabel(label: string): Promise<void> {
+  if (!isValidDotLabel(label)) {
+    return Promise.resolve();
+  }
   try {
     const recent = getRecentLabels().filter((l) => l !== label);
     recent.unshift(label);

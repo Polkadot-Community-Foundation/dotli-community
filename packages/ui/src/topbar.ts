@@ -10,6 +10,7 @@
 import type { AuthState } from "@dotli/auth/auth";
 import type { Identity } from "@novasamatech/host-papp";
 import { log } from "@dotli/shared/log";
+import { escapeHtml } from "@dotli/shared/html";
 import { SITE_ID } from "@dotli/config/config";
 import {
   ALL_PERMISSIONS,
@@ -231,7 +232,7 @@ function renderLoggedOut(): void {
 function renderLoggedIn(state: AuthState & { status: "authenticated" }): void {
   const initials =
     state.identity && authMod ? authMod.shortenName(state.identity) : "??";
-  authButton.innerHTML = `<div class="user-badge">${initials}</div>`;
+  authButton.innerHTML = `<div class="user-badge">${escapeHtml(initials)}</div>`;
   authButton.title = "Account";
   window.dispatchEvent(new Event("dotli:authenticated"));
 
