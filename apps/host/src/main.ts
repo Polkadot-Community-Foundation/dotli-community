@@ -327,10 +327,19 @@ async function main(): Promise<void> {
   m.tag("skip_cid_cache", String(cacheSettings.skipCidCache));
   m.tag("skip_archive_cache", String(cacheSettings.skipArchiveCache));
 
-  // In P2P mode, pre-warm the protocol iframe so smoldot starts syncing
-  // before resolution is needed. In gateway mode, skip entirely.
-  if (isP2pMode(mode)) {
-    const subMode = mode === "p2p-shared-worker" ? "shared-worker" : "direct";
+  // Pre-warm the protocol iframe for every mode so sandboxed apps that call
+  // `chainConnect` have a handler waiting on the other side. Each mode maps
+  // to a protocol-side submode:
+  //   p2p-shared-worker → "shared-worker" (smoldot in SharedWorker)
+  //   p2p-direct        → "direct"        (smoldot in this iframe)
+  //   gateway           → "rpc"           (trusted WSS JSON-RPC, no smoldot)
+  {
+    const subMode: "shared-worker" | "direct" | "rpc" =
+      mode === "p2p-shared-worker"
+        ? "shared-worker"
+        : mode === "p2p-direct"
+          ? "direct"
+          : "rpc";
     const protocolChunkPromise = import("@dotli/protocol/client");
     void protocolChunkPromise.then(
       ({ ensureProtocolFrame, warmupProtocol, setProtocolSubMode }) => {

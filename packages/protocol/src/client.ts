@@ -51,14 +51,20 @@ let listenerBound = false;
 let protocolReady = false;
 let pendingReadyResolvers: (() => void)[] = [];
 
-/** P2P sub-mode to pass to the protocol iframe. `null` means the iframe
- *  is only needed for shared auth — no smoldot. */
-let protocolSubMode: "shared-worker" | "direct" | null = null;
+/** Sub-mode to pass to the protocol iframe. `null` means the iframe is
+ *  only needed for shared auth — no chain provider at all.
+ *
+ *  `"shared-worker"` and `"direct"` are P2P (smoldot-backed) submodes.
+ *  `"rpc"` is the gateway submode: chain calls are bridged over trusted
+ *  WSS JSON-RPC instead of smoldot. */
+let protocolSubMode: "shared-worker" | "direct" | "rpc" | null = null;
 
 /**
- * Set the P2P sub-mode for the protocol iframe.
+ * Set the sub-mode for the protocol iframe.
  */
-export function setProtocolSubMode(mode: "shared-worker" | "direct"): void {
+export function setProtocolSubMode(
+  mode: "shared-worker" | "direct" | "rpc",
+): void {
   protocolSubMode = mode;
 }
 

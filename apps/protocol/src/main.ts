@@ -1,8 +1,10 @@
 // dot.li — Protocol host entry point
 //
-// Two modes, selected explicitly via `?mode=` URL parameter:
-//   1. SharedWorker mode — smoldot runs in a SharedWorker shared across tabs
-//   2. Direct mode — smoldot runs in this iframe with no cross-tab coordination
+// Three modes, selected explicitly via `?mode=` URL parameter:
+//   1. "shared-worker" — smoldot runs in a SharedWorker shared across tabs
+//   2. "direct"        — smoldot runs in this iframe with no cross-tab coordination
+//   3. "rpc"           — trusted WSS JSON-RPC to a public node (no smoldot),
+//                        used by gateway mode to bridge sandboxed-app chain calls
 
 // Reload once on chunk load failure (stale HTML referencing deleted assets).
 window.addEventListener("vite:preloadError", () => {
@@ -13,7 +15,10 @@ window.addEventListener("vite:preloadError", () => {
 });
 
 import { initSentry } from "@dotli/metrics/sentry";
-import type { JsonRpcConnection } from "@polkadot-api/json-rpc-provider";
+import type {
+  JsonRpcConnection,
+  JsonRpcProvider,
+} from "@polkadot-api/json-rpc-provider";
 import {
   BASE_DOMAIN,
   MAX_CONNECTIONS_PER_ORIGIN,
@@ -28,6 +33,10 @@ import {
   resolveDotName,
   resolveOwner,
 } from "@dotli/resolver/resolve";
+import {
+  createRpcChainProvider,
+  isRpcChainSupported,
+} from "@dotli/resolver/rpc-chain";
 import { terminateSmoldot } from "@dotli/resolver/smoldot";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
@@ -281,11 +290,11 @@ function signalReady(): void {
 
 // ── Mode initialization (explicit, no auto-detection) ───────
 
-function getRequestedMode(): "shared-worker" | "direct" | null {
+function getRequestedMode(): "shared-worker" | "direct" | "rpc" | null {
   try {
     const params = new URLSearchParams(window.location.search);
     const mode = params.get("mode");
-    if (mode === "shared-worker" || mode === "direct") {
+    if (mode === "shared-worker" || mode === "direct" || mode === "rpc") {
       return mode;
     }
   } catch {
@@ -299,10 +308,10 @@ async function init(): Promise<void> {
   const mode = getRequestedMode();
 
   // When no mode is requested, the iframe is only serving shared auth
-  // storage requests (localStorage). No smoldot needed.
+  // storage requests (localStorage). No chain provider needed.
   if (mode === null) {
     log.warn(
-      "[dot.li protocol] No mode requested — auth-only iframe, skipping smoldot",
+      "[dot.li protocol] No mode requested — auth-only iframe, skipping chain provider",
     );
     signalReady();
     return;
@@ -322,6 +331,10 @@ async function init(): Promise<void> {
     await initSharedWorkerMode();
     m.tag("protocol_mode", "shared_worker");
     m.count(S.PROTOCOL_MODE, { mode: "shared_worker" });
+  } else if (mode === "rpc") {
+    initRpcMode();
+    m.tag("protocol_mode", "rpc");
+    m.count(S.PROTOCOL_MODE, { mode: "rpc" });
   } else {
     initDirectMode();
     m.tag("protocol_mode", "direct");
@@ -459,8 +472,62 @@ function initDirectMode(): void {
     "[dot.li protocol] Smoldot runs in this iframe with no cross-tab coordination",
   );
 
-  const engine = createEngine();
+  const engine = createEngine({
+    createChainProvider,
+    isChainSupported,
+    onInit: () => {
+      getSmoldot();
+    },
+    onCleanup: () => {
+      terminateSmoldot();
+    },
+    onWarmup: async () => {
+      getSmoldot();
+      await getRelayChain();
+    },
+    resolveDotName,
+    resolveOwner,
+  });
 
+  bindEngineToMessages(engine);
+  signalReady();
+
+  window.addEventListener("beforeunload", () => {
+    engine.cleanup();
+  });
+}
+
+// ── RPC mode (gateway) ──────────────────────────────────────
+//
+// No smoldot. Sandboxed app chain requests are bridged to a trusted WSS
+// JSON-RPC endpoint via the shared broker. Name resolution in gateway mode
+// happens in the host process (see `@dotli/resolver/rpc-resolve`), not via
+// this iframe, so `resolveDotName` / `resolveOwner` requests aren't wired
+// up here — the host never sends them when gateway is active.
+
+function initRpcMode(): void {
+  log.warn("[dot.li protocol] === RPC MODE ===");
+  log.warn(
+    "[dot.li protocol] Chain calls routed via WSS JSON-RPC (no smoldot)",
+  );
+
+  const engine = createEngine({
+    createChainProvider: createRpcChainProvider,
+    isChainSupported: isRpcChainSupported,
+    // No onInit / onCleanup: the WS provider lifecycle is owned by the
+    // broker's `ensureUpstream` / `disconnectAll`.
+    // No resolver: gateway-mode resolution doesn't go through this iframe.
+  });
+
+  bindEngineToMessages(engine);
+  signalReady();
+
+  window.addEventListener("beforeunload", () => {
+    engine.cleanup();
+  });
+}
+
+function bindEngineToMessages(engine: ProtocolEngine): void {
   window.addEventListener("message", (event: MessageEvent) => {
     const data: unknown = event.data;
     if (!isProtocolEnvelope(data) || data.kind !== "request") {
@@ -490,12 +557,6 @@ function initDirectMode(): void {
           error: serializeError(error),
         });
       });
-  });
-
-  signalReady();
-
-  window.addEventListener("beforeunload", () => {
-    engine.cleanup();
   });
 }
 
@@ -616,12 +677,32 @@ interface ProtocolEngine {
   cleanup: () => void;
 }
 
-function createEngine(): ProtocolEngine {
+interface EngineOptions {
+  /** Factory for a `JsonRpcProvider` keyed by genesis hash. */
+  createChainProvider: (genesisHash: string) => JsonRpcProvider | null;
+  /** Whether the given genesis hash is handled by this engine. */
+  isChainSupported: (genesisHash: string) => boolean;
+  /** Called once at engine creation — e.g. to kick off smoldot pre-sync. */
+  onInit?: () => void;
+  /** Called at cleanup time after broker teardown. */
+  onCleanup?: () => void;
+  /** Called on `warmup` requests. If omitted, `warmup` resolves immediately. */
+  onWarmup?: () => Promise<void>;
+  /** Resolver implementations. If omitted, resolution methods reject with a
+   *  clear error so hanging callers surface fast. */
+  resolveDotName?: (
+    label: string,
+    onStatus: (message: string) => void,
+  ) => Promise<string | null>;
+  resolveOwner?: (label: string) => Promise<string | null>;
+}
+
+function createEngine(options: EngineOptions): ProtocolEngine {
   const MAX_CONNS = 10;
   const connections = new Map<string, JsonRpcConnection>();
   const originConns = new Map<string, Set<string>>();
-  const broker = createChainBrokerManager(createChainProvider);
-  getSmoldot();
+  const broker = createChainBrokerManager(options.createChainProvider);
+  options.onInit?.();
 
   function assertStr(value: unknown, name: string): asserts value is string {
     if (typeof value !== "string" || value.length === 0) {
@@ -641,8 +722,9 @@ function createEngine(): ProtocolEngine {
 
     switch (request.method) {
       case "warmup": {
-        getSmoldot();
-        await getRelayChain();
+        if (options.onWarmup) {
+          await options.onWarmup();
+        }
         respond({
           namespace: "dotli:protocol",
           kind: "response",
@@ -654,16 +736,22 @@ function createEngine(): ProtocolEngine {
       }
 
       case "resolveDotName": {
+        if (!options.resolveDotName) {
+          throw new Error("resolveDotName is not served by this protocol mode");
+        }
         const payload = request.payload as ProtocolRequestMap["resolveDotName"];
         assertStr(payload.label, "label");
-        const result = await resolveDotName(payload.label, (message) => {
-          respond({
-            namespace: "dotli:protocol",
-            kind: "progress",
-            id: request.id,
-            message,
-          });
-        });
+        const result = await options.resolveDotName(
+          payload.label,
+          (message) => {
+            respond({
+              namespace: "dotli:protocol",
+              kind: "progress",
+              id: request.id,
+              message,
+            });
+          },
+        );
         respond({
           namespace: "dotli:protocol",
           kind: "response",
@@ -675,9 +763,12 @@ function createEngine(): ProtocolEngine {
       }
 
       case "resolveOwner": {
+        if (!options.resolveOwner) {
+          throw new Error("resolveOwner is not served by this protocol mode");
+        }
         const payload = request.payload as ProtocolRequestMap["resolveOwner"];
         assertStr(payload.label, "label");
-        const result = await resolveOwner(payload.label);
+        const result = await options.resolveOwner(payload.label);
         respond({
           namespace: "dotli:protocol",
           kind: "response",
@@ -703,7 +794,7 @@ function createEngine(): ProtocolEngine {
             `Per-origin connection limit reached (max ${String(MAX_CONNECTIONS_PER_ORIGIN)})`,
           );
         }
-        if (!isChainSupported(payload.genesisHash)) {
+        if (!options.isChainSupported(payload.genesisHash)) {
           throw new Error(`Unsupported chain: ${payload.genesisHash}`);
         }
         const connection = broker.connectRemote(
@@ -790,7 +881,7 @@ function createEngine(): ProtocolEngine {
     connections.clear();
     originConns.clear();
     broker.disconnectAll();
-    terminateSmoldot();
+    options.onCleanup?.();
   }
 
   return { handleRequest, cleanup };
