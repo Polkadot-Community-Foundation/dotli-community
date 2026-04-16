@@ -45,10 +45,13 @@ fi
 
 # Merge: take current local spec (compact genesis), update lightSyncState + bootNodes from fresh.
 # Tests each bootnode via TCP connect and only keeps healthy ones.
+# When SKIP_BOOTNODE_CHECK=true, bootnodes are preserved from the existing local file.
 # Note: PASEO_RAW is too large for a CLI argument, so we pipe it via stdin.
 echo "$PASEO_RAW" | bun -e '
 const fs = require("fs");
 const net = require("net");
+
+const skipBootnodeCheck = process.env.SKIP_BOOTNODE_CHECK === "true";
 
 function parseMultiaddr(ma) {
   const parts = ma.split("/").filter(Boolean);
@@ -97,28 +100,33 @@ process.stdin.on("end", async () => {
 
   currentSpec.lightSyncState = freshSpec.lightSyncState;
 
-  const bootNodes = freshSpec.bootNodes || [];
-  console.log("  Testing " + bootNodes.length + " bootnodes (5s timeout each)...");
-
-  const results = await Promise.all(bootNodes.map((bn) => testBootnode(bn)));
-  const healthy = [];
-  for (const r of results) {
-    const short = r.ma.length > 80 ? r.ma.substring(0, 77) + "..." : r.ma;
-    if (r.healthy) {
-      console.log("    ✓ " + short);
-      healthy.push(r.ma);
-    } else {
-      console.log("    ✗ " + short + " (" + r.reason + ")");
-    }
-  }
-
-  console.log("  Healthy: " + healthy.length + "/" + bootNodes.length);
-
-  if (healthy.length === 0) {
-    console.log("  WARNING: No healthy bootnodes found — keeping all original bootnodes.");
-    currentSpec.bootNodes = bootNodes;
+  if (skipBootnodeCheck) {
+    console.log("  Bootnode health check SKIPPED — keeping existing bootnodes.");
+    console.log("  Boot nodes (unchanged): " + currentSpec.bootNodes.length);
   } else {
-    currentSpec.bootNodes = healthy;
+    const bootNodes = freshSpec.bootNodes || [];
+    console.log("  Testing " + bootNodes.length + " bootnodes (5s timeout each)...");
+
+    const results = await Promise.all(bootNodes.map((bn) => testBootnode(bn)));
+    const healthy = [];
+    for (const r of results) {
+      const short = r.ma.length > 80 ? r.ma.substring(0, 77) + "..." : r.ma;
+      if (r.healthy) {
+        console.log("    ✓ " + short);
+        healthy.push(r.ma);
+      } else {
+        console.log("    ✗ " + short + " (" + r.reason + ")");
+      }
+    }
+
+    console.log("  Healthy: " + healthy.length + "/" + bootNodes.length);
+
+    if (healthy.length === 0) {
+      console.log("  WARNING: No healthy bootnodes found — keeping all original bootnodes.");
+      currentSpec.bootNodes = bootNodes;
+    } else {
+      currentSpec.bootNodes = healthy;
+    }
   }
 
   fs.writeFileSync(process.argv[1], JSON.stringify(currentSpec));
