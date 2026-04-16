@@ -3,6 +3,7 @@ import { defineConfig, type Plugin } from "vite";
 import { readFileSync, copyFileSync } from "node:fs";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
+import { VitePWA } from "vite-plugin-pwa";
 
 const OUT_DIR = "dist";
 
@@ -155,6 +156,10 @@ function sentry(project: string): Plugin | false {
   });
 }
 
+const { version } = JSON.parse(
+  readFileSync(resolve(import.meta.dirname, "package.json"), "utf8"),
+) as { version: string };
+
 const PACKAGES = resolve(import.meta.dirname, "../../packages");
 const SANDBOX_CHECKER_SRC = resolve(PACKAGES, "sandbox-checker/src");
 
@@ -168,6 +173,25 @@ export default defineConfig({
     preloadCriticalAssets(),
     githubPages404(),
     sentry("dotli"),
+    VitePWA({
+      injectRegister: false,
+      filename: "host-sw.js",
+      manifest: {
+        name: "dot.li",
+        short_name: "dot.li",
+        description: "Decentralized web browser for Polkadot",
+        theme_color: "#E6007A",
+      },
+      workbox: {
+        globPatterns: ["**/*.{js,css,html,svg,png,ico,wasm}"],
+        cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
+        navigateFallback: "index.html",
+        navigateFallbackDenylist: [/^\/api\//],
+        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
+      },
+    }),
   ],
   resolve: {
     alias: {
@@ -185,6 +209,7 @@ export default defineConfig({
   },
   define: {
     __BUILD_TARGET__: JSON.stringify("host"),
+    __APP_VERSION__: JSON.stringify(version),
   },
   optimizeDeps: {
     exclude: ["@polkadot-api/wasm-executor", "verifiablejs"],

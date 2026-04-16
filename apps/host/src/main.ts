@@ -2,6 +2,8 @@
 //
 // Flow: parse URL → resolve .dot name via smoldot → iframe to cid.app.dot.li
 
+console.warn(`dot.li v${__APP_VERSION__}`);
+
 // Reload once on chunk load failure (stale HTML referencing deleted assets).
 window.addEventListener("vite:preloadError", () => {
   if (sessionStorage.getItem("dotli:chunk-reload") === null) {
@@ -18,6 +20,7 @@ if (typeof globalThis.requestIdleCallback !== "function") {
     }, 1) as unknown as number;
 }
 
+import "./pwa";
 import "@dotli/ui/styles.css";
 import { initSentry } from "@dotli/metrics/sentry";
 import {
