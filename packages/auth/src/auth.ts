@@ -23,6 +23,7 @@ import { toHex } from "@novasamatech/host-api";
 import { getWsProvider } from "polkadot-api/ws-provider";
 import { getPeopleChainProvider } from "@dotli/resolver/smoldot";
 import { SITE_ID, SS_USE_SMOLDOT } from "@dotli/config/config";
+import { getMode, isP2pMode } from "@dotli/config/mode";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
@@ -180,8 +181,11 @@ export function initAuth(): void {
 
   const siteId = SITE_ID;
   const storage = createSharedAuthStorageAdapter(siteId);
+  // Use smoldot for the statement store only when enabled AND in P2P mode.
+  // In gateway mode, always use the WS provider — no smoldot should run.
+  const useSmoldotForAuth = SS_USE_SMOLDOT && isP2pMode(getMode());
   const lazyClient = createLazyClient(
-    SS_USE_SMOLDOT
+    useSmoldotForAuth
       ? getPeopleChainProvider()
       : getWsProvider([...SS_PASEO_STABLE_STAGE_ENDPOINTS], {
           heartbeatTimeout: 120_000, // 2 minutes — default 40s is too aggressive through tunnels

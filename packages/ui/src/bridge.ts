@@ -6,6 +6,7 @@
 // out of the sandbox bundle.
 
 import { BASE_DOMAIN } from "@dotli/config/config";
+import { getMode, getCacheSettings } from "@dotli/config/mode";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { buildAllowAttribute } from "./permissions";
@@ -34,7 +35,6 @@ let currentRenderMode: "iframe" | "subdomain" | null = null;
 let currentLabel: string | null = null;
 let currentUrl: string | null = null;
 let currentCid: string | null = null;
-let currentPreferGateway = false;
 
 // Listen for device permission grants — reload the iframe so the
 // updated `allow` attribute takes effect.
@@ -50,9 +50,7 @@ window.addEventListener("dotli:device-permission-changed", () => {
     currentCid !== null &&
     currentLabel !== null
   ) {
-    void renderAppSubdomain(currentCid, currentLabel, {
-      preferGateway: currentPreferGateway,
-    });
+    void renderAppSubdomain(currentCid, currentLabel);
   }
 });
 
@@ -145,29 +143,32 @@ export async function renderIframe(url: string, label: string): Promise<void> {
 export async function renderAppSubdomain(
   cid: string,
   label: string,
-  options?: { preferGateway?: boolean },
 ): Promise<void> {
   const stopSetup = m.timer(S.BRIDGE_SETUP);
   cleanup();
 
-  const preferGateway = options?.preferGateway === true;
   currentRenderMode = "subdomain";
   currentLabel = label;
   currentCid = cid;
   currentUrl = null;
-  currentPreferGateway = preferGateway;
 
+  const mode = getMode();
+  const cache = getCacheSettings();
   const appOrigin = getAppOrigin(cid);
   const deepPath = getDeepPath();
   let url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
-  if (preferGateway) {
-    // Signal the sandbox app to skip P2P and go straight to the IPFS gateway.
-    try {
-      const parsed = new URL(url);
-      parsed.searchParams.set("gateway", "1");
-      url = parsed.toString();
-    } catch {
-      url += (url.includes("?") ? "&" : "?") + "gateway=1";
+  // Pass the current resolution mode and cache settings to the sandbox.
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("mode", mode);
+    if (cache.skipArchiveCache) {
+      parsed.searchParams.set("skipArchiveCache", "1");
+    }
+    url = parsed.toString();
+  } catch {
+    url += (url.includes("?") ? "&" : "?") + `mode=${mode}`;
+    if (cache.skipArchiveCache) {
+      url += "&skipArchiveCache=1";
     }
   }
 

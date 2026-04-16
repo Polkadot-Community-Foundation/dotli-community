@@ -48,6 +48,7 @@ import {
 import { MAX_NESTED_BRIDGES } from "@dotli/config/config";
 import { dotNsUrl } from "@dotli/shared/dotns-url";
 import { log } from "@dotli/shared/log";
+import { getMode, isP2pMode } from "@dotli/config/mode";
 import { concatBytes } from "@noble/hashes/utils.js";
 import { computePreimageKey, hashToCid } from "@dotli/content/preimage";
 import { ensureHelia } from "@dotli/content/fetch";
@@ -564,8 +565,11 @@ function wireContainerHandlers(
   const preimageLimiter = createSubmitRateLimiter();
 
   // Eagerly start Bulletin chain sync so it's ready by the time
-  // a product calls remote_preimage_submit.
-  void ensureBulletinClient();
+  // a product calls remote_preimage_submit. Only in P2P mode —
+  // gateway mode should not create any smoldot instances.
+  if (isP2pMode(getMode())) {
+    void ensureBulletinClient();
+  }
 
   container.handlePreimageSubmit((value, { err }) => {
     log.warn(

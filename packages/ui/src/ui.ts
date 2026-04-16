@@ -191,8 +191,15 @@ function clearSlowWarning(): void {
   }
   const hint = document.getElementById("loading-hint");
   if (hint !== null) {
-    hint.classList.remove("visible");
-    hint.textContent = "";
+    // Remove only the text span, preserve any gateway button
+    const textSpan = hint.querySelector(".loading-hint-text");
+    if (textSpan !== null) {
+      textSpan.remove();
+    }
+    // Only hide if no gateway button is present
+    if (hint.querySelector(".loading-gateway-btn") === null) {
+      hint.classList.remove("visible");
+    }
   }
 }
 
@@ -214,7 +221,16 @@ export function showStatus(message: string): void {
     slowTimer = setTimeout(() => {
       const hint = document.getElementById("loading-hint");
       if (hint !== null) {
-        hint.textContent = threshold.hint;
+        // Remove previous text span if any
+        const existing = hint.querySelector(".loading-hint-text");
+        if (existing !== null) {
+          existing.remove();
+        }
+        // Insert text as a span so it doesn't wipe the gateway button
+        const span = document.createElement("span");
+        span.className = "loading-hint-text";
+        span.textContent = threshold.hint;
+        hint.insertBefore(span, hint.firstChild);
         hint.classList.add("visible");
       }
     }, threshold.secs * 1000);

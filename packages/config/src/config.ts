@@ -131,14 +131,13 @@ export const BULLETIN_PEERS = [
 
 // --- IPFS Gateway ---
 
-/** Gateway used for fallback when P2P fetch fails */
+/** IPFS gateway for content fetching in gateway mode */
 export const IPFS_GATEWAY = "https://paseo-ipfs.polkadot.io";
 
-// --- Asset Hub Paseo JSON-RPC endpoints (trusted fallback) ---
+// --- Asset Hub Paseo JSON-RPC endpoints (gateway mode) ---
 //
-// Used when the user opts out of smoldot/light-client resolution via the
-// "Use gateway instead" button. Direct WSS JSON-RPC to a known RPC node —
-// faster but introduces a trust assumption on the operator.
+// Used in gateway mode for trusted name resolution. Direct WSS JSON-RPC
+// to a known RPC node — faster but introduces a trust assumption.
 
 export const ASSET_HUB_PASEO_RPC_ENDPOINTS = [
   "wss://sys.ibp.network/asset-hub-paseo",
@@ -161,14 +160,15 @@ export const MAX_NESTED_BRIDGES = 5;
 // --- Timeouts (ms) ---
 
 export const TIMEOUTS = {
+  // ── Shared (both modes) ──
   /** SW cache lookup before falling through */
   SW_CACHE_LOOKUP: 3_000,
   /** Waiting for SW controllerchange after registration */
   SW_READY: 10_000,
+
+  // ── P2P mode ──
   /** P2P fetch abort (per attempt) */
   P2P_FETCH: 30_000,
-  /** Delay before starting gateway fetch in parallel with P2P */
-  P2P_RACE_GATEWAY_DELAY: 5_000,
   /** SharedWorker readiness timeout (must cover full cold-start chain sync, up to ~60s) */
   SHARED_WORKER_READY: 90_000,
 } as const;

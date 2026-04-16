@@ -13,6 +13,13 @@ import { log } from "@dotli/shared/log";
 import { escapeHtml } from "@dotli/shared/html";
 import { SITE_ID } from "@dotli/config/config";
 import {
+  getMode,
+  setMode,
+  getCacheSettings,
+  setCacheSettings,
+  type DotliMode,
+} from "@dotli/config/mode";
+import {
   ALL_PERMISSIONS,
   getPermissionStatus,
   hasAnyGrant,
@@ -41,6 +48,10 @@ let userPopover: HTMLElement;
 let userPopoverUsername: HTMLElement;
 let userPopoverDisconnect: HTMLElement;
 
+let modeButton: HTMLElement;
+let modePopover: HTMLElement;
+let modePopoverContent: HTMLElement;
+
 let permissionsButton: HTMLElement;
 let permissionsPopover: HTMLElement;
 let permissionsPopoverList: HTMLElement;
@@ -49,7 +60,8 @@ let permissionsPopoverList: HTMLElement;
 let currentProductLabel: string | null = null;
 
 // Hexagon SVG for the logged-out state
-const HEXAGON_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
+// User icon for the logged-out state
+const USER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
 
 // Track the current QR payload to prevent stale canvas appends
 let currentQrPayload: string | null = null;
@@ -157,6 +169,13 @@ export function initTopBar(): void {
       userPopover.classList.remove("open");
     }
     if (
+      modePopover.classList.contains("open") &&
+      !modePopover.contains(e.target as Node) &&
+      !modeButton.contains(e.target as Node)
+    ) {
+      modePopover.classList.remove("open");
+    }
+    if (
       permissionsPopover.classList.contains("open") &&
       !permissionsPopover.contains(e.target as Node) &&
       !permissionsButton.contains(e.target as Node)
@@ -175,6 +194,9 @@ export function initTopBar(): void {
 
   // Theme toggle
   initThemeToggle();
+
+  // Mode toggle (P2P / Centralized)
+  initModeToggle();
 
   // Permissions
   initPermissions();
@@ -224,7 +246,7 @@ function renderAuthState(state: AuthState): void {
 }
 
 function renderLoggedOut(): void {
-  authButton.innerHTML = HEXAGON_SVG;
+  authButton.innerHTML = USER_SVG;
   authButton.title = "Login with Polkadot Mobile";
   window.dispatchEvent(new Event("dotli:logged-out"));
 }
@@ -378,11 +400,10 @@ function initPermissions(): void {
     }
   });
 
-  // Show button when a product is loaded
+  // Update when a product is loaded
   window.addEventListener("dotli:product-loaded", (e) => {
     const { label } = (e as CustomEvent<{ label: string }>).detail;
     currentProductLabel = label;
-    permissionsButton.style.display = "";
     updatePermissionsButtonState();
     if (permissionsPopover.classList.contains("open")) {
       renderPermissionsPopover();
@@ -417,11 +438,16 @@ function updatePermissionsButtonState(): void {
 }
 
 function renderPermissionsPopover(): void {
+  permissionsPopoverList.innerHTML = "";
+
   if (currentProductLabel === null) {
+    const hint = document.createElement("div");
+    hint.className = "permissions-popover-footer";
+    hint.textContent =
+      "Wait for the app to finish loading to change its permissions.";
+    permissionsPopoverList.appendChild(hint);
     return;
   }
-
-  permissionsPopoverList.innerHTML = "";
 
   for (const perm of ALL_PERMISSIONS) {
     const status = getPermissionStatus(currentProductLabel, perm.name);
@@ -485,6 +511,203 @@ function renderPermissionsPopover(): void {
   footer.className = "permissions-popover-footer";
   footer.textContent = "Changing permissions will reload the app.";
   permissionsPopoverList.appendChild(footer);
+}
+
+// ── Resolution Mode Toggle ───────────────────────────────────
+
+function initModeToggle(): void {
+  modeButton = getElement("mode-button");
+  modePopover = getElement("mode-popover");
+  modePopoverContent = getElement("mode-popover-content");
+
+  // Show gateway-mode indicator on the button
+  modeButton.classList.toggle("gateway-mode", getMode() === "gateway");
+
+  modeButton.addEventListener("click", () => {
+    modePopover.classList.toggle("open");
+    if (modePopover.classList.contains("open")) {
+      renderModePopover();
+    }
+  });
+}
+
+function renderModeRadio(
+  value: DotliMode,
+  label: string,
+  description: string,
+  currentMode: DotliMode,
+): void {
+  const selected = value === currentMode;
+  const row = document.createElement("label");
+  row.className = `mode-radio-row${selected ? " selected" : ""}`;
+
+  const radio = document.createElement("input");
+  radio.type = "radio";
+  radio.name = "dotli-mode";
+  radio.value = value;
+  radio.checked = selected;
+  radio.className = "mode-radio-input";
+  row.appendChild(radio);
+
+  const dot = document.createElement("span");
+  dot.className = "mode-radio-dot";
+  row.appendChild(dot);
+
+  const text = document.createElement("span");
+  text.className = "mode-radio-text";
+  text.innerHTML = `<span class="mode-radio-label">${label}</span><span class="mode-radio-desc">${description}</span>`;
+  row.appendChild(text);
+
+  radio.addEventListener("change", () => {
+    setMode(value);
+    window.location.reload();
+  });
+
+  modePopoverContent.appendChild(row);
+}
+
+function renderModePopover(): void {
+  const currentMode = getMode();
+  const isP2p = currentMode !== "gateway";
+  const cache = getCacheSettings(currentMode);
+
+  modePopoverContent.innerHTML = "";
+
+  // ── Section 1: P2P Light Client ──
+  const p2pHeader = document.createElement("div");
+  p2pHeader.className = "mode-popover-section";
+  p2pHeader.textContent = "P2P Light Client";
+  modePopoverContent.appendChild(p2pHeader);
+
+  renderModeRadio(
+    "p2p-shared-worker",
+    "SharedWorker",
+    "Shared across tabs (recommended)",
+    currentMode,
+  );
+  renderModeRadio(
+    "p2p-direct",
+    "Direct (per-tab)",
+    "Independent per tab",
+    currentMode,
+  );
+
+  // ── Divider ──
+  appendDivider();
+
+  // ── Section 2: Gateway ──
+  renderModeRadio(
+    "gateway",
+    "Gateway (fast)",
+    "Fast loading from trusted nodes",
+    currentMode,
+  );
+
+  // ── Section 3: P2P Cache (only visible for P2P modes) ──
+  if (isP2p) {
+    appendDivider();
+
+    const cacheHeader = document.createElement("div");
+    cacheHeader.className = "mode-popover-section";
+    cacheHeader.textContent = "P2P Cache";
+    modePopoverContent.appendChild(cacheHeader);
+
+    renderCacheToggle("CID cache", !cache.skipCidCache, (enabled) => {
+      setCacheSettings({ ...cache, skipCidCache: !enabled });
+      window.location.reload();
+    });
+
+    renderCacheToggle("Content cache", !cache.skipArchiveCache, (enabled) => {
+      setCacheSettings({ ...cache, skipArchiveCache: !enabled });
+      window.location.reload();
+    });
+
+    // Clear chain data button
+    const clearRow = document.createElement("div");
+    clearRow.className = "mode-cache-row";
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "mode-clear-btn";
+    clearBtn.textContent = "Clear chain data";
+    clearBtn.title =
+      "Delete smoldot chain database and reload (forces cold sync)";
+    clearBtn.addEventListener("click", () => {
+      void clearSmoldotDatabases().then(() => {
+        window.location.reload();
+      });
+    });
+    clearRow.appendChild(clearBtn);
+    modePopoverContent.appendChild(clearRow);
+  }
+
+  // ── Footer ──
+  const footer = document.createElement("div");
+  footer.className = "mode-popover-hint";
+  footer.textContent = "Changing settings will reload the page.";
+  modePopoverContent.appendChild(footer);
+}
+
+function appendDivider(): void {
+  const divider = document.createElement("div");
+  divider.className = "mode-popover-divider";
+  modePopoverContent.appendChild(divider);
+}
+
+async function clearSmoldotDatabases(): Promise<void> {
+  try {
+    if (typeof indexedDB.databases === "function") {
+      const dbs = await indexedDB.databases();
+      for (const db of dbs) {
+        if (
+          db.name !== undefined &&
+          db.name !== "" &&
+          db.name !== "dotli" &&
+          db.name !== "dotli-sw"
+        ) {
+          indexedDB.deleteDatabase(db.name);
+        }
+      }
+    }
+    // Also clear our own chain store
+    const { getDb } = await import("@dotli/storage/db");
+    const db = await getDb();
+    const tx = db.transaction("chains", "readwrite");
+    tx.objectStore("chains").clear();
+  } catch {
+    // Best effort — some browsers restrict indexedDB.databases()
+  }
+}
+
+function renderCacheToggle(
+  label: string,
+  checked: boolean,
+  onChange: (enabled: boolean) => void,
+): void {
+  const row = document.createElement("div");
+  row.className = "mode-cache-row";
+
+  const nameEl = document.createElement("span");
+  nameEl.className = "mode-cache-label";
+  nameEl.textContent = label;
+  row.appendChild(nameEl);
+
+  const toggle = document.createElement("button");
+  toggle.className = `permissions-popover-toggle ${checked ? "on" : ""}`;
+  toggle.setAttribute("role", "switch");
+  toggle.setAttribute("aria-checked", String(checked));
+
+  const track = document.createElement("span");
+  track.className = "permissions-toggle-track";
+  const knob = document.createElement("span");
+  knob.className = "permissions-toggle-knob";
+  track.appendChild(knob);
+  toggle.appendChild(track);
+
+  toggle.addEventListener("click", () => {
+    onChange(!checked);
+  });
+
+  row.appendChild(toggle);
+  modePopoverContent.appendChild(row);
 }
 
 // ── Modal ─────────────────────────────────────────────────

@@ -54,6 +54,10 @@ export function isCarFile(buffer: Uint8Array): boolean {
 
 // ── CAR parsing ────────────────────────────────────────────
 
+// CID codec constants
+const DAG_PB = 0x70;
+const RAW = 0x55;
+
 function joinPath(base: string, name: string): string {
   return base ? `${base}/${name}` : name;
 }
@@ -71,32 +75,70 @@ export async function parseCarFile(buffer: Uint8Array): Promise<ArchiveFiles> {
 
   const files: ArchiveFiles = {};
 
+  /** Read the raw data bytes from a chunk CID (used for multi-block files). */
   async function getChunkData(cid: CID): Promise<Uint8Array> {
     const block = await reader.get(cid);
     if (!block) {
       return new Uint8Array(0);
     }
 
-    try {
-      const node = dagPb.decode(block.bytes);
-      return node.Data
-        ? (UnixFS.unmarshal(node.Data).data ?? new Uint8Array(0))
-        : new Uint8Array(0);
-    } catch {
+    // Raw codec — block bytes ARE the content
+    if (cid.code === RAW) {
       return block.bytes;
     }
+
+    // dag-pb — extract UnixFS data payload
+    if (cid.code === DAG_PB) {
+      try {
+        const node = dagPb.decode(block.bytes);
+        return node.Data
+          ? (UnixFS.unmarshal(node.Data).data ?? new Uint8Array(0))
+          : new Uint8Array(0);
+      } catch {
+        return block.bytes;
+      }
+    }
+
+    // Unknown codec — return raw bytes
+    return block.bytes;
   }
 
+  /** Recursively walk a DAG node, collecting files into `files`. */
   async function processNode(cid: CID, path: string): Promise<void> {
     const block = await reader.get(cid);
     if (!block) {
       return;
     }
 
+    // Raw codec — block bytes ARE the file content (leaf node).
+    // Special case: if the raw bytes are themselves a CAR file (content
+    // was uploaded as a binary CAR archive), parse it recursively.
+    if (cid.code === RAW) {
+      if (isCarFile(block.bytes)) {
+        const inner = await parseCarFile(block.bytes);
+        for (const [p, data] of Object.entries(inner)) {
+          files[p] = data;
+        }
+        return;
+      }
+      files[path || "index.html"] = block.bytes;
+      return;
+    }
+
+    // Only attempt dag-pb decoding for the right codec
+    if (cid.code !== DAG_PB) {
+      // Unknown codec — store raw bytes if this is a named path
+      if (path !== "") {
+        files[path] = block.bytes;
+      }
+      return;
+    }
+
     try {
       const node = dagPb.decode(block.bytes);
       const uf = node.Data ? UnixFS.unmarshal(node.Data) : null;
-      const isDirectory = uf?.type === "directory";
+      const isDirectory =
+        uf?.type === "directory" || uf?.type === "hamt-sharded-directory";
       const isFile = !uf || uf.type === "file" || uf.type === "raw";
 
       if (isDirectory || (!uf && node.Links.length > 0)) {
@@ -118,10 +160,23 @@ export async function parseCarFile(buffer: Uint8Array): Promise<ArchiveFiles> {
                 )),
               );
 
-        files[path] = content;
+        // If the assembled file content is itself a CAR archive (content
+        // was uploaded as a binary CAR), parse it recursively to extract
+        // the actual files instead of storing the raw CAR bytes.
+        if (isCarFile(content)) {
+          const inner = await parseCarFile(content);
+          for (const [p, data] of Object.entries(inner)) {
+            files[p] = data;
+          }
+        } else {
+          files[path || "index.html"] = content;
+        }
       }
     } catch {
-      files[path] = block.bytes;
+      // dag-pb decode failed — store raw bytes only for named paths
+      if (path !== "") {
+        files[path] = block.bytes;
+      }
     }
   }
 

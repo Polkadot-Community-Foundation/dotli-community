@@ -1,6 +1,6 @@
 // dot.li — Pre-defined metric names
 //
-// Centralized metric name constants so instrumentation is consistent
+// Metric name constants so instrumentation is consistent
 // and discoverable. All names are prefixed with "dotli." automatically
 // by the metrics API — these are the suffixes.
 
@@ -32,14 +32,8 @@ export const SMOLDOT_PRESYNC_FAILURE = "smoldot.presync_failure";
 /** Total protocol iframe init (mode detection + engine start) */
 export const PROTOCOL_INIT = "protocol.init";
 
-/** Time from SharedWorker creation to "alive" signal */
-export const PROTOCOL_SW_ALIVE = "protocol.sw_alive";
-
 /** Time from SharedWorker creation to "ready" signal */
 export const PROTOCOL_SW_READY = "protocol.sw_ready";
-
-/** SharedWorker timed out (no "alive" or "ready") */
-export const PROTOCOL_SW_TIMEOUT = "protocol.sw_timeout";
 
 /** Which protocol mode was selected */
 export const PROTOCOL_MODE = "protocol.mode";
@@ -65,16 +59,13 @@ export const CACHE_MISS = "cache.miss";
 /** Time to fetch content via P2P */
 export const CONTENT_P2P = "content.p2p";
 
-/** Time to fetch content via gateway fallback */
+/** Time to fetch content via IPFS gateway (gateway mode) */
 export const CONTENT_GATEWAY = "content.gateway";
 
 /** Total content fetch time (whichever method wins) */
 export const CONTENT_FETCH = "content.fetch";
 
 // ── End-to-end ─────────────────────────────────────────────────
-
-/** Total page load: main() start to content rendered */
-export const E2E_TOTAL = "e2e.total";
 
 /** Fast path: CID cache hit to content rendered */
 export const E2E_FAST = "e2e.fast_path";
@@ -95,9 +86,6 @@ export const CONTENT_HELIA_INIT = "content.helia_init";
 /** P2P fetch timed out */
 export const CONTENT_P2P_TIMEOUT = "content.p2p_timeout";
 
-/** Gateway fallback activated (P2P too slow or failed) */
-export const CONTENT_GATEWAY_FALLBACK = "content.gateway_fallback";
-
 /** Fetched content size in bytes */
 export const CONTENT_SIZE = "content.size";
 
@@ -108,9 +96,6 @@ export const CACHE_READ_LATENCY = "cache.read_latency";
 
 /** IndexedDB write latency for CID store */
 export const CACHE_WRITE_LATENCY = "cache.write_latency";
-
-/** IndexedDB database open time */
-export const CACHE_DB_OPEN = "cache.db_open";
 
 // ── Chain spec loading ─────────────────────────────────────────
 

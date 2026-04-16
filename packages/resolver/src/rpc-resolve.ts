@@ -1,14 +1,13 @@
 // dot.li — Trusted RPC-based dotNS resolver
 //
-// Fallback path that bypasses smoldot/light-client entirely and reads the
-// dotNS contract storage directly from a public Asset Hub Paseo RPC node
-// over WSS JSON-RPC. This trades trustlessness for reliability + speed —
-// used when smoldot can't sync or the user would rather not wait.
+// Reads the dotNS contract storage directly from a public Asset Hub Paseo
+// RPC node over WSS JSON-RPC. This trades trustlessness for speed — used
+// when the user chooses gateway mode.
 //
 // Intentionally does NOT import from `./smoldot` so Vite can tree-shake the
 // smoldot worker out of any bundle that only pulls in this module.
 
-import { createClient, Binary, type PolkadotClient } from "polkadot-api";
+import { createClient, type PolkadotClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws-provider";
 import {
   ASSET_HUB_PASEO_RPC_ENDPOINTS,
@@ -17,18 +16,11 @@ import {
 } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { dur } from "@dotli/shared/perf";
-import {
-  namehash,
-  computeMappingSlot,
-  addToSlot,
-  toHex,
-  extractAddress,
-  decodeBytesSlot,
-  decodeIpfsContenthash,
-} from "./abi";
+import { namehash, toHex, decodeIpfsContenthash } from "./abi";
+import { readMappingBytes, readMappingAddress } from "./storage";
+import type { StatusCallback, UnsafeApi } from "./storage";
 
-export type StatusCallback = (status: string) => void;
-type UnsafeApi = ReturnType<PolkadotClient["getUnsafeApi"]>;
+export type { StatusCallback } from "./storage";
 
 // ── Client lifecycle ─────────────────────────────────────────
 
@@ -81,97 +73,6 @@ async function doCreateClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
 
   onStatus?.("Connected to Asset Hub RPC");
   return apiInstance;
-}
-
-// ── Storage reads (mirror of smoldot-based resolver) ────────
-
-function extractBytes(result: unknown): Uint8Array | null {
-  if (result === null || result === undefined) {
-    return null;
-  }
-  if (result instanceof Uint8Array) {
-    return result;
-  }
-  if (typeof result !== "object") {
-    return null;
-  }
-  const obj = result as Record<string, unknown>;
-  if (typeof obj.asBytes === "function") {
-    return new Uint8Array((result as Binary).asBytes());
-  }
-  if ("success" in obj) {
-    if (obj.success !== true) {
-      return null;
-    }
-    return extractBytes(obj.value);
-  }
-  if ("value" in obj) {
-    return extractBytes(obj.value);
-  }
-  return null;
-}
-
-async function readStorageSlot(
-  api: UnsafeApi,
-  contractAddress: string,
-  slotKey: `0x${string}`,
-): Promise<Uint8Array | null> {
-  const result: unknown = await api.apis.ReviveApi.get_storage(
-    Binary.fromHex(contractAddress as `0x${string}`),
-    Binary.fromHex(slotKey),
-    { at: "best" },
-  );
-  return extractBytes(result);
-}
-
-async function readMappingAddress(
-  api: UnsafeApi,
-  contractAddress: string,
-  mappingKey: `0x${string}`,
-  mappingSlot: number,
-): Promise<string | null> {
-  const slotKey = computeMappingSlot(mappingKey, mappingSlot);
-  const data = await readStorageSlot(api, contractAddress, slotKey);
-  if (data === null) {
-    return null;
-  }
-  const address = extractAddress(data);
-  if (address === "0x0000000000000000000000000000000000000000") {
-    return null;
-  }
-  return address;
-}
-
-async function readMappingBytes(
-  api: UnsafeApi,
-  contractAddress: string,
-  mappingKey: `0x${string}`,
-  mappingSlot: number,
-): Promise<Uint8Array | null> {
-  const baseSlotKey = computeMappingSlot(mappingKey, mappingSlot);
-  const baseData = await readStorageSlot(api, contractAddress, baseSlotKey);
-  if (baseData === null) {
-    return null;
-  }
-  const decoded = decodeBytesSlot(baseData, baseSlotKey);
-  if (decoded === null) {
-    return null;
-  }
-  if (decoded.inline) {
-    return decoded.data;
-  }
-  const slotsNeeded = Math.ceil(decoded.length / 32);
-  const result = new Uint8Array(decoded.length);
-  for (let i = 0; i < slotsNeeded; i++) {
-    const slotKey = addToSlot(decoded.dataSlot, i);
-    const slotData = await readStorageSlot(api, contractAddress, slotKey);
-    if (slotData !== null) {
-      const offset = i * 32;
-      const copyLen = Math.min(32, decoded.length - offset);
-      result.set(slotData.slice(0, copyLen), offset);
-    }
-  }
-  return result;
 }
 
 // ── Public API ───────────────────────────────────────────────

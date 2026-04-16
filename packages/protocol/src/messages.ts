@@ -77,18 +77,6 @@ export interface ProtocolAuthStorageChangedEnvelope {
   value: string | null;
 }
 
-/**
- * Early "hello" envelope the iframe fires at the very top of its init
- * routine, before any smoldot / SharedWorker work. Lets the host read
- * shared state (e.g. "has smoldot ever synced in this storage partition")
- * without having to wait for the full `ready` signal.
- */
-export interface ProtocolHelloEnvelope {
-  namespace: "dotli:protocol";
-  kind: "hello";
-  smoldotEverSynced: boolean;
-}
-
 export type ProtocolEnvelope =
   | ProtocolRequestEnvelope
   | ProtocolProgressEnvelope
@@ -97,8 +85,7 @@ export type ProtocolEnvelope =
   | ProtocolChainMessageEnvelope
   | ProtocolChainHaltEnvelope
   | ProtocolReadyEnvelope
-  | ProtocolAuthStorageChangedEnvelope
-  | ProtocolHelloEnvelope;
+  | ProtocolAuthStorageChangedEnvelope;
 
 const VALID_KINDS = new Set([
   "request",
@@ -108,7 +95,6 @@ const VALID_KINDS = new Set([
   "chain-halt",
   "ready",
   "auth-storage-changed",
-  "hello",
 ]);
 
 export function isProtocolEnvelope(value: unknown): value is ProtocolEnvelope {

@@ -489,101 +489,40 @@ async function fetchViaGateway(
 }
 
 /**
- * Fetch content by CID.
+ * Fetch content by CID using the specified mode.
  *
- * Default: tries P2P first. If P2P hasn't resolved after P2P_RACE_GATEWAY_DELAY,
- * starts a gateway fetch in parallel and takes whichever resolves first.
+ * - `"p2p"` (default): Helia/bitswap from Bulletin Chain peers
+ * - `"gateway"`: HTTP fetch from IPFS gateway
  *
- * When `options.preferGateway` is true, skips P2P entirely and goes straight
- * to the IPFS gateway — used by the host's "Use gateway instead" opt-out
- * when the user is OK with fetching content from a trusted IPFS endpoint
- * rather than resolving it over the P2P network.
+ * No fallback between modes — if the chosen path fails, it fails.
  */
 export async function fetchArchive(
   cidString: string,
   onStatus?: StatusCallback,
-  options?: { preferGateway?: boolean },
+  options?: { useGateway?: boolean },
 ): Promise<FetchResult> {
   performance.mark("dotli:fetch:start");
   const stopFetch = m.timer(S.CONTENT_FETCH);
-
-  // Gateway-only path (user opted in on the host page).
-  if (options?.preferGateway === true) {
-    try {
-      const result = await fetchViaGateway(cidString, onStatus);
-      performance.mark("dotli:fetch:end");
-      m.tag("content_method", "gateway");
-      m.count("content.gateway_prefer");
-      measureContentSize(result);
-      stopFetch();
-      return result;
-    } catch (gwErr) {
-      performance.mark("dotli:fetch:end");
-      stopFetch();
-      if (gwErr instanceof Error) {
-        log.error(`[dot.li fetch] Gateway (prefer) failed: ${gwErr.message}`);
-      }
-      throw gwErr;
-    }
-  }
-
-  // Try P2P, race with gateway after a delay
-  let gatewayTimer: ReturnType<typeof setTimeout> | undefined;
-  const raceState = { gatewayStarted: false };
+  const method = options?.useGateway === true ? "gateway" : "p2p";
+  m.tag("content_method", method);
 
   try {
-    const result = await Promise.race([
-      fetchViaP2P(cidString, onStatus),
-      new Promise<FetchResult>((_resolve, reject) => {
-        gatewayTimer = setTimeout(() => {
-          raceState.gatewayStarted = true;
-          log.warn(
-            `[dot.li fetch] P2P still running after ${String(TIMEOUTS.P2P_RACE_GATEWAY_DELAY / 1000)}s, racing gateway...`,
-          );
-          onStatus?.("Still loading — trying gateway in parallel...");
-          fetchViaGateway(cidString, onStatus).then(_resolve, reject);
-        }, TIMEOUTS.P2P_RACE_GATEWAY_DELAY);
-      }),
-    ]);
-    clearTimeout(gatewayTimer);
+    const result =
+      method === "gateway"
+        ? await fetchViaGateway(cidString, onStatus)
+        : await fetchViaP2P(cidString, onStatus);
     performance.mark("dotli:fetch:end");
-    log.warn("[dot.li fetch] Content fetched successfully");
-    m.tag("content_method", raceState.gatewayStarted ? "gateway" : "p2p");
+    log.warn(`[dot.li fetch] Content fetched via ${method}`);
     measureContentSize(result);
     stopFetch();
     return result;
-  } catch (p2pErr: unknown) {
-    clearTimeout(gatewayTimer);
-    if (p2pErr instanceof AggregateError && Array.isArray(p2pErr.errors)) {
-      const reasons = (p2pErr.errors as unknown[])
-        .map((e) => (e instanceof Error ? e.message : String(e)))
-        .join("; ");
-      log.error(
-        `[dot.li fetch] P2P failed (${String(p2pErr.errors.length)} broker error(s)): ${reasons}`,
-      );
-    } else if (p2pErr instanceof Error) {
-      log.error(`[dot.li fetch] P2P failed: ${p2pErr.message}`);
-    }
-  }
-
-  // Full fallback: both P2P and raced gateway failed (or gateway wasn't started)
-  log.warn("[dot.li fetch] Falling back to IPFS gateway...");
-  onStatus?.("P2P unavailable, trying IPFS gateway...");
-  m.count(S.CONTENT_GATEWAY_FALLBACK);
-  try {
-    const result = await fetchViaGateway(cidString, onStatus);
-    performance.mark("dotli:fetch:end");
-    m.tag("content_method", "gateway");
-    measureContentSize(result);
-    stopFetch();
-    return result;
-  } catch (gwErr) {
+  } catch (err) {
     performance.mark("dotli:fetch:end");
     stopFetch();
-    if (gwErr instanceof Error) {
-      log.error(`[dot.li fetch] Gateway also failed: ${gwErr.message}`);
+    if (err instanceof Error) {
+      log.error(`[dot.li fetch] ${method} failed: ${err.message}`);
     }
-    throw gwErr;
+    throw err;
   }
 }
 

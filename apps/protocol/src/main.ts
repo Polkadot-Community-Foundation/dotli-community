@@ -1,9 +1,8 @@
 // dot.li — Protocol host entry point
 //
-// Three-mode initialization:
+// Two modes, selected explicitly via `?mode=` URL parameter:
 //   1. SharedWorker mode — smoldot runs in a SharedWorker shared across tabs
-//   2. Leader election mode — Web Locks ensure one leader; followers relay via BroadcastChannel
-//   3. Direct mode — current behavior (fallback when no coordination APIs available)
+//   2. Direct mode — smoldot runs in this iframe with no cross-tab coordination
 
 // Reload once on chunk load failure (stale HTML referencing deleted assets).
 window.addEventListener("vite:preloadError", () => {
@@ -271,54 +270,6 @@ function bindSharedAuthListener(): void {
   });
 }
 
-// ── Smoldot "ever synced" flag ───────────────────────────────
-//
-// Stored in THIS iframe's localStorage (at `host.{BASE_DOMAIN}`) so it
-// lives in the same storage partition as smoldot's own chain DB and is
-// shared across every `*.{BASE_DOMAIN}` subdomain that embeds this frame
-// (in any browser that doesn't partition third-party iframe storage).
-
-const SMOLDOT_EVER_SYNCED_KEY = "dotli:smoldot-ever-synced";
-
-function hasSmoldotEverSynced(): boolean {
-  try {
-    return localStorage.getItem(SMOLDOT_EVER_SYNCED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function markSmoldotEverSynced(): void {
-  try {
-    if (localStorage.getItem(SMOLDOT_EVER_SYNCED_KEY) !== "1") {
-      localStorage.setItem(SMOLDOT_EVER_SYNCED_KEY, "1");
-      log.warn(
-        "[dot.li protocol] Recorded first successful smoldot sync in this partition",
-      );
-    }
-  } catch {
-    /* storage may be blocked — the flag is purely an optimisation */
-  }
-}
-
-/**
- * Fire the early `hello` envelope — lets the parent host learn the
- * current `smoldotEverSynced` state without waiting for the full `ready`
- * handshake (which is gated on smoldot presync completing).
- */
-function signalHello(): void {
-  if (window.parent !== window) {
-    window.parent.postMessage(
-      {
-        namespace: "dotli:protocol",
-        kind: "hello",
-        smoldotEverSynced: hasSmoldotEverSynced(),
-      } as const,
-      "*",
-    );
-  }
-}
-
 function signalReady(): void {
   if (window.parent !== window) {
     window.parent.postMessage(
@@ -328,69 +279,71 @@ function signalReady(): void {
   }
 }
 
-// ── Mode detection + initialization ──────────────────────────
+// ── Mode initialization (explicit, no auto-detection) ───────
+
+function getRequestedMode(): "shared-worker" | "direct" | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get("mode");
+    if (mode === "shared-worker" || mode === "direct") {
+      return mode;
+    }
+  } catch {
+    // URL parsing failed
+  }
+  // No mode param → iframe was loaded for shared auth only, not smoldot
+  return null;
+}
 
 async function init(): Promise<void> {
-  const stopInit = m.timer(S.PROTOCOL_INIT);
+  const mode = getRequestedMode();
 
-  // Fire the `hello` envelope immediately — before any mode detection
-  // or smoldot setup. This is what the host races against when deciding
-  // whether smoldot is warm enough to commit to.
-  signalHello();
-
-  log.warn("[dot.li protocol] Detecting best coordination mode...");
-  log.warn(
-    `[dot.li protocol]   SharedWorker: ${typeof SharedWorker !== "undefined" ? "available" : "unavailable"}`,
-  );
-  log.warn(
-    `[dot.li protocol]   Web Locks: ${typeof navigator.locks !== "undefined" ? "available" : "unavailable"}`,
-  );
-  log.warn(
-    `[dot.li protocol]   BroadcastChannel: ${typeof BroadcastChannel !== "undefined" ? "available" : "unavailable"}`,
-  );
-
-  // Mode 1: SharedWorker (best — persists across navigations, single instance)
-  if (typeof SharedWorker !== "undefined") {
-    try {
-      log.warn("[dot.li protocol] Attempting SharedWorker mode...");
-      await initSharedWorkerMode();
-      m.tag("protocol_mode", "shared_worker");
-      m.count(S.PROTOCOL_MODE, { mode: "shared_worker" });
-      stopInit();
-      return;
-    } catch (err) {
-      m.count(S.PROTOCOL_SW_TIMEOUT);
-      m.breadcrumb("SharedWorker failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      log.warn(
-        "[dot.li protocol] SharedWorker failed, falling back:",
-        err instanceof Error ? err.message : err,
-      );
-    }
-  }
-
-  // Mode 2: Leader election (good — prevents duplicate smoldot across tabs)
-  if (
-    typeof navigator.locks !== "undefined" &&
-    typeof BroadcastChannel !== "undefined"
-  ) {
-    log.warn("[dot.li protocol] Using leader election mode...");
-    await initLeaderElectionMode();
-    m.tag("protocol_mode", "leader_election");
-    m.count(S.PROTOCOL_MODE, { mode: "leader_election" });
-    stopInit();
+  // When no mode is requested, the iframe is only serving shared auth
+  // storage requests (localStorage). No smoldot needed.
+  if (mode === null) {
+    log.warn(
+      "[dot.li protocol] No mode requested — auth-only iframe, skipping smoldot",
+    );
+    signalReady();
     return;
   }
 
-  // Mode 3: Direct (fallback — current behavior)
-  log.warn(
-    "[dot.li protocol] No coordination APIs available, using direct mode",
-  );
-  initDirectMode();
-  m.tag("protocol_mode", "direct");
-  m.count(S.PROTOCOL_MODE, { mode: "direct" });
+  const stopInit = m.timer(S.PROTOCOL_INIT);
+  log.warn(`[dot.li protocol] Requested mode: ${mode}`);
+
+  if (mode === "shared-worker") {
+    if (typeof SharedWorker === "undefined") {
+      const msg = "SharedWorker is not available in this browser";
+      log.error(`[dot.li protocol] ${msg}`);
+      signalError(msg);
+      stopInit();
+      return;
+    }
+    await initSharedWorkerMode();
+    m.tag("protocol_mode", "shared_worker");
+    m.count(S.PROTOCOL_MODE, { mode: "shared_worker" });
+  } else {
+    initDirectMode();
+    m.tag("protocol_mode", "direct");
+    m.count(S.PROTOCOL_MODE, { mode: "direct" });
+  }
+
   stopInit();
+}
+
+function signalError(message: string): void {
+  if (window.parent !== window) {
+    window.parent.postMessage(
+      {
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: "__init__",
+        ok: false,
+        error: message,
+      } as const,
+      "*",
+    );
+  }
 }
 
 // ── Mode 1: SharedWorker relay ───────────────────────────────
@@ -451,13 +404,6 @@ async function initSharedWorkerMode(): Promise<void> {
     "[dot.li protocol] Smoldot runs in SharedWorker, persists across navigations",
   );
 
-  // SharedWorker only signals ready after its own presync completes,
-  // which includes one successful `resolveDotName` run against the live
-  // chain — so at this point smoldot has at least one successful sync
-  // on record in this storage partition. Persist that so the next page
-  // load can commit to the smoldot path synchronously.
-  markSmoldotEverSynced();
-
   // Relay: parent postMessage → SharedWorker
   window.addEventListener("message", (event: MessageEvent) => {
     const data: unknown = event.data;
@@ -505,227 +451,7 @@ async function initSharedWorkerMode(): Promise<void> {
   });
 }
 
-// ── Mode 2: Leader election (Web Locks + BroadcastChannel) ───
-
-const LOCK_NAME = "dotli:smoldot-leader";
-const BC_CHANNEL = "dotli:protocol-bus";
-
-// BroadcastChannel message types
-interface BCFollowerRequest {
-  type: "bc:follower-request";
-  followerId: string;
-  envelope: ProtocolRequestEnvelope;
-  origin: string;
-}
-
-interface BCLeaderResponse {
-  type: "bc:leader-response";
-  followerId: string;
-  envelope: ProtocolEnvelope;
-}
-
-type BCMessage = BCFollowerRequest | BCLeaderResponse;
-
-async function initLeaderElectionMode(): Promise<void> {
-  const bc = new BroadcastChannel(BC_CHANNEL);
-
-  // Check if a leader already exists
-  const lockState = await navigator.locks.query();
-  const leaderExists =
-    lockState.held?.some((l) => l.name === LOCK_NAME) === true;
-  log.warn(
-    `[dot.li protocol] Leader lock "${LOCK_NAME}" currently held: ${String(leaderExists)}`,
-  );
-
-  if (!leaderExists) {
-    // Try to become leader (non-blocking)
-    const acquired = await new Promise<boolean>((resolve) => {
-      void navigator.locks.request(LOCK_NAME, { ifAvailable: true }, (lock) => {
-        if (lock === null) {
-          resolve(false);
-          return undefined;
-        }
-        resolve(true);
-        // Hold lock until tab/iframe closes (never resolves intentionally)
-        return new Promise<void>((_resolve) => {
-          /* held indefinitely */
-        });
-      });
-    });
-
-    if (acquired) {
-      initLeaderMode(bc);
-      return;
-    }
-  }
-
-  // Leader exists or we lost the race — run as follower
-  initFollowerMode(bc);
-}
-
-function initLeaderMode(bc: BroadcastChannel): void {
-  log.warn("[dot.li protocol] === LEADER ELECTION MODE: LEADER ===");
-  log.warn(
-    "[dot.li protocol] Smoldot runs in this iframe, followers relay via BroadcastChannel",
-  );
-
-  // Initialize engine (same as direct mode)
-  const engine = createEngine();
-
-  // Handle parent postMessage requests (from our own host shell)
-  window.addEventListener("message", (event: MessageEvent) => {
-    const data: unknown = event.data;
-    if (!isProtocolEnvelope(data) || data.kind !== "request") {
-      return;
-    }
-    if (isSharedAuthRequestMethod(data.method)) {
-      return;
-    }
-    if (!isAllowedOrigin(event.origin)) {
-      return;
-    }
-
-    void engine
-      .handleRequest(data, event.origin, (response) => {
-        postToSource(event.source, event.origin, response);
-      })
-      .catch((error: unknown) => {
-        postToSource(event.source, event.origin, {
-          namespace: "dotli:protocol",
-          kind: "response",
-          id: data.id,
-          ok: false,
-          error: serializeError(error),
-        });
-      });
-  });
-
-  // Handle follower requests via BroadcastChannel
-  bc.addEventListener("message", (event: MessageEvent) => {
-    const msg = event.data as BCMessage;
-    if (msg.type !== "bc:follower-request") {
-      return;
-    }
-
-    void engine
-      .handleRequest(msg.envelope, msg.origin, (response) => {
-        const reply: BCLeaderResponse = {
-          type: "bc:leader-response",
-          followerId: msg.followerId,
-          envelope: response,
-        };
-        bc.postMessage(reply);
-      })
-      .catch((error: unknown) => {
-        const reply: BCLeaderResponse = {
-          type: "bc:leader-response",
-          followerId: msg.followerId,
-          envelope: {
-            namespace: "dotli:protocol",
-            kind: "response",
-            id: msg.envelope.id,
-            ok: false,
-            error: serializeError(error),
-          },
-        };
-        bc.postMessage(reply);
-      });
-  });
-
-  signalReady();
-
-  window.addEventListener("beforeunload", () => {
-    engine.cleanup();
-    bc.close();
-  });
-}
-
-function initFollowerMode(bc: BroadcastChannel): void {
-  log.warn("[dot.li protocol] === LEADER ELECTION MODE: FOLLOWER ===");
-  log.warn(
-    "[dot.li protocol] Requests will be relayed to leader via BroadcastChannel",
-  );
-
-  const followerId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  const pending = new Map<
-    string,
-    { source: MessageEventSource | null; origin: string }
-  >();
-
-  // Forward parent requests to leader via BroadcastChannel
-  window.addEventListener("message", (event: MessageEvent) => {
-    const data: unknown = event.data;
-    if (!isProtocolEnvelope(data) || data.kind !== "request") {
-      return;
-    }
-    if (isSharedAuthRequestMethod(data.method)) {
-      return;
-    }
-    if (!isAllowedOrigin(event.origin)) {
-      return;
-    }
-
-    pending.set(data.id, { source: event.source, origin: event.origin });
-    log.warn(
-      `[dot.li protocol] FOLLOWER: relaying ${data.method} (id=${data.id}) to leader`,
-    );
-    const msg: BCFollowerRequest = {
-      type: "bc:follower-request",
-      followerId,
-      envelope: data,
-      origin: event.origin,
-    };
-    bc.postMessage(msg);
-  });
-
-  // Forward leader responses back to parent
-  bc.addEventListener("message", (event: MessageEvent) => {
-    const msg = event.data as BCMessage;
-    if (msg.type !== "bc:leader-response") {
-      return;
-    }
-    if (msg.followerId !== followerId) {
-      return;
-    }
-
-    const envelope = msg.envelope;
-    // Route based on envelope type
-    if (envelope.kind === "response" || envelope.kind === "progress") {
-      const req = pending.get(envelope.id);
-      if (req) {
-        postToSource(req.source, req.origin, envelope);
-        if (envelope.kind === "response") {
-          pending.delete(envelope.id);
-        }
-      }
-    } else if (envelope.kind === "chain-message") {
-      // Chain messages go to parent (the host shell routes them)
-      if (window.parent !== window) {
-        window.parent.postMessage(envelope, "*");
-      }
-    }
-  });
-
-  signalReady();
-
-  // Queue for promotion — if leader dies, we take over
-  void navigator.locks.request(LOCK_NAME, () => {
-    log.warn("[dot.li protocol] Leader lock acquired, promoting...");
-    bc.close();
-    // Reload to start fresh as leader. The parent's protocol client
-    // will receive a new "ready" signal after reload.
-    window.location.reload();
-    return new Promise<void>((_resolve) => {
-      /* held until reload */
-    });
-  });
-
-  window.addEventListener("beforeunload", () => {
-    bc.close();
-  });
-}
-
-// ── Mode 3: Direct mode (fallback) ──────────────────────────
+// ── Direct mode ─────────────────────────────────────────────
 
 function initDirectMode(): void {
   log.warn("[dot.li protocol] === DIRECT MODE ===");
@@ -773,7 +499,7 @@ function initDirectMode(): void {
   });
 }
 
-// ── Protocol engine (shared by leader + direct modes) ────────
+// ── Protocol engine (used by direct mode) ────────────────────
 
 type ResponseCallback = (envelope: ProtocolEnvelope) => void;
 
@@ -938,10 +664,6 @@ function createEngine(): ProtocolEngine {
             message,
           });
         });
-        // Successful resolveDotName in direct/leader mode means smoldot
-        // successfully reached the chain in this partition — persist
-        // the flag so next visit can take the smoldot path synchronously.
-        markSmoldotEverSynced();
         respond({
           namespace: "dotli:protocol",
           kind: "response",
@@ -1080,6 +802,6 @@ bindSharedAuthListener();
 bindSharedAuthBroadcastRelay();
 
 void init().catch((err: unknown) => {
-  log.error("[dot.li protocol] Init failed, falling back to direct mode:", err);
-  initDirectMode();
+  log.error("[dot.li protocol] Init failed:", err);
+  signalError(err instanceof Error ? err.message : String(err));
 });

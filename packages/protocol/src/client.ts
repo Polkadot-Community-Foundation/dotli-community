@@ -51,58 +51,15 @@ let listenerBound = false;
 let protocolReady = false;
 let pendingReadyResolvers: (() => void)[] = [];
 
-/**
- * Last-known `smoldotEverSynced` hint reported by the protocol iframe.
- * `null` until the iframe's early `hello` envelope arrives. The iframe's
- * localStorage at `host.{BASE_DOMAIN}` is the source of truth — shared
- * across every `*.{BASE_DOMAIN}` subdomain in the same storage partition.
- */
-let smoldotHintState: boolean | null = null;
-const smoldotHintWaiters: ((value: boolean) => void)[] = [];
+/** P2P sub-mode to pass to the protocol iframe. `null` means the iframe
+ *  is only needed for shared auth — no smoldot. */
+let protocolSubMode: "shared-worker" | "direct" | null = null;
 
 /**
- * Synchronous peek at the cached smoldot-ever-synced hint. Returns
- * `null` when the `hello` envelope hasn't been received yet.
+ * Set the P2P sub-mode for the protocol iframe.
  */
-export function peekSmoldotEverSynced(): boolean | null {
-  return smoldotHintState;
-}
-
-/**
- * Wait for the iframe's `hello` envelope and resolve with the
- * `smoldotEverSynced` flag. The iframe fires `hello` at the very top
- * of its init routine — before any smoldot / SharedWorker work — so
- * this promise usually resolves well under a second. Ensures the
- * iframe is actually loading by kicking `ensureProtocolFrame()` in
- * parallel and forwarding its rejections, so a broken iframe never
- * hangs the caller indefinitely.
- */
-export function waitForSmoldotEverSynced(): Promise<boolean> {
-  bindMessageListener();
-  if (smoldotHintState !== null) {
-    return Promise.resolve(smoldotHintState);
-  }
-  // Make sure the iframe is being created so the hello will actually
-  // arrive. Forward its rejection so this waiter fails fast if the
-  // iframe can't load at all (rather than hanging forever).
-  const iframeStart = ensureProtocolFrame();
-  return new Promise<boolean>((resolve, reject) => {
-    let settled = false;
-    smoldotHintWaiters.push((value: boolean) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      resolve(value);
-    });
-    iframeStart.catch((err: unknown) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      reject(err instanceof Error ? err : new Error(String(err)));
-    });
-  });
+export function setProtocolSubMode(mode: "shared-worker" | "direct"): void {
+  protocolSubMode = mode;
 }
 
 export function getProtocolOrigin(): string {
@@ -225,14 +182,6 @@ function bindMessageListener(): void {
         }
         return;
       }
-      case "hello": {
-        smoldotHintState = msg.smoldotEverSynced;
-        const waiters = smoldotHintWaiters.splice(0);
-        for (const waiter of waiters) {
-          waiter(msg.smoldotEverSynced);
-        }
-        return;
-      }
     }
   });
 }
@@ -250,7 +199,10 @@ const IFRAME_MAX_RETRIES = 2;
 function createHostIframe(): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const iframe = document.createElement("iframe");
-    iframe.src = getProtocolOrigin();
+    iframe.src =
+      protocolSubMode !== null
+        ? `${getProtocolOrigin()}?mode=${protocolSubMode}`
+        : getProtocolOrigin();
     iframe.setAttribute("aria-hidden", "true");
     iframe.tabIndex = -1;
     iframe.style.cssText =

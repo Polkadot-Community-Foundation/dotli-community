@@ -418,6 +418,140 @@
   height: 18px;
 }
 
+/* ── Mode Button & Popover ─────────────── */
+#mode-button {
+  position: relative;
+}
+#mode-button.gateway-mode::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #eab308;
+}
+.mode-popover {
+  display: none;
+  position: fixed;
+  top: 44px;
+  right: 12px;
+  width: 260px;
+  background: #171717;
+  border: 1px solid #404040;
+  border-radius: 12px;
+  z-index: 1500;
+  overflow: hidden;
+}
+.mode-popover.open {
+  display: block;
+}
+.mode-popover-header {
+  padding: 10px 14px 6px;
+  font-size: 0.7rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.mode-popover-hint {
+  padding: 4px 14px 10px;
+  font-size: 0.65rem;
+  color: #555;
+}
+.mode-popover-divider {
+  height: 1px;
+  background: #2a2a2a;
+  margin: 6px 14px;
+}
+.mode-popover-section {
+  padding: 4px 14px 2px;
+  font-size: 0.65rem;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+/* Radio rows */
+.mode-radio-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.mode-radio-row:hover {
+  background: #222;
+}
+.mode-radio-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.mode-radio-dot {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #555;
+  margin-top: 1px;
+  transition: border-color 0.15s;
+  position: relative;
+}
+.mode-radio-row.selected .mode-radio-dot {
+  border-color: #4ade80;
+}
+.mode-radio-row.selected .mode-radio-dot::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+}
+.mode-radio-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.mode-radio-label {
+  font-size: 0.8rem;
+  color: #e0e0e0;
+}
+.mode-radio-desc {
+  font-size: 0.65rem;
+  color: #666;
+}
+/* Cache toggle rows */
+.mode-cache-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 14px;
+}
+.mode-cache-label {
+  font-size: 0.78rem;
+  color: #e0e0e0;
+}
+.mode-clear-btn {
+  width: 100%;
+  padding: 5px 0;
+  background: none;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #aaa;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.mode-clear-btn:hover {
+  border-color: #555;
+  color: #e0e0e0;
+}
+
 /* ── Permissions Button State ───────────── */
 #permissions-button {
   position: relative;

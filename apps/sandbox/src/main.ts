@@ -15,6 +15,7 @@ window.addEventListener("vite:preloadError", () => {
 import "@dotli/ui/styles.css";
 import { initSentry } from "@dotli/metrics/sentry";
 import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
+import type { FetchResult } from "@dotli/content/fetch";
 import { isEncrypted, decryptContent } from "@dotli/content/decrypt";
 import {
   showStatus as showStatusLocal,
@@ -302,21 +303,33 @@ async function main(): Promise<void> {
   log.warn(`[dot.li app] CID from hostname: ${cid}`);
   showStatus("Loading content...");
 
-  // Register SW + pre-load chunks in parallel
+  // Read resolution mode and cache settings from URL parameters set by the host.
+  const urlParams = new URL(window.location.href).searchParams;
+  const urlMode = urlParams.get("mode");
+  const isCentralized = urlMode === "gateway";
+  const skipArchiveCache = urlParams.get("skipArchiveCache") === "1";
+
+  // Register SW + pre-load chunks in parallel.
+  // The fetch chunk is only pre-loaded in P2P mode — in gateway mode
+  // it is imported lazily so Vite can split out Helia/libp2p.
   const stopSw = m.timer(S.APP_SW_REGISTER);
   const swReady = registerAppServiceWorker().then((v) => {
     stopSw();
     return v;
   });
   const renderChunkPromise = import("@dotli/ui/render");
-  const fetchChunkPromise = import("@dotli/content/fetch");
+  const fetchChunkPromise = isCentralized
+    ? null
+    : import("@dotli/content/fetch");
 
   // Wait for SW before cache check
   await swReady;
   log.warn(`[dot.li app] SW ready (${elapsed(T0)})`);
 
-  // Check SW cache first
-  const cachedFiles = await getCachedArchive(cid, cid);
+  // Check SW cache first (skip if user disabled content cache)
+  const cachedFiles = skipArchiveCache
+    ? null
+    : await getCachedArchive(cid, cid);
   if (cachedFiles) {
     log.warn(`[dot.li app] SW archive cache HIT (${elapsed(T0)})`);
 
@@ -360,28 +373,30 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Honor `?gateway=1` from the host (user opted into trusted IPFS gateway).
-  const preferGateway =
-    new URL(window.location.href).searchParams.get("gateway") === "1";
+  let result: FetchResult;
 
-  const { fetchArchive, ensureHelia, destroyHelia } = await fetchChunkPromise;
-  destroyHeliaFn = destroyHelia;
-
-  if (preferGateway) {
+  if (isCentralized) {
+    // Centralized mode: IPFS gateway fetch only — no Helia/libp2p loaded.
     log.warn(
-      `[dot.li app] SW archive cache MISS — user opted for IPFS gateway (${elapsed(T0)})`,
+      `[dot.li app] SW archive cache MISS — gateway mode, using IPFS gateway (${elapsed(T0)})`,
     );
     showStatus("Fetching via IPFS gateway...");
+    const { fetchArchive } = await import("@dotli/content/fetch");
+    result = await fetchArchive(cid, showStatus, { useGateway: true });
   } else {
+    // P2P mode: Helia/bitswap fetch — full P2P stack loaded.
     log.warn(
-      `[dot.li app] SW archive cache MISS — fetching via P2P (${elapsed(T0)})`,
+      `[dot.li app] SW archive cache MISS — P2P mode, fetching via Helia (${elapsed(T0)})`,
     );
     showStatus("Connecting to peers...");
+    const fetchChunk = await (fetchChunkPromise ??
+      import("@dotli/content/fetch"));
+    const { fetchArchive, ensureHelia, destroyHelia } = fetchChunk;
+    destroyHeliaFn = destroyHelia;
     await ensureHelia();
     log.warn(`[dot.li app] Helia P2P ready (${elapsed(T0)})`);
+    result = await fetchArchive(cid, showStatus);
   }
-
-  let result = await fetchArchive(cid, showStatus, { preferGateway });
   log.warn(`[dot.li app] Content fetched → ${result.type} (${elapsed(T0)})`);
 
   // Decrypt if the fetched content is an encrypted blob

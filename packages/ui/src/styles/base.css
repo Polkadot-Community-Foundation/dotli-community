@@ -129,6 +129,25 @@ body {
 .loading-hint.visible {
   opacity: 0.5;
 }
+.loading-hint-text {
+  display: block;
+}
+.loading-gateway-btn {
+  margin-top: 8px;
+  padding: 6px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: #eab308;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.loading-gateway-btn:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.05);
+}
 
 /* Gateway button */
 .loading-gateway {
