@@ -19,6 +19,9 @@
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean"
   },
+  "overrides": {
+    "smoldot": "3.0.0"
+  },
   "devDependencies": {
     "prettier": "^3.8.2",
     "turbo": "^2.9.6",

@@ -8,16 +8,19 @@
 // Chain DB persistence is handled by smoldot internally — we do NOT
 // manually save/load chain databases to IndexedDB.
 
+import type { AddChainOptions } from "polkadot-api/smoldot";
 import { start as startSmoldotDirect } from "polkadot-api/smoldot";
 import { startFromWorker } from "polkadot-api/smoldot/from-worker";
 import SmWorker from "polkadot-api/smoldot/worker?worker";
-import { getSmProvider } from "polkadot-api/sm-provider";
-import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 import {
   getPaseoChainSpec,
   getAssetHubPaseoChainSpec,
   getBulletinPaseoChainSpec,
+  getPeopleChainSpec,
+  getCustomRelayChainSpec,
 } from "./chain-specs";
+import { getSmProvider } from "polkadot-api/sm-provider";
+import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
@@ -193,6 +196,51 @@ export function makeNonRemovingChain(chain: SmoldotChain): SmoldotChain {
       /* intentional no-op: chain is a shared singleton */
     },
   };
+}
+
+// ── People Chain (for statement store / auth) ────────────────
+// Long-lived singleton used by the auth module for statement store
+// operations via smoldot.  The variant (westend-local or paseo)
+// is controlled by VITE_SS_PEOPLE_CHAIN.
+
+import { SS_RELAY_CHAIN } from "@dotli/config/config";
+
+let customRelayChainPromise: Promise<SmoldotChain> | null = null;
+let peopleChainPromise: Promise<SmoldotChain> | null = null;
+
+/**
+ * Get or create the People Chain parachain singleton.
+ * Enables the statement store protocol for P2P statement distribution.
+ */
+export function getPeopleChain(): Promise<SmoldotChain> {
+  if (peopleChainPromise !== null) {
+    return peopleChainPromise;
+  }
+
+  const relayPromise =
+    SS_RELAY_CHAIN !== undefined && SS_RELAY_CHAIN !== ""
+      ? (customRelayChainPromise ??= getCustomRelayChainSpec().then((spec) =>
+          getSmoldot().addChain({ chainSpec: spec }),
+        ))
+      : getRelayChain();
+
+  peopleChainPromise = Promise.all([relayPromise, getPeopleChainSpec()]).then(
+    ([relayChain, chainSpec]) =>
+      getSmoldot().addChain({
+        chainSpec,
+        potentialRelayChains: [relayChain],
+        statementStore: { maxSeenStatements: 65536 },
+      } as AddChainOptions & { statementStore: { maxSeenStatements: number } }),
+  );
+  return peopleChainPromise;
+}
+
+/**
+ * Get a JsonRpcProvider backed by the People Chain smoldot singleton.
+ * Used by the auth module as a drop-in replacement for the WS provider.
+ */
+export function getPeopleChainProvider(): JsonRpcProvider {
+  return getSmProvider(getPeopleChain().then(makeNonRemovingChain));
 }
 
 // ── Dedicated provider factories ─────────────────────────────

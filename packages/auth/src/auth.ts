@@ -21,7 +21,8 @@ import {
 import type { Statement } from "@novasamatech/sdk-statement";
 import { toHex } from "@novasamatech/host-api";
 import { getWsProvider } from "polkadot-api/ws-provider";
-import { SITE_ID } from "@dotli/config/config";
+import { getPeopleChainProvider } from "@dotli/resolver/smoldot";
+import { SITE_ID, SS_USE_SMOLDOT } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
@@ -180,9 +181,11 @@ export function initAuth(): void {
   const siteId = SITE_ID;
   const storage = createSharedAuthStorageAdapter(siteId);
   const lazyClient = createLazyClient(
-    getWsProvider([...SS_PASEO_STABLE_STAGE_ENDPOINTS], {
-      heartbeatTimeout: 120_000, // 2 minutes — default 40s is too aggressive through tunnels
-    }),
+    SS_USE_SMOLDOT
+      ? getPeopleChainProvider()
+      : getWsProvider([...SS_PASEO_STABLE_STAGE_ENDPOINTS], {
+          heartbeatTimeout: 120_000, // 2 minutes — default 40s is too aggressive through tunnels
+        }),
   );
 
   const rawStatementStore = createPapiStatementStoreAdapter(lazyClient);

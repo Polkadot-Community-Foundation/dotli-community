@@ -30,6 +30,29 @@ export const isLocalhost =
 
 export const SITE_ID: SiteId = isLocalhost ? "local.li" : BASE_DOMAIN;
 
+// --- Statement store provider --------------------------------------------
+
+/** Use smoldot light client for the statement store chain (default: false).
+ *  Set VITE_SS_USE_SMOLDOT=true to enable.
+ *  Default is false for now until all dependencies to make statement
+ *  store support in smoldot production-ready are in place, but can be
+ *  enabled in development for testing and feedback. */
+export const SS_USE_SMOLDOT =
+  (import.meta.env.VITE_SS_USE_SMOLDOT as string | undefined) === "true";
+
+/** Which people chain spec to use for the statement store via smoldot.
+ *  Value is the chain-spec file name without `.json`, e.g.
+ *  "people-westend-local" (default) or "next-people-paseo". */
+export const SS_PEOPLE_CHAIN: string =
+  (import.meta.env.VITE_SS_PEOPLE_CHAIN as string | undefined) ??
+  "next-people-paseo";
+
+/** Optional relay chain spec override for the statement store people chain.
+ *  Value is the chain-spec file name without `.json`, e.g. "westend-local".
+ *  When unset, the default Paseo relay chain is reused. */
+export const SS_RELAY_CHAIN: string | undefined =
+  (import.meta.env.VITE_SS_RELAY_CHAIN as string | undefined) ?? undefined;
+
 // --- Debug logging -------------------------------------------------------
 
 export const DEBUG =

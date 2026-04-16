@@ -25,6 +25,7 @@
     "@dotli/config": "workspace:*",
     "@dotli/metrics": "workspace:*",
     "@dotli/protocol": "workspace:*",
+    "@dotli/resolver": "workspace:*",
     "@dotli/shared": "workspace:*",
     "@novasamatech/host-api": "^0.6.17",
     "@novasamatech/host-papp": "^0.6.17",
