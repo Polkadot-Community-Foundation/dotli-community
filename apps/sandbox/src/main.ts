@@ -68,10 +68,11 @@ function notifyLoadingDone(): void {
  * Extract the CID from the hostname.
  *
  * Examples:
- *   "bafyrei1234.app.dot.li"     → "bafyrei1234"
- *   "bafyrei1234.app.localhost"   → "bafyrei1234"
- *   "app.dot.li"                  → null (bare app domain)
- *   "dot.li"                      → null
+ *   "bafyrei1234.app.dot.li"              → "bafyrei1234"
+ *   "bafyrei1234.app.dot.li.localhost"    → "bafyrei1234" (local_gateway)
+ *   "bafyrei1234.app.localhost"           → "bafyrei1234"
+ *   "app.dot.li"                          → null (bare app domain)
+ *   "dot.li"                              → null
  */
 function parseCidFromHostname(): string | null {
   const hostname = window.location.hostname;
@@ -80,6 +81,13 @@ function parseCidFromHostname(): string | null {
   const appSuffix = `.app.${BASE_DOMAIN}`;
   if (hostname.endsWith(appSuffix)) {
     const cid = hostname.slice(0, -appSuffix.length);
+    return cid || null;
+  }
+
+  // Local gateway: cid.app.{BASE_DOMAIN}.localhost
+  const gatewayAppSuffix = `.app.${BASE_DOMAIN}.localhost`;
+  if (hostname.endsWith(gatewayAppSuffix)) {
+    const cid = hostname.slice(0, -gatewayAppSuffix.length);
     return cid || null;
   }
 

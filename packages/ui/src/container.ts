@@ -722,6 +722,14 @@ function identifierToLabel(identifier: string): string {
 /** Build a full URL for a .dot product on the current environment. */
 function buildDotTargetUrl(label: string, pathname: string): string {
   const suffix = pathname ? "/" + pathname : "";
+  // Local gateway: HTTPS via Caddy (foo.dot.li.localhost).
+  if (
+    window.location.hostname === `${BASE_DOMAIN}.localhost` ||
+    window.location.hostname.endsWith(`.${BASE_DOMAIN}.localhost`)
+  ) {
+    const portSuffix = window.location.port ? `:${window.location.port}` : "";
+    return `${window.location.protocol}//${label}.${BASE_DOMAIN}.localhost${portSuffix}${suffix}`;
+  }
   if (isLocalhost) {
     return `http://${label}.localhost:${window.location.port}${suffix}`;
   }
@@ -730,6 +738,14 @@ function buildDotTargetUrl(label: string, pathname: string): string {
 
 /** Bare host origin without any product subdomain (e.g. `http://localhost:5173` or `https://dot.li`). */
 function getHostOrigin(): string {
+  // Local gateway: HTTPS via Caddy.
+  if (
+    window.location.hostname === `${BASE_DOMAIN}.localhost` ||
+    window.location.hostname.endsWith(`.${BASE_DOMAIN}.localhost`)
+  ) {
+    const portSuffix = window.location.port ? `:${window.location.port}` : "";
+    return `${window.location.protocol}//${BASE_DOMAIN}.localhost${portSuffix}`;
+  }
   if (isLocalhost) {
     return `http://localhost:${window.location.port}`;
   }

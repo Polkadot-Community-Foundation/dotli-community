@@ -70,6 +70,16 @@ export function setProtocolSubMode(
 
 export function getProtocolOrigin(): string {
   const hostname = window.location.hostname;
+  // Local gateway: page is served over HTTPS via Caddy (e.g.
+  // https://foo.dot.li.localhost or the bare https://dot.li.localhost
+  // landing page). Route the protocol iframe through the same gateway
+  // so we don't trip mixed-content blocks.
+  if (
+    hostname === `${BASE_DOMAIN}.localhost` ||
+    hostname.endsWith(`.${BASE_DOMAIN}.localhost`)
+  ) {
+    return `${window.location.protocol}//host.${BASE_DOMAIN}.localhost${window.location.port ? `:${window.location.port}` : ""}`;
+  }
   if (hostname === "localhost" || hostname.endsWith(".localhost")) {
     const port =
       window.location.port.length > 0 ? window.location.port : "5173";

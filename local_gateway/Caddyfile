@@ -1,0 +1,66 @@
+{
+	admin off
+	local_certs
+
+	# On-demand TLS lets us issue a fresh single-wildcard leaf for every
+	# hostname the browser asks for, which is the only way to cover
+	# arbitrary-depth dotns names (pr195.market.dot.li.localhost, etc.)
+	# since browsers only honor one leftmost wildcard per cert.
+	on_demand_tls {
+		ask http://127.0.0.1:9000/check
+	}
+
+	log {
+		level INFO
+		format console
+	}
+}
+
+# Ask endpoint for on-demand TLS. Only reachable from Caddy itself
+# (port 9000 is not exposed by docker-compose), so approve everything.
+:9000 {
+	respond 200
+}
+
+# Catch-all HTTPS. Routes by Host header to the pre-built static
+# bundles, mirroring production nginx:
+#   host.dot.li.localhost    → apps/protocol/dist  (shared protocol origin)
+#   *.app.dot.li.localhost   → apps/sandbox/dist   (CID-sandboxed app)
+#   (*.)dot.li.localhost     → apps/host/dist      (host shell / landing)
+https:// {
+	tls internal {
+		on_demand
+	}
+	encode gzip zstd
+
+	# Matcher order matters — first match wins. `host` matchers only
+	# cover a single label, so we use header_regexp to support nested
+	# dotns names (e.g. pr195.market.dot.li.localhost).
+
+	@protocol host host.dot.li.localhost
+	handle @protocol {
+		root * /srv/protocol
+		try_files {path} /index.html
+		file_server
+	}
+
+	@app header_regexp Host ^(.+)\.app\.dot\.li\.localhost$
+	handle @app {
+		root * /srv/sandbox
+		header /app-sw.js Service-Worker-Allowed "/"
+		try_files {path} /index.html
+		file_server
+	}
+
+	@host header_regexp Host ^(.+\.)?dot\.li\.localhost$
+	handle @host {
+		root * /srv/host
+		header /host-sw.js Service-Worker-Allowed "/"
+		try_files {path} /index.html
+		file_server
+	}
+
+	handle {
+		respond "Not a dot.li host" 404
+	}
+}
