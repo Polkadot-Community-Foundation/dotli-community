@@ -34,7 +34,11 @@ navigator.serviceWorker
     console.warn("[dot.li] SW registration failed:", err);
   });
 
-// Reload when a new SW takes control (skipWaiting + clientsClaim fired).
+// Reload only when an *updated* SW takes control, not on first activation.
+let hasController = !!navigator.serviceWorker.controller;
 navigator.serviceWorker.addEventListener("controllerchange", () => {
-  window.location.reload();
+  if (hasController) {
+    window.location.reload();
+  }
+  hasController = true;
 });
