@@ -14,6 +14,10 @@
 [data-theme="light"] .topbar-brand {
   color: #111;
 }
+[data-theme="light"] .topbar-beta {
+  background: rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.55);
+}
 [data-theme="light"] .topbar-url-pill {
   background: #f0f0f0;
   border-color: #ddd;
@@ -111,16 +115,37 @@
   color: #111;
 }
 [data-theme="light"] #status {
-  color: #666;
+  color: #1a1a1a;
 }
 [data-theme="light"] .loading-hint {
-  color: #b45309;
+  color: #78350f;
+}
+/* The base rule fades to 50% opacity so the hint doesn't visually compete
+   with the status text. Dark mode has a bright enough base color that 50%
+   still reads; on a near-white background 50% opacity amber washes out
+   completely. Bump to 0.95 for light theme. */
+[data-theme="light"] .loading-hint.visible {
+  opacity: 0.95;
+}
+[data-theme="light"] .loading-gateway-btn {
+  border-color: rgba(0, 0, 0, 0.25);
+  color: #78350f;
+}
+[data-theme="light"] .loading-gateway-btn:hover {
+  border-color: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.04);
 }
 [data-theme="light"] .loading-progress-bar {
   background: rgba(0, 0, 0, 0.06);
 }
 [data-theme="light"] .loading-progress-fill {
   background: rgba(0, 0, 0, 0.35);
+}
+/* Loading logo — dark-mode uses `fill: #fff` on the petals, which is
+   invisible on the light-theme cream body. Flip to near-black so the
+   animated logo actually shows during cold starts. */
+[data-theme="light"] .loading-petal {
+  fill: #111;
 }
 [data-theme="light"] .loading-progress-pct {
   color: #333;
@@ -279,6 +304,49 @@
 [data-theme="light"] .mode-clear-btn:hover {
   border-color: #bbb;
   color: #333;
+}
+[data-theme="light"] .mode-clear-btn:disabled:hover {
+  border-color: #ddd;
+  color: #666;
+}
+[data-theme="light"] .mode-clear-btn.mode-apply-dirty {
+  border-color: #16a34a;
+  color: #16a34a;
+}
+[data-theme="light"] .mode-clear-btn.mode-apply-dirty:hover {
+  border-color: #15803d;
+  color: #15803d;
+}
+[data-theme="light"] .mode-apply-warning {
+  color: #b45309;
+}
+
+/* Endpoint rows + custom-endpoints editor */
+[data-theme="light"] .mode-endpoint-row:hover {
+  background: #f5f5f5;
+}
+[data-theme="light"] .mode-endpoint-label {
+  color: #666;
+}
+[data-theme="light"] .mode-endpoint-value {
+  color: #333;
+}
+[data-theme="light"] .mode-custom-endpoint-label {
+  color: #666;
+}
+[data-theme="light"] .mode-custom-endpoint-textarea {
+  background: #fff;
+  color: #222;
+  border-color: #ddd;
+}
+[data-theme="light"] .mode-custom-endpoint-textarea::placeholder {
+  color: #aaa;
+}
+[data-theme="light"] .mode-custom-endpoint-hint {
+  color: #888;
+}
+[data-theme="light"] .mode-custom-endpoint-hint.invalid {
+  color: #b91c1c;
 }
 [data-theme="light"] .permissions-popover-footer {
   color: #999;

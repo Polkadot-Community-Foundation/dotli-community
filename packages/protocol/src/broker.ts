@@ -63,13 +63,24 @@ interface CachedBlock {
 
 type WireMode = "string" | "object";
 
+// Wire mode is fixed at broker construction time. Auto-detecting from
+// message shape (the previous behavior) let a malformed first payload
+// silently flip the broker into the wrong encoding for every
+// subsequent message — a single corrupted request could desync every
+// downstream session. We pin the default to "string" because that's
+// what every first-party consumer in this repo emits today (sm-provider
+// `sendJsonRpc` is always a JSON string). If a future consumer needs
+// the object wire, expose a constructor flag rather than sniffing — an
+// explicit toggle preserves the "no silent fallbacks" contract.
+const DEFAULT_WIRE_MODE: WireMode = "string";
+
 interface Session {
   id: string;
   onMessage: (message: string) => void;
   ownedTokens: Set<string>;
   connected: boolean;
-  /** Detected from the first inbound message: does this consumer speak strings or objects? */
-  wireMode: WireMode | null;
+  /** Set from `DEFAULT_WIRE_MODE` at session creation — never inferred later. */
+  wireMode: WireMode;
 }
 
 const TOKEN_METHODS = new Map<string, string>([
@@ -114,15 +125,18 @@ function isSubscriptionMessage(value: unknown): value is SubscriptionMessage {
 }
 
 /**
- * Detect wire mode from a message and parse it into an object.
- * polkadot-api raw-client ≥0.2.0 / sm-provider ≥0.2.1 use objects;
- * older versions use JSON strings.
+ * Parse an inbound message into a JS object without guessing wire mode.
+ * The sender must match the broker's configured wire mode; a shape
+ * mismatch is an error rather than a cue to flip the whole broker's
+ * encoding. Strings are still parsed for the object wire since some
+ * substrate clients serialize payloads inconsistently, but the result
+ * is always returned as an object.
  */
-function parseInbound(message: unknown): { parsed: unknown; mode: WireMode } {
+function parseInbound(message: unknown): unknown {
   if (typeof message === "string") {
-    return { parsed: JSON.parse(message), mode: "string" };
+    return JSON.parse(message);
   }
-  return { parsed: message, mode: "object" };
+  return message;
 }
 
 /** Encode a JS object into the given wire format. */
@@ -173,18 +187,17 @@ class ChainBroker {
   private readonly upstreamFollowTokens = new Map<string, SharedFollow>();
   private requestCounter = 0;
   private tokenCounter = 0;
-  /** Wire format used by the upstream sm-provider (detected on first message). */
-  private upstreamMode: WireMode = "string";
+  /** Wire format used by the upstream sm-provider — fixed at construction. */
+  private readonly upstreamMode: WireMode = DEFAULT_WIRE_MODE;
 
   constructor(provider: JsonRpcProvider, onEmpty: () => void) {
     this.provider = provider;
     this.onEmpty = onEmpty;
   }
 
-  /** Send a JSON-RPC object to a session in its detected wire format. */
+  /** Send a JSON-RPC object to a session in its configured wire format. */
   private sendToSession(session: Session, obj: unknown): void {
-    const mode = session.wireMode ?? "string";
-    session.onMessage(encode(obj, mode) as string);
+    session.onMessage(encode(obj, session.wireMode) as string);
   }
 
   /** Send a JSON-RPC object to the upstream provider in its detected wire format. */
@@ -209,7 +222,7 @@ class ChainBroker {
       onMessage,
       ownedTokens: new Set<string>(),
       connected: true,
-      wireMode: null,
+      wireMode: DEFAULT_WIRE_MODE,
     });
 
     return {
@@ -253,13 +266,13 @@ class ChainBroker {
       return;
     }
 
-    // Detect wire mode from first message and normalize to object.
-    // raw-client ≥0.2.0 sends objects; older versions send strings.
+    // Parse the inbound payload against the broker's configured wire
+    // mode. We do NOT mutate `session.wireMode` based on the message
+    // shape — that would let a malformed first payload permanently
+    // flip the encoding for every subsequent message on the session.
     let parsed: unknown;
     try {
-      const inbound = parseInbound(message);
-      parsed = inbound.parsed;
-      session.wireMode ??= inbound.mode;
+      parsed = parseInbound(message);
     } catch {
       brokerLog(`sendFromSession: invalid JSON from session ${sessionId}`);
       this.sendToSession(session, {
@@ -386,14 +399,42 @@ class ChainBroker {
   }
 
   private handleUpstreamMessage(message: string): void {
-    // sm-provider/proxy may pass strings OR parsed objects depending on version
+    // `upstreamMode` was fixed at construction, so don't overwrite it
+    // based on the observed shape — `parseInbound` just normalizes
+    // strings into objects for the downstream switch below.
     let parsed: unknown;
     try {
-      const inbound = parseInbound(message);
-      parsed = inbound.parsed;
-      this.upstreamMode = inbound.mode;
-    } catch {
-      brokerLog(`← upstream: unparseable message: ${message.slice(0, 200)}`);
+      parsed = parseInbound(message);
+    } catch (err: unknown) {
+      // An unparseable upstream message must NOT vanish silently — that
+      // would leave any pending request waiting for a reply that never
+      // arrives. Best-effort recover the JSON-RPC `id` from the raw text
+      // so we can reject the matching pending request.
+      const reason = err instanceof Error ? err.message : String(err);
+      brokerLog(
+        `← upstream: unparseable message: ${message.slice(0, 200)} (${reason})`,
+      );
+      const idMatch = /"id"\s*:\s*("?)([^",}\s]+)\1/.exec(message);
+      if (idMatch !== null) {
+        const candidates = [idMatch[2]];
+        for (const idKey of candidates) {
+          const pending = this.pending.get(idKey);
+          if (pending !== undefined) {
+            this.pending.delete(idKey);
+            const session = this.sessions.get(pending.sessionId);
+            if (session !== undefined) {
+              this.sendToSession(
+                session,
+                buildJsonRpcError(
+                  pending.clientId,
+                  `Upstream returned unparseable response: ${reason}`,
+                ),
+              );
+            }
+            break;
+          }
+        }
+      }
       return;
     }
 

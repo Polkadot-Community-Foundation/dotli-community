@@ -6,15 +6,37 @@
 //   3. "rpc"           — trusted WSS JSON-RPC to a public node (no smoldot),
 //                        used by gateway mode to bridge sandboxed-app chain calls
 
-// Reload once on chunk load failure (stale HTML referencing deleted assets).
-window.addEventListener("vite:preloadError", () => {
-  if (sessionStorage.getItem("dotli:chunk-reload") === null) {
-    sessionStorage.setItem("dotli:chunk-reload", "1");
-    window.location.reload();
+import {
+  initSentry,
+  installGlobalErrorHandlers,
+  captureException,
+} from "@dotli/metrics/sentry";
+
+// Do NOT silently reload on chunk preload failure. The protocol iframe is
+// hidden and has no UI of its own, so it surfaces the failure to the parent
+// via the standard error envelope. The parent will render the user-facing
+// error.
+window.addEventListener("vite:preloadError", (event) => {
+  const evt = event as unknown as { payload?: unknown };
+  captureException(evt.payload ?? new Error("vite:preloadError"), {
+    kind: "chunk_preload_error",
+    surface: "protocol_iframe",
+  });
+  if (window.parent !== window) {
+    const msg =
+      evt.payload instanceof Error
+        ? evt.payload.message
+        : "Asset failed to load";
+    window.parent.postMessage(
+      {
+        namespace: "dotli:protocol",
+        kind: "fatal",
+        message: `Protocol iframe asset failed to load: ${msg}`,
+      } as const,
+      "*",
+    );
   }
 });
-
-import { initSentry } from "@dotli/metrics/sentry";
 import type {
   JsonRpcConnection,
   JsonRpcProvider,
@@ -26,18 +48,15 @@ import {
   TIMEOUTS,
   type SiteId,
 } from "@dotli/config/config";
-import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
-import {
-  getRelayChain,
-  getSmoldot,
-  resolveDotName,
-  resolveOwner,
-} from "@dotli/resolver/resolve";
+// Smoldot / relay-chain / dot-name resolver imports live behind
+// `initDirectMode()` (dynamic) so `rpc` mode doesn't drag smoldot into the
+// protocol iframe's initial chunk. The SharedWorker path doesn't import
+// these either — smoldot for shared-worker mode lives inside
+// `./protocol-shared-worker.ts`, which is already a separate bundle.
 import {
   createRpcChainProvider,
   isRpcChainSupported,
 } from "@dotli/resolver/rpc-chain";
-import { terminateSmoldot } from "@dotli/resolver/smoldot";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
@@ -59,6 +78,7 @@ import {
 import type { SWRelayRequest, SWOutbound } from "./protocol-shared-worker";
 
 initSentry("host");
+installGlobalErrorHandlers("host");
 
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
@@ -92,8 +112,9 @@ function isAllowedOrigin(origin: string): boolean {
     if (url.hostname === "localhost" || url.hostname.endsWith(".localhost")) {
       return true;
     }
+    // eslint-disable-next-line no-restricted-syntax -- `new URL()` throws on a malformed origin; the deny path (`return false`) is the correct response.
   } catch {
-    // invalid origin
+    /* invalid origin — deny */
   }
   return false;
 }
@@ -290,22 +311,113 @@ function signalReady(): void {
 
 // ── Mode initialization (explicit, no auto-detection) ───────
 
-function getRequestedMode(): "shared-worker" | "direct" | "rpc" | null {
+type RequestedMode = "shared-worker" | "direct" | "rpc" | null;
+
+/**
+ * Distinguish "no mode requested" (auth-only iframe — legitimate) from
+ * "mode requested but unrecognised" (host bug or URL-tampering — must
+ * surface to the parent so the user sees a real error instead of a silent
+ * downgrade to auth-only behavior).
+ */
+function getRequestedMode(): RequestedMode | "invalid" {
+  let raw: string | null;
+  try {
+    raw = new URLSearchParams(window.location.search).get("mode");
+  } catch {
+    return "invalid";
+  }
+  if (raw === null) {
+    return null;
+  }
+  if (raw === "shared-worker" || raw === "direct" || raw === "rpc") {
+    return raw;
+  }
+  return "invalid";
+}
+
+function getSkipWorkerCache(): boolean {
   try {
     const params = new URLSearchParams(window.location.search);
-    const mode = params.get("mode");
-    if (mode === "shared-worker" || mode === "direct" || mode === "rpc") {
-      return mode;
-    }
+    return params.get("skipWorkerCache") === "1";
   } catch {
-    // URL parsing failed
+    return false;
   }
-  // No mode param → iframe was loaded for shared auth only, not smoldot
-  return null;
+}
+
+/**
+ * Purge every IndexedDB on this origin that isn't one of ours. Covers
+ * smoldot's internal chain DB + polkadot-api's caches — anything persisted
+ * across page loads that could warm-start the runtime. The dot.li-owned
+ * stores (`dotli`, `dotli-sw`) are preserved because they hold user state
+ * (CID cache, shared auth), which is orthogonal to worker bootstrapping.
+ *
+ * Best-effort: some browsers don't expose `indexedDB.databases()` (Firefox
+ * historically, Safari pre-17); on those, the skip still takes effect for
+ * future writes but we can't proactively clear prior state.
+ */
+async function purgeWorkerCaches(): Promise<void> {
+  // Throw on enumeration failure and await each delete: a silent log-and-
+  // continue would let smoldot boot against the still-present stale DB.
+  const KEEP = new Set(["dotli", "dotli-sw"]);
+  if (
+    typeof indexedDB === "undefined" ||
+    typeof indexedDB.databases !== "function"
+  ) {
+    throw new Error(
+      "Browser does not expose indexedDB.databases() — cannot fully purge worker caches. " +
+        "Please clear site data manually before retrying.",
+    );
+  }
+  const dbs = await indexedDB.databases();
+  const targets = dbs
+    .map((db) => db.name)
+    .filter(
+      (name): name is string =>
+        name !== undefined && name !== "" && !KEEP.has(name),
+    );
+  await Promise.all(
+    targets.map(
+      (name) =>
+        new Promise<void>((resolve, reject) => {
+          const req = indexedDB.deleteDatabase(name);
+          req.onsuccess = () => {
+            resolve();
+          };
+          req.onerror = () => {
+            reject(
+              new Error(
+                `Failed to delete IDB ${name}: ${req.error?.name ?? "unknown"}`,
+                req.error ? { cause: req.error } : undefined,
+              ),
+            );
+          };
+          req.onblocked = () => {
+            reject(
+              new Error(`Delete of IDB ${name} blocked by another connection`),
+            );
+          };
+        }),
+    ),
+  );
+  log.warn("[dot.li protocol] Purged worker caches (skipWorkerCache)");
 }
 
 async function init(): Promise<void> {
   const mode = getRequestedMode();
+
+  if (mode === "invalid") {
+    let raw: string | null = null;
+    try {
+      raw = new URLSearchParams(window.location.search).get("mode");
+      // eslint-disable-next-line no-restricted-syntax -- best-effort extraction of the offending mode value for the error message; the error is already signalled below regardless.
+    } catch {
+      /* URL parse failed — fall through with raw=null */
+    }
+    const message = `Unknown protocol mode: ${raw === null ? "<unparseable>" : `"${raw}"`}`;
+    log.error(`[dot.li protocol] ${message}`);
+    signalError(message);
+    return;
+  }
 
   // When no mode is requested, the iframe is only serving shared auth
   // storage requests (localStorage). No chain provider needed.
@@ -315,6 +427,21 @@ async function init(): Promise<void> {
     );
     signalReady();
     return;
+  }
+
+  // Worker-cache purge runs *before* any broker/smoldot init so the clean
+  // state is what the chain client opens against. A purge failure when the
+  // user explicitly requested skipWorkerCache MUST abort init — proceeding
+  // against a stale DB would silently violate the user's setting.
+  if (getSkipWorkerCache()) {
+    try {
+      await purgeWorkerCaches();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error("[dot.li protocol] purgeWorkerCaches failed:", err);
+      signalError(`Failed to reset chain DB: ${message}`);
+      return;
+    }
   }
 
   const stopInit = m.timer(S.PROTOCOL_INIT);
@@ -328,16 +455,20 @@ async function init(): Promise<void> {
       stopInit();
       return;
     }
+    // Register protocol_mode as a session default before any further metrics
+    // so bootnode errors, chain-connect failures etc. all carry the mode tag.
+    // Values are kebab-case to match `DotliMode` + the `?mode=` URL convention
+    // (see M-5: one naming convention across host + protocol).
+    m.setDefaults({ protocol_mode: "shared-worker" });
     await initSharedWorkerMode();
-    m.tag("protocol_mode", "shared_worker");
-    m.count(S.PROTOCOL_MODE, { mode: "shared_worker" });
+    m.count(S.PROTOCOL_MODE, { mode: "shared-worker" });
   } else if (mode === "rpc") {
+    m.setDefaults({ protocol_mode: "rpc" });
     initRpcMode();
-    m.tag("protocol_mode", "rpc");
     m.count(S.PROTOCOL_MODE, { mode: "rpc" });
   } else {
-    initDirectMode();
-    m.tag("protocol_mode", "direct");
+    m.setDefaults({ protocol_mode: "direct" });
+    await initDirectMode();
     m.count(S.PROTOCOL_MODE, { mode: "direct" });
   }
 
@@ -345,14 +476,17 @@ async function init(): Promise<void> {
 }
 
 function signalError(message: string): void {
+  // `init-failed` is a dedicated envelope — it has no `id` because no
+  // request was in flight when init died. The client listens for this
+  // alongside `fatal` and rejects every pending request + blocks new
+  // work until the user reloads. The old `id: "__init__"` sentinel was
+  // a collision hazard (any real request using that id would alias).
   if (window.parent !== window) {
     window.parent.postMessage(
       {
         namespace: "dotli:protocol",
-        kind: "response",
-        id: "__init__",
-        ok: false,
-        error: message,
+        kind: "init-failed",
+        message,
       } as const,
       "*",
     );
@@ -373,7 +507,7 @@ async function initSharedWorkerMode(): Promise<void> {
   // Listen for SharedWorker errors (e.g. if the script fails to load)
   worker.addEventListener("error", (event) => {
     log.error("[dot.li protocol] SharedWorker error event:", event);
-    m.count(S.BOOTNODE_ERROR, { source: "shared_worker" });
+    m.count(S.BOOTNODE_ERROR, { source: "shared-worker" });
   });
 
   // Wait for SharedWorker to signal ready (or error)
@@ -394,7 +528,7 @@ async function initSharedWorkerMode(): Promise<void> {
         const readyMs = performance.now() - swStartTime;
         m.measure(S.PROTOCOL_SW_READY, readyMs);
         m.distribution(S.PROTOCOL_SW_READY, readyMs, "millisecond", {
-          outcome: "success",
+          outcome: "ok",
         });
         resolve();
       } else if (data?.type === "error") {
@@ -457,8 +591,9 @@ async function initSharedWorkerMode(): Promise<void> {
     );
     try {
       port.postMessage({ type: "disconnect" });
+      // eslint-disable-next-line no-restricted-syntax -- best-effort unload signal to the SharedWorker; the port may already be closed (browser tab unloading), which is the expected terminal state.
     } catch {
-      /* port already closed */
+      /* port already closed on unload — safe */
     }
     port.close();
   });
@@ -466,11 +601,38 @@ async function initSharedWorkerMode(): Promise<void> {
 
 // ── Direct mode ─────────────────────────────────────────────
 
-function initDirectMode(): void {
+async function initDirectMode(): Promise<void> {
   log.warn("[dot.li protocol] === DIRECT MODE ===");
   log.warn(
     "[dot.li protocol] Smoldot runs in this iframe with no cross-tab coordination",
   );
+
+  // Dynamic imports so users in `rpc` or `shared-worker` submode don't pay
+  // the smoldot / chain-specs bundle cost (D-1).
+  const [{ createChainProvider, isChainSupported }, resolve, smoldotMod] =
+    await Promise.all([
+      import("@dotli/resolver/chains"),
+      import("@dotli/resolver/resolve"),
+      import("@dotli/resolver/smoldot"),
+    ]);
+  const { getRelayChain, getSmoldot, resolveDotName, resolveOwner } = resolve;
+  const { terminateSmoldot, onSmoldotFatal } = smoldotMod;
+
+  // Smoldot panic → broadcast fatal to parent. Direct mode has no
+  // SharedWorker in the loop, so we post straight up to the host shell.
+  onSmoldotFatal((message) => {
+    log.error("[dot.li protocol] Smoldot panic detected, signaling fatal");
+    if (window.parent !== window) {
+      window.parent.postMessage(
+        {
+          namespace: "dotli:protocol",
+          kind: "fatal",
+          message,
+        },
+        "*",
+      );
+    }
+  });
 
   const engine = createEngine({
     createChainProvider,

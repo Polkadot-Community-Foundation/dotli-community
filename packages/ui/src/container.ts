@@ -48,10 +48,13 @@ import {
 import { MAX_NESTED_BRIDGES } from "@dotli/config/config";
 import { dotNsUrl } from "@dotli/shared/dotns-url";
 import { log } from "@dotli/shared/log";
-import { getMode, isP2pMode } from "@dotli/config/mode";
+import { getMode, isP2pMode, getContentBackend } from "@dotli/config/mode";
 import { concatBytes } from "@noble/hashes/utils.js";
 import { computePreimageKey, hashToCid } from "@dotli/content/preimage";
-import { ensureHelia } from "@dotli/content/fetch";
+// `@dotli/content/fetch` pulls in the entire Helia + libp2p stack. Only
+// import it dynamically when the user's content backend is actually P2P —
+// gateway users should not pay the ~1 MB bundle cost.
+// `@dotli/content/ipfs` is tiny (plain HTTP fetch) and stays static.
 import { fetchFromIpfs } from "@dotli/content/ipfs";
 import {
   ensureBulletinClient,
@@ -597,11 +600,22 @@ function wireContainerHandlers(
       .mapErr((reason) => new PreimageSubmitErr.Unknown({ reason }));
   });
 
-  container.handlePreimageLookupSubscribe((key, send, interrupt) => {
+  // Preimage lookup subscribe contract:
+  //   - Caller (sandboxed app) requests a preimage by key. The lookup runs
+  //     against the user's chosen content backend EXCLUSIVELY — no crossover.
+  //   - We poll at POLL_INTERVAL_MS until cached or the caller drops the
+  //     subscription.
+  //   - A miss ("not found yet") and a backend throw (Helia/gateway error)
+  //     are both logged and polling continues. The subscription never
+  //     self-interrupts: the propagation time for a valid preimage can be
+  //     arbitrary, and cutting the subscription on "a few misses" made slow
+  //     but healthy chains look like transport failure to the caller.
+  //   - This is NOT a silent retry across providers. The user-selected
+  //     backend is the only backend dialed; failures stay attributable.
+  container.handlePreimageLookupSubscribe((key, send, _interrupt) => {
     log.warn(`[${label}] Preimage lookup subscribe, key: ${key}`);
 
     let stopped = false;
-    let consecutiveFailures = 0;
 
     // Check local cache first
     const cached = preimageCache.get(key);
@@ -611,7 +625,7 @@ function wireContainerHandlers(
       send(null);
     }
 
-    // Poll: Helia P2P first, IPFS gateway fallback
+    // Poll: use whichever content backend the user selected.
     const poll = async (): Promise<void> => {
       if (stopped) {
         return;
@@ -621,60 +635,56 @@ function wireContainerHandlers(
       const cachedValue = preimageCache.get(key);
       if (cachedValue) {
         send(cachedValue);
-        consecutiveFailures = 0;
         return;
       }
 
       const cid = hashToCid(key);
       const cidString = cid.toString();
 
-      // Try Helia P2P
+      // Honor the user's content backend choice. No silent helia→gateway
+      // crossover. A Helia lookup failure is a Helia failure; a gateway
+      // failure is a gateway failure. We log and keep polling — the caller
+      // unsubscribes when it's done waiting.
+      const contentBackend = getContentBackend();
       try {
-        const helia = await ensureHelia();
-        const chunks: Uint8Array[] = [];
-        const blockData = helia.blockstore.get(cid);
-        if (blockData instanceof Uint8Array) {
-          chunks.push(blockData);
-        } else if (
-          typeof blockData === "object" &&
-          Symbol.asyncIterator in Object(blockData)
-        ) {
-          for await (const chunk of blockData as AsyncIterable<Uint8Array>) {
-            chunks.push(chunk);
+        if (contentBackend === "p2p-helia") {
+          // Dynamic import — only P2P users load Helia (~1 MB bundle).
+          const { ensureHelia } = await import("@dotli/content/fetch");
+          const helia = await ensureHelia();
+          const chunks: Uint8Array[] = [];
+          const blockData = helia.blockstore.get(cid);
+          if (blockData instanceof Uint8Array) {
+            chunks.push(blockData);
+          } else if (
+            typeof blockData === "object" &&
+            Symbol.asyncIterator in Object(blockData)
+          ) {
+            for await (const chunk of blockData as AsyncIterable<Uint8Array>) {
+              chunks.push(chunk);
+            }
           }
-        }
-        if (chunks.length > 0) {
-          const data = concatBytes(...chunks);
-          if (data.length > 0) {
-            preimageCache.set(key, data);
-            send(data);
-            consecutiveFailures = 0;
+          if (chunks.length > 0) {
+            const data = concatBytes(...chunks);
+            if (data.length > 0) {
+              preimageCache.set(key, data);
+              send(data);
+              return;
+            }
+          }
+        } else {
+          // "ipfs-gateway"
+          const result = await fetchFromIpfs(cidString);
+          if (result.data.length > 0) {
+            preimageCache.set(key, result.data);
+            send(result.data);
             return;
           }
         }
-      } catch {
-        // Helia failed, try gateway
-      }
-
-      // Fallback: IPFS gateway
-      try {
-        const result = await fetchFromIpfs(cidString);
-        if (result.data.length > 0) {
-          preimageCache.set(key, result.data);
-          send(result.data);
-          consecutiveFailures = 0;
-          return;
-        }
-      } catch {
-        // Both failed
-      }
-
-      consecutiveFailures++;
-      if (consecutiveFailures >= 3) {
-        log.error(
-          `[${label}] Preimage lookup: 3 consecutive failures, interrupting`,
+      } catch (err) {
+        log.warn(
+          `[${label}] preimage lookup via ${contentBackend} failed:`,
+          err,
         );
-        interrupt();
       }
     };
 

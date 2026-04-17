@@ -11,14 +11,27 @@ import type { AuthState } from "@dotli/auth/auth";
 import type { Identity } from "@novasamatech/host-papp";
 import { log } from "@dotli/shared/log";
 import { escapeHtml } from "@dotli/shared/html";
-import { SITE_ID } from "@dotli/config/config";
 import {
-  getMode,
-  setMode,
+  SITE_ID,
+  PASEO_RELAY_GENESIS,
+  ASSET_HUB_PASEO_GENESIS,
+} from "@dotli/config/config";
+import {
   getCacheSettings,
   setCacheSettings,
-  type DotliMode,
+  getChainBackend,
+  setChainBackend,
+  getContentBackend,
+  setContentBackend,
+  isVerifiedSession,
+  type ChainBackend,
+  type ContentBackend,
+  type CacheSettings,
 } from "@dotli/config/mode";
+import {
+  getActiveAssetHubRpcEndpoint,
+  getActivePaseoRelayRpcEndpoint,
+} from "@dotli/config/endpoints";
 import {
   ALL_PERMISSIONS,
   getPermissionStatus,
@@ -51,10 +64,12 @@ let userPopoverDisconnect: HTMLElement;
 let modeButton: HTMLElement;
 let modePopover: HTMLElement;
 let modePopoverContent: HTMLElement;
+let modePopoverBackdrop: HTMLElement | null = null;
 
 let permissionsButton: HTMLElement;
 let permissionsPopover: HTMLElement;
 let permissionsPopoverList: HTMLElement;
+let permissionsPopoverBackdrop: HTMLElement | null = null;
 
 /** The label of the currently loaded product (set via dotli:product-loaded event). */
 let currentProductLabel: string | null = null;
@@ -173,14 +188,14 @@ export function initTopBar(): void {
       !modePopover.contains(e.target as Node) &&
       !modeButton.contains(e.target as Node)
     ) {
-      modePopover.classList.remove("open");
+      setModePopoverOpen(false);
     }
     if (
       permissionsPopover.classList.contains("open") &&
       !permissionsPopover.contains(e.target as Node) &&
       !permissionsButton.contains(e.target as Node)
     ) {
-      permissionsPopover.classList.remove("open");
+      setPermissionsPopoverOpen(false);
     }
   });
 
@@ -392,12 +407,20 @@ function initPermissions(): void {
   permissionsButton = getElement("permissions-button");
   permissionsPopover = getElement("permissions-popover");
   permissionsPopoverList = getElement("permissions-popover-list");
+  // Backdrop is optional — older host shells that haven't added the element
+  // still work, the popover just doesn't get a modal overlay there.
+  permissionsPopoverBackdrop = document.getElementById(
+    "permissions-popover-backdrop",
+  );
 
   permissionsButton.addEventListener("click", () => {
-    permissionsPopover.classList.toggle("open");
-    if (permissionsPopover.classList.contains("open")) {
-      renderPermissionsPopover();
-    }
+    const willOpen = !permissionsPopover.classList.contains("open");
+    setPermissionsPopoverOpen(willOpen);
+  });
+
+  // Clicking the backdrop dismisses the popover (same as clicking outside).
+  permissionsPopoverBackdrop?.addEventListener("click", () => {
+    setPermissionsPopoverOpen(false);
   });
 
   // Update when a product is loaded
@@ -519,33 +542,916 @@ function initModeToggle(): void {
   modeButton = getElement("mode-button");
   modePopover = getElement("mode-popover");
   modePopoverContent = getElement("mode-popover-content");
+  // Backdrop is optional — older host shells that haven't added the element
+  // still work, the popover just doesn't get a modal overlay there.
+  modePopoverBackdrop = document.getElementById("mode-popover-backdrop");
 
-  // Show gateway-mode indicator on the button
-  modeButton.classList.toggle("gateway-mode", getMode() === "gateway");
+  // Show the "trusted provider" indicator on the settings button whenever
+  // the session is not fully verified — i.e. chain=rpc or content=gateway
+  // on either axis. The rule is owned by `isVerifiedSession` so this
+  // button and the host shield can never disagree on trust posture.
+  modeButton.classList.toggle(
+    "gateway-mode",
+    !isVerifiedSession(getChainBackend(), getContentBackend()),
+  );
 
   modeButton.addEventListener("click", () => {
-    modePopover.classList.toggle("open");
     if (modePopover.classList.contains("open")) {
-      renderModePopover();
+      setModePopoverOpen(false);
+    } else {
+      setModePopoverOpen(true);
     }
+  });
+
+  // Clicking the backdrop dismisses the popover (same as clicking outside).
+  modePopoverBackdrop?.addEventListener("click", () => {
+    setModePopoverOpen(false);
   });
 }
 
-function renderModeRadio(
-  value: DotliMode,
+/**
+ * Single source of truth for popover open/close. Keeps the backdrop in
+ * sync with the popover visibility so "the rest of the page is blocked
+ * while settings are open" always holds.
+ */
+function setModePopoverOpen(open: boolean): void {
+  modePopover.classList.toggle("open", open);
+  modePopoverBackdrop?.classList.toggle("open", open);
+  if (open) {
+    renderModePopover();
+  }
+}
+
+/**
+ * Single source of truth for the permissions popover. Keeps the backdrop
+ * in sync so "the rest of the page is blocked while permissions are open"
+ * holds the same way it does for settings.
+ */
+function setPermissionsPopoverOpen(open: boolean): void {
+  permissionsPopover.classList.toggle("open", open);
+  permissionsPopoverBackdrop?.classList.toggle("open", open);
+  if (open) {
+    renderPermissionsPopover();
+  }
+}
+
+/**
+ * Open the resolution-mode popover programmatically, e.g. from a slow-path
+ * "Adjust mode" affordance instead of silently swapping modes behind the
+ * user's back. Safe to call before `initTopBar()` — falls through silently
+ * if the DOM isn't ready yet.
+ */
+export function openModePopover(): void {
+  try {
+    const popover = document.getElementById("mode-popover");
+    if (popover === null) {
+      return;
+    }
+    if (!popover.classList.contains("open")) {
+      popover.classList.add("open");
+      const backdrop = document.getElementById("mode-popover-backdrop");
+      backdrop?.classList.add("open");
+      renderModePopover();
+    }
+    // eslint-disable-next-line no-restricted-syntax -- DOM not available (SSR / test harness); caller is just asking to open a popover, there's nothing to do.
+  } catch {
+    /* no DOM — nothing to open */
+  }
+}
+
+/**
+ * Draft of everything the popover can change. Controls mutate this; nothing
+ * touches localStorage or reloads the page until the user clicks Save &
+ * Apply. Closing the popover throws the draft away — the next open re-reads
+ * persisted state from scratch, so partial changes never leak.
+ */
+interface ModeDraft {
+  chain: ChainBackend;
+  content: ContentBackend;
+  cache: CacheSettings;
+}
+
+function renderModePopover(): void {
+  // Two-column grid. Left: chain / content / cache. Right: endpoints /
+  // diagnostics. Save & Apply and the footer span both columns at the
+  // bottom. Collapses to a single column on narrow viewports (CSS media
+  // query on `.mode-popover-columns`).
+  const parent = modePopoverContent;
+  parent.innerHTML = "";
+
+  const persisted: ModeDraft = {
+    chain: getChainBackend(),
+    content: getContentBackend(),
+    cache: getCacheSettings(),
+  };
+  const draft: ModeDraft = { ...persisted, cache: { ...persisted.cache } };
+
+  // Forward declarations so controls can re-sync the apply button whenever
+  // they mutate the draft.
+  let syncApply: () => void = () => {
+    /* filled in below */
+  };
+
+  const columns = document.createElement("div");
+  columns.className = "mode-popover-columns";
+  parent.appendChild(columns);
+
+  const leftCol = document.createElement("div");
+  leftCol.className = "mode-popover-col";
+  columns.appendChild(leftCol);
+
+  const rightCol = document.createElement("div");
+  rightCol.className = "mode-popover-col";
+  columns.appendChild(rightCol);
+
+  // ── Left column: Chain / Content / Cache ──
+  appendSectionHeader(leftCol, "Chain");
+  const chainChoices: [ChainBackend, string, string][] = [
+    [
+      "smoldot-shared-worker",
+      "Light Client (smoldot worker)",
+      "Light client shared across tabs (recommended)",
+    ],
+    ["smoldot-direct", "Light Client (smoldot direct)", "Light client per tab"],
+    ["rpc", "RPC Node (trusted provider)", "Direct JSON-RPC to a known node"],
+  ];
+  const chainGroup = document.createElement("div");
+  leftCol.appendChild(chainGroup);
+  const rerenderChain = (): void => {
+    chainGroup.innerHTML = "";
+    for (const [value, label, desc] of chainChoices) {
+      renderChainRadio(chainGroup, value, label, desc, draft.chain, (next) => {
+        draft.chain = next;
+        rerenderChain();
+        syncApply();
+      });
+    }
+  };
+  rerenderChain();
+
+  appendDivider(leftCol);
+  appendSectionHeader(leftCol, "Content");
+  const contentChoices: [ContentBackend, string, string][] = [
+    [
+      "p2p-helia",
+      "P2P (bulletin bitswap)",
+      "Fetch blocks from configured peers",
+    ],
+    [
+      "ipfs-gateway",
+      "Gateway (trusted provider)",
+      "HTTP fetch from trusted gateway",
+    ],
+  ];
+  const contentGroup = document.createElement("div");
+  leftCol.appendChild(contentGroup);
+  const rerenderContent = (): void => {
+    contentGroup.innerHTML = "";
+    for (const [value, label, desc] of contentChoices) {
+      renderContentRadio(
+        contentGroup,
+        value,
+        label,
+        desc,
+        draft.content,
+        (next) => {
+          draft.content = next;
+          rerenderContent();
+          syncApply();
+        },
+      );
+    }
+  };
+  rerenderContent();
+
+  appendDivider(leftCol);
+  appendSectionHeader(leftCol, "Cache");
+  renderCacheToggle(
+    leftCol,
+    "dotNS cache",
+    !draft.cache.skipCidCache,
+    (enabled) => {
+      draft.cache = { ...draft.cache, skipCidCache: !enabled };
+      syncApply();
+    },
+  );
+  renderCacheToggle(
+    leftCol,
+    "Archive cache",
+    !draft.cache.skipArchiveCache,
+    (enabled) => {
+      draft.cache = { ...draft.cache, skipArchiveCache: !enabled };
+      syncApply();
+    },
+  );
+  // Worker cache: when off, the protocol iframe purges its IDB state
+  // (smoldot chain DB + polkadot-api caches) before initialisation — i.e.
+  // every cold start boots from scratch. Trades startup time for a
+  // deterministic baseline.
+  renderCacheToggle(
+    leftCol,
+    "Worker cache",
+    !draft.cache.skipWorkerCache,
+    (enabled) => {
+      draft.cache = { ...draft.cache, skipWorkerCache: !enabled };
+      syncApply();
+    },
+  );
+
+  // Manual "clear everything" escape hatch. Reuses the same full-reset
+  // pipeline as Save & Apply so users don't have to toggle a setting back
+  // and forth just to wipe state. Kept here (bottom of the Cache section)
+  // because conceptually it's the same capability as the cache toggles —
+  // just "all of them, now, regardless of the current choice".
+  const clearRow = document.createElement("div");
+  clearRow.className = "mode-cache-row mode-clear-all-row";
+  const clearBtn = document.createElement("button");
+  clearBtn.className = "mode-clear-btn";
+  clearBtn.textContent = "Clear all caches";
+  clearBtn.title =
+    "Wipe every cache, database, and worker across all origins. The app will reload from a clean baseline.";
+  clearBtn.addEventListener("click", () => {
+    if (clearBtn.disabled) {
+      return;
+    }
+    clearBtn.disabled = true;
+    clearBtn.textContent = "Clearing…";
+    // Apply the current persisted settings (no-op as a diff) so the reset
+    // path always re-seeds localStorage with a valid baseline.
+    void applyAndReset(persisted, persisted);
+  });
+  clearRow.appendChild(clearBtn);
+  leftCol.appendChild(clearRow);
+
+  // ── Right column: Diagnostics only ──
+  appendSectionHeader(rightCol, "Diagnostics");
+  renderDiagnostics(rightCol);
+
+  // ── Save & Apply (full width) ──
+  appendDivider();
+  const applyRow = document.createElement("div");
+  applyRow.className = "mode-cache-row mode-apply-row";
+  const applyBtn = document.createElement("button");
+  applyBtn.className = "mode-clear-btn";
+  applyRow.appendChild(applyBtn);
+  parent.appendChild(applyRow);
+
+  // Warning text: changing any backend/cache option triggers a full wipe of
+  // host + protocol + sandbox state on reload. Shown only when the draft is
+  // dirty so the idle popover isn't noisy.
+  const resetWarning = document.createElement("p");
+  resetWarning.className = "mode-apply-warning";
+  resetWarning.textContent =
+    "Applying will wipe all cached data across every origin.";
+  parent.appendChild(resetWarning);
+
+  syncApply = (): void => {
+    const dirty =
+      draft.chain !== persisted.chain ||
+      draft.content !== persisted.content ||
+      draft.cache.skipCidCache !== persisted.cache.skipCidCache ||
+      draft.cache.skipArchiveCache !== persisted.cache.skipArchiveCache ||
+      draft.cache.skipWorkerCache !== persisted.cache.skipWorkerCache;
+    applyBtn.disabled = !dirty;
+    applyBtn.textContent = "Save & Apply";
+    applyBtn.classList.toggle("mode-apply-dirty", dirty);
+    resetWarning.classList.toggle("visible", dirty);
+  };
+  syncApply();
+
+  applyBtn.addEventListener("click", () => {
+    if (applyBtn.disabled) {
+      return;
+    }
+    applyBtn.disabled = true;
+    applyBtn.textContent = "Resetting…";
+    void applyAndReset(draft, persisted);
+  });
+}
+
+/**
+ * Apply the pending draft and wipe every piece of persisted state we own on
+ * this origin before reloading. The reload path also signals the protocol
+ * iframe (host.dot.li) and the sandbox iframe (cid.app.dot.li) to purge
+ * their origins — each origin has to wipe itself, we can't reach across.
+ *
+ * Order matters:
+ *   1. Persist the new settings (so the re-apply after wipe uses them).
+ *   2. Mark cross-origin reset flags in sessionStorage (host main + bridge
+ *      consume these on the next boot).
+ *   3. Wipe host-origin state. After wipe we re-write just the settings +
+ *      the cross-origin flags so the next boot has both the user's choice
+ *      and the "please purge yourselves" signal intact.
+ *   4. Reload.
+ */
+async function applyAndReset(
+  draft: ModeDraft,
+  persisted: ModeDraft,
+): Promise<void> {
+  try {
+    // Snapshot the theme so we don't yank the user into a different colour
+    // scheme just because they changed the resolution mode.
+    const theme = localStorage.getItem("dotli-theme");
+
+    if (draft.chain !== persisted.chain) {
+      setChainBackend(draft.chain);
+    }
+    if (draft.content !== persisted.content) {
+      setContentBackend(draft.content);
+    }
+    if (
+      draft.cache.skipCidCache !== persisted.cache.skipCidCache ||
+      draft.cache.skipArchiveCache !== persisted.cache.skipArchiveCache ||
+      draft.cache.skipWorkerCache !== persisted.cache.skipWorkerCache
+    ) {
+      setCacheSettings(draft.cache);
+    }
+
+    await wipeOriginState();
+
+    // Re-apply the user's choice + theme after wipe.
+    setChainBackend(draft.chain);
+    setContentBackend(draft.content);
+    setCacheSettings(draft.cache);
+    if (theme === "light" || theme === "dark") {
+      localStorage.setItem("dotli-theme", theme);
+    }
+
+    // Cross-origin purge signals — consumed by host main (protocol iframe)
+    // and the bridge (sandbox iframe) on the next boot.
+    try {
+      sessionStorage.setItem("dotli:pending-reset:protocol", "1");
+      sessionStorage.setItem("dotli:pending-reset:sandbox", "1");
+      // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); cross-origin purges are best-effort, reload below is unconditional.
+    } catch {
+      /* sessionStorage unavailable — cross-origin purges skipped */
+    }
+  } finally {
+    window.location.reload();
+  }
+}
+
+/**
+ * Wipe every persisted store on this origin: IndexedDB, CacheStorage, all
+ * service worker registrations, localStorage, sessionStorage.
+ *
+ * Best-effort — some browsers don't expose `indexedDB.databases()`
+ * (historically Firefox, Safari pre-17). On those we can't proactively list
+ * + delete; the user will get a partially clean baseline but the mode
+ * change still takes effect via the reloaded settings.
+ */
+async function wipeOriginState(): Promise<void> {
+  await Promise.allSettled([deleteAllIndexedDBs(), deleteAllCacheStorage()]);
+  await unregisterAllServiceWorkers();
+  try {
+    sessionStorage.clear();
+    // eslint-disable-next-line no-restricted-syntax -- sessionStorage unavailable (Safari private mode). Full reset is best-effort; anything we can't clear just means a partial baseline.
+  } catch {
+    /* sessionStorage unavailable */
+  }
+  try {
+    localStorage.clear();
+    // eslint-disable-next-line no-restricted-syntax -- localStorage unavailable. Full reset is best-effort.
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+async function deleteAllIndexedDBs(): Promise<void> {
+  try {
+    if (
+      typeof indexedDB === "undefined" ||
+      typeof indexedDB.databases !== "function"
+    ) {
+      return;
+    }
+    const dbs = await indexedDB.databases();
+    await Promise.all(
+      dbs.map(
+        (db) =>
+          new Promise<void>((resolve) => {
+            if (db.name === undefined || db.name === "") {
+              resolve();
+              return;
+            }
+            const req = indexedDB.deleteDatabase(db.name);
+            req.onsuccess = (): void => {
+              resolve();
+            };
+            req.onerror = (): void => {
+              resolve();
+            };
+            req.onblocked = (): void => {
+              resolve();
+            };
+          }),
+      ),
+    );
+    // eslint-disable-next-line no-restricted-syntax -- full-reset is best-effort; any surviving IDB just means partial baseline. Next boot will still see the new mode settings.
+  } catch {
+    /* best-effort IDB wipe */
+  }
+}
+
+async function deleteAllCacheStorage(): Promise<void> {
+  try {
+    if (typeof caches === "undefined") {
+      return;
+    }
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
+    // eslint-disable-next-line no-restricted-syntax -- full-reset is best-effort; partial CacheStorage survival is acceptable.
+  } catch {
+    /* best-effort CacheStorage wipe */
+  }
+}
+
+async function unregisterAllServiceWorkers(): Promise<void> {
+  try {
+    if (!("serviceWorker" in navigator)) {
+      return;
+    }
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((r) => r.unregister()));
+    // eslint-disable-next-line no-restricted-syntax -- full-reset is best-effort; surviving SW registration will be replaced on next install.
+  } catch {
+    /* best-effort SW unregister */
+  }
+}
+
+function appendSectionHeader(parent: HTMLElement, text: string): void {
+  const header = document.createElement("div");
+  header.className = "mode-popover-section";
+  header.textContent = text;
+  parent.appendChild(header);
+}
+
+// Baked at build time by `apps/host/vite.config.ts` (`define.*`). The
+// topbar only ever renders in the host shell so these will always be
+// present in practice; `undefined` fallbacks are defensive for tests and
+// for any future caller that imports this module from a different bundle.
+declare const __DOTLI_VERSION__: string | undefined;
+declare const __SMOLDOT_VERSION__: string | undefined;
+declare const __SMOLDOT_COMMIT__: string | undefined;
+declare const __POLKADOT_API_VERSION__: string | undefined;
+declare const __POLKADOT_API_VERSIONS__:
+  | { name: string; version: string }[]
+  | undefined;
+declare const __NOVASAMATECH_VERSIONS__:
+  | { name: string; version: string }[]
+  | undefined;
+
+/**
+ * Render the Diagnostics block at the bottom of the settings popover. Rows
+ * are static (no click-to-copy) — the "Share diagnostic" button at the end
+ * exports the whole block at once, so individual-row copy would be noise.
+ *
+ * Values come from places that are cheap to read synchronously so the
+ * popover doesn't pop open with a spinner. "unknown" is a valid value;
+ * don't over-engineer fallbacks.
+ */
+function renderDiagnostics(parent: HTMLElement): void {
+  const base = buildBaseDiagnosticsRows();
+  for (const [label, value] of base) {
+    renderInfoRow(parent, label, value);
+  }
+
+  // ── @smoldot ──
+  // Version is static + cheap; block numbers are async so the rows start
+  // with an ellipsis placeholder and get swapped in when `chainConnect`
+  // rounds-trip back with a finalized-block header. When the user is on
+  // the RPC chain backend, smoldot isn't running — hide the per-chain
+  // block rows entirely (the endpoints already appear under Chain) and
+  // keep only the smoldot version so the dependency is still visible.
+  const smoldotInfo: SmoldotInfo = {
+    version: buildSmoldotVersionLabel(),
+    blocks: { relay: "…", assetHub: "…" },
+  };
+  const smoldotActive = getChainBackend() !== "rpc";
+  appendSectionHeader(parent, "@smoldot");
+  renderInfoRow(parent, "smoldot", smoldotInfo.version);
+  if (smoldotActive) {
+    const relayRow = renderInfoRow(parent, "Relay Chain", "…");
+    const assetHubRow = renderInfoRow(parent, "Asset Hub", "…");
+
+    // Fire both queries; they update their own rows + the shared snapshot
+    // (so the "Share diagnostic" button captures whatever resolved in time).
+    void queryFinalizedBlock(PASEO_RELAY_GENESIS).then((n) => {
+      const v = formatBlock(n);
+      relayRow.update(v);
+      smoldotInfo.blocks.relay = v;
+    });
+    void queryFinalizedBlock(ASSET_HUB_PASEO_GENESIS).then((n) => {
+      const v = formatBlock(n);
+      assetHubRow.update(v);
+      smoldotInfo.blocks.assetHub = v;
+    });
+  } else {
+    // Keep the snapshot tagged as n/a so the Share-diagnostic report is
+    // coherent: smoldot wasn't consulted, don't claim a block height.
+    smoldotInfo.blocks.relay = "n/a";
+    smoldotInfo.blocks.assetHub = "n/a";
+  }
+
+  // The unscoped `polkadot-api` package lives in the same visual section as
+  // `@polkadot-api/*` — same ecosystem, same release cadence, users expect
+  // to see it with its siblings rather than at the top of the popover.
+  const polkadotApi: { name: string; version: string }[] = [];
+  if (typeof __POLKADOT_API_VERSION__ === "string") {
+    polkadotApi.push({
+      name: "polkadot-api",
+      version: __POLKADOT_API_VERSION__,
+    });
+  }
+  if (typeof __POLKADOT_API_VERSIONS__ !== "undefined") {
+    polkadotApi.push(...__POLKADOT_API_VERSIONS__);
+  }
+
+  // @novasamatech/* versions move in lockstep — showing every single
+  // package is noise. Keep only the two that are independently meaningful:
+  // host-api (the host runtime) and sdk-statement (the statement store
+  // client). Everything else in the scope tracks host-api's version.
+  const NOVASAMATECH_ALLOWLIST = new Set([
+    "@novasamatech/host-api",
+    "@novasamatech/sdk-statement",
+  ]);
+  const novasamatech = (
+    typeof __NOVASAMATECH_VERSIONS__ === "undefined"
+      ? []
+      : __NOVASAMATECH_VERSIONS__
+  ).filter((p) => NOVASAMATECH_ALLOWLIST.has(p.name));
+
+  if (polkadotApi.length > 0) {
+    appendSectionHeader(parent, "@polkadot-api");
+    for (const pkg of polkadotApi) {
+      renderInfoRow(parent, pkg.name, pkg.version);
+    }
+  }
+  if (novasamatech.length > 0) {
+    appendSectionHeader(parent, "@triangle-sdk");
+    for (const pkg of novasamatech) {
+      renderInfoRow(parent, pkg.name, pkg.version);
+    }
+  }
+
+  const shareRow = document.createElement("div");
+  shareRow.className = "mode-cache-row";
+  const shareBtn = document.createElement("button");
+  shareBtn.className = "mode-clear-btn";
+  shareBtn.textContent = "Share diagnostic";
+  shareBtn.title =
+    "Open a new issue on paritytech/dotli pre-filled with these diagnostics";
+  shareBtn.addEventListener("click", () => {
+    const report = formatDiagnosticsReport(
+      base,
+      smoldotInfo,
+      polkadotApi,
+      novasamatech,
+    );
+    const body = [
+      "<!-- Describe the issue above this line; the diagnostics below are auto-filled. -->",
+      "",
+      "## Diagnostics",
+      "",
+      "```",
+      report,
+      "```",
+    ].join("\n");
+    const url = new URL("https://github.com/paritytech/dotli/issues/new");
+    url.searchParams.set("body", body);
+    window.open(url.toString(), "_blank", "noopener,noreferrer");
+  });
+  shareRow.appendChild(shareBtn);
+  parent.appendChild(shareRow);
+}
+
+/** Flatten the diagnostics tree into a plain-text block that reads cleanly
+ *  both inside a GitHub issue code block and in a Slack message.
+ *
+ *  Structure (one blank line between sections):
+ *    1. Base rows (Site, Build, Chain[, Worker|RPC Node], Content, Browser)
+ *    2. Cache   — every toggle as on/off. Sourced from persisted settings
+ *                 so the snapshot matches what's actually live right now.
+ *    3. Permissions — per-product; omitted on landing where we don't have
+ *                     a scoped label to query.
+ *    4. Packages — flat list: smoldot + polkadot-api + novasamatech. The
+ *                   live block heights from the @smoldot popover section
+ *                   aren't included here because they're noise in a bug
+ *                   report; the popover already shows them live. */
+function formatDiagnosticsReport(
+  base: [label: string, value: string][],
+  smoldot: SmoldotInfo,
+  polkadotApi: { name: string; version: string }[],
+  novasamatech: { name: string; version: string }[],
+): string {
+  const lines: string[] = [];
+  for (const [k, v] of base) {
+    lines.push(`${k}: ${v}`);
+  }
+
+  // Cache
+  const cache = getCacheSettings();
+  lines.push(
+    "",
+    "Cache:",
+    `  dotNS cache: ${cache.skipCidCache ? "off" : "on"}`,
+    `  Archive cache: ${cache.skipArchiveCache ? "off" : "on"}`,
+    `  Worker cache: ${cache.skipWorkerCache ? "off" : "on"}`,
+  );
+
+  // Permissions — only when we know which product label to scope against.
+  if (currentProductLabel !== null) {
+    lines.push("", "Permissions:");
+    for (const perm of ALL_PERMISSIONS) {
+      const status = getPermissionStatus(currentProductLabel, perm.name);
+      lines.push(`  ${perm.label}: ${status === "granted" ? "on" : "off"}`);
+    }
+  }
+
+  // Packages — one flat list. smoldot leads because it's the heaviest
+  // dependency and the one most issues are ultimately about.
+  lines.push("", "Packages:", `  smoldot: ${smoldot.version}`);
+  for (const p of polkadotApi) {
+    lines.push(`  ${p.name}: ${p.version}`);
+  }
+  for (const p of novasamatech) {
+    lines.push(`  ${p.name}: ${p.version}`);
+  }
+  return lines.join("\n");
+}
+
+function buildBaseDiagnosticsRows(): [label: string, value: string][] {
+  const version =
+    typeof __DOTLI_VERSION__ === "string" ? __DOTLI_VERSION__ : "0.0.0";
+  const sha = (import.meta.env.VITE_COMMIT_SHA as string | undefined) ?? "dev";
+
+  const chain = getChainBackend();
+  const content = getContentBackend();
+
+  const rows: [string, string][] = [
+    // `location.host` includes the port when non-default — useful on
+    // localhost (`hackme3.localhost:5173`), transparent on production
+    // (`hackme3.dot.li`).
+    ["Site", window.location.host],
+    ["Build", `${version} (${shortSha(sha)})`],
+    ["Chain", chainBackendLabel(chain)],
+  ];
+
+  // Sub-row attached to the Chain row:
+  //   - smoldot-shared-worker: "Worker" + build SHA. The SharedWorker is a
+  //     cached script — if it's running an older bundle than the current
+  //     page, this SHA diverges from Build, which is the tell-tale for a
+  //     stale worker. (Today the Worker ships embedded in the same bundle,
+  //     so the two match; the row still lets us spot a divergence in the
+  //     field.)
+  //   - smoldot-direct: no sub-row; smoldot is torn down every page load.
+  //   - rpc: both WSS endpoints (Relay + Asset Hub). dotNS resolution
+  //     only dials the Asset Hub node today, but the relay endpoint is
+  //     shown so the user sees the full RPC-mode surface area rather
+  //     than having to infer it.
+  if (chain === "smoldot-shared-worker") {
+    if (typeof SharedWorker === "undefined") {
+      rows.push(["Worker", "unavailable"]);
+    } else {
+      rows.push(["Worker", shortSha(sha)]);
+    }
+  } else if (chain === "rpc") {
+    rows.push(["Relay node", getActivePaseoRelayRpcEndpoint()]);
+    rows.push(["AssetHub node", getActiveAssetHubRpcEndpoint()]);
+  }
+
+  rows.push(["Content", contentBackendLabel(content)]);
+  rows.push(["Browser", summarizeUserAgent(navigator.userAgent)]);
+  return rows;
+}
+
+function chainBackendLabel(b: ChainBackend): string {
+  switch (b) {
+    case "smoldot-shared-worker":
+      return "Smoldot Worker";
+    case "smoldot-direct":
+      return "Smoldot Direct";
+    case "rpc":
+      return "RPC Node";
+  }
+}
+
+function contentBackendLabel(b: ContentBackend): string {
+  switch (b) {
+    case "p2p-helia":
+      return "P2P";
+    case "ipfs-gateway":
+      return "Gateway";
+  }
+}
+
+interface SmoldotInfo {
+  /** Human-facing version label, e.g. "3.0.0 (c33c647)". */
+  version: string;
+  /** Mutable block readouts for the share report. */
+  blocks: { relay: string; assetHub: string };
+}
+
+function buildSmoldotVersionLabel(): string {
+  const smoldot =
+    typeof __SMOLDOT_VERSION__ === "string" ? __SMOLDOT_VERSION__ : "unknown";
+  // Smoldot's upstream commit is resolved at build time by the host's
+  // vite.config against paritytech/smoldot's release tags. Degrades to
+  // just `<version>` when the lookup wasn't possible (offline build).
+  const commit =
+    typeof __SMOLDOT_COMMIT__ === "string" && __SMOLDOT_COMMIT__.length > 0
+      ? ` (${shortSha(__SMOLDOT_COMMIT__)})`
+      : "";
+  return `${smoldot}${commit}`;
+}
+
+/**
+ * Query the finalized block number for a given chain through the protocol
+ * iframe's `chainConnect` bridge. Works across all chain backends:
+ *   - smoldot-shared-worker / smoldot-direct: goes through smoldot
+ *   - rpc: goes through the curated WSS endpoint
+ *
+ * Returns `null` if the chain isn't supported by the active backend (e.g.
+ * asking for relay in rpc mode, which only supports Asset Hub) or if the
+ * query doesn't resolve within the timeout. All imports are dynamic so
+ * opening the popover is cheap when the user doesn't care about blocks.
+ */
+async function queryFinalizedBlock(
+  genesisHash: string,
+): Promise<number | null> {
+  try {
+    const [protocolClient, papi] = await Promise.all([
+      import("@dotli/protocol/client"),
+      import("polkadot-api"),
+    ]);
+    if (!protocolClient.isRemoteChainSupported(genesisHash)) {
+      return null;
+    }
+    const provider = protocolClient.createRemoteChainProvider(genesisHash);
+    if (provider === null) {
+      return null;
+    }
+    const client = papi.createClient(provider);
+    try {
+      const block = await Promise.race([
+        client.getFinalizedBlock(),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error("timeout"));
+          }, 10_000);
+        }),
+      ]);
+      return block.number;
+    } finally {
+      client.destroy();
+    }
+  } catch {
+    return null;
+  }
+}
+
+function formatBlock(n: number | null): string {
+  return n === null ? "n/a" : `#${n.toLocaleString("en-US")}`;
+}
+
+function shortSha(sha: string): string {
+  if (sha === "dev" || sha.length <= 7) {
+    return sha;
+  }
+  return sha.slice(0, 7);
+}
+
+/**
+ * Turn a long `navigator.userAgent` string into something compact like
+ * "Chrome 147 (macOS)". Heuristic — not a replacement for a real UA parser,
+ * good enough for a debug row that the user can still click-to-copy the
+ * full value (the row shows the short version but the UA is stable enough
+ * that engineers can recognize the brand without the full payload).
+ */
+function summarizeUserAgent(ua: string): string {
+  let browser = "Unknown";
+  const chromeMatch = /(Chrome|CriOS)\/(\d+)/.exec(ua);
+  const firefoxMatch = /Firefox\/(\d+)/.exec(ua);
+  const safariMatch = /Version\/(\d+)[^)]+Safari/.exec(ua);
+  const edgeMatch = /Edg\/(\d+)/.exec(ua);
+  if (edgeMatch) {
+    browser = `Edge ${edgeMatch[1]}`;
+  } else if (firefoxMatch) {
+    browser = `Firefox ${firefoxMatch[1]}`;
+  } else if (chromeMatch) {
+    browser = `Chrome ${chromeMatch[2]}`;
+  } else if (safariMatch) {
+    browser = `Safari ${safariMatch[1]}`;
+  }
+
+  let os = "Unknown";
+  if (ua.includes("Mac OS X") || ua.includes("Macintosh")) {
+    os = "macOS";
+  } else if (ua.includes("Windows")) {
+    os = "Windows";
+  } else if (ua.includes("Android")) {
+    os = "Android";
+  } else if (ua.includes("iPhone") || ua.includes("iPad")) {
+    os = "iOS";
+  } else if (ua.includes("Linux")) {
+    os = "Linux";
+  }
+
+  return `${browser} (${os})`;
+}
+
+/**
+ * Static label/value row used by the Diagnostics block. No click-to-copy —
+ * the "Share diagnostic" button at the bottom exports the full report at
+ * once, so per-row copy would just be noise.
+ *
+ * Returns an `update(value)` handle so callers can fill the row later when
+ * an async lookup finishes (used by the @smoldot block queries).
+ */
+interface InfoRowHandle {
+  update: (value: string) => void;
+}
+function renderInfoRow(
+  parent: HTMLElement,
+  label: string,
+  value: string,
+): InfoRowHandle {
+  const row = document.createElement("div");
+  row.className = "mode-endpoint-row mode-info-row";
+  const labelEl = document.createElement("span");
+  labelEl.className = "mode-endpoint-label";
+  labelEl.textContent = label;
+  const valueEl = document.createElement("code");
+  valueEl.className = "mode-endpoint-value";
+  valueEl.textContent = value;
+  row.appendChild(labelEl);
+  row.appendChild(valueEl);
+  parent.appendChild(row);
+  return {
+    update: (next) => {
+      valueEl.textContent = next;
+    },
+  };
+}
+
+function renderChainRadio(
+  parent: HTMLElement,
+  value: ChainBackend,
   label: string,
   description: string,
-  currentMode: DotliMode,
+  current: ChainBackend,
+  onSelect: (next: ChainBackend) => void,
 ): void {
-  const selected = value === currentMode;
+  const row = buildRadioRow(`dotli-chain-${value}`, "dotli-chain-backend", {
+    value,
+    label,
+    description,
+    selected: value === current,
+  });
+  row.querySelector("input")?.addEventListener("change", () => {
+    onSelect(value);
+  });
+  parent.appendChild(row);
+}
+
+function renderContentRadio(
+  parent: HTMLElement,
+  value: ContentBackend,
+  label: string,
+  description: string,
+  current: ContentBackend,
+  onSelect: (next: ContentBackend) => void,
+): void {
+  const row = buildRadioRow(`dotli-content-${value}`, "dotli-content-backend", {
+    value,
+    label,
+    description,
+    selected: value === current,
+  });
+  row.querySelector("input")?.addEventListener("change", () => {
+    onSelect(value);
+  });
+  parent.appendChild(row);
+}
+
+function buildRadioRow(
+  _id: string,
+  name: string,
+  opts: {
+    value: string;
+    label: string;
+    description: string;
+    selected: boolean;
+  },
+): HTMLLabelElement {
   const row = document.createElement("label");
-  row.className = `mode-radio-row${selected ? " selected" : ""}`;
+  row.className = `mode-radio-row${opts.selected ? " selected" : ""}`;
 
   const radio = document.createElement("input");
   radio.type = "radio";
-  radio.name = "dotli-mode";
-  radio.value = value;
-  radio.checked = selected;
+  radio.name = name;
+  radio.value = opts.value;
+  radio.checked = opts.selected;
   radio.className = "mode-radio-input";
   row.appendChild(radio);
 
@@ -555,129 +1461,20 @@ function renderModeRadio(
 
   const text = document.createElement("span");
   text.className = "mode-radio-text";
-  text.innerHTML = `<span class="mode-radio-label">${label}</span><span class="mode-radio-desc">${description}</span>`;
+  text.innerHTML = `<span class="mode-radio-label">${opts.label}</span><span class="mode-radio-desc">${opts.description}</span>`;
   row.appendChild(text);
 
-  radio.addEventListener("change", () => {
-    setMode(value);
-    window.location.reload();
-  });
-
-  modePopoverContent.appendChild(row);
+  return row;
 }
 
-function renderModePopover(): void {
-  const currentMode = getMode();
-  const isP2p = currentMode !== "gateway";
-  const cache = getCacheSettings(currentMode);
-
-  modePopoverContent.innerHTML = "";
-
-  // ── Section 1: P2P Light Client ──
-  const p2pHeader = document.createElement("div");
-  p2pHeader.className = "mode-popover-section";
-  p2pHeader.textContent = "P2P Light Client";
-  modePopoverContent.appendChild(p2pHeader);
-
-  renderModeRadio(
-    "p2p-shared-worker",
-    "SharedWorker",
-    "Shared across tabs (recommended)",
-    currentMode,
-  );
-  renderModeRadio(
-    "p2p-direct",
-    "Direct (per-tab)",
-    "Independent per tab",
-    currentMode,
-  );
-
-  // ── Divider ──
-  appendDivider();
-
-  // ── Section 2: Gateway ──
-  renderModeRadio(
-    "gateway",
-    "Gateway (fast)",
-    "Fast loading from trusted nodes",
-    currentMode,
-  );
-
-  // ── Section 3: P2P Cache (only visible for P2P modes) ──
-  if (isP2p) {
-    appendDivider();
-
-    const cacheHeader = document.createElement("div");
-    cacheHeader.className = "mode-popover-section";
-    cacheHeader.textContent = "P2P Cache";
-    modePopoverContent.appendChild(cacheHeader);
-
-    renderCacheToggle("CID cache", !cache.skipCidCache, (enabled) => {
-      setCacheSettings({ ...cache, skipCidCache: !enabled });
-      window.location.reload();
-    });
-
-    renderCacheToggle("Content cache", !cache.skipArchiveCache, (enabled) => {
-      setCacheSettings({ ...cache, skipArchiveCache: !enabled });
-      window.location.reload();
-    });
-
-    // Clear chain data button
-    const clearRow = document.createElement("div");
-    clearRow.className = "mode-cache-row";
-    const clearBtn = document.createElement("button");
-    clearBtn.className = "mode-clear-btn";
-    clearBtn.textContent = "Clear chain data";
-    clearBtn.title =
-      "Delete smoldot chain database and reload (forces cold sync)";
-    clearBtn.addEventListener("click", () => {
-      void clearSmoldotDatabases().then(() => {
-        window.location.reload();
-      });
-    });
-    clearRow.appendChild(clearBtn);
-    modePopoverContent.appendChild(clearRow);
-  }
-
-  // ── Footer ──
-  const footer = document.createElement("div");
-  footer.className = "mode-popover-hint";
-  footer.textContent = "Changing settings will reload the page.";
-  modePopoverContent.appendChild(footer);
-}
-
-function appendDivider(): void {
+function appendDivider(parent: HTMLElement = modePopoverContent): void {
   const divider = document.createElement("div");
   divider.className = "mode-popover-divider";
-  modePopoverContent.appendChild(divider);
-}
-
-async function clearSmoldotDatabases(): Promise<void> {
-  try {
-    if (typeof indexedDB.databases === "function") {
-      const dbs = await indexedDB.databases();
-      for (const db of dbs) {
-        if (
-          db.name !== undefined &&
-          db.name !== "" &&
-          db.name !== "dotli" &&
-          db.name !== "dotli-sw"
-        ) {
-          indexedDB.deleteDatabase(db.name);
-        }
-      }
-    }
-    // Also clear our own chain store
-    const { getDb } = await import("@dotli/storage/db");
-    const db = await getDb();
-    const tx = db.transaction("chains", "readwrite");
-    tx.objectStore("chains").clear();
-  } catch {
-    // Best effort — some browsers restrict indexedDB.databases()
-  }
+  parent.appendChild(divider);
 }
 
 function renderCacheToggle(
+  parent: HTMLElement,
   label: string,
   checked: boolean,
   onChange: (enabled: boolean) => void,
@@ -691,9 +1488,7 @@ function renderCacheToggle(
   row.appendChild(nameEl);
 
   const toggle = document.createElement("button");
-  toggle.className = `permissions-popover-toggle ${checked ? "on" : ""}`;
   toggle.setAttribute("role", "switch");
-  toggle.setAttribute("aria-checked", String(checked));
 
   const track = document.createElement("span");
   track.className = "permissions-toggle-track";
@@ -702,12 +1497,25 @@ function renderCacheToggle(
   track.appendChild(knob);
   toggle.appendChild(track);
 
+  // The toggle owns its own on/off state locally — the `renderModePopover`
+  // caller doesn't re-render the cache section on change (only chain/content
+  // groups re-render), so the button has to flip its own class + aria
+  // attribute or the UI stays stuck on its initial value.
+  let current = checked;
+  const paint = (): void => {
+    toggle.className = `permissions-popover-toggle ${current ? "on" : ""}`;
+    toggle.setAttribute("aria-checked", String(current));
+  };
+  paint();
+
   toggle.addEventListener("click", () => {
-    onChange(!checked);
+    current = !current;
+    paint();
+    onChange(current);
   });
 
   row.appendChild(toggle);
-  modePopoverContent.appendChild(row);
+  parent.appendChild(row);
 }
 
 // ── Modal ─────────────────────────────────────────────────

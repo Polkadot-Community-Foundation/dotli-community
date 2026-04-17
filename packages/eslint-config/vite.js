@@ -65,6 +65,62 @@ export const config = [
       "prefer-const": "error",
       "no-throw-literal": "error",
       curly: ["error", "all"],
+
+      // Deterministic-path contract rules — see
+      // docs/DETERMINISM_AUDIT_2026-04-17.md §3 for rationale. Every
+      // pattern here encodes one specific regression class that leaked
+      // into the repo before the audit pass.
+      "no-restricted-syntax": [
+        "error",
+        {
+          // Silent catch bodies. Every `catch` must either rethrow with
+          // `{ cause }`, or call `captureException` + `log.error` + emit
+          // an outcome metric. Bare `catch {}` / `catch (e) {}` swallows
+          // the cause entirely. For genuinely-safe silent-swallow cases
+          // (e.g. `localStorage` unavailable), use an eslint-disable
+          // with a one-line rationale so the exception is reviewed.
+          selector: "CatchClause > BlockStatement[body.length=0]",
+          message:
+            "Silent catch {} is forbidden. Either rethrow with `{ cause: err }`, or call captureException + log.error and emit an outcome metric (see docs/DETERMINISM_AUDIT §3.1).",
+        },
+        {
+          // Error wrapping via string concatenation with a `.message`
+          // access: `new Error("x: " + e.message)` loses the original
+          // `.cause` chain. Use the native `cause` constructor option
+          // instead. We only match the `.message` form — plain string
+          // concatenation for constant messages doesn't apply.
+          selector:
+            "NewExpression[callee.name='Error'] BinaryExpression[operator='+'] MemberExpression[property.name='message']",
+          message:
+            "Do not wrap errors by concatenating `err.message`. Use `new Error('msg', { cause: err })` so `.cause` survives (see docs/DETERMINISM_AUDIT §3.1).",
+        },
+        {
+          // Parallel `_FAILURE` / `_TIMEOUT` / `_RETRY` metric constants
+          // violate the "one name per logical event" schema. Use
+          // `m.count(<base>, { outcome: "error" | "timeout" })` instead.
+          selector:
+            "ExportNamedDeclaration > VariableDeclaration > VariableDeclarator[id.name=/_(FAILURE|TIMEOUT|RETRY|RETRIES)$/]",
+          message:
+            "Parallel _FAILURE / _TIMEOUT / _RETRY metric constants are forbidden. Use one name + `{ outcome, reason }` (see docs/DETERMINISM_AUDIT §3.4).",
+        },
+      ],
+    },
+  },
+  {
+    // Only the logging + metrics entry points may call `console.*`
+    // directly. Everywhere else must go through `log.*` so DEBUG
+    // gating + Sentry breadcrumb wiring applies uniformly.
+    files: [
+      "**/src/**/*.ts",
+      "**/src/**/*.tsx",
+    ],
+    ignores: [
+      "**/packages/shared/src/log.ts",
+      "**/packages/metrics/src/**",
+      "**/apps/sandbox/src/app-sw.ts",
+    ],
+    rules: {
+      "no-console": "error",
     },
   },
   {

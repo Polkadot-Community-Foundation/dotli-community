@@ -3,7 +3,8 @@
 // Uses the same HeliaClient implementation as polkadot-bulletin-chain/console-ui.
 // Connects to Bulletin Chain peers via bitswap over WebSocket.
 
-import { TIMEOUTS, BULLETIN_PEERS } from "@dotli/config/config";
+import { TIMEOUTS } from "@dotli/config/config";
+import { getActiveBulletinPeers } from "@dotli/config/endpoints";
 import { dur } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
@@ -51,6 +52,17 @@ export interface HeliaFetchResult {
   parsedJSON?: unknown;
 }
 
+/**
+ * Per-peer dial outcome — returned from `HeliaClient.initialize()` so
+ * the UI can surface "peer X failed" individually instead of only
+ * seeing "could not connect to any peer" after the threshold check.
+ */
+export interface PeerDialOutcome {
+  addr: string;
+  ok: boolean;
+  error?: string;
+}
+
 export class HeliaClient {
   private config: HeliaClientConfig;
   private helia?: Helia;
@@ -82,6 +94,7 @@ export class HeliaClient {
   async initialize(): Promise<{
     peerId: string;
     connections: ConnectionInfo[];
+    dialOutcomes: PeerDialOutcome[];
   }> {
     this.log("info", "Initializing Helia P2P client...");
 
@@ -131,18 +144,21 @@ export class HeliaClient {
     );
 
     const helia = this.helia;
-    await Promise.allSettled(
+    const dialOutcomes: PeerDialOutcome[] = await Promise.all(
       this.config.peerMultiaddrs.map(async (addr) => {
         try {
           const ma = multiaddr(addr);
           await helia.libp2p.dial(ma);
           this.log("success", `Connected to peer: ${addr.slice(-20)}`);
+          return { addr, ok: true };
         } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
           this.log(
             "error",
             `Failed to connect to peer: ${addr.slice(-20)}`,
             error,
           );
+          return { addr, ok: false, error: reason };
         }
       }),
     );
@@ -155,12 +171,13 @@ export class HeliaClient {
       direction: conn.direction,
     }));
 
+    const okCount = dialOutcomes.filter((o) => o.ok).length;
     this.log(
       "success",
-      `Connected to ${String(this.connectedPeers.length)} peer(s)`,
+      `Connected to ${String(this.connectedPeers.length)} peer(s) (${String(okCount)}/${String(dialOutcomes.length)} dials succeeded)`,
     );
 
-    return { peerId, connections: this.connectedPeers };
+    return { peerId, connections: this.connectedPeers, dialOutcomes };
   }
 
   async fetchData(cidOrString: string | CID): Promise<HeliaFetchResult> {
@@ -264,12 +281,43 @@ export class HeliaClient {
 }
 
 // ── dotli wrapper (backward-compatible API) ──────────────
+//
+// The Helia client is cached by the exact peer list it was built with.
+// If the user changes their Bulletin peers (custom endpoints, profile
+// switch) mid-session, a new client MUST be built — otherwise the next
+// fetch would run against the old peer set, violating the determinism
+// contract ("the user's chosen path is the only path").
 
 let client: HeliaClient | null = null;
+let clientPeerFingerprint: string | null = null;
+
+function peerFingerprint(peers: readonly string[]): string {
+  // Sorted join so the fingerprint is order-insensitive — peer array
+  // ordering is not meaningful to the user.
+  return [...peers].sort().join("|");
+}
 
 function getClient(): HeliaClient {
-  client ??= new HeliaClient({
-    peerMultiaddrs: BULLETIN_PEERS,
+  const peers = getActiveBulletinPeers();
+  const fingerprint = peerFingerprint(peers);
+  if (client !== null && clientPeerFingerprint === fingerprint) {
+    return client;
+  }
+  if (client !== null && clientPeerFingerprint !== fingerprint) {
+    // Peer list changed under us — tear down the old client before
+    // building a new one against the user's current selection.
+    log.warn(
+      "[dot.li fetch] Bulletin peer set changed; rebuilding Helia client",
+    );
+    const prev = client;
+    client = null;
+    clientPeerFingerprint = null;
+    void prev.stop().catch((err: unknown) => {
+      log.warn("[dot.li fetch] Helia stop() failed during rebuild:", err);
+    });
+  }
+  client = new HeliaClient({
+    peerMultiaddrs: peers,
     onLog: (level, message, data) => {
       const fn =
         level === "error"
@@ -282,11 +330,18 @@ function getClient(): HeliaClient {
       fn(`[dot.li fetch] ${message}`, data ?? "");
     },
   });
+  clientPeerFingerprint = fingerprint;
   return client;
 }
 
 /**
  * Initialize the Helia P2P client.
+ *
+ * Surfaces per-peer dial outcomes via the status callback so a UI
+ * operator can see "peer X failed" individually. The N-1 failure case
+ * (one peer up, three down) would otherwise look identical to the
+ * all-peers-healthy case — a deterministic path needs visibility into
+ * each peer, not just the aggregate.
  */
 export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
   const c = getClient();
@@ -294,13 +349,41 @@ export async function ensureHelia(onStatus?: StatusCallback): Promise<Helia> {
     onStatus?.("Initializing P2P client...");
     const initStart = performance.now();
     const stopInit = m.timer(S.CONTENT_HELIA_INIT);
-    const { connections } = await c.initialize();
+    const { connections, dialOutcomes } = await c.initialize();
     stopInit();
     log.warn(`[dot.li fetch] ensureHelia() done (${dur(initStart)})`);
     m.gauge("content.peer_connections", connections.length, "none");
-    onStatus?.(`Connected to ${String(connections.length)} peer(s)`);
+
+    // Emit a per-peer count so dashboards see failures even when the
+    // cluster is up in aggregate.
+    for (const outcome of dialOutcomes) {
+      m.count("content.peer_dial", {
+        outcome: outcome.ok ? "ok" : "error",
+      });
+      if (!outcome.ok) {
+        log.warn(
+          `[dot.li fetch] peer dial failed: ${outcome.addr.slice(-32)} — ${outcome.error ?? "unknown"}`,
+        );
+      }
+    }
+
+    const okPeers = dialOutcomes.filter((o) => o.ok).length;
+    const failedPeers = dialOutcomes.length - okPeers;
+    if (failedPeers > 0) {
+      onStatus?.(
+        `Connected to ${String(okPeers)}/${String(dialOutcomes.length)} peer(s) — ${String(failedPeers)} failed`,
+      );
+    } else {
+      onStatus?.(`Connected to ${String(connections.length)} peer(s)`);
+    }
     if (connections.length === 0) {
-      throw new Error("Could not connect to any Bulletin Chain peers");
+      const detail = dialOutcomes
+        .filter((o) => !o.ok)
+        .map((o) => `${o.addr.slice(-32)}: ${o.error ?? "unknown"}`)
+        .join("; ");
+      throw new Error(
+        `Could not connect to any Bulletin Chain peers${detail.length > 0 ? ` (${detail})` : ""}`,
+      );
     }
   }
   const helia = c.getHelia();
@@ -334,7 +417,7 @@ async function fetchViaP2P(
     log.warn(
       `[dot.li fetch] P2P timeout after ${String(TIMEOUTS.P2P_FETCH / 1000)}s, aborting...`,
     );
-    m.count(S.CONTENT_P2P_TIMEOUT);
+    m.count(S.CONTENT_P2P, { outcome: "timeout" });
     controller.abort();
   }, TIMEOUTS.P2P_FETCH);
 
@@ -346,13 +429,24 @@ async function fetchViaP2P(
 
   try {
     if (cid.code === 0x70) {
-      // dag-pb (UnixFS) — file or directory
+      // dag-pb (UnixFS) — the CID is either a file or a directory. Ask
+      // UnixFS up-front via `fs.stat(cid)` so the branch is structural
+      // rather than error-message-driven. The old approach (attempt
+      // `fs.cat()` and branch on `"not a file"` in the error message)
+      // was brittle: any future version of the unixfs package that
+      // localized or rewrote that message would silently turn directory
+      // CIDs into fatal errors.
       log.warn(`[dot.li fetch] P2P: fetching dag-pb (UnixFS) CID...`);
       const fs = unixfs(helia);
 
-      // Try as file first
-      try {
-        log.warn(`[dot.li fetch] P2P: trying fs.cat()...`);
+      log.warn(`[dot.li fetch] P2P: step=stat (determine file vs dir)`);
+      const stat = await fs.stat(cid, { signal });
+      const unixfsType: string | undefined = (stat as { type?: string }).type;
+      const isDirectory =
+        unixfsType === "directory" || unixfsType === "hamt-sharded-directory";
+
+      if (!isDirectory) {
+        log.warn(`[dot.li fetch] P2P: step=cat (type=${unixfsType ?? "file"})`);
         const chunks: Uint8Array[] = [];
         for await (const chunk of fs.cat(cid, { signal })) {
           chunks.push(chunk);
@@ -370,27 +464,32 @@ async function fetchViaP2P(
           return toFetchResult(files);
         }
         return { type: "single", content };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(`[dot.li fetch] P2P: fs.cat() failed: ${msg}`);
-        if (!(err instanceof Error) || !err.message.includes("not a file")) {
-          throw err;
-        }
       }
 
-      // It's a directory — walk it recursively
-      log.warn(`[dot.li fetch] P2P: CID is a directory, walking entries...`);
+      log.warn(`[dot.li fetch] P2P: step=walk (UnixFS type=${unixfsType})`);
       onStatus?.("Fetching directory via P2P...");
       const files: ArchiveFiles = {};
       const CONCURRENCY = 6;
 
       async function walkDir(dirCid: CID, prefix: string): Promise<void> {
         log.warn(`[dot.li fetch] P2P: listing directory ${prefix || "/"}...`);
-        const entries: { cid: CID; path: string }[] = [];
+        // `fs.ls()` already surfaces a typed `UnixFSEntry.type`, so
+        // keep the type alongside the cid/path triple — no need to
+        // string-match "not a file" on each cat() error. The walker
+        // branches structurally, and real cat failures (timeouts,
+        // missing blocks) propagate unchanged.
+        const entries: {
+          cid: CID;
+          path: string;
+          type: string | undefined;
+        }[] = [];
         for await (const entry of fs.ls(dirCid, { signal })) {
           const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-          entries.push({ cid: entry.cid, path });
-          log.debug(`[dot.li fetch] P2P: found entry: ${path}`);
+          const type = (entry as { type?: string }).type;
+          entries.push({ cid: entry.cid, path, type });
+          log.debug(
+            `[dot.li fetch] P2P: found entry: ${path} (type=${type ?? "?"})`,
+          );
         }
         log.warn(
           `[dot.li fetch] P2P: listed ${String(entries.length)} entries in ${prefix || "/"}`,
@@ -400,24 +499,22 @@ async function fetchViaP2P(
         async function next(): Promise<void> {
           while (i < entries.length) {
             const entry = entries[i++];
-            try {
-              log.debug(`[dot.li fetch] P2P: fetching file ${entry.path}...`);
-              const chunks: Uint8Array[] = [];
-              for await (const chunk of fs.cat(entry.cid, { signal })) {
-                chunks.push(chunk);
-              }
-              files[entry.path] = concatBytes(...chunks);
-              log.debug(
-                `[dot.li fetch] P2P: fetched ${entry.path} (${String(files[entry.path].length)} bytes)`,
-              );
-            } catch (catErr) {
-              if (
-                catErr instanceof Error &&
-                catErr.message.includes("not a file")
-              ) {
-                await walkDir(entry.cid, entry.path);
-              }
+            const isSubdir =
+              entry.type === "directory" ||
+              entry.type === "hamt-sharded-directory";
+            if (isSubdir) {
+              await walkDir(entry.cid, entry.path);
+              continue;
             }
+            log.debug(`[dot.li fetch] P2P: fetching file ${entry.path}...`);
+            const chunks: Uint8Array[] = [];
+            for await (const chunk of fs.cat(entry.cid, { signal })) {
+              chunks.push(chunk);
+            }
+            files[entry.path] = concatBytes(...chunks);
+            log.debug(
+              `[dot.li fetch] P2P: fetched ${entry.path} (${String(files[entry.path].length)} bytes)`,
+            );
           }
         }
         await Promise.all(Array.from({ length: CONCURRENCY }, () => next()));
@@ -447,45 +544,53 @@ async function fetchViaP2P(
 }
 
 /**
- * Fetch content via IPFS gateway (HTTP fallback).
+ * Fetch content via IPFS gateway.
  *
- * Strategy:
- * 1. Try ?format=car (returns directory tree as CAR archive)
- * 2. If CAR fails, try plain gateway fetch (single file)
+ * No silent CAR→plain fallback. The CID codec deterministically decides
+ * which transport is correct:
+ *   - DAG-PB (0x70): UnixFS directory or chunked file → request CAR
+ *   - RAW    (0x55): single raw block → plain HTTP GET
+ * Any other codec is a hard failure — we don't guess. Any transport
+ * failure surfaces with the original cause.
  */
+const CODEC_DAG_PB = 0x70;
+const CODEC_RAW = 0x55;
+
 async function fetchViaGateway(
   cidString: string,
   onStatus?: StatusCallback,
 ): Promise<FetchResult> {
   const stopGw = m.timer(S.CONTENT_GATEWAY);
-  // Try CAR format first (handles directories)
   try {
-    onStatus?.("Fetching archive from IPFS gateway...");
-    log.warn(`[dot.li fetch] Gateway: trying CAR format...`);
-    const gatewayStart = performance.now();
-    const carBuffer = await fetchCarFromIpfs(cidString);
-    log.warn(
-      `[dot.li fetch] Gateway CAR: fetched ${String(Math.round(carBuffer.length / 1024))} KB in ${dur(gatewayStart)}`,
+    const cid = CID.parse(cidString);
+    if (cid.code === CODEC_DAG_PB) {
+      onStatus?.("Fetching archive from IPFS gateway...");
+      log.warn(`[dot.li fetch] Gateway: requesting CAR (codec dag-pb)...`);
+      const gatewayStart = performance.now();
+      const carBuffer = await fetchCarFromIpfs(cidString);
+      log.warn(
+        `[dot.li fetch] Gateway CAR: fetched ${String(Math.round(carBuffer.length / 1024))} KB in ${dur(gatewayStart)}`,
+      );
+      onStatus?.("Parsing content...");
+      const files = await parseIpfsResponse(carBuffer);
+      return toFetchResult(files);
+    }
+    if (cid.code === CODEC_RAW) {
+      onStatus?.("Fetching content via IPFS gateway...");
+      log.warn(`[dot.li fetch] Gateway: plain GET (codec raw)...`);
+      const gatewayStart = performance.now();
+      const { data } = await fetchFromIpfs(cidString);
+      log.warn(
+        `[dot.li fetch] Gateway: fetched ${String(Math.round(data.length / 1024))} KB in ${dur(gatewayStart)}`,
+      );
+      return { type: "single", content: data };
+    }
+    throw new Error(
+      `Unsupported CID codec for gateway fetch: 0x${cid.code.toString(16)} (cid=${cidString})`,
     );
-    onStatus?.("Parsing content...");
-    const files = await parseIpfsResponse(carBuffer);
+  } finally {
     stopGw();
-    return toFetchResult(files);
-  } catch (carErr) {
-    const carMsg = carErr instanceof Error ? carErr.message : String(carErr);
-    log.warn(`[dot.li fetch] Gateway CAR failed: ${carMsg}`);
   }
-
-  // Plain gateway fetch (single file)
-  onStatus?.("Fetching content via IPFS gateway...");
-  log.warn(`[dot.li fetch] Gateway: trying plain fetch...`);
-  const gatewayStart = performance.now();
-  const { data } = await fetchFromIpfs(cidString);
-  log.warn(
-    `[dot.li fetch] Gateway: fetched ${String(Math.round(data.length / 1024))} KB in ${dur(gatewayStart)}`,
-  );
-  stopGw();
-  return { type: "single", content: data };
 }
 
 /**
@@ -557,5 +662,6 @@ export async function destroyHelia(): Promise<void> {
   if (client) {
     await client.stop();
     client = null;
+    clientPeerFingerprint = null;
   }
 }

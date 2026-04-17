@@ -139,19 +139,19 @@ const SLOW_THRESHOLDS: Record<string, { secs: number; hint: string }> = {
   },
   "Adding Paseo relay chain": {
     secs: 10,
-    hint: "Relay chain bootstrap is stalled — smoldot may be having trouble reaching bootnodes",
+    hint: "Paseo relay chain bootstrap is stalled — smoldot may be having trouble reaching bootnodes",
   },
   "Connecting to Asset Hub": {
     secs: 12,
-    hint: "Parachain connection is taking long — the chain may be congested or peers unavailable",
+    hint: "Asset Hub parachain connection is taking long — the chain may be congested or peers unavailable",
   },
   Syncing: {
     secs: 15,
-    hint: "Chain sync is slow — smoldot is catching up to the latest finalized block",
+    hint: "Asset Hub sync is slow — smoldot is still catching up to the latest finalized block on the Paseo relay chain",
   },
   Resolving: {
     secs: 10,
-    hint: "Smoldot is taking longer to sync — the light client is still catching up",
+    hint: "Smoldot is still catching up on the Paseo relay chain",
   },
   "Connecting to peers": {
     secs: 10,

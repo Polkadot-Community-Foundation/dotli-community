@@ -1,16 +1,37 @@
 // dot.li Universal Viewer — Configuration
 // Contract addresses, chain config, peer multiaddrs, and minimal ABIs.
 
-// Supports dot.li, paseo.li, or any future two-segment domain.
-// Falls back to "dot.li" for localhost / unknown hosts.
+// The shell is deployed across several root domains (dot.li, paseo.li,
+// paseoli.dev, ephemeral previews). `BASE_DOMAIN` derives the
+// registrable root from the current hostname — never silently defaulted
+// to "dot.li" — because the cross-origin allow-list (shared auth,
+// protocol iframe, SITE_ID) is keyed on this string.
+//
+// Localhost is a legal dev environment and keeps its explicit
+// `"dot.li"` fallback so local runs match the production allow-list;
+// anything else that doesn't parse as a two-segment hostname is a
+// deploy misconfiguration and aborts boot rather than opening the
+// allow-list to the wrong origin.
 const hostname = self.location.hostname;
 const segments = hostname.split(".");
-export const BASE_DOMAIN =
-  segments.length >= 2 &&
-  !hostname.endsWith(".localhost") &&
-  hostname !== "localhost"
-    ? `${segments[segments.length - 2]}.${segments[segments.length - 1]}`
-    : "dot.li";
+const isLocalEnv =
+  hostname === "localhost" ||
+  hostname.endsWith(".localhost") ||
+  hostname === "127.0.0.1";
+
+function deriveBaseDomain(): string {
+  if (isLocalEnv) {
+    return "dot.li";
+  }
+  if (segments.length < 2) {
+    throw new Error(
+      `[dot.li config] Refusing to boot — hostname "${hostname}" doesn't have a two-segment registrable root. Set up a proper DNS entry or run from localhost.`,
+    );
+  }
+  return `${segments[segments.length - 2]}.${segments[segments.length - 1]}`;
+}
+
+export const BASE_DOMAIN = deriveBaseDomain();
 
 // --- Site identity -------------------------------------------------------
 
@@ -23,10 +44,7 @@ export const BASE_DOMAIN =
 // running `SITE_ID` at runtime.
 export type SiteId = string;
 
-export const isLocalhost =
-  hostname === "localhost" ||
-  hostname.endsWith(".localhost") ||
-  hostname === "127.0.0.1";
+export const isLocalhost = isLocalEnv;
 
 export const SITE_ID: SiteId = isLocalhost ? "local.li" : BASE_DOMAIN;
 
@@ -42,10 +60,14 @@ export const SS_USE_SMOLDOT =
 
 /** Which people chain spec to use for the statement store via smoldot.
  *  Value is the chain-spec file name without `.json`, e.g.
- *  "people-westend-local" (default) or "next-people-paseo". */
-export const SS_PEOPLE_CHAIN: string =
-  (import.meta.env.VITE_SS_PEOPLE_CHAIN as string | undefined) ??
-  "next-people-paseo";
+ *  "people-westend-local" or "next-people-paseo".
+ *
+ *  Hard-coded — the active deployment targets Paseo and every other
+ *  network-scoped constant (Asset Hub RPC, relay genesis, bulletin peers)
+ *  lives here, not in env. When the network flips we'll change this
+ *  string alongside the rest, as a single deliberate commit instead of
+ *  a per-environment deploy knob. */
+export const SS_PEOPLE_CHAIN = "next-people-paseo";
 
 /** Optional relay chain spec override for the statement store people chain.
  *  Value is the chain-spec file name without `.json`, e.g. "westend-local".
@@ -54,9 +76,14 @@ export const SS_RELAY_CHAIN: string | undefined =
   (import.meta.env.VITE_SS_RELAY_CHAIN as string | undefined) ?? undefined;
 
 // --- Debug logging -------------------------------------------------------
+//
+// Allow-list polarity: DEBUG is ON only when VITE_APP_DEBUG === "true".
+// The previous `!== "false"` check had the wrong sign — a typo like
+// "flase" / "0" / "off" would silently enable debug in production
+// builds and flood real sessions with debug logs.
 
 export const DEBUG =
-  (import.meta.env.VITE_APP_DEBUG as string | undefined) !== "false";
+  (import.meta.env.VITE_APP_DEBUG as string | undefined) === "true";
 
 // --- Well-known genesis hashes (Paseo testnet) ---
 
@@ -109,6 +136,17 @@ export const STORAGE_SLOTS = {
 } as const;
 
 // --- Bulletin Chain — Peer multiaddrs for Helia P2P ---
+//
+// The active peer set MUST match the resolver chain genesis. Mixing Paseo
+// and Westend peers would let Helia dial both networks via
+// `Promise.allSettled`, racing across networks and succeeding against
+// whichever happened to have the CID first — a violation of "user picks
+// one path, we use that path".
+//
+// `BULLETIN_PEERS` (the active default) is Paseo-only, matching
+// `ASSET_HUB_PASEO_GENESIS` below. The per-network constants stay for
+// documentation and for the future endpoint-picker UI; they are *not* the
+// active default.
 
 export const BULLETIN_PEERS_PASEO = [
   "/dns4/paseo-bulletin-collator-node-0.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWRuKisocQ2Z5hBZagV5YGxJMYuW13xT42sUiUCWf5bRtu",
@@ -124,10 +162,7 @@ export const BULLETIN_PEERS_WESTEND = [
   "/dns4/westend-bulletin-collator-node-1.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWSD5tovFkmja9aFYA6QM8eU3mFhZKdAuCsa5MgSsNDmxc",
 ];
 
-export const BULLETIN_PEERS = [
-  ...BULLETIN_PEERS_PASEO,
-  ...BULLETIN_PEERS_WESTEND,
-];
+export const BULLETIN_PEERS = BULLETIN_PEERS_PASEO;
 
 // --- IPFS Gateway ---
 
@@ -138,9 +173,34 @@ export const IPFS_GATEWAY = "https://paseo-ipfs.polkadot.io";
 //
 // Used in gateway mode for trusted name resolution. Direct WSS JSON-RPC
 // to a known RPC node — faster but introduces a trust assumption.
+//
+// `ASSET_HUB_PASEO_RPC_ENDPOINT` is the single primary endpoint dialed when
+// the user is on the default endpoint profile. The full curated list lives
+// in `ASSET_HUB_PASEO_RPC_CANDIDATES` for the (future) custom-endpoints
+// picker UI; it is NOT dialable as a list because polkadot-api's
+// `getWsProvider` silently round-robins any list it's handed, which
+// contradicts the "what the user chose is what runs" principle. Active
+// endpoint resolution lives in `./endpoints.ts`
+// (`getActiveAssetHubRpcEndpoint`).
 
-export const ASSET_HUB_PASEO_RPC_ENDPOINTS = [
-  "wss://sys.ibp.network/asset-hub-paseo",
+export const ASSET_HUB_PASEO_RPC_ENDPOINT =
+  "wss://sys.ibp.network/asset-hub-paseo";
+
+/**
+ * Paseo relay chain JSON-RPC endpoint. Used for diagnostic display only
+ * right now (dotNS resolution happens entirely on Asset Hub, so RPC mode
+ * never actually dials this). Kept alongside the Asset Hub endpoint so
+ * the settings popover can report both when the user is on `chain=rpc`.
+ */
+export const PASEO_RELAY_RPC_ENDPOINT = "wss://rpc.ibp.network/paseo";
+
+/**
+ * Curated alternates for the user-driven custom-endpoints picker. NOT for
+ * automatic dialing — pass `ASSET_HUB_PASEO_RPC_ENDPOINT` (or the user's
+ * explicit override) to `getWsProvider` instead.
+ */
+export const ASSET_HUB_PASEO_RPC_CANDIDATES = [
+  ASSET_HUB_PASEO_RPC_ENDPOINT,
   "wss://asset-hub-paseo-rpc.n.dwellir.com",
   "wss://asset-hub-paseo.dotters.network",
   "wss://sys.turboflakes.io/asset-hub-paseo",

@@ -16,9 +16,12 @@
     "@dotli/typescript-config": "workspace:*",
     "eslint": "^10.2.0",
     "happy-dom": "^20.9.0",
-    "typescript": "~6.0.2",
+    "typescript": "~6.0.3",
     "vite": "^8.0.8",
     "vitest": "^4.1.4"
+  },
+  "dependencies": {
+    "@dotli/shared": "workspace:*"
   },
   "peerDependencies": {
     "@sentry/browser": ">=10.0.0"

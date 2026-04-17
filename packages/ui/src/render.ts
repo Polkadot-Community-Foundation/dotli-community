@@ -246,8 +246,9 @@ export function renderIframe(url: string, label: string): void {
     let doc: Document | null = null;
     try {
       doc = iframe.contentDocument;
+      // eslint-disable-next-line no-restricted-syntax -- cross-origin iframe access: some browsers throw, others return null; both mean "can't read title from here" and the caller falls back to `${label}.dot`.
     } catch {
-      // Cross-origin: some browsers throw instead of returning null
+      /* cross-origin — fall through with doc=null */
     }
 
     if (!doc) {

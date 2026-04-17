@@ -9,14 +9,12 @@
 
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws-provider";
-import {
-  ASSET_HUB_PASEO_RPC_ENDPOINTS,
-  CONTRACTS,
-  STORAGE_SLOTS,
-} from "@dotli/config/config";
+import { CONTRACTS, STORAGE_SLOTS } from "@dotli/config/config";
+import { getActiveAssetHubRpcEndpoint } from "@dotli/config/endpoints";
 import { log } from "@dotli/shared/log";
+import { m } from "@dotli/metrics/metrics";
 import { dur } from "@dotli/shared/perf";
-import { namehash, toHex, decodeIpfsContenthash } from "./abi";
+import { namehash, toHex, decodeIpfsContenthashResult } from "./abi";
 import { readMappingBytes, readMappingAddress } from "./storage";
 import type { StatusCallback, UnsafeApi } from "./storage";
 
@@ -43,9 +41,14 @@ function ensureClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
 
 async function doCreateClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
   const t0 = performance.now();
-  onStatus?.("Connecting to Asset Hub RPC...");
+  // Dial a single endpoint — silent round-robin would hide which node is
+  // responsible for any failure, defeating the whole point of gateway mode's
+  // "trusted, deterministic" contract.
+  const endpoint = getActiveAssetHubRpcEndpoint();
+  m.setDefaults({ rpc_endpoint: endpoint });
+  onStatus?.(`Connecting to Asset Hub RPC (${endpoint})...`);
 
-  const provider = getWsProvider([...ASSET_HUB_PASEO_RPC_ENDPOINTS], {
+  const provider = getWsProvider([endpoint], {
     // Public RPC endpoints can be tunnel-gated; the default 40s heartbeat
     // is occasionally too tight.
     heartbeatTimeout: 120_000,
@@ -115,17 +118,31 @@ export async function resolveDotNameViaRpc(
     return null;
   }
 
-  const cid = decodeIpfsContenthash(toHex(contenthashBytes));
-  if (cid === null || cid === "") {
-    onStatus?.(`Domain "${domain}" not found or no content set`);
-    return null;
+  // Mirror the smoldot-side resolver in distinguishing "not registered" /
+  // "non-IPFS contenthash" / "decode error".
+  const decoded = decodeIpfsContenthashResult(toHex(contenthashBytes));
+  switch (decoded.kind) {
+    case "ok":
+      log.warn(
+        `[dot.li rpc-resolve] JSON-RPC resolved ${domain} -> ${decoded.cid} (${dur(t0)})`,
+      );
+      onStatus?.(`Resolved "${domain}" via RPC`);
+      return decoded.cid;
+    case "empty":
+      onStatus?.(`Domain "${domain}" not found or no content set`);
+      return null;
+    case "unsupported-codec":
+      throw new Error(
+        `Domain "${domain}" has a non-IPFS contenthash (codec=${decoded.codec ?? "unknown"})`,
+      );
+    case "decode-error": {
+      const cause = decoded.cause;
+      throw new Error(
+        `Failed to decode contenthash for "${domain}": ${cause instanceof Error ? cause.message : String(cause)}`,
+        cause instanceof Error ? { cause } : undefined,
+      );
+    }
   }
-
-  log.warn(
-    `[dot.li rpc-resolve] JSON-RPC resolved ${domain} -> ${cid} (${dur(t0)})`,
-  );
-  onStatus?.(`Resolved "${domain}" via RPC`);
-  return cid;
 }
 
 /**
@@ -155,6 +172,7 @@ export function destroyRpcClient(): void {
   if (clientInstance !== null) {
     try {
       clientInstance.destroy();
+      // eslint-disable-next-line no-restricted-syntax -- best-effort teardown: the WS client may already be disconnected; we still clear references below.
     } catch {
       /* already dead */
     }

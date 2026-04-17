@@ -150,13 +150,16 @@
             </button>
         </div>
 
-        <!-- Mode Popover -->
+        <!-- Mode Popover + backdrop (backdrop blocks clicks under the popover
+             and dismisses the popover when clicked) -->
+        <div class="mode-popover-backdrop" id="mode-popover-backdrop"></div>
         <div class="mode-popover" id="mode-popover">
-            <div class="mode-popover-header">Resolution Mode</div>
             <div class="mode-popover-content" id="mode-popover-content"></div>
         </div>
 
-        <!-- Permissions Popover -->
+        <!-- Permissions Popover + backdrop (same pattern as settings menu:
+             blocks clicks under the popover + dismisses it when clicked) -->
+        <div class="permissions-popover-backdrop" id="permissions-popover-backdrop"></div>
         <div class="permissions-popover" id="permissions-popover">
             <div class="permissions-popover-header">Permissions</div>
             <div class="permissions-popover-list" id="permissions-popover-list"></div>

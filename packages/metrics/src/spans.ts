@@ -21,11 +21,11 @@ export const SMOLDOT_FINALIZED_BLOCK = "smoldot.finalized_block";
 /** Total presync duration (create + relay + asset hub + finalized block) */
 export const SMOLDOT_PRESYNC = "smoldot.presync";
 
-/** Number of presync attempts before success (1 = first try) */
-export const SMOLDOT_PRESYNC_ATTEMPTS = "smoldot.presync_attempts";
-
-/** Presync failed after all retries */
-export const SMOLDOT_PRESYNC_FAILURE = "smoldot.presync_failure";
+/**
+ * Presync outcome — same series as `SMOLDOT_PRESYNC`. Callers emit
+ * `m.count(SMOLDOT_PRESYNC, { outcome: "error", reason })` instead of a
+ * parallel `_FAILURE` name so dashboards can chart one line per event.
+ */
 
 // ── Protocol initialization ────────────────────────────────────
 
@@ -56,7 +56,7 @@ export const CACHE_MISS = "cache.miss";
 
 // ── Content loading ────────────────────────────────────────────
 
-/** Time to fetch content via P2P */
+/** Time to fetch content via P2P. Timeouts emit `{ outcome: "timeout" }`. */
 export const CONTENT_P2P = "content.p2p";
 
 /** Time to fetch content via IPFS gateway (gateway mode) */
@@ -82,9 +82,6 @@ export const BOOTNODE_ERROR = "bootnode.error";
 
 /** Helia P2P client initialization (peer discovery + connect) */
 export const CONTENT_HELIA_INIT = "content.helia_init";
-
-/** P2P fetch timed out */
-export const CONTENT_P2P_TIMEOUT = "content.p2p_timeout";
 
 /** Fetched content size in bytes */
 export const CONTENT_SIZE = "content.size";
@@ -121,17 +118,19 @@ export const APP_RENDER = "app.render";
 
 // ── Protocol client ────────────────────────────────────────────
 
-/** Protocol iframe creation + ready wait */
+/**
+ * Protocol iframe creation + ready wait. Load failures emit
+ * `m.count(PROTOCOL_IFRAME_READY, { outcome: "error", reason })`; the
+ * parallel `_LOAD_FAILURE` constant is retired.
+ */
 export const PROTOCOL_IFRAME_READY = "protocol.iframe_ready";
 
-/** Protocol iframe creation retry */
-export const PROTOCOL_IFRAME_RETRY = "protocol.iframe_retry";
-
-/** Protocol request roundtrip time */
+/**
+ * Protocol request roundtrip time. Timeouts emit
+ * `m.count(PROTOCOL_REQUEST, { outcome: "timeout", method })`; there is
+ * no separate `_TIMEOUT` constant.
+ */
 export const PROTOCOL_REQUEST = "protocol.request";
-
-/** Protocol request timeout */
-export const PROTOCOL_REQUEST_TIMEOUT = "protocol.request_timeout";
 
 // ── Container bridge ───────────────────────────────────────────
 

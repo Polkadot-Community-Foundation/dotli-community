@@ -61,17 +61,40 @@ export function createSharedAuthStorageAdapter(siteId: SiteId): StorageAdapter {
       return fromPromise(readSharedAuthStorage(siteId, key), toError);
     },
     write(key, value) {
+      // The iframe on `host.<root>` is the authoritative store: after a
+      // write resolves, read back through the iframe before firing the
+      // local `emit`. Trusting the local `value` we just tried to write
+      // would let a same-tab subscriber observe an update that the
+      // upstream storage quietly rejected (quota, validation, etc.). The
+      // cross-tab BroadcastChannel listener handles other tabs; here we
+      // reconcile this tab against the source of truth.
       return fromPromise(
         writeSharedAuthStorage(siteId, key, value),
         toError,
       ).map(() => {
-        emit(key, value);
+        void readSharedAuthStorage(siteId, key).then(
+          (actual) => {
+            emit(key, actual);
+          },
+          () => {
+            // Read-back failed — fall back to the value we intended.
+            // The subsequent write or subscription tick will reconcile.
+            emit(key, value);
+          },
+        );
       });
     },
     clear(key) {
       return fromPromise(clearSharedAuthStorage(siteId, key), toError).map(
         () => {
-          emit(key, null);
+          void readSharedAuthStorage(siteId, key).then(
+            (actual) => {
+              emit(key, actual);
+            },
+            () => {
+              emit(key, null);
+            },
+          );
         },
       );
     },

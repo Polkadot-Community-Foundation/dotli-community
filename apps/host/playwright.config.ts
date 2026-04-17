@@ -5,7 +5,7 @@ export default defineConfig({
   timeout: 900_000, // 15 min — smoldot sync can be slow
   retries: 0,
   use: {
-    baseURL: "http://mytestapp.localhost:5173",
+    baseURL: "http://browse.localhost:5173",
     browserName: "chromium",
     headless: process.env.HEADED !== "1",
     bypassCSP: true,

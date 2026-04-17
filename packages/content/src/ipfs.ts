@@ -2,14 +2,14 @@
 //
 // Same API as polkadot-bulletin-chain/console-ui/src/lib/ipfs.ts
 
-import { IPFS_GATEWAY } from "@dotli/config/config";
+import { getActiveIpfsGateway } from "@dotli/config/endpoints";
 
 /**
  * Fetch content from IPFS by CID via HTTP gateway.
  */
 export async function fetchFromIpfs(
   cid: string,
-  gateway: string = IPFS_GATEWAY,
+  gateway: string = getActiveIpfsGateway(),
 ): Promise<{
   data: Uint8Array;
   contentType?: string;
@@ -39,7 +39,7 @@ export async function fetchFromIpfs(
  */
 export async function fetchCarFromIpfs(
   cid: string,
-  gateway: string = IPFS_GATEWAY,
+  gateway: string = getActiveIpfsGateway(),
 ): Promise<Uint8Array> {
   const url = `${gateway}/ipfs/${cid}?format=car`;
 

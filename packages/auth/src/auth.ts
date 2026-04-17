@@ -184,13 +184,25 @@ export function initAuth(): void {
   // Use smoldot for the statement store only when enabled AND in P2P mode.
   // In gateway mode, always use the WS provider — no smoldot should run.
   const useSmoldotForAuth = SS_USE_SMOLDOT && isP2pMode(getMode());
+  // The auth chain RPC endpoint is intentionally NOT user-overridable
+  // today — the custom-endpoints axis (`@dotli/config/endpoints`) only
+  // covers Asset Hub and IPFS. Until a parallel
+  // `getActivePeopleChainRpcEndpoint()` exists, we pick the first blessed
+  // default deterministically and emit a metric tag so dashboards can
+  // attribute auth failures back to the endpoint chosen here. If you
+  // change `SS_PASEO_STABLE_STAGE_ENDPOINTS[0]`, all users move with it
+  // — there is no per-user override.
+  const peopleRpcEndpoint = SS_PASEO_STABLE_STAGE_ENDPOINTS[0];
   const lazyClient = createLazyClient(
     useSmoldotForAuth
       ? getPeopleChainProvider()
-      : getWsProvider([...SS_PASEO_STABLE_STAGE_ENDPOINTS], {
+      : getWsProvider([peopleRpcEndpoint], {
           heartbeatTimeout: 120_000, // 2 minutes — default 40s is too aggressive through tunnels
         }),
   );
+  if (!useSmoldotForAuth) {
+    m.setDefaults({ people_rpc_endpoint: peopleRpcEndpoint });
+  }
 
   const rawStatementStore = createPapiStatementStoreAdapter(lazyClient);
   const statementStore = createLoggingStatementStore(rawStatementStore);

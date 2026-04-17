@@ -37,6 +37,45 @@ jobs:
       - name: Remove source maps
         run: find apps/*/dist -name '*.map' -delete
 
+      # Enforce that mode-specific bundles stay within budget. If
+      # `apps/protocol/dist/assets/index-*.js` exceeds 600 KB raw, it
+      # almost certainly means a static smoldot or chain-specs import
+      # crept back into the protocol iframe's cold-start chunk — which
+      # silently inflates RPC-mode users by ~3 MB. The thresholds below
+      # have headroom above the current sizes; tighten once they've
+      # soaked.
+      - name: Enforce mode-specific bundle budgets
+        run: |
+          fail=0
+          check() {
+            local label=$1 glob=$2 max=$3
+            local file
+            file=$(ls $glob 2>/dev/null | head -1)
+            if [[ -z "$file" ]]; then
+              echo "::warning::${label}: no file matched $glob"
+              return
+            fi
+            local size
+            size=$(stat --format=%s "$file")
+            if (( size > max )); then
+              echo "::error::${label} exceeded budget: ${size} B > ${max} B (${file})"
+              fail=1
+            else
+              echo "${label}: ${size} B (budget ${max} B) — ok"
+            fi
+          }
+          # Protocol iframe main entry (RPC mode cold start) — must NOT
+          # bundle smoldot / chain specs.
+          check "protocol-iframe-entry" \
+                "apps/protocol/dist/assets/index-*.js" \
+                $((600 * 1024))
+          # Host shell main entry — must not regress more than ~20% above
+          # its current ~460 KB raw size.
+          check "host-entry" \
+                "apps/host/dist/assets/index-*.js" \
+                $((600 * 1024))
+          exit $fail
+
       # ── PR: download baseline from main ────────────────────────
       - name: Download baseline from main
         if: github.event_name == 'pull_request'

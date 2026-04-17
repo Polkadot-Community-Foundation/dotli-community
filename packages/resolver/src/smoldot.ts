@@ -50,6 +50,51 @@ export function onConnectionIssue(cb: ConnectionIssueCallback): () => void {
   };
 }
 
+// ── Fatal panic detection ────────────────────────────────────
+//
+// Smoldot's WASM can panic (e.g. the "Option::unwrap() on a None value"
+// crash during relay-chain sync). A panic leaves every chain dead — any
+// in-flight request would hang forever. The log callback catches the
+// panic line so the surrounding layers can broadcast a fatal signal out
+// to the host client and reject pending requests immediately instead of
+// relying on a per-request timeout.
+
+type FatalCallback = (message: string) => void;
+const fatalListeners = new Set<FatalCallback>();
+let smoldotFatalMessage: string | null = null;
+
+export function onSmoldotFatal(cb: FatalCallback): () => void {
+  fatalListeners.add(cb);
+  // Replay the panic message for listeners registered after the crash so
+  // a late subscriber still sees the failure instead of silently waiting.
+  if (smoldotFatalMessage !== null) {
+    try {
+      cb(smoldotFatalMessage);
+      // eslint-disable-next-line no-restricted-syntax -- defensive multicast replay: one buggy late subscriber must not prevent the caller from registering.
+    } catch {
+      /* listener threw — safe to ignore on replay */
+    }
+  }
+  return () => {
+    fatalListeners.delete(cb);
+  };
+}
+
+function markSmoldotFatal(message: string): void {
+  if (smoldotFatalMessage !== null) {
+    return;
+  }
+  smoldotFatalMessage = message;
+  for (const cb of fatalListeners) {
+    try {
+      cb(message);
+      // eslint-disable-next-line no-restricted-syntax -- defensive multicast: one buggy subscriber must not block the fatal broadcast to all others.
+    } catch {
+      /* listener threw — don't let one listener break the broadcast */
+    }
+  }
+}
+
 // Patterns that indicate a bootnode or peer connection problem.
 const CONNECTION_ISSUE_PATTERNS = [
   "reset by remote",
@@ -69,6 +114,15 @@ function smoldotLogCallback(
   // Level 1 = Error, 2 = Warn
   if (level <= 2) {
     log.warn(`[smoldot:${target}] ${message}`);
+  }
+
+  // Panic — terminal, no recovery. Smoldot's log message starts with
+  // "Smoldot has panicked while executing task …". Surface as fatal.
+  if (
+    message.includes("Smoldot has panicked") ||
+    message.includes("panicked at")
+  ) {
+    markSmoldotFatal(message);
   }
 
   if (connectionIssueListeners.size === 0) {
@@ -125,6 +179,17 @@ export function getSmoldot(): SmoldotClient {
   return smoldotInstance;
 }
 
+/**
+ * Tear down every cached singleton bound to the shared smoldot instance.
+ *
+ * When smoldot itself is terminated (user switched chain backend, panic
+ * broadcast, etc.) every chain promise we had cached is pointing at a
+ * dead `SmoldotChain`. If any of them survive, the next call to e.g.
+ * `getBulletinChain()` would return a promise that resolves to a chain
+ * whose `sendJsonRpc` is a no-op — the user would see a silent hang.
+ * Clear them all atomically so the next access re-creates against the
+ * freshly booted smoldot.
+ */
 export function terminateSmoldot(): void {
   if (smoldotInstance === null) {
     return;
@@ -132,16 +197,24 @@ export function terminateSmoldot(): void {
   log.warn("[dot.li smoldot] Terminating smoldot instance");
   try {
     void smoldotInstance.terminate();
+    // eslint-disable-next-line no-restricted-syntax -- best-effort teardown: smoldot may already be dead (panic or prior terminate); surfacing the error would block the subsequent promise cleanup which is the important step here.
   } catch {
-    // Already destroyed or crashed — safe to ignore.
+    /* already destroyed or crashed — safe to ignore */
   }
   smoldotInstance = null;
   relayChainPromise = null;
   resolverAssetHubPromise = null;
   assetHubProvider = null;
+  dappAssetHubPromise = null;
+  bulletinChainPromise = null;
+  peopleChainPromise = null;
+  customRelayChainPromise = null;
 }
 
 export function getRelayChain(): Promise<SmoldotChain> {
+  // Clear the cached promise on rejection so the next call retries
+  // against a fresh smoldot / chain-spec fetch instead of handing the
+  // same dead rejection to every caller forever.
   relayChainPromise ??= getPaseoChainSpec()
     .then((chainSpec) => {
       log.warn("[dot.li smoldot] Adding relay chain...");
@@ -166,17 +239,26 @@ let bulletinChainPromise: Promise<SmoldotChain> | null = null;
 /**
  * Get or create the Bulletin Paseo parachain singleton.
  * Used for preimage submission via TransactionStorage.
+ *
+ * Rejections clear the cached promise so a subsequent call re-creates
+ * the chain instead of permanently caching the failure.
  */
 export function getBulletinChain(): Promise<SmoldotChain> {
   bulletinChainPromise ??= Promise.all([
     getRelayChain(),
     getBulletinPaseoChainSpec(),
-  ]).then(([relayChain, chainSpec]) =>
-    getSmoldot().addChain({
-      chainSpec,
-      potentialRelayChains: [relayChain],
-    }),
-  );
+  ])
+    .then(([relayChain, chainSpec]) =>
+      getSmoldot().addChain({
+        chainSpec,
+        potentialRelayChains: [relayChain],
+      }),
+    )
+    .catch((error: unknown) => {
+      bulletinChainPromise = null;
+      m.count(S.BOOTNODE_ERROR, { chain: "bulletin" });
+      throw error;
+    });
   return bulletinChainPromise;
 }
 
@@ -200,8 +282,9 @@ export function makeNonRemovingChain(chain: SmoldotChain): SmoldotChain {
 
 // ── People Chain (for statement store / auth) ────────────────
 // Long-lived singleton used by the auth module for statement store
-// operations via smoldot.  The variant (westend-local or paseo)
-// is controlled by VITE_SS_PEOPLE_CHAIN.
+// operations via smoldot. The active chain spec (westend-local,
+// next-people-paseo, …) is hard-coded in `@dotli/config/config`
+// as `SS_PEOPLE_CHAIN` — change it there and deploy as a single commit.
 
 import { SS_RELAY_CHAIN } from "@dotli/config/config";
 
@@ -211,6 +294,10 @@ let peopleChainPromise: Promise<SmoldotChain> | null = null;
 /**
  * Get or create the People Chain parachain singleton.
  * Enables the statement store protocol for P2P statement distribution.
+ *
+ * Both the custom-relay and people-chain promises clear themselves on
+ * rejection so the failure isn't permanently cached across a live
+ * session — the next access rebuilds against a fresh smoldot chain.
  */
 export function getPeopleChain(): Promise<SmoldotChain> {
   if (peopleChainPromise !== null) {
@@ -219,19 +306,30 @@ export function getPeopleChain(): Promise<SmoldotChain> {
 
   const relayPromise =
     SS_RELAY_CHAIN !== undefined && SS_RELAY_CHAIN !== ""
-      ? (customRelayChainPromise ??= getCustomRelayChainSpec().then((spec) =>
-          getSmoldot().addChain({ chainSpec: spec }),
-        ))
+      ? (customRelayChainPromise ??= getCustomRelayChainSpec()
+          .then((spec) => getSmoldot().addChain({ chainSpec: spec }))
+          .catch((error: unknown) => {
+            customRelayChainPromise = null;
+            m.count(S.BOOTNODE_ERROR, { chain: "custom-relay" });
+            throw error;
+          }))
       : getRelayChain();
 
-  peopleChainPromise = Promise.all([relayPromise, getPeopleChainSpec()]).then(
-    ([relayChain, chainSpec]) =>
+  peopleChainPromise = Promise.all([relayPromise, getPeopleChainSpec()])
+    .then(([relayChain, chainSpec]) =>
       getSmoldot().addChain({
         chainSpec,
         potentialRelayChains: [relayChain],
         statementStore: { maxSeenStatements: 65536 },
-      } as AddChainOptions & { statementStore: { maxSeenStatements: number } }),
-  );
+      } as AddChainOptions & {
+        statementStore: { maxSeenStatements: number };
+      }),
+    )
+    .catch((error: unknown) => {
+      peopleChainPromise = null;
+      m.count(S.BOOTNODE_ERROR, { chain: "people" });
+      throw error;
+    });
   return peopleChainPromise;
 }
 
@@ -267,7 +365,7 @@ function createAssetHubChain(
       return chain;
     })
     .catch((error: unknown) => {
-      m.count(S.BOOTNODE_ERROR, { chain: "asset_hub" });
+      m.count(S.BOOTNODE_ERROR, { chain: "asset-hub" });
       throw error;
     });
 }

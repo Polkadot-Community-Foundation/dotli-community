@@ -19,6 +19,11 @@ import { getBulletinChain, makeNonRemovingChain } from "./smoldot";
 import { log } from "@dotli/shared/log";
 
 // ── Bulletin client singleton ────────────────────────────────
+//
+// Neither the cached client nor the in-flight promise are published to
+// the outer module until `getFinalizedBlock()` resolves — a failure
+// before sync clears both so the next caller retries from scratch
+// instead of inheriting a dead client.
 
 let bulletinClient: PolkadotClient | null = null;
 let bulletinClientPromise: Promise<PolkadotClient> | null = null;
@@ -30,11 +35,27 @@ export async function ensureBulletinClient(): Promise<PolkadotClient> {
   bulletinClientPromise ??= (async () => {
     const chain = await getBulletinChain();
     const provider = getSmProvider(makeNonRemovingChain(chain));
-    bulletinClient = createClient(provider);
-    await bulletinClient.getFinalizedBlock();
+    const candidate = createClient(provider);
+    try {
+      await candidate.getFinalizedBlock();
+    } catch (err) {
+      try {
+        candidate.destroy();
+        // eslint-disable-next-line no-restricted-syntax -- best-effort teardown of a never-fully-initialised client; the real error (the pre-sync failure) is rethrown below.
+      } catch {
+        /* already dead */
+      }
+      bulletinClient = null;
+      bulletinClientPromise = null;
+      throw err;
+    }
+    bulletinClient = candidate;
     log.warn("[dot.li bulletin] Client synced to finalized block");
     return bulletinClient;
-  })();
+  })().catch((err: unknown) => {
+    bulletinClientPromise = null;
+    throw err;
+  });
   return bulletinClientPromise;
 }
 

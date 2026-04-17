@@ -169,20 +169,61 @@ export function decodeBytesSlot(
 
 // ── Contenthash decoding ──────────────────────────────────
 
-/** Decode contenthash bytes (ENS-style) into an IPFS CID string. */
-export function decodeIpfsContenthash(contenthashHex: string): string | null {
+/**
+ * Discriminated result so callers can distinguish:
+ *   - `empty`              : slot was unset (the name has no contenthash)
+ *   - `unsupported-codec`  : record exists but isn't an IPFS contenthash
+ *   - `decode-error`       : record exists but fails to decode (malformed)
+ *   - `ok`                 : valid IPFS CID
+ *
+ * Returning `string | null` would collapse all four into "not found",
+ * hiding real on-chain decode failures behind the same UI message as
+ * "no record set".
+ */
+export type ContenthashResult =
+  | { kind: "ok"; cid: string }
+  | { kind: "empty" }
+  | { kind: "unsupported-codec"; codec: string | null }
+  | { kind: "decode-error"; cause: unknown };
+
+export function decodeIpfsContenthashResult(
+  contenthashHex: string,
+): ContenthashResult {
   const hex = contenthashHex.startsWith("0x")
     ? contenthashHex.slice(2)
     : contenthashHex;
   if (!hex || hex === "0" || hex.length < 4) {
-    return null;
+    return { kind: "empty" };
+  }
+  let codec: string | null;
+  try {
+    codec = getCodec(hex) ?? null;
+  } catch (cause) {
+    return { kind: "decode-error", cause };
+  }
+  if (codec !== "ipfs") {
+    return { kind: "unsupported-codec", codec };
   }
   try {
-    if (getCodec(hex) !== "ipfs") {
-      return null;
+    const cid = decodeContentHash(hex);
+    if (typeof cid === "string" && cid.length > 0) {
+      return { kind: "ok", cid };
     }
-    return decodeContentHash(hex) || null;
-  } catch {
-    return null;
+    return {
+      kind: "decode-error",
+      cause: new Error("decodeContentHash returned empty"),
+    };
+  } catch (cause) {
+    return { kind: "decode-error", cause };
   }
+}
+
+/**
+ * Backwards-compatible string-or-null surface, for call sites that haven't
+ * been migrated to the discriminated variant yet. New callers should use
+ * `decodeIpfsContenthashResult` directly so they can surface the reason.
+ */
+export function decodeIpfsContenthash(contenthashHex: string): string | null {
+  const result = decodeIpfsContenthashResult(contenthashHex);
+  return result.kind === "ok" ? result.cid : null;
 }

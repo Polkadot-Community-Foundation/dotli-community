@@ -75,11 +75,21 @@ export async function parseCarFile(buffer: Uint8Array): Promise<ArchiveFiles> {
 
   const files: ArchiveFiles = {};
 
+  // Failure rules:
+  //   - Missing CAR blocks throw — a dangling reference is a malformed CAR,
+  //     not a partial-success situation.
+  //   - dag-pb decode failures throw — never substitute raw protobuf bytes
+  //     as user content.
+  //   - Unknown codecs at non-root throw — we don't guess what the bytes
+  //     mean, the caller must surface the failure.
+
   /** Read the raw data bytes from a chunk CID (used for multi-block files). */
   async function getChunkData(cid: CID): Promise<Uint8Array> {
     const block = await reader.get(cid);
     if (!block) {
-      return new Uint8Array(0);
+      throw new Error(
+        `CAR is missing block for ${cid.toString()} (referenced as a chunk)`,
+      );
     }
 
     // Raw codec — block bytes ARE the content
@@ -87,27 +97,26 @@ export async function parseCarFile(buffer: Uint8Array): Promise<ArchiveFiles> {
       return block.bytes;
     }
 
-    // dag-pb — extract UnixFS data payload
+    // dag-pb — extract UnixFS data payload. Decode failures are fatal.
     if (cid.code === DAG_PB) {
-      try {
-        const node = dagPb.decode(block.bytes);
-        return node.Data
-          ? (UnixFS.unmarshal(node.Data).data ?? new Uint8Array(0))
-          : new Uint8Array(0);
-      } catch {
-        return block.bytes;
-      }
+      const node = dagPb.decode(block.bytes);
+      return node.Data
+        ? (UnixFS.unmarshal(node.Data).data ?? new Uint8Array(0))
+        : new Uint8Array(0);
     }
 
-    // Unknown codec — return raw bytes
-    return block.bytes;
+    throw new Error(
+      `Unsupported chunk codec 0x${cid.code.toString(16)} for ${cid.toString()}`,
+    );
   }
 
   /** Recursively walk a DAG node, collecting files into `files`. */
   async function processNode(cid: CID, path: string): Promise<void> {
     const block = await reader.get(cid);
     if (!block) {
-      return;
+      throw new Error(
+        `CAR is missing block for ${cid.toString()} (path="${path}")`,
+      );
     }
 
     // Raw codec — block bytes ARE the file content (leaf node).
@@ -125,59 +134,57 @@ export async function parseCarFile(buffer: Uint8Array): Promise<ArchiveFiles> {
       return;
     }
 
-    // Only attempt dag-pb decoding for the right codec
     if (cid.code !== DAG_PB) {
-      // Unknown codec — store raw bytes if this is a named path
-      if (path !== "") {
-        files[path] = block.bytes;
+      throw new Error(
+        `Unsupported codec 0x${cid.code.toString(16)} at path="${path}" (${cid.toString()})`,
+      );
+    }
+
+    // dag-pb decode is fatal on failure.
+    const node = dagPb.decode(block.bytes);
+    const uf = node.Data ? UnixFS.unmarshal(node.Data) : null;
+    const isDirectory =
+      uf?.type === "directory" || uf?.type === "hamt-sharded-directory";
+    const isFile = !uf || uf.type === "file" || uf.type === "raw";
+
+    if (isDirectory) {
+      for (const link of node.Links) {
+        if (link.Name !== undefined && link.Name !== "") {
+          await processNode(link.Hash, joinPath(path, link.Name));
+        }
       }
       return;
     }
 
-    try {
-      const node = dagPb.decode(block.bytes);
-      const uf = node.Data ? UnixFS.unmarshal(node.Data) : null;
-      const isDirectory =
-        uf?.type === "directory" || uf?.type === "hamt-sharded-directory";
-      const isFile = !uf || uf.type === "file" || uf.type === "raw";
+    if (isFile) {
+      const content =
+        node.Links.length === 0
+          ? (uf?.data ?? new Uint8Array(0))
+          : concatBytes(
+              ...(await Promise.all(
+                node.Links.map((link) => getChunkData(link.Hash)),
+              )),
+            );
 
-      if (isDirectory || (!uf && node.Links.length > 0)) {
-        for (const link of node.Links) {
-          if (link.Name !== undefined && link.Name !== "") {
-            await processNode(link.Hash, joinPath(path, link.Name));
-          }
+      // If the assembled file content is itself a CAR archive (content
+      // was uploaded as a binary CAR), parse it recursively to extract
+      // the actual files instead of storing the raw CAR bytes.
+      if (isCarFile(content)) {
+        const inner = await parseCarFile(content);
+        for (const [p, data] of Object.entries(inner)) {
+          files[p] = data;
         }
-        return;
+      } else {
+        files[path || "index.html"] = content;
       }
-
-      if (isFile) {
-        const content =
-          node.Links.length === 0
-            ? (uf?.data ?? new Uint8Array(0))
-            : concatBytes(
-                ...(await Promise.all(
-                  node.Links.map((link) => getChunkData(link.Hash)),
-                )),
-              );
-
-        // If the assembled file content is itself a CAR archive (content
-        // was uploaded as a binary CAR), parse it recursively to extract
-        // the actual files instead of storing the raw CAR bytes.
-        if (isCarFile(content)) {
-          const inner = await parseCarFile(content);
-          for (const [p, data] of Object.entries(inner)) {
-            files[p] = data;
-          }
-        } else {
-          files[path || "index.html"] = content;
-        }
-      }
-    } catch {
-      // dag-pb decode failed — store raw bytes only for named paths
-      if (path !== "") {
-        files[path] = block.bytes;
-      }
+      return;
     }
+
+    // UnixFS classified the node as something else (symlink/metadata) —
+    // fail loud rather than guess at how to render it.
+    throw new Error(
+      `Unsupported UnixFS node type "${uf.type}" at path="${path}"`,
+    );
   }
 
   await processNode(rootCid, "");

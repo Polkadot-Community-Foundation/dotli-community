@@ -6,6 +6,11 @@
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;
 
+// Baked at build time by vite.config.ts (`define.__SW_VERSION__`). The page
+// queries this via `GET_SW_VERSION` to detect stale workers; see M-14 in the
+// observability audit for the rationale.
+declare const __SW_VERSION__: string;
+
 import { getMimeType } from "@dotli/shared/mime";
 import { SW_ARCHIVE_CACHE_MAX } from "@dotli/config/config";
 
@@ -31,6 +36,12 @@ interface ArchiveEntry {
   domain?: string;
   cid?: string;
   files?: Record<string, ArrayBuffer>;
+  /**
+   * Backend the archive was originally fetched under. Cache lookups only
+   * return the entry if the user's current backend matches. Older entries
+   * that lack this field are treated as misses.
+   */
+  contentBackend?: string;
 }
 
 let archiveDbPromise: Promise<IDBDatabase> | null = null;
@@ -66,6 +77,7 @@ async function saveArchiveToDB(entry: {
   domain: string;
   cid: string;
   files: Record<string, ArrayBuffer>;
+  contentBackend?: string;
 }): Promise<void> {
   try {
     const db = await getArchiveDB();
@@ -171,13 +183,32 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
     return;
   }
 
+  if (data.type === "GET_SW_VERSION") {
+    // Reply synchronously via MessageChannel port so the caller doesn't have
+    // to wire up a global listener. If no port was provided (older callers),
+    // fall back to source.postMessage.
+    const reply = { type: "SW_VERSION", version: __SW_VERSION__ } as const;
+    if (event.ports.length > 0) {
+      event.ports[0].postMessage(reply);
+    } else if (event.source) {
+      (event.source as Client).postMessage(reply);
+    }
+    return;
+  }
+
   if (data.type === "SET_ARCHIVE") {
+    // Reject malformed payloads loudly instead of ACKing as if it
+    // worked — the sender will loop forever trying to serve archives
+    // from an empty SW if we ACK without applying the payload.
     const packed = data.packed as ArrayBuffer | undefined;
     const idx = data.index as { p: string; o: number; l: number }[] | undefined;
 
     if (packed === undefined || idx === undefined) {
       if (event.source) {
-        (event.source as Client).postMessage({ type: "ARCHIVE_READY" });
+        (event.source as Client).postMessage({
+          type: "ARCHIVE_ERROR",
+          reason: "SET_ARCHIVE missing packed/index payload",
+        });
       }
       return;
     }
@@ -187,6 +218,16 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
 
     const domain = data.domain as string | undefined;
     const cid = data.cid as string | undefined;
+    const contentBackend = data.contentBackend as string | undefined;
+    const source = event.source;
+
+    // In-memory tables are live immediately (set above) so fetches can
+    // be served. The ACK waits until the IDB persist completes: a reload
+    // before IDB flush would otherwise find an empty archive store and
+    // fall through to the network for every sub-resource. Splitting this
+    // into two signals (ARCHIVE_INDEXED vs ARCHIVE_PERSISTED) would be
+    // cleaner, but the page today only waits on ARCHIVE_READY — so we
+    // gate ARCHIVE_READY on the slower, authoritative step.
     if (
       domain !== undefined &&
       domain !== "" &&
@@ -197,30 +238,63 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
       const i = idx;
       const d = domain;
       const c = cid;
-      setTimeout(() => {
-        const files: Record<string, ArrayBuffer> = {};
-        for (const entry of i) {
-          files[entry.p] = p.slice(entry.o, entry.o + entry.l);
-        }
-        const archiveEntry = { domain: d, cid: c, files };
-        archiveCacheSet(d, archiveEntry);
-        void saveArchiveToDB(archiveEntry);
-      }, 0);
+      const cb = contentBackend;
+      const files: Record<string, ArrayBuffer> = {};
+      for (const entry of i) {
+        files[entry.p] = p.slice(entry.o, entry.o + entry.l);
+      }
+      const archiveEntry: ArchiveEntry = {
+        domain: d,
+        cid: c,
+        files,
+        contentBackend: cb,
+      };
+      archiveCacheSet(d, archiveEntry);
+      void saveArchiveToDB({
+        domain: d,
+        cid: c,
+        files,
+        contentBackend: cb,
+      })
+        .then(() => {
+          if (source) {
+            (source as Client).postMessage({ type: "ARCHIVE_READY" });
+          }
+        })
+        .catch((err: unknown) => {
+          const reason = err instanceof Error ? err.message : String(err);
+          if (source) {
+            (source as Client).postMessage({
+              type: "ARCHIVE_ERROR",
+              reason: `Failed to persist archive: ${reason}`,
+            });
+          }
+        });
+      return;
     }
-    if (event.source) {
-      (event.source as Client).postMessage({ type: "ARCHIVE_READY" });
+
+    // No domain/cid supplied — index is live but there's nothing to
+    // persist. ACK immediately; IDB-lookup consumers will miss, which
+    // is the correct behavior when the caller supplied no key.
+    if (source) {
+      (source as Client).postMessage({ type: "ARCHIVE_READY" });
     }
     return;
   }
 
   if (data.type === "SW_CACHE_LOOKUP_EVENT") {
     const domain = data.domain as string;
+    // The SW returns `contentBackend` from the stored entry so the page-side
+    // `getCachedArchive` can verify it matches the user's current backend.
+    // (We don't filter here because the page-side check is authoritative
+    // and the SW must remain backend-agnostic for older callers.)
     const cached = archiveCacheGet(domain);
     if (cached !== undefined) {
       for (const port of event.ports) {
         port.postMessage({
           found: true,
           cid: cached.cid,
+          contentBackend: cached.contentBackend,
           files: cached.files,
         });
       }
@@ -235,13 +309,21 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
           port.postMessage({
             found: entry !== null,
             cid: entry?.cid ?? null,
+            contentBackend: entry?.contentBackend,
             files: entry?.files ?? null,
           });
         }
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        // Expose the IDB error to the page instead of pretending it was a
+        // cache miss. Page-side code can decide whether to surface it.
         for (const port of event.ports) {
-          port.postMessage({ found: false, cid: null, files: null });
+          port.postMessage({
+            found: false,
+            cid: null,
+            files: null,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       });
     return;
@@ -251,22 +333,16 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
 // ── Fetch Interception (archive serving) ─────────────────────
 
 self.addEventListener("fetch", (event: FetchEvent) => {
-  if (!hasArchive()) {
-    return;
-  }
-
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) {
     return;
   }
 
-  if (
-    event.request.mode === "navigate" &&
-    !url.pathname.startsWith(DOTLI_APP_PREFIX)
-  ) {
-    return;
-  }
-
+  // SW infrastructure paths (the SW script itself, dev source,
+  // node_modules, Vite virtual modules) are intentionally not served from
+  // the archive — let them reach the network. Note: this excludes well-known
+  // dApp filesystem paths only by accident; future archives that legitimately
+  // contain `node_modules/` will not be served. Documented for follow-up.
   if (
     url.pathname === BASE ||
     url.pathname === BASE.slice(0, -1) ||
@@ -278,13 +354,56 @@ self.addEventListener("fetch", (event: FetchEvent) => {
     return;
   }
 
-  const result = lookupArchive(url.pathname);
+  // If the SW is active but the archive hasn't been set yet, sub-resource
+  // requests for app paths must NOT fall through to nginx (which returns the
+  // sandbox shell HTML and produces broken MIME types). Respond with a
+  // deterministic 503 so the page sees a real failure instead of a nonsense
+  // response.
+  if (!hasArchive()) {
+    if (url.pathname.startsWith(DOTLI_APP_PREFIX)) {
+      event.respondWith(
+        new Response(null, {
+          status: 503,
+          statusText: "App archive not yet loaded",
+        }),
+      );
+    }
+    return;
+  }
+
+  if (
+    event.request.mode === "navigate" &&
+    !url.pathname.startsWith(DOTLI_APP_PREFIX)
+  ) {
+    return;
+  }
+
+  const result = lookupArchive(url.pathname, event.request.mode);
   if (result !== null) {
     event.respondWith(result);
   }
 });
 
-function lookupArchive(pathname: string): Response | null {
+/**
+ * Look up `pathname` in the loaded archive.
+ *
+ * Return values:
+ *   - `Response` — we own this path (either a file hit, or the SPA
+ *     `index.html` fallback for a top-level navigation).
+ *   - `null` — we don't own it; the caller MUST let the request fall
+ *     through to the network. The sandbox origin hosts BOTH the shell
+ *     (`cid.app.localhost/index.html` + its vite-hashed `/assets/*.js`
+ *     and `/assets/*.css`) AND, post-boot, whatever the currently-loaded
+ *     dApp archive contains. Returning a 404 for shell asset requests
+ *     just because they're not in the dApp archive breaks every refresh
+ *     once a previous archive is in memory — Firefox surfaces a 404 on
+ *     a module import as `NS_ERROR_CORRUPTED_CONTENT`, so the shell's
+ *     own bundle fails to load and the page gets stuck on the loader.
+ */
+function lookupArchive(
+  pathname: string,
+  requestMode: RequestMode,
+): Response | null {
   let filePath = pathname.startsWith(DOTLI_APP_PREFIX)
     ? pathname.slice(DOTLI_APP_PREFIX.length)
     : pathname.startsWith(BASE)
@@ -345,10 +464,14 @@ function lookupArchive(pathname: string): Response | null {
     });
   }
 
-  // SPA fallback
-  const indexHtml = getFile("index.html");
-  if (!hasExtension(filePath) && indexHtml !== undefined) {
-    return makeHtmlResponse(indexHtml, "text/html");
+  // SPA fallback — only for top-level navigations. Other requests fall
+  // through to the network so shell assets (same origin, not in the
+  // archive) reach nginx and load correctly.
+  if (requestMode === "navigate") {
+    const indexHtml = getFile("index.html");
+    if (!hasExtension(filePath) && indexHtml !== undefined) {
+      return makeHtmlResponse(indexHtml, "text/html");
+    }
   }
 
   return null;

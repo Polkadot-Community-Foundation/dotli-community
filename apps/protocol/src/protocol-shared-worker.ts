@@ -18,18 +18,23 @@ import {
   getSmoldotDirect,
   resolveDotName,
   resolveOwner,
+  waitForAssetHubFinalized,
 } from "@dotli/resolver/resolve";
 import {
+  onSmoldotFatal,
   releaseResolverAssetHubChain,
-  terminateSmoldot,
 } from "@dotli/resolver/smoldot";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
-import { initSentry } from "@dotli/metrics/sentry";
+import { initSentry, installGlobalErrorHandlers } from "@dotli/metrics/sentry";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
 import { serializeError } from "@dotli/shared/errors";
 
 initSentry("worker");
+installGlobalErrorHandlers("worker");
+// Only ever runs in shared-worker mode; tag every metric emitted from this
+// context so broker/smoldot counters aggregate cleanly with the iframe's.
+m.setDefaults({ protocol_mode: "shared-worker" });
 import { isSharedAuthRequestMethod } from "@dotli/protocol/auth-storage";
 import type {
   ProtocolRequestEnvelope,
@@ -88,95 +93,114 @@ let resolverChainReleased = false;
 // Placeholder — set after pre-sync
 let chainBrokerManager: ReturnType<typeof createChainBrokerManager>;
 
-// ── Pre-sync: boot smoldot and wait for chain sync before accepting requests ──
-
-const MAX_PRESYNC_RETRIES = 3;
-
-async function presync(): Promise<void> {
-  for (let attempt = 1; attempt <= MAX_PRESYNC_RETRIES; attempt++) {
-    const t0 = performance.now();
-    swLog(
-      `Pre-sync attempt ${String(attempt)}/${String(MAX_PRESYNC_RETRIES)}...`,
-    );
-    m.gauge(S.SMOLDOT_PRESYNC_ATTEMPTS, attempt);
-
+// Smoldot panic broadcast. When smoldot's log callback detects a WASM
+// panic, relay a `fatal` envelope to every connected port so the host
+// client rejects every in-flight request immediately instead of waiting
+// for a per-request timeout. `onSmoldotFatal` is idempotent + replays
+// the last panic to late subscribers, so firing this once at module
+// load is enough for the lifetime of the SharedWorker.
+onSmoldotFatal((message) => {
+  swError(
+    `Smoldot panic detected, broadcasting fatal to ${String(ports.size)} port(s)`,
+  );
+  const fatal: ProtocolEnvelope = {
+    namespace: "dotli:protocol",
+    kind: "fatal",
+    message,
+  };
+  const msg: SWRelayResponse = { type: "relay-response", envelope: fatal };
+  for (const port of ports) {
     try {
-      // 1. Create smoldot (current thread, no Worker needed)
-      swLog("Creating smoldot via getSmoldotDirect()...");
-      getSmoldotDirect();
-      m.measure(S.SMOLDOT_CREATE, performance.now() - t0);
-      swLog(
-        `Smoldot client created (${String(Math.round(performance.now() - t0))}ms)`,
-      );
-
-      // 2. Add relay chain
-      swLog("Adding relay chain...");
-      const relayT0 = performance.now();
-      await getRelayChain();
-      m.measure(S.SMOLDOT_RELAY_CHAIN, performance.now() - relayT0);
-      swLog(
-        `Relay chain added (${String(Math.round(performance.now() - t0))}ms)`,
-      );
-
-      // 3. Wait for Asset Hub to sync to a finalized block.
-      // The resolver uses its own chain (getResolverAssetHubChain singleton).
-      // We do NOT set a provider override — the resolver creates its chain
-      // directly via getResolverAssetHubProvider().
-      swLog("Waiting for Asset Hub to reach finalized block...");
-      await resolveDotName("__presync__", (msg) => {
-        swLog(`Pre-sync status: ${msg}`);
-      });
-      const totalMs = performance.now() - t0;
-      m.measure(S.SMOLDOT_PRESYNC, totalMs);
-      m.distribution(S.SMOLDOT_PRESYNC, totalMs);
-      swLog(`Asset Hub synced (${String(Math.round(totalMs))}ms total)`);
-
-      // 4. Create the broker. The resolver's Asset Hub chain is released
-      // lazily on the first dApp chainConnect (see handleRequest below),
-      // NOT here — the host still needs it for resolveDotName/resolveOwner.
-      chainBrokerManager = createChainBrokerManager(createChainProvider);
-
-      // 5. Success — mark ready
-      swLog("Pre-sync complete, engine ready");
-      engineReady = true;
-
-      // Signal ready to any ports that connected during pre-sync
-      for (const port of pendingPorts) {
-        const readyMsg: SWReady = { type: "ready" };
-        port.postMessage(readyMsg);
-      }
-      pendingPorts.length = 0;
-      return;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      swError(`Pre-sync attempt ${String(attempt)} failed: ${msg}`);
-      m.count(S.SMOLDOT_PRESYNC_FAILURE, { attempt: String(attempt) });
-
-      if (attempt < MAX_PRESYNC_RETRIES) {
-        // Terminate and restart smoldot for a clean retry
-        swLog("Terminating smoldot for clean retry...");
-        try {
-          terminateSmoldot();
-        } catch {
-          /* already dead */
-        }
-        // Brief pause before retry
-        await new Promise<void>((r) => setTimeout(r, 2000));
-      }
+      port.postMessage(msg);
+      // eslint-disable-next-line no-restricted-syntax -- defensive fatal broadcast: one closed port must not prevent delivery to the rest. `removePort` already cleans up ports that throw on later sends.
+    } catch {
+      /* port already disconnected — ignore on broadcast */
     }
   }
+});
 
-  // All retries exhausted — signal error to waiting ports
-  swError(`Pre-sync failed after ${String(MAX_PRESYNC_RETRIES)} attempts`);
-  m.count(S.SMOLDOT_PRESYNC_FAILURE, { attempt: "exhausted" });
-  for (const port of pendingPorts) {
-    const errorMsg: SWError = {
-      type: "error",
-      message: "Smoldot failed to sync after multiple attempts",
-    };
-    port.postMessage(errorMsg);
+// ── Pre-sync: boot smoldot and wait for chain sync before accepting requests ──
+//
+// NO retries. NO cleanup-and-retry. NO backoff. The user picked
+// smoldot-shared-worker; if presync fails the actual cause is surfaced to
+// every waiting port and the engine stays dead until the user reloads.
+
+let presyncFailureMessage: string | null = null;
+
+async function presync(): Promise<void> {
+  const t0 = performance.now();
+  m.breadcrumb("smoldot presync starting");
+
+  try {
+    // 1. Create smoldot on the SharedWorker's own thread.
+    //
+    // `getSmoldotDirect()` is the in-thread smoldot bootstrap helper —
+    // the name is a polkadot-api convention meaning "run smoldot on the
+    // current execution context", NOT the dot.li chain backend named
+    // "smoldot-direct". Inside a SharedWorker the `Worker` constructor
+    // is unavailable, so this is the only option; the chain backend the
+    // user picked is still honored via the iframe's `?mode=` param.
+    swLog("Creating smoldot on SharedWorker thread...");
+    getSmoldotDirect();
+    m.measure(S.SMOLDOT_CREATE, performance.now() - t0);
+    swLog(
+      `Smoldot client created (${String(Math.round(performance.now() - t0))}ms)`,
+    );
+
+    // 2. Add relay chain
+    swLog("Adding relay chain...");
+    const relayT0 = performance.now();
+    await getRelayChain();
+    m.measure(S.SMOLDOT_RELAY_CHAIN, performance.now() - relayT0);
+    swLog(
+      `Relay chain added (${String(Math.round(performance.now() - t0))}ms)`,
+    );
+
+    // 3. Wait for Asset Hub to sync to a finalized block via the
+    // explicit presync primitive (no more overloading `resolveDotName`
+    // with a sentinel label).
+    swLog("Waiting for Asset Hub to reach finalized block...");
+    await waitForAssetHubFinalized((msg) => {
+      swLog(`Pre-sync status: ${msg}`);
+    });
+    const totalMs = performance.now() - t0;
+    m.measure(S.SMOLDOT_PRESYNC, totalMs);
+    m.distribution(S.SMOLDOT_PRESYNC, totalMs);
+    swLog(`Asset Hub synced (${String(Math.round(totalMs))}ms total)`);
+
+    // 4. Create the broker. The resolver's Asset Hub chain is released
+    // lazily on the first dApp chainConnect (see handleRequest below),
+    // NOT here — the host still needs it for resolveDotName/resolveOwner.
+    chainBrokerManager = createChainBrokerManager(createChainProvider);
+
+    // 5. Success — mark ready
+    swLog("Pre-sync complete, engine ready");
+    engineReady = true;
+
+    // Signal ready to any ports that connected during pre-sync
+    for (const port of pendingPorts) {
+      const readyMsg: SWReady = { type: "ready" };
+      port.postMessage(readyMsg);
+    }
+    pendingPorts.length = 0;
+  } catch (err: unknown) {
+    const msg = serializeError(err);
+    swError(`Pre-sync failed: ${msg}`);
+    m.count(S.SMOLDOT_PRESYNC, {
+      outcome: "error",
+      reason: err instanceof Error ? err.name : "unknown",
+    });
+    m.breadcrumb("smoldot presync failed", { reason: msg });
+
+    // Surface the actual cause to every waiting port. Engine remains
+    // permanently dead — user must reload to retry.
+    presyncFailureMessage = msg;
+    for (const port of pendingPorts) {
+      const errorMsg: SWError = { type: "error", message: msg };
+      port.postMessage(errorMsg);
+    }
+    pendingPorts.length = 0;
   }
-  pendingPorts.length = 0;
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -191,8 +215,26 @@ function sendToPort(port: MessagePort, envelope: ProtocolEnvelope): void {
   try {
     const msg: SWRelayResponse = { type: "relay-response", envelope };
     port.postMessage(msg);
-  } catch {
-    swLog("Port disconnected, cleaning up");
+  } catch (err: unknown) {
+    // Distinguish "port closed" (expected on tab navigation) from any
+    // other postMessage failure. Closed ports throw `InvalidStateError`
+    // / `DataCloneError` with `name === "InvalidStateError"`. Any other
+    // cause — structured-clone failure on an un-transferable payload,
+    // for example — is a real bug and we want it visible instead of
+    // silently removing an otherwise-healthy port.
+    const name =
+      err instanceof Error && typeof err.name === "string" ? err.name : "";
+    if (name === "InvalidStateError") {
+      swLog("Port closed, cleaning up");
+      removePort(port);
+      return;
+    }
+    swError(
+      `sendToPort unexpected failure (name=${name || "<unknown>"}):`,
+      err,
+    );
+    // Remove the port regardless — we can't deliver to it — but the
+    // error log above preserves the real cause for triage.
     removePort(port);
   }
 }
@@ -473,6 +515,14 @@ self.addEventListener("connect", (event) => {
     // Engine already synced — signal ready immediately
     const readyMsg: SWReady = { type: "ready" };
     port.postMessage(readyMsg);
+  } else if (presyncFailureMessage !== null) {
+    // Pre-sync already failed; surface the original cause immediately
+    // instead of queuing this port forever.
+    const errorMsg: SWError = {
+      type: "error",
+      message: presyncFailureMessage,
+    };
+    port.postMessage(errorMsg);
   } else {
     // Engine still syncing — queue port, will signal when pre-sync completes
     swLog("Engine not ready yet, queuing port for ready signal");

@@ -1,10 +1,170 @@
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, type Plugin } from "vite";
-import { readFileSync, copyFileSync } from "node:fs";
+import { readFileSync, readdirSync, copyFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
 
+// Local builds don't get `VITE_COMMIT_SHA` injected by CI. Fall back to the
+// git HEAD so Diagnostics shows a real commit identifier in dev too — "dev"
+// is only used when we're not in a git checkout at all (e.g. a tarball).
+if (!process.env.VITE_COMMIT_SHA) {
+  try {
+    process.env.VITE_COMMIT_SHA = execSync("git rev-parse HEAD", {
+      cwd: import.meta.dirname,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+  } catch {
+    // Not a git checkout — leave unset; topbar.ts treats that as "dev".
+  }
+}
+
 const OUT_DIR = "dist";
+
+/**
+ * Walk every workspace member's `package.json` and collect its direct
+ * `dependencies` entries (devDependencies + peerDependencies are ignored —
+ * only what dot.li code actually imports should appear in Diagnostics).
+ * Returns a map keyed by package name whose value is the set of workspace
+ * directories that depend on it.
+ */
+function collectWorkspaceDependencies(): Map<string, Set<string>> {
+  const deps = new Map<string, Set<string>>();
+  const roots = [
+    resolve(import.meta.dirname, "../../apps"),
+    resolve(import.meta.dirname, "../../packages"),
+  ];
+  for (const root of roots) {
+    let dirs: string[];
+    try {
+      dirs = readdirSync(root);
+    } catch {
+      continue;
+    }
+    for (const dir of dirs) {
+      const wsDir = resolve(root, dir);
+      let pkg: { dependencies?: Record<string, string> };
+      try {
+        pkg = JSON.parse(
+          readFileSync(resolve(wsDir, "package.json"), "utf8"),
+        ) as { dependencies?: Record<string, string> };
+      } catch {
+        continue;
+      }
+      for (const depName of Object.keys(pkg.dependencies ?? {})) {
+        let set = deps.get(depName);
+        if (!set) {
+          set = new Set<string>();
+          deps.set(depName, set);
+        }
+        set.add(wsDir);
+      }
+    }
+  }
+  return deps;
+}
+
+/**
+ * For every direct dependency whose name starts with `scope`, resolve the
+ * actually-installed version via the depending workspace's own
+ * `node_modules/<name>/package.json`. Ignores transitive dependencies (that's
+ * what made the previous `.bun`-scan version lists explode to 80+ rows).
+ */
+function collectDirectScopedDeps(
+  scope: string,
+): { name: string; version: string }[] {
+  const wsDeps = collectWorkspaceDependencies();
+  const result = new Map<string, string>();
+  for (const [name, usedBy] of wsDeps) {
+    if (!name.startsWith(scope)) {
+      continue;
+    }
+    for (const wsDir of usedBy) {
+      try {
+        const depPkg = JSON.parse(
+          readFileSync(
+            resolve(wsDir, "node_modules", name, "package.json"),
+            "utf8",
+          ),
+        ) as { version?: string };
+        if (depPkg.version) {
+          result.set(name, depPkg.version);
+          break;
+        }
+      } catch {
+        // Not hoisted into this workspace's node_modules — try next one.
+      }
+    }
+  }
+  return [...result]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, version]) => ({ name, version }));
+}
+
+function readSmoldotVersion(): string {
+  const direct = collectDirectScopedDeps("smoldot");
+  return direct.find((p) => p.name === "smoldot")?.version ?? "unknown";
+}
+
+function readPolkadotApiVersion(): string {
+  const direct = collectDirectScopedDeps("polkadot-api");
+  return direct.find((p) => p.name === "polkadot-api")?.version ?? "unknown";
+}
+
+function readHostVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(resolve(import.meta.dirname, "package.json"), "utf8"),
+    ) as { version?: string };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+/**
+ * Look up the paritytech/smoldot commit SHA for the npm-published `smoldot`
+ * version we bundle. Smoldot's git repo tags its JS releases with the
+ * `light-js-deno-v<version>` prefix (verified via GitHub's refs API), and
+ * the JS binding's published version tracks that tag directly — so the
+ * commit behind `light-js-deno-v3.0.0` is the commit that produced
+ * `smoldot@3.0.0` on npm.
+ *
+ * Neither `bun.lock` nor smoldot's package.json carries a commit; the
+ * lockfile only stores the tarball integrity hash, so the GitHub API is
+ * the only build-time source of truth. Failures are silent — if the build
+ * host can't reach github.com (offline dev, locked-down CI), the
+ * Diagnostics row degrades to just `<version>` instead of `<version>
+ * (sha)` rather than failing the build.
+ */
+async function resolveSmoldotCommit(version: string): Promise<string> {
+  if (version === "" || version === "unknown") {
+    return "";
+  }
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(
+      `https://api.github.com/repos/paritytech/smoldot/git/refs/tags/light-js-deno-v${version}`,
+      {
+        signal: controller.signal,
+        headers: { Accept: "application/vnd.github+json" },
+      },
+    );
+    clearTimeout(timer);
+    if (!res.ok) {
+      return "";
+    }
+    const data = (await res.json()) as { object?: { sha?: string } };
+    return data.object?.sha ?? "";
+  } catch {
+    return "";
+  }
+}
+
+const SMOLDOT_COMMIT = await resolveSmoldotCommit(readSmoldotVersion());
 
 /**
  * Extract unique WSS bootnode hostnames from a chain spec JSON file.
@@ -185,6 +345,19 @@ export default defineConfig({
   },
   define: {
     __BUILD_TARGET__: JSON.stringify("host"),
+    // Baked once at build time — read lazily at declaration site so a
+    // missing package (shouldn't happen given the monorepo overrides)
+    // falls back to empty/"unknown" rather than failing the build.
+    __DOTLI_VERSION__: JSON.stringify(readHostVersion()),
+    __SMOLDOT_VERSION__: JSON.stringify(readSmoldotVersion()),
+    __SMOLDOT_COMMIT__: JSON.stringify(SMOLDOT_COMMIT),
+    __POLKADOT_API_VERSION__: JSON.stringify(readPolkadotApiVersion()),
+    __POLKADOT_API_VERSIONS__: JSON.stringify(
+      collectDirectScopedDeps("@polkadot-api/"),
+    ),
+    __NOVASAMATECH_VERSIONS__: JSON.stringify(
+      collectDirectScopedDeps("@novasamatech/"),
+    ),
   },
   optimizeDeps: {
     exclude: ["@polkadot-api/wasm-executor", "verifiablejs"],

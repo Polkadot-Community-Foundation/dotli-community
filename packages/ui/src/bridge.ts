@@ -6,7 +6,11 @@
 // out of the sandbox bundle.
 
 import { BASE_DOMAIN } from "@dotli/config/config";
-import { getMode, getCacheSettings } from "@dotli/config/mode";
+import {
+  getChainBackend,
+  getContentBackend,
+  getCacheSettings,
+} from "@dotli/config/mode";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { buildAllowAttribute } from "./permissions";
@@ -152,23 +156,55 @@ export async function renderAppSubdomain(
   currentCid = cid;
   currentUrl = null;
 
-  const mode = getMode();
+  // Propagate the two independent backend axes. The legacy `?mode=`
+  // preset param is no longer sent — host and sandbox deploy together,
+  // there are no old sandbox builds in the wild, and the sandbox
+  // validator rejects unknown params so keeping it would guarantee a
+  // boot failure on the next deploy.
+  //
+  // The sandbox reads its own curated endpoint defaults from
+  // `@dotli/config/endpoints` (same package, built into its bundle), so
+  // the host no longer threads RPC/gateway URLs across the origin —
+  // there are no user-overridable endpoints to preserve.
+  const chainBackend = getChainBackend();
+  const contentBackend = getContentBackend();
   const cache = getCacheSettings();
   const appOrigin = getAppOrigin(cid);
   const deepPath = getDeepPath();
+  // One-shot: the settings popover sets this flag right before reloading so
+  // the first sandbox boot after "Save & Apply" wipes its own origin too.
+  // Consume + clear so subsequent navigations (permission reload, etc.)
+  // don't keep triggering resets.
+  let fullReset = false;
+  try {
+    if (sessionStorage.getItem("dotli:pending-reset:sandbox") === "1") {
+      fullReset = true;
+      sessionStorage.removeItem("dotli:pending-reset:sandbox");
+    }
+    // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); reset flag defaults to false which is the safe state.
+  } catch {
+    /* sessionStorage unavailable — skip pending reset */
+  }
   let url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
-  // Pass the current resolution mode and cache settings to the sandbox.
   try {
     const parsed = new URL(url);
-    parsed.searchParams.set("mode", mode);
+    parsed.searchParams.set("chainBackend", chainBackend);
+    parsed.searchParams.set("contentBackend", contentBackend);
     if (cache.skipArchiveCache) {
       parsed.searchParams.set("skipArchiveCache", "1");
     }
+    if (fullReset) {
+      parsed.searchParams.set("fullReset", "1");
+    }
     url = parsed.toString();
   } catch {
-    url += (url.includes("?") ? "&" : "?") + `mode=${mode}`;
+    const sep = url.includes("?") ? "&" : "?";
+    url += `${sep}chainBackend=${chainBackend}&contentBackend=${contentBackend}`;
     if (cache.skipArchiveCache) {
       url += "&skipArchiveCache=1";
+    }
+    if (fullReset) {
+      url += "&fullReset=1";
     }
   }
 

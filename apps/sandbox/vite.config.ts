@@ -1,7 +1,24 @@
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, build as viteBuild, type Plugin } from "vite";
+import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
+
+// Mirror the host's behavior: fall back to git HEAD when CI didn't inject
+// `VITE_COMMIT_SHA`, so the SW's baked `__SW_VERSION__` is a real commit in
+// dev builds too.
+if (!process.env.VITE_COMMIT_SHA) {
+  try {
+    process.env.VITE_COMMIT_SHA = execSync("git rev-parse HEAD", {
+      cwd: import.meta.dirname,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+  } catch {
+    // Not a git checkout — leave unset.
+  }
+}
 
 const OUT_DIR = "dist";
 
@@ -29,7 +46,14 @@ function buildServiceWorker(): Plugin {
     name: "build-service-worker",
     apply: "build",
     async closeBundle() {
-      console.log("\nBuilding Service Worker (app-sw)...");
+      // Stamp the SW bundle with the commit SHA (falls back to a dev marker).
+      // The page checks this at runtime to detect a stale SW and force an
+      // update — see `apps/sandbox/src/main.ts` registerAppServiceWorker.
+      // Using `define` guarantees the SHA is inlined as a literal, so the SW
+      // bytes actually change between releases (otherwise the browser might
+      // skip updating a byte-identical script).
+      const swVersion = process.env.VITE_COMMIT_SHA ?? "dev";
+      console.log(`\nBuilding Service Worker (app-sw) @ ${swVersion}...`);
       await viteBuild({
         configFile: false,
         plugins: [wasm()],
@@ -44,6 +68,9 @@ function buildServiceWorker(): Plugin {
               "../../packages/shared/src",
             ),
           },
+        },
+        define: {
+          __SW_VERSION__: JSON.stringify(swVersion),
         },
         build: {
           emptyOutDir: false,

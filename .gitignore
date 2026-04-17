@@ -46,9 +46,19 @@ tests/results.json
 
 # AI files
 .claude
+.cursor
+.codeium
+.gemini
+.roo
+.cline
 .claude-flow
 .codex
+.swarm
+.ai
+.llm
 .mcp.json
 opencode.json
 docs
 CLAUDE.md
+AGENTS.md
+GEMINI.md

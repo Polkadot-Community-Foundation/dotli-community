@@ -432,17 +432,58 @@
   border-radius: 50%;
   background: #eab308;
 }
+.mode-popover-backdrop {
+  display: none;
+  position: fixed;
+  top: 40px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 1400;
+}
+.mode-popover-backdrop.open {
+  display: block;
+}
 .mode-popover {
   display: none;
   position: fixed;
-  top: 44px;
+  /* Overlaps the bottom of the topbar by a few pixels so the popover
+     visually attaches to the button instead of floating with a gap. */
+  top: 36px;
   right: 12px;
-  width: 260px;
+  width: 620px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
   background: #171717;
   border: 1px solid #404040;
   border-radius: 12px;
   z-index: 1500;
-  overflow: hidden;
+  /* Bottom padding lives on the popover itself so the gap between the
+     last element (Save & Apply when clean, warning text when dirty) and
+     the popover's bottom edge is visually identical in both states. */
+  padding-bottom: 10px;
+}
+.mode-popover-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12px;
+  /* Breathing room so section headers don't kiss the popover's top border. */
+  padding-top: 10px;
+}
+.mode-popover-col {
+  min-width: 0;
+}
+/* Collapse to single column on narrow viewports (matches the old
+   single-column width). */
+@media (max-width: 560px) {
+  .mode-popover {
+    width: 340px;
+  }
+  .mode-popover-columns {
+    grid-template-columns: 1fr;
+  }
 }
 .mode-popover.open {
   display: block;
@@ -463,6 +504,71 @@
   height: 1px;
   background: #2a2a2a;
   margin: 6px 14px;
+}
+.mode-endpoint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 14px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  gap: 8px;
+}
+.mode-endpoint-row:hover {
+  background: #191919;
+}
+/* Non-interactive variant used by Diagnostics — same layout, no feedback. */
+.mode-endpoint-row.mode-info-row {
+  cursor: default;
+}
+.mode-endpoint-row.mode-info-row:hover {
+  background: transparent;
+}
+.mode-endpoint-label {
+  color: #888;
+  flex-shrink: 0;
+}
+.mode-endpoint-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.65rem;
+  color: #ccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+.mode-custom-endpoints {
+  padding: 4px 14px 8px;
+}
+.mode-custom-endpoint-field {
+  margin-bottom: 8px;
+}
+.mode-custom-endpoint-label {
+  font-size: 0.65rem;
+  color: #888;
+  margin-bottom: 2px;
+}
+.mode-custom-endpoint-textarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.65rem;
+  background: #0e0e0e;
+  color: #ddd;
+  border: 1px solid #2a2a2a;
+  border-radius: 3px;
+  padding: 4px 6px;
+  resize: vertical;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+.mode-custom-endpoint-hint {
+  font-size: 0.6rem;
+  color: #666;
+  margin-top: 2px;
+  min-height: 0.8em;
+}
+.mode-custom-endpoint-hint.invalid {
+  color: #d46a6a;
 }
 .mode-popover-section {
   padding: 4px 14px 2px;
@@ -532,6 +638,16 @@
   justify-content: space-between;
   padding: 5px 14px;
 }
+/* Bottom breathing room is owned by `.mode-popover` so the visual gap is
+   identical whether or not the warning text below the button is shown. */
+.mode-apply-row {
+  padding-bottom: 0;
+}
+/* "Clear all caches" button: give it breathing room after the last cache
+   toggle so it doesn't visually merge with the toggle row above. */
+.mode-clear-all-row {
+  padding-top: 10px;
+}
 .mode-cache-label {
   font-size: 0.78rem;
   color: #e0e0e0;
@@ -551,6 +667,37 @@
   border-color: #555;
   color: #e0e0e0;
 }
+.mode-clear-btn:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.mode-clear-btn:disabled:hover {
+  border-color: #333;
+  color: #aaa;
+}
+.mode-clear-btn.mode-apply-dirty {
+  border-color: #4ade80;
+  color: #4ade80;
+}
+.mode-clear-btn.mode-apply-dirty:hover {
+  border-color: #6ff39c;
+  color: #6ff39c;
+}
+/* Reset warning: hidden by default, fades in when the draft is dirty so
+   the popover isn't noisy in its idle state. Amber to flag "this action
+   has side effects" without screaming error red. */
+.mode-apply-warning {
+  display: none;
+  margin: 6px 14px 0;
+  padding: 0;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: #f5c16c;
+  text-align: center;
+}
+.mode-apply-warning.visible {
+  display: block;
+}
 
 /* ── Permissions Button State ───────────── */
 #permissions-button {
@@ -568,10 +715,27 @@
 }
 
 /* ── Permissions Popover ───────────────── */
+/* Backdrop mirrors `.mode-popover-backdrop` — blocks clicks under the
+   permissions popover and dismisses it on click. */
+.permissions-popover-backdrop {
+  display: none;
+  position: fixed;
+  top: 40px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 1400;
+}
+.permissions-popover-backdrop.open {
+  display: block;
+}
 .permissions-popover {
   display: none;
   position: fixed;
-  top: 44px;
+  /* Matches `.mode-popover` — overlaps the topbar bottom so the popover
+     visually attaches to its trigger button. */
+  top: 36px;
   right: 12px;
   width: 260px;
   background: #171717;
@@ -655,11 +819,16 @@
 }
 /* Footer */
 .permissions-popover-footer {
-  padding: 6px 14px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 14px;
   font-size: 0.65rem;
   color: #555;
   border-top: 1px solid #2a2a2a;
   margin-top: 4px;
+  text-align: center;
 }
 
 /* ── Permission modal additions ─────────── */

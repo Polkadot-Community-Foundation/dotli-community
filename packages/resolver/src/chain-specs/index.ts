@@ -7,6 +7,12 @@
 // Fetches start immediately when this module is first imported,
 // running in parallel with smoldot worker initialization.
 //
+// NO silent retry. A rejected fetch is cached as a rejected promise so
+// every subsequent call sees the same failure. Use `resetChainSpecCaches()`
+// to opt in to a retry (e.g. from a user-driven "Retry" UI affordance).
+// Fetches also explicitly check `r.ok` so a 404/500 HTML body cannot be
+// fed to smoldot's chain-spec parser as if it were valid JSON.
+//
 // To refresh these specs, run:
 //   npm run update-chain-specs
 
@@ -43,7 +49,18 @@ function getPeopleChainSpecUrl(): string {
   return url;
 }
 
-// Lazy getters that retry on failure instead of caching a rejected promise.
+async function fetchChainSpec(url: string): Promise<string> {
+  const r = await fetch(url);
+  if (!r.ok) {
+    throw new Error(
+      `Chain spec fetch failed: ${String(r.status)} ${r.statusText} (${url})`,
+    );
+  }
+  return r.text();
+}
+
+// Cached promises. Rejections are NOT cleared — a failure is sticky until
+// `resetChainSpecCaches()` is invoked explicitly.
 let paseoPromise: Promise<string> | null = null;
 let assetHubPromise: Promise<string> | null = null;
 let bulletinPaseoPromise: Promise<string> | null = null;
@@ -53,14 +70,9 @@ let customRelayPromise: Promise<string> | null = null;
 export function getPaseoChainSpec(): Promise<string> {
   if (paseoPromise === null) {
     const stop = m.timer(S.CHAINSPEC_PASEO);
-    paseoPromise = fetch(paseoUrl)
-      .then((r) => r.text())
-      .then((text) => {
-        stop();
-        return text;
-      });
-    paseoPromise.catch(() => {
-      paseoPromise = null;
+    paseoPromise = fetchChainSpec(paseoUrl).then((text) => {
+      stop();
+      return text;
     });
   }
   return paseoPromise;
@@ -69,14 +81,9 @@ export function getPaseoChainSpec(): Promise<string> {
 export function getAssetHubPaseoChainSpec(): Promise<string> {
   if (assetHubPromise === null) {
     const stop = m.timer(S.CHAINSPEC_ASSETHUB);
-    assetHubPromise = fetch(assetHubPaseoUrl)
-      .then((r) => r.text())
-      .then((text) => {
-        stop();
-        return text;
-      });
-    assetHubPromise.catch(() => {
-      assetHubPromise = null;
+    assetHubPromise = fetchChainSpec(assetHubPaseoUrl).then((text) => {
+      stop();
+      return text;
     });
   }
   return assetHubPromise;
@@ -85,28 +92,16 @@ export function getAssetHubPaseoChainSpec(): Promise<string> {
 export function getBulletinPaseoChainSpec(): Promise<string> {
   if (bulletinPaseoPromise === null) {
     const stop = m.timer(S.CHAINSPEC_BULLETIN);
-    bulletinPaseoPromise = fetch(bulletinPaseoUrl)
-      .then((r) => r.text())
-      .then((text) => {
-        stop();
-        return text;
-      });
-    bulletinPaseoPromise.catch(() => {
-      bulletinPaseoPromise = null;
+    bulletinPaseoPromise = fetchChainSpec(bulletinPaseoUrl).then((text) => {
+      stop();
+      return text;
     });
   }
   return bulletinPaseoPromise;
 }
 
 export function getPeopleChainSpec(): Promise<string> {
-  if (peopleChainSpecPromise === null) {
-    peopleChainSpecPromise = fetch(getPeopleChainSpecUrl()).then((r) =>
-      r.text(),
-    );
-    peopleChainSpecPromise.catch(() => {
-      peopleChainSpecPromise = null;
-    });
-  }
+  peopleChainSpecPromise ??= fetchChainSpec(getPeopleChainSpecUrl());
   return peopleChainSpecPromise;
 }
 
@@ -120,10 +115,20 @@ export function getCustomRelayChainSpec(): Promise<string> {
           `Available: ${Object.keys(allChainSpecs).join(", ")}`,
       );
     }
-    customRelayPromise = fetch(url).then((r) => r.text());
-    customRelayPromise.catch(() => {
-      customRelayPromise = null;
-    });
+    customRelayPromise = fetchChainSpec(url);
   }
   return customRelayPromise;
+}
+
+/**
+ * Clear all cached chain-spec promises so the next getter call performs a
+ * fresh fetch. Call this from explicit user-driven retry paths only — never
+ * from automatic recovery code.
+ */
+export function resetChainSpecCaches(): void {
+  paseoPromise = null;
+  assetHubPromise = null;
+  bulletinPaseoPromise = null;
+  peopleChainSpecPromise = null;
+  customRelayPromise = null;
 }

@@ -64,6 +64,34 @@ export interface ProtocolReadyEnvelope {
   kind: "ready";
 }
 
+/**
+ * Unsolicited broadcast from the protocol iframe (or its SharedWorker) when
+ * smoldot has crashed/panicked. A panic leaves every chain dead — any
+ * in-flight request would hang indefinitely, so the client rejects all
+ * pending requests on receipt instead of waiting for a per-request timeout.
+ */
+export interface ProtocolFatalEnvelope {
+  namespace: "dotli:protocol";
+  kind: "fatal";
+  message: string;
+}
+
+/**
+ * Dedicated "iframe init failed before we even emitted a response" envelope.
+ *
+ * Previously the protocol iframe signalled an early init failure by
+ * posting a response envelope with `id: "__init__"` — a sentinel id
+ * collision waiting to happen. `kind: "init-failed"` is explicit: no
+ * request was in flight, no id is expected, and clients route it to
+ * the same "reject everything pending + block new work" path as
+ * `kind: "fatal"`.
+ */
+export interface ProtocolInitFailedEnvelope {
+  namespace: "dotli:protocol";
+  kind: "init-failed";
+  message: string;
+}
+
 // Unsolicited notification from the host iframe to its parent window when a
 // sibling tab writes or clears a shared-auth storage key. Drives cross-tab
 // `StorageAdapter.subscribe` callbacks — see `@dotli/protocol/client`
@@ -85,6 +113,8 @@ export type ProtocolEnvelope =
   | ProtocolChainMessageEnvelope
   | ProtocolChainHaltEnvelope
   | ProtocolReadyEnvelope
+  | ProtocolFatalEnvelope
+  | ProtocolInitFailedEnvelope
   | ProtocolAuthStorageChangedEnvelope;
 
 const VALID_KINDS = new Set([
@@ -94,6 +124,8 @@ const VALID_KINDS = new Set([
   "chain-message",
   "chain-halt",
   "ready",
+  "fatal",
+  "init-failed",
   "auth-storage-changed",
 ]);
 

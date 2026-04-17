@@ -4,64 +4,69 @@
 // fetches content via P2P, and renders it in a sandboxed iframe.
 // No dotns resolution, no smoldot, no topbar.
 
-// Reload once on chunk load failure (stale HTML referencing deleted assets).
-window.addEventListener("vite:preloadError", () => {
-  if (sessionStorage.getItem("dotli:chunk-reload") === null) {
-    sessionStorage.setItem("dotli:chunk-reload", "1");
-    window.location.reload();
-  }
-});
-
 import "@dotli/ui/styles.css";
-import { initSentry } from "@dotli/metrics/sentry";
+import {
+  initSentry,
+  installGlobalErrorHandlers,
+  captureException,
+} from "@dotli/metrics/sentry";
+import { showNotification } from "@dotli/ui/notification";
+
+// Surface chunk-load failures explicitly: capture the original cause to
+// Sentry and let the user opt into a reload, instead of reloading silently.
+window.addEventListener("vite:preloadError", (event) => {
+  const evt = event as unknown as { payload?: unknown };
+  captureException(evt.payload ?? new Error("vite:preloadError"), {
+    kind: "chunk_preload_error",
+  });
+  showNotification({
+    label: "Asset failed to load",
+    text: "A new version may have been deployed. Reload to get the latest.",
+    dismissMs: 0,
+    action: {
+      label: "Reload",
+      onClick: () => {
+        window.location.reload();
+      },
+    },
+  });
+});
 import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
 import type { FetchResult } from "@dotli/content/fetch";
 import { isEncrypted, decryptContent } from "@dotli/content/decrypt";
-import {
-  showStatus as showStatusLocal,
-  showError,
-  dismissLoading,
-} from "@dotli/ui/ui";
+import { showError } from "@dotli/ui/ui";
 import { showPasswordPrompt } from "@dotli/ui/password-prompt";
 import { TIMEOUTS, BASE_DOMAIN } from "@dotli/config/config";
+import { validateSandboxParams } from "@dotli/config/host-sandbox-contract";
 import { elapsed } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
 import { parseIpfsResponse } from "@dotli/content/archive";
 
 initSentry("sandbox");
+installGlobalErrorHandlers("sandbox");
 
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 
 const T0 = performance.now();
 
-// In relay mode (inside host iframe), post status to parent so the host's
-// unified loading UI stays active. Otherwise update our own DOM.
-const isRelayMode = window.self !== window.top;
-
-// In relay mode the host shows the loading UI — hide the sandbox's own copy.
-if (isRelayMode) {
-  const loading = document.querySelector<HTMLElement>("#app > .loading");
-  if (loading) {
-    loading.style.display = "none";
-  }
+// The sandbox only runs embedded inside the host iframe (`dot.li` →
+// `cid.app.dot.li`). Direct / bookmarked loads of the sandbox origin are
+// unsupported: they have no container bridge to answer account / signing /
+// storage requests, no trust-shield context, and no unified loading UI.
+// `main()` rejects top-level loads with an explicit error; these helpers
+// now just postMessage to the host parent — there is no "else" branch.
+const loadingEl = document.querySelector<HTMLElement>("#app > .loading");
+if (loadingEl) {
+  loadingEl.style.display = "none";
 }
 
 function showStatus(message: string): void {
-  if (isRelayMode) {
-    window.parent.postMessage({ type: "dotli:loading-status", message }, "*");
-  } else {
-    showStatusLocal(message);
-  }
+  window.parent.postMessage({ type: "dotli:loading-status", message }, "*");
 }
 
 function notifyLoadingDone(): void {
-  if (isRelayMode) {
-    window.parent.postMessage(
-      { type: "dotli:loading-status", done: true },
-      "*",
-    );
-  }
+  window.parent.postMessage({ type: "dotli:loading-status", done: true }, "*");
 }
 
 /**
@@ -106,6 +111,7 @@ function parseCidFromHostname(): string | null {
 async function getCachedArchive(
   domain: string,
   cid: string,
+  contentBackend: string,
 ): Promise<ArchiveFiles | null> {
   const controller = navigator.serviceWorker.controller;
   if (!controller) {
@@ -123,11 +129,16 @@ async function getCachedArchive(
       const msg = event.data as {
         found?: boolean;
         cid?: string;
+        contentBackend?: string;
         files?: Record<string, ArrayBuffer | Uint8Array> | null;
       };
+      // Only return a cache hit if the entry was populated under the same
+      // content backend the user has selected now. A gateway-fetched archive
+      // must not satisfy a P2P-mode request and vice versa.
       if (
         msg.found === true &&
         msg.cid === cid &&
+        msg.contentBackend === contentBackend &&
         msg.files !== undefined &&
         msg.files !== null
       ) {
@@ -143,16 +154,104 @@ async function getCachedArchive(
       }
     };
 
-    controller.postMessage({ type: "SW_CACHE_LOOKUP_EVENT", domain }, [
-      channel.port2,
-    ]);
+    controller.postMessage(
+      { type: "SW_CACHE_LOOKUP_EVENT", domain, contentBackend },
+      [channel.port2],
+    );
+  });
+}
+
+/**
+ * Ask an active Service Worker for its baked-in version tag.
+ * Resolves `null` if the SW doesn't answer (older build, comms error, timeout).
+ */
+function querySwVersion(sw: ServiceWorker): Promise<string | null> {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(() => {
+      channel.port1.close();
+      resolve(null);
+    }, 1_000);
+    channel.port1.onmessage = (event: MessageEvent) => {
+      clearTimeout(timer);
+      channel.port1.close();
+      const data = event.data as { type?: string; version?: string } | null;
+      resolve(
+        data?.type === "SW_VERSION" && typeof data.version === "string"
+          ? data.version
+          : null,
+      );
+    };
+    sw.postMessage({ type: "GET_SW_VERSION" }, [channel.port2]);
+  });
+}
+
+/**
+ * Check whether the active SW's build matches the page's build. On mismatch
+ * surface a notification with a "Reload" action — the user decides whether
+ * to take it. NO automatic reload: silently triggering `update()` +
+ * `controllerchange → reload` would override the user's current session
+ * without consent.
+ */
+async function ensureFreshServiceWorker(
+  registration: ServiceWorkerRegistration,
+): Promise<void> {
+  const expected = import.meta.env.VITE_COMMIT_SHA as string | undefined;
+  if (expected === undefined || expected === "") {
+    return; // dev build, no version to compare against
+  }
+  const active = registration.active ?? navigator.serviceWorker.controller;
+  if (!active) {
+    return;
+  }
+  const actual = await querySwVersion(active);
+  if (actual === null || actual === expected) {
+    return;
+  }
+  log.warn(
+    `[dot.li app] SW version mismatch (active=${actual}, expected=${expected}); prompting user`,
+  );
+  showNotification({
+    label: "New version available",
+    text: `App was updated. Reload to use the latest version.`,
+    dismissMs: 0,
+    action: {
+      label: "Reload",
+      onClick: () => {
+        // User-driven update + reload. The SW self-promotes via
+        // `skipWaiting()` + `clients.claim()`; when the controller flips,
+        // reload to pick up fresh assets.
+        navigator.serviceWorker.addEventListener(
+          "controllerchange",
+          () => {
+            window.location.reload();
+          },
+          { once: true },
+        );
+        registration.update().catch((err: unknown) => {
+          captureException(err, { kind: "sw_update_failed" });
+          log.error("[dot.li app] SW update() failed:", err);
+        });
+      },
+    },
   });
 }
 
 /**
  * Register the app Service Worker for archive serving.
+ *
+ * `waitForFreshController` is the escape hatch for the `fullReset=1` path:
+ * after `purgeSandboxOriginState()` unregisters every SW, the browser may
+ * still report a stale `navigator.serviceWorker.controller` for the current
+ * document (unregister doesn't detach the already-attached controller from
+ * an in-flight page). If we short-circuit on that stale controller we'd
+ * proceed against the SW we just tried to wipe. In the reset path we
+ * always wait for a `controllerchange` (or for the freshly-registered SW
+ * to claim clients in response to `SW_CLAIM_EVENT`) before returning.
  */
-async function registerAppServiceWorker(): Promise<void> {
+async function registerAppServiceWorker({
+  waitForFreshController = false,
+}: { waitForFreshController?: boolean } = {}): Promise<void> {
   if (!("serviceWorker" in navigator)) {
     return;
   }
@@ -162,12 +261,13 @@ async function registerAppServiceWorker(): Promise<void> {
       ? "/src/app-sw.ts"
       : `${import.meta.env.BASE_URL}app-sw.js`;
     const swScope = import.meta.env.DEV ? "/" : import.meta.env.BASE_URL;
-    await navigator.serviceWorker.register(swUrl, {
+    const registration = await navigator.serviceWorker.register(swUrl, {
       type: "module",
       scope: swScope,
     });
 
-    if (navigator.serviceWorker.controller) {
+    if (!waitForFreshController && navigator.serviceWorker.controller) {
+      void ensureFreshServiceWorker(registration);
       return;
     }
 
@@ -179,15 +279,20 @@ async function registerAppServiceWorker(): Promise<void> {
         clearTimeout(timeout);
         resolve();
       });
-      void navigator.serviceWorker.ready.then((registration) => {
-        if (navigator.serviceWorker.controller) {
+      void navigator.serviceWorker.ready.then((readyRegistration) => {
+        // In the reset path we explicitly ignore the current controller —
+        // only a `controllerchange` counts as "fresh". Prod the new SW to
+        // claim clients so the controllerchange arrives quickly.
+        if (!waitForFreshController && navigator.serviceWorker.controller) {
           clearTimeout(timeout);
           resolve();
-        } else if (registration.active) {
-          registration.active.postMessage({ type: "SW_CLAIM_EVENT" });
+        } else if (readyRegistration.active) {
+          readyRegistration.active.postMessage({ type: "SW_CLAIM_EVENT" });
         }
       });
     });
+
+    void ensureFreshServiceWorker(registration);
   } catch (err) {
     log.warn("[dot.li app] Service worker registration failed:", err);
   }
@@ -202,6 +307,7 @@ async function storeArchiveInSW(
   files: ArchiveFiles,
   domain: string,
   cid: string,
+  contentBackend: string,
 ): Promise<void> {
   const sw = navigator.serviceWorker.controller;
   if (!sw) {
@@ -219,16 +325,33 @@ async function storeArchiveInSW(
     }, 10_000);
 
     const handler = (evt: MessageEvent): void => {
-      if ((evt.data as { type?: string } | null)?.type === "ARCHIVE_READY") {
+      const msg = evt.data as { type?: string; reason?: string } | null;
+      if (msg?.type === "ARCHIVE_READY") {
         clearTimeout(timer);
         navigator.serviceWorker.removeEventListener("message", handler);
         resolve();
+      } else if (msg?.type === "ARCHIVE_ERROR") {
+        // The SW rejected the payload (malformed index or IDB persist
+        // failure). Surface the real cause instead of waiting for the
+        // timeout — the page retry flow then has something to act on.
+        clearTimeout(timer);
+        navigator.serviceWorker.removeEventListener("message", handler);
+        reject(
+          new Error(
+            `Service worker rejected archive: ${msg.reason ?? "unknown"}`,
+          ),
+        );
       }
     };
     navigator.serviceWorker.addEventListener("message", handler);
   });
 
-  sw.postMessage({ type: "SET_ARCHIVE", packed, index, domain, cid }, [packed]);
+  // Tag the stored archive with the backend it was fetched under so future
+  // cache lookups can verify the backend matches the user's current setting.
+  sw.postMessage(
+    { type: "SET_ARCHIVE", packed, index, domain, cid, contentBackend },
+    [packed],
+  );
 
   await archiveReady;
 }
@@ -266,24 +389,31 @@ async function decryptIfNeeded(
   }
   log.warn(`[dot.li app] Content is encrypted, prompting for password...`);
 
-  // Dismiss the loading overlay so it doesn't cover the password prompt.
-  // In relay mode this tells the host to remove its overlay; in standalone
-  // mode it removes the local one.
-  dismissLoading();
+  // Tell the host to dismiss its loading overlay so the password prompt
+  // isn't covered by the shell's spinner.
   notifyLoadingDone();
 
   // Re-use password from this session if available
   let password = decryptedPasswords.get(cid);
   let error: string | undefined;
 
+  // Only treat ChaCha20-Poly1305 auth-tag mismatch as "wrong password". Any
+  // other decryption error (corrupted ciphertext, library bug) is fatal —
+  // surface the real cause instead of looping infinitely with a misleading
+  // "Wrong password" prompt.
   for (;;) {
     password ??= await showPasswordPrompt({ error });
     try {
       const plaintext = await decryptContent(data, password);
       decryptedPasswords.set(cid, password);
-      // Parse the decrypted bytes as an archive or single file
       return await parseIpfsResponse(plaintext);
-    } catch {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const looksLikeWrongPassword =
+        /invalid tag|auth(entication)? failed|poly1305|chacha/i.test(msg);
+      if (!looksLikeWrongPassword) {
+        throw err;
+      }
       error = "Wrong password. Please try again.";
       password = undefined;
     }
@@ -293,10 +423,136 @@ async function decryptIfNeeded(
 // Module-level reference for cleanup
 let destroyHeliaFn: (() => Promise<void>) | null = null;
 
+/**
+ * Wipe every piece of sandbox-origin state before init. Triggered by the
+ * `fullReset=1` URL param the host sets on the first load after "Save &
+ * Apply".
+ *
+ * Clears, in order:
+ *   - IndexedDB   (all databases enumerable via `indexedDB.databases()`)
+ *   - CacheStorage (every named cache the document can see)
+ *   - ServiceWorker registrations (next `registerAppServiceWorker()` call
+ *     installs a fresh one against empty caches)
+ *   - localStorage / sessionStorage (cleared to the empty object)
+ *   - JS-visible cookies (expired on path=/ and on the current path)
+ *
+ * Best-effort across the board — some surfaces cannot be wiped from a
+ * page context:
+ *   - Firefox < 126 / Safari < 17 don't expose `indexedDB.databases()`,
+ *     so IDB stores opened before this page load cannot be enumerated.
+ *   - `HttpOnly` cookies are invisible to `document.cookie` and therefore
+ *     unreachable from JS; clearing those requires server-side headers.
+ * The user still gets a near-clean baseline; surviving state is logged
+ * as a warning, not treated as fatal, because the reset is opt-in and
+ * the worst case is a partial wipe.
+ */
+async function purgeSandboxOriginState(): Promise<void> {
+  // IDB
+  try {
+    if (
+      typeof indexedDB !== "undefined" &&
+      typeof indexedDB.databases === "function"
+    ) {
+      const dbs = await indexedDB.databases();
+      await Promise.all(
+        dbs.map(
+          (db) =>
+            new Promise<void>((resolve) => {
+              if (db.name === undefined || db.name === "") {
+                resolve();
+                return;
+              }
+              const req = indexedDB.deleteDatabase(db.name);
+              req.onsuccess = (): void => {
+                resolve();
+              };
+              req.onerror = (): void => {
+                resolve();
+              };
+              req.onblocked = (): void => {
+                resolve();
+              };
+            }),
+        ),
+      );
+    }
+  } catch (err) {
+    log.warn("[dot.li app] IDB purge failed:", err);
+  }
+  // CacheStorage (Cache API — not the SW archive which lives in IDB)
+  try {
+    if (typeof caches !== "undefined") {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch (err) {
+    log.warn("[dot.li app] CacheStorage purge failed:", err);
+  }
+  // Service workers: unregister so the next registerAppServiceWorker() call
+  // installs a fresh one against empty caches.
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+  } catch (err) {
+    log.warn("[dot.li app] SW unregister failed:", err);
+  }
+  // localStorage / sessionStorage. Previously omitted — the `purge…State`
+  // name promised a full wipe but the implementation left these alive, so
+  // a dApp that stashed preferences / tokens here survived the reset.
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.clear();
+    }
+  } catch (err) {
+    log.warn("[dot.li app] localStorage purge failed:", err);
+  }
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.clear();
+    }
+  } catch (err) {
+    log.warn("[dot.li app] sessionStorage purge failed:", err);
+  }
+  // Cookies visible to `document.cookie`. `HttpOnly` cookies are out of
+  // reach from JS — documented above. Expire on both `/` and the current
+  // path since a dApp may have set the cookie on either.
+  try {
+    if (document.cookie.length > 0) {
+      const expired = "expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      for (const entry of document.cookie.split(";")) {
+        const name = entry.split("=")[0].trim();
+        if (name === "") {
+          continue;
+        }
+        document.cookie = `${name}=; ${expired}; path=/`;
+        document.cookie = `${name}=; ${expired}; path=${window.location.pathname}`;
+      }
+    }
+  } catch (err) {
+    log.warn("[dot.li app] cookie purge failed:", err);
+  }
+}
+
 async function main(): Promise<void> {
   const stopApp = m.timer(S.APP_TOTAL);
   performance.mark("dotli:app:start");
   log.warn(`[dot.li app] main() started (${elapsed(T0)})`);
+
+  // The sandbox is host-managed only — it must run as an iframe child of
+  // the dot.li shell. A top-level load here has no bridge to answer
+  // account/signing/storage calls, no shield/topbar context, and no
+  // unified loading UI. Fail loudly instead of degrading into a broken
+  // half-page. Users arriving via a bookmark are pointed back at dot.li.
+  if (window.self === window.top) {
+    showError(
+      "Sandbox URL not supported",
+      `Open this dApp through https://${BASE_DOMAIN} — the sandbox origin (${window.location.host}) is not a standalone entry point.`,
+    );
+    stopApp();
+    return;
+  }
 
   const cid = parseCidFromHostname();
   if (cid === null) {
@@ -311,21 +567,65 @@ async function main(): Promise<void> {
   log.warn(`[dot.li app] CID from hostname: ${cid}`);
   showStatus("Loading content...");
 
-  // Read resolution mode and cache settings from URL parameters set by the host.
+  // The sandbox lives on cid.app.dot.li and cannot read the host's
+  // localStorage, so every user-chosen axis MUST arrive via URL param.
+  // The validator lives in `@dotli/config/host-sandbox-contract` so the
+  // schema + accepted values are a single source of truth for host +
+  // sandbox. Missing/unknown params are a hard error; there is no
+  // silent default.
   const urlParams = new URL(window.location.href).searchParams;
-  const urlMode = urlParams.get("mode");
-  const isCentralized = urlMode === "gateway";
-  const skipArchiveCache = urlParams.get("skipArchiveCache") === "1";
+  const parsed = validateSandboxParams(urlParams);
+  if (!parsed.ok) {
+    showError("Invalid sandbox URL", parsed.reason);
+    stopApp();
+    return;
+  }
+  const {
+    contentBackend: urlContentBackend,
+    chainBackend: urlChainBackend,
+    skipArchiveCache,
+  } = parsed.params;
+  const isCentralized = urlContentBackend === "ipfs-gateway";
+
+  // Full-reset signal from the host settings popover: wipe sandbox-origin
+  // state (IDB, CacheStorage, SW registrations) before the normal init
+  // flow so the user gets a truly clean baseline across every origin.
+  // Runs before SW registration so the fresh SW installs cleanly instead
+  // of adopting stale state.
+  if (parsed.params.fullReset) {
+    log.warn("[dot.li app] fullReset=1 → purging sandbox-origin state");
+    await purgeSandboxOriginState();
+  }
+
+  // Propagate the explicit axes into every metric emitted from the sandbox
+  // so dashboards can slice either way (M-8, B-5, C-4).
+  const sessionDefaults: Record<string, string> = {
+    skip_archive_cache: String(skipArchiveCache),
+    content_backend: urlContentBackend,
+  };
+  if (urlChainBackend !== undefined) {
+    sessionDefaults.chain_backend = urlChainBackend;
+  }
+  m.setDefaults(sessionDefaults);
 
   // Register SW + pre-load chunks in parallel.
   // The fetch chunk is only pre-loaded in P2P mode — in gateway mode
   // it is imported lazily so Vite can split out Helia/libp2p.
+  // After a fullReset the existing `navigator.serviceWorker.controller`
+  // is the SW we just unregistered; force the registration path to wait
+  // for a fresh controller rather than adopting that stale one.
   const stopSw = m.timer(S.APP_SW_REGISTER);
-  const swReady = registerAppServiceWorker().then((v) => {
+  const swReady = registerAppServiceWorker({
+    waitForFreshController: parsed.params.fullReset,
+  }).then((v) => {
     stopSw();
     return v;
   });
-  const renderChunkPromise = import("@dotli/ui/render");
+  // The sandbox renders by writing HTML into its own window via
+  // `document.write` — it never instantiates `@dotli/ui/render`, so we
+  // don't pre-load that chunk here. The content-fetch chunk is only
+  // needed on a cache miss, and only in P2P mode (gateway mode does a
+  // plain HTTPS fetch) so the import is deferred.
   const fetchChunkPromise = isCentralized
     ? null
     : import("@dotli/content/fetch");
@@ -334,50 +634,52 @@ async function main(): Promise<void> {
   await swReady;
   log.warn(`[dot.li app] SW ready (${elapsed(T0)})`);
 
-  // Check SW cache first (skip if user disabled content cache)
+  // Check SW cache first (skip if user disabled content cache). The cache
+  // lookup is keyed by (cid, contentBackend) so a stale gateway-fetched
+  // archive cannot satisfy a P2P-mode request.
   const cachedFiles = skipArchiveCache
     ? null
-    : await getCachedArchive(cid, cid);
+    : await getCachedArchive(cid, cid, urlContentBackend);
   if (cachedFiles) {
     log.warn(`[dot.li app] SW archive cache HIT (${elapsed(T0)})`);
 
-    if (isRelayMode) {
-      // Extract index.html and write it directly into this window
-      const indexHtml = cachedFiles["index.html"] as Uint8Array | undefined;
-      if (indexHtml) {
-        // For multi-file archives, store files in the SW so it can serve
-        // sub-resources (CSS, JS, fonts) when the browser loads them.
-        if (Object.keys(cachedFiles).length > 1) {
-          await storeArchiveInSW(cachedFiles, cid, cid);
-          log.warn(
-            `[dot.li app] Relay mode: archive stored in SW (${elapsed(T0)})`,
-          );
-        }
-        let html = new TextDecoder().decode(indexHtml);
-        html = await maybeInjectSandboxChecker(html);
-        log.warn(
-          `[dot.li app] Relay mode: writing cached content into window (${elapsed(T0)})`,
-        );
-        notifyLoadingDone();
-        performance.mark("dotli:app:end");
-        stopApp();
-        document.open();
-        // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
-        document.write(html);
-        document.close();
-        return;
-      }
+    // Extract index.html and write it directly into this window so it
+    // occupies the APP iframe. An archive without index.html is invalid
+    // — surface it instead of silently falling through to a no-op render.
+    const indexHtml = cachedFiles["index.html"] as Uint8Array | undefined;
+    if (indexHtml === undefined) {
+      throw new Error(
+        "Archive cache hit missing index.html — cannot render a sandbox without a root document.",
+      );
     }
-
-    showStatus("Rendering (cached)...");
-    const stopRender = m.timer(S.APP_RENDER);
-    const { renderArchive } = await renderChunkPromise;
-    await renderArchive(cachedFiles, cid, cid);
-    stopRender();
+    // For multi-file archives, store files in the SW so it can serve
+    // sub-resources (CSS, JS, fonts) when the browser loads them.
+    if (Object.keys(cachedFiles).length > 1) {
+      await storeArchiveInSW(cachedFiles, cid, cid, urlContentBackend);
+      log.warn(`[dot.li app] archive stored in SW (${elapsed(T0)})`);
+    }
+    let html = new TextDecoder().decode(indexHtml);
+    html = await maybeInjectSandboxChecker(html);
+    log.warn(
+      `[dot.li app] writing cached content into window (${elapsed(T0)})`,
+    );
     notifyLoadingDone();
     performance.mark("dotli:app:end");
-    log.warn(`[dot.li app] Done — cached (${elapsed(T0)})`);
     stopApp();
+    if (destroyHeliaFn !== null) {
+      const destroy = destroyHeliaFn;
+      destroyHeliaFn = null;
+      void destroy().catch((err: unknown) => {
+        log.warn(
+          "[dot.li app] destroyHelia() failed before document.write:",
+          err,
+        );
+      });
+    }
+    document.open();
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
+    document.write(html);
+    document.close();
     return;
   }
 
@@ -397,8 +699,16 @@ async function main(): Promise<void> {
       `[dot.li app] SW archive cache MISS — P2P mode, fetching via Helia (${elapsed(T0)})`,
     );
     showStatus("Connecting to peers...");
-    const fetchChunk = await (fetchChunkPromise ??
-      import("@dotli/content/fetch"));
+    // The P2P branch is gated on `!isCentralized`, which is the same
+    // condition that populates `fetchChunkPromise`. If we reached here
+    // without a pre-populated promise that's a logic bug — a silent
+    // dynamic import would mask a violation of "user picked X, we use X".
+    if (fetchChunkPromise === null) {
+      throw new Error(
+        "Invariant violation: P2P branch reached but fetchChunkPromise was not pre-loaded",
+      );
+    }
+    const fetchChunk = await fetchChunkPromise;
     const { fetchArchive, ensureHelia, destroyHelia } = fetchChunk;
     destroyHeliaFn = destroyHelia;
     await ensureHelia();
@@ -416,57 +726,50 @@ async function main(): Promise<void> {
     }
   }
 
-  if (isRelayMode) {
-    // Write the dApp content directly into this window so it occupies
-    // the APP iframe. The HOST's container bridge communicates with this
-    // iframe via window.top ↔ iframe.contentWindow.
-    let html: string | null = null;
-    if (result.type === "single") {
-      html = new TextDecoder().decode(result.content);
-    } else {
-      // For multi-file archives, store files in the SW so it can serve
-      // sub-resources (CSS, JS, fonts) when the browser loads them.
-      await storeArchiveInSW(result.files, cid, cid);
-      log.warn(
-        `[dot.li app] Relay mode: archive stored in SW (${elapsed(T0)})`,
-      );
-      const indexHtml = result.files["index.html"] as Uint8Array | undefined;
-      if (indexHtml) {
-        html = new TextDecoder().decode(indexHtml);
-      }
-    }
-
-    if (html !== null) {
-      html = await maybeInjectSandboxChecker(html);
-      log.warn(
-        `[dot.li app] Relay mode: writing content into window (${elapsed(T0)})`,
-      );
-      notifyLoadingDone();
-      performance.mark("dotli:app:end");
-      stopApp();
-      document.open();
-      // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
-      document.write(html);
-      document.close();
-      return;
-    }
-  }
-
-  // Render in sub-iframe (standalone mode or archive fallback)
-  showStatus("Rendering...");
-  const stopRender = m.timer(S.APP_RENDER);
-  const { renderArchive, renderContent } = await renderChunkPromise;
-  if (result.type === "archive") {
-    await renderArchive(result.files, cid, cid);
+  // Write the dApp content directly into this window so it occupies the
+  // APP iframe. The HOST's container bridge communicates with this iframe
+  // via window.top ↔ iframe.contentWindow.
+  let html: string;
+  if (result.type === "single") {
+    html = new TextDecoder().decode(result.content);
   } else {
-    await renderContent(result.content, cid);
+    // For multi-file archives, store files in the SW so it can serve
+    // sub-resources (CSS, JS, fonts) when the browser loads them.
+    await storeArchiveInSW(result.files, cid, cid, urlContentBackend);
+    log.warn(`[dot.li app] archive stored in SW (${elapsed(T0)})`);
+    const indexHtml = result.files["index.html"] as Uint8Array | undefined;
+    if (indexHtml === undefined) {
+      throw new Error(
+        "Archive missing index.html — cannot render a sandbox without a root document.",
+      );
+    }
+    html = new TextDecoder().decode(indexHtml);
   }
-  stopRender();
-  notifyLoadingDone();
 
+  html = await maybeInjectSandboxChecker(html);
+  log.warn(`[dot.li app] writing content into window (${elapsed(T0)})`);
+  notifyLoadingDone();
   performance.mark("dotli:app:end");
-  log.warn(`[dot.li app] Done (${elapsed(T0)})`);
   stopApp();
+  // `document.open()/write()` wipes the current document, including
+  // the `beforeunload` handler we registered below for Helia cleanup.
+  // Tear down the Helia client synchronously first so libp2p sockets
+  // don't leak past the page replacement.
+  if (destroyHeliaFn !== null) {
+    const destroy = destroyHeliaFn;
+    destroyHeliaFn = null;
+    void destroy().catch((err: unknown) => {
+      log.warn(
+        "[dot.li app] destroyHelia() failed before document.write:",
+        err,
+      );
+    });
+  }
+  document.open();
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
+  document.write(html);
+  document.close();
+  log.warn(`[dot.li app] Done (${elapsed(T0)})`);
 }
 
 // Cleanup on page unload
@@ -476,22 +779,89 @@ window.addEventListener("beforeunload", () => {
   }
 });
 
+// The retry button exists so a user can re-trigger a failed init after
+// fixing something out-of-band (e.g. toggling a flag). It is NOT an
+// automatic retry — only a click path. We still guard against runaway
+// recursion if the user mashes the button and against overlapping
+// `main()` calls (two invocations would race on Helia/SW state).
+let runInFlight = false;
+let runAttempts = 0;
+const MAX_RUN_ATTEMPTS = 5;
+
 function run(): void {
-  void main().catch((err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
-    showError("Failed to load content", message, () => {
-      // Restore the loading UI and re-run main
-      const app = document.getElementById("app") ?? document.body;
-      app.innerHTML = `
+  if (runInFlight) {
+    log.warn("[dot.li app] run() already in flight; ignoring re-entry");
+    return;
+  }
+  if (runAttempts >= MAX_RUN_ATTEMPTS) {
+    showError(
+      "Too many retry attempts",
+      `Reached ${String(MAX_RUN_ATTEMPTS)} failed attempts. Reload the page to start over.`,
+    );
+    return;
+  }
+  runAttempts += 1;
+  runInFlight = true;
+
+  // Before a retry, clear Helia/SW state that a prior `main()` attempt
+  // may have partially set up. Without this, re-running `main()` can
+  // re-use a half-initialized Helia client or stale SW archive state
+  // that doesn't match the user's current configuration.
+  const resetForRetry = async (): Promise<void> => {
+    if (destroyHeliaFn !== null) {
+      const destroy = destroyHeliaFn;
+      destroyHeliaFn = null;
+      try {
+        await destroy();
+      } catch (err) {
+        log.warn("[dot.li app] destroyHelia() failed during retry reset:", err);
+      }
+    }
+  };
+
+  void resetForRetry()
+    .then(() => main())
+    .catch((err: unknown) => {
+      // Surface before rendering so Sentry sees every failure. Attribute
+      // strictly from the explicit `contentBackend` URL param; tag `unknown`
+      // when missing rather than guessing P2P (the missing-param path is
+      // already a hard error from `main()`, but a thrown error before that
+      // validation also lands here).
+      const params = new URL(window.location.href).searchParams;
+      const cb = params.get("contentBackend");
+      const dependency =
+        cb === "ipfs-gateway"
+          ? "ipfs-gateway"
+          : cb === "p2p-helia"
+            ? "helia-bulletin"
+            : "unknown";
+      captureException(err, {
+        surface: "sandbox_main",
+        dependency,
+        content_backend: cb ?? "unknown",
+        attempt: String(runAttempts),
+      });
+      const message = err instanceof Error ? err.message : String(err);
+      showError(
+        "Failed to load content",
+        `${message} (via ${dependency})`,
+        () => {
+          // Restore the loading UI and re-run main
+          const app = document.getElementById("app") ?? document.body;
+          app.innerHTML = `
         <div class="loading">
           <h1>dot.li</h1>
           <div class="spinner"></div>
           <p id="status">Retrying...</p>
         </div>
       `;
-      run();
+          run();
+        },
+      );
+    })
+    .finally(() => {
+      runInFlight = false;
     });
-  });
 }
 
 run();

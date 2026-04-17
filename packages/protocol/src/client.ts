@@ -49,7 +49,11 @@ const chainConnections = new Map<string, RemoteChainConnection>();
 const sharedAuthListeners = new Set<SharedAuthStorageListener>();
 let listenerBound = false;
 let protocolReady = false;
-let pendingReadyResolvers: (() => void)[] = [];
+interface ReadyWaiter {
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+let pendingReadyResolvers: ReadyWaiter[] = [];
 
 /** Sub-mode to pass to the protocol iframe. `null` means the iframe is
  *  only needed for shared auth — no chain provider at all.
@@ -59,13 +63,19 @@ let pendingReadyResolvers: (() => void)[] = [];
  *  WSS JSON-RPC instead of smoldot. */
 let protocolSubMode: "shared-worker" | "direct" | "rpc" | null = null;
 
+/** When true, ask the protocol iframe to purge its IDB caches before
+ *  starting up — i.e. every cold start from scratch, no warm-start state. */
+let protocolSkipWorkerCache = false;
+
 /**
  * Set the sub-mode for the protocol iframe.
  */
 export function setProtocolSubMode(
   mode: "shared-worker" | "direct" | "rpc",
+  opts: { skipWorkerCache?: boolean } = {},
 ): void {
   protocolSubMode = mode;
+  protocolSkipWorkerCache = opts.skipWorkerCache === true;
 }
 
 export function getProtocolOrigin(): string {
@@ -95,18 +105,28 @@ function resolveProtocolReady(): void {
   protocolReady = true;
   const resolvers = pendingReadyResolvers;
   pendingReadyResolvers = [];
-  for (const resolve of resolvers) {
-    resolve();
+  for (const waiter of resolvers) {
+    waiter.resolve();
   }
 }
 
-function resetProtocolFrameState(): void {
+function resetProtocolFrameState(reason?: Error): void {
   protocolIframe?.remove();
   protocolIframe = null;
   hostFramePromise = null;
   protocolReadyPromise = null;
   protocolReady = false;
+  // Reject any callers blocked on `waitForProtocolReady()` before we drop the
+  // resolvers — otherwise their promises would hang until the 120s timeout.
+  const orphaned = pendingReadyResolvers;
   pendingReadyResolvers = [];
+  if (orphaned.length > 0) {
+    const err =
+      reason ?? new Error("Protocol frame state reset before ready signal");
+    for (const waiter of orphaned) {
+      waiter.reject(err);
+    }
+  }
 }
 
 function bindMessageListener(): void {
@@ -151,6 +171,40 @@ function bindMessageListener(): void {
           err.name = "ProtocolResponseError";
           pending.reject(err);
         }
+        return;
+      }
+      case "fatal":
+      case "init-failed": {
+        // Smoldot (or the protocol iframe) has died — either crashed
+        // mid-session (`fatal`) or failed to come up at all
+        // (`init-failed`). Either way every in-flight request is
+        // orphaned: the chain is gone, nothing will ever respond.
+        const kind = msg.kind === "fatal" ? "Fatal" : "Init failed";
+        log.error(`[dot.li protocol] ${kind}: ${msg.message}`);
+        const err = new Error(`${kind}: ${msg.message}`);
+        err.name =
+          msg.kind === "fatal"
+            ? "ProtocolFatalError"
+            : "ProtocolInitFailedError";
+
+        // Reject each pending request with the underlying cause so the
+        // loading UI fails fast instead of spinning until per-request
+        // timeouts.
+        for (const [id, pending] of pendingRequests) {
+          pendingRequests.delete(id);
+          pending.reject(err);
+        }
+
+        // Route through the same reset path used by iframe load failures
+        // so that callers blocked on `waitForProtocolReady()`
+        // (`pendingReadyResolvers`) are also rejected immediately —
+        // previously they'd hang until `IFRAME_READY_TIMEOUT_MS` (120 s)
+        // even though the chain was already known dead. This also clears
+        // the iframe, `hostFramePromise`, and `protocolReadyPromise` so
+        // the next `ensureProtocolFrame()` call can attempt a clean
+        // re-boot (e.g. after the user switches settings) instead of
+        // being stuck on a poisoned cached rejection.
+        resetProtocolFrameState(err);
         return;
       }
       case "chain-message": {
@@ -210,14 +264,24 @@ const IFRAME_LOAD_TIMEOUT_MS = 30_000;
 // The iframe signals "ready" only after the SharedWorker pre-syncs the chain.
 // Cold-start chain sync can take up to ~60s, so allow enough time.
 const IFRAME_READY_TIMEOUT_MS = 120_000;
-const IFRAME_MAX_RETRIES = 2;
+// NO automatic retries. The user picked this protocol path; if the iframe
+// load fails the cause must surface immediately so the user (or a
+// higher-level UI affordance) can decide whether to retry.
 
 function createHostIframe(): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const iframe = document.createElement("iframe");
+    const params = new URLSearchParams();
+    if (protocolSubMode !== null) {
+      params.set("mode", protocolSubMode);
+    }
+    if (protocolSkipWorkerCache) {
+      params.set("skipWorkerCache", "1");
+    }
+    const query = params.toString();
     iframe.src =
-      protocolSubMode !== null
-        ? `${getProtocolOrigin()}?mode=${protocolSubMode}`
+      query.length > 0
+        ? `${getProtocolOrigin()}?${query}`
         : getProtocolOrigin();
     iframe.setAttribute("aria-hidden", "true");
     iframe.tabIndex = -1;
@@ -266,22 +330,22 @@ async function ensureHostFrame(): Promise<void> {
   }
 
   hostFramePromise = (async () => {
-    let lastError: unknown;
-    for (let attempt = 0; attempt <= IFRAME_MAX_RETRIES; attempt++) {
-      try {
-        await createHostIframe();
-        return;
-      } catch (error: unknown) {
-        lastError = error;
-        m.count(S.PROTOCOL_IFRAME_RETRY);
-        log.warn(
-          `[dot.li protocol] Host iframe attempt ${String(attempt + 1)} failed, ${attempt < IFRAME_MAX_RETRIES ? "retrying..." : "giving up"}`,
-        );
-        resetProtocolFrameState();
-      }
+    try {
+      await createHostIframe();
+    } catch (error: unknown) {
+      m.count(S.PROTOCOL_IFRAME_READY, {
+        outcome: "error",
+        phase: "load",
+        reason: error instanceof Error ? error.name : "unknown",
+      });
+      m.breadcrumb("protocol iframe load failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      log.error("[dot.li protocol] Host iframe load failed:", error);
+      resetProtocolFrameState();
+      hostFramePromise = null;
+      throw error;
     }
-    hostFramePromise = null;
-    throw lastError;
   })();
 
   return hostFramePromise;
@@ -296,21 +360,26 @@ function waitForProtocolReady(): Promise<void> {
       return;
     }
 
-    const onReady = (): void => {
-      clearTimeout(timer);
-      stopIframe();
-      resolve();
+    const waiter: ReadyWaiter = {
+      resolve: () => {
+        clearTimeout(timer);
+        stopIframe();
+        resolve();
+      },
+      reject: (err) => {
+        clearTimeout(timer);
+        stopIframe();
+        reject(err);
+      },
     };
 
     const timer = setTimeout(() => {
-      pendingReadyResolvers = pendingReadyResolvers.filter(
-        (callback) => callback !== onReady,
-      );
+      pendingReadyResolvers = pendingReadyResolvers.filter((w) => w !== waiter);
       stopIframe();
       reject(new Error("Shared protocol iframe timed out (no ready signal)"));
     }, IFRAME_READY_TIMEOUT_MS);
 
-    pendingReadyResolvers.push(onReady);
+    pendingReadyResolvers.push(waiter);
   });
 }
 
@@ -326,33 +395,40 @@ export async function ensureProtocolFrame(): Promise<void> {
   }
 
   protocolReadyPromise = (async () => {
-    let lastError: unknown;
-    for (let attempt = 0; attempt <= IFRAME_MAX_RETRIES; attempt++) {
-      try {
-        await waitForProtocolReady();
-        return;
-      } catch (error: unknown) {
-        lastError = error;
-        m.count(S.PROTOCOL_IFRAME_RETRY);
-        log.warn(
-          `[dot.li protocol] Ready wait attempt ${String(attempt + 1)} failed, ${attempt < IFRAME_MAX_RETRIES ? "retrying..." : "giving up"}`,
-        );
-        resetProtocolFrameState();
-        await ensureHostFrame();
-      }
+    try {
+      await waitForProtocolReady();
+    } catch (error: unknown) {
+      // Do NOT auto-retry. The SharedWorker no longer retries its own
+      // presync either (see protocol-shared-worker.ts), so this failure
+      // surfaces the actual cause to the caller without silent recovery.
+      // The cached promise is released so an explicit user action (e.g.
+      // "Change settings") can try again.
+      m.count(S.PROTOCOL_IFRAME_READY, {
+        phase: "ready",
+        outcome: "error",
+        reason: error instanceof Error ? error.name : "unknown",
+      });
+      m.breadcrumb("protocol iframe ready wait failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      log.error("[dot.li protocol] Ready wait failed:", error);
+      protocolReadyPromise = null;
+      throw error;
     }
-    protocolReadyPromise = null;
-    throw lastError;
   })();
 
   return protocolReadyPromise;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// Methods whose completion time depends on chain sync / user patience. No
+// per-request timeout — a smoldot panic emits a `fatal` envelope that
+// rejects pending requests, and the user can abandon via the "Change
+// settings" affordance. Waiting longer than 5 min is fine; silently
+// killing the request is not.
+const UNTIMED_METHODS: ReadonlySet<ProtocolRequestMethod> =
+  new Set<ProtocolRequestMethod>(["warmup", "resolveDotName", "resolveOwner"]);
 const METHOD_TIMEOUTS: Partial<Record<ProtocolRequestMethod, number>> = {
-  warmup: 300_000,
-  resolveDotName: 300_000,
-  resolveOwner: 300_000,
   chainConnect: 30_000,
 };
 
@@ -377,29 +453,38 @@ async function postRequest<M extends ProtocolRequestMethod>(
     payload,
   };
 
-  const timeoutMs = METHOD_TIMEOUTS[method] ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = UNTIMED_METHODS.has(method)
+    ? null
+    : (METHOD_TIMEOUTS[method] ?? DEFAULT_TIMEOUT_MS);
   const stopReq = m.timer(S.PROTOCOL_REQUEST);
 
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pendingRequests.delete(id);
-      m.count(S.PROTOCOL_REQUEST_TIMEOUT, { method });
-      stopReq();
-      reject(
-        new Error(
-          `Protocol request "${method}" timed out after ${String(timeoutMs)}ms`,
-        ),
-      );
-    }, timeoutMs);
+    const timer =
+      timeoutMs === null
+        ? null
+        : setTimeout(() => {
+            pendingRequests.delete(id);
+            m.count(S.PROTOCOL_REQUEST, { outcome: "timeout", method });
+            stopReq();
+            reject(
+              new Error(
+                `Protocol request "${method}" timed out after ${String(timeoutMs)}ms`,
+              ),
+            );
+          }, timeoutMs);
 
     pendingRequests.set(id, {
       resolve: (value) => {
-        clearTimeout(timer);
+        if (timer !== null) {
+          clearTimeout(timer);
+        }
         stopReq();
         resolve(value);
       },
       reject: (reason?: unknown) => {
-        clearTimeout(timer);
+        if (timer !== null) {
+          clearTimeout(timer);
+        }
         reject(reason instanceof Error ? reason : new Error(String(reason)));
       },
       onProgress,

@@ -37,7 +37,11 @@ body {
   margin-top: 40px;
   text-align: center;
 }
-.loading {
+/* Scoped to `#app > .loading` because the bare `.loading` class is *also*
+   used as a modifier on in-popover value spans (e.g. the domain info popover's
+   "Resolving..." row). Before scoping, the full-viewport `min-height` on the
+   span stretched popover rows to viewport height. */
+#app > .loading {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -133,7 +137,8 @@ body {
   display: block;
 }
 .loading-gateway-btn {
-  margin-top: 8px;
+  display: block;
+  margin: 20px auto 0;
   padding: 6px 16px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.15);
@@ -142,7 +147,9 @@ body {
   font-size: 11px;
   font-family: inherit;
   cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
 }
 .loading-gateway-btn:hover {
   border-color: rgba(255, 255, 255, 0.3);

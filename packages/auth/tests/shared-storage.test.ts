@@ -40,6 +40,14 @@ describe("createSharedAuthStorageAdapter", () => {
   it("emits local subscribers after writes and clears", async () => {
     vi.mocked(writeSharedAuthStorage).mockResolvedValue(undefined);
     vi.mocked(clearSharedAuthStorage).mockResolvedValue(undefined);
+    // After write/clear, the adapter reads back through the iframe
+    // (the authoritative store) to reconcile same-tab listeners against
+    // the value that was actually persisted. Mock the read-back so the
+    // local subscriber sees the post-write value.
+    vi.mocked(readSharedAuthStorage)
+      .mockResolvedValueOnce("next-value")
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue("ignored");
 
     const adapter = createSharedAuthStorageAdapter("dot.li");
     const seen: (string | null)[] = [];
@@ -48,9 +56,13 @@ describe("createSharedAuthStorageAdapter", () => {
     });
 
     await adapter.write("SsoSessions", "next-value");
+    // Flush the detached read-back chain scheduled by `.map()`.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await adapter.clear("SsoSessions");
+    await new Promise((resolve) => setTimeout(resolve, 0));
     unsubscribe();
     await adapter.write("SsoSessions", "ignored");
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(writeSharedAuthStorage).toHaveBeenNthCalledWith(
       1,

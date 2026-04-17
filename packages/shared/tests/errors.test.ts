@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { serializeError } from "@dotli/shared/errors";
+import { serializeError, fullErrorChain } from "@dotli/shared/errors";
 
 describe("serializeError", () => {
   // ── primitives ────────────────────────────────────────────────
@@ -145,5 +145,58 @@ describe("serializeError", () => {
       const out = serializeError(value);
       expect(out.length).toBeGreaterThan(0);
     }
+  });
+});
+
+// ── Cycle detection uses the active DFS path, not a global visited set.
+// Regression guard for the "shared references collapsed to Cycle" bug.
+describe("fullErrorChain cycle semantics", () => {
+  it("walks shared cause references in separate branches independently", () => {
+    // Same `inner` attached as `.cause` of two separate Errors, both
+    // bundled under an AggregateError. Previously the second branch
+    // saw `inner` as already-visited and returned `Cycle`, losing the
+    // real message/stack. With path-local tracking, each branch walks
+    // `inner` fully.
+    const inner = new Error("inner boom");
+    const left = new Error("left branch", { cause: inner });
+    const right = new Error("right branch", { cause: inner });
+    const agg = new AggregateError([left, right], "both failed");
+    const chain = fullErrorChain(agg);
+    expect(chain.causes).toHaveLength(2);
+    expect(chain.causes[0]?.message).toBe("left branch");
+    expect(chain.causes[0]?.causes[0]?.message).toBe("inner boom");
+    expect(chain.causes[0]?.causes[0]?.name).not.toBe("Cycle");
+    expect(chain.causes[1]?.message).toBe("right branch");
+    expect(chain.causes[1]?.causes[0]?.message).toBe("inner boom");
+    expect(chain.causes[1]?.causes[0]?.name).not.toBe("Cycle");
+  });
+
+  it("marks a true back-edge as Cycle", () => {
+    const a: Error & { cause?: unknown } = new Error("a");
+    const b: Error & { cause?: unknown } = new Error("b");
+    a.cause = b;
+    b.cause = a;
+    const chain = fullErrorChain(a);
+    // a → b → a(Cycle)
+    expect(chain.message).toBe("a");
+    expect(chain.causes).toHaveLength(1);
+    expect(chain.causes[0]?.message).toBe("b");
+    expect(chain.causes[0]?.causes).toHaveLength(1);
+    expect(chain.causes[0]?.causes[0]?.name).toBe("Cycle");
+  });
+
+  it("walks a DAG where two branches share a leaf without cycling", () => {
+    // A → [B, C]; B.cause = Leaf, C.cause = Leaf. Leaf is shared but
+    // no back-edge exists. Both branches should fully materialise Leaf.
+    const leaf = new Error("leaf");
+    const b = new Error("B", { cause: leaf });
+    const c = new Error("C", { cause: leaf });
+    const a = new AggregateError([b, c], "A");
+    const chain = fullErrorChain(a);
+    expect(chain.causes).toHaveLength(2);
+    expect(chain.causes[0]?.causes[0]?.message).toBe("leaf");
+    expect(chain.causes[0]?.causes[0]?.name).not.toBe("Cycle");
+    expect(chain.causes[1]?.causes[0]?.message).toBe("leaf");
+    expect(chain.causes[1]?.causes[0]?.name).not.toBe("Cycle");
   });
 });
