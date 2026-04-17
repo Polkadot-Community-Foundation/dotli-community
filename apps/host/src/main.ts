@@ -134,15 +134,12 @@ function parseLocalhostUrl(): string | null {
  * Extract the .dot label from the current hostname.
  *
  * Examples:
- *   "myapp.dot.li"              → "myapp"
- *   "myapp.dot.li.localhost"    → "myapp"    (local_gateway)
- *   "myapp.localhost"            → "myapp"    (bare preview server)
- *   "dot.li"                    → null        (landing page)
- *   "dot.li.localhost"          → null        (landing page via gateway)
- *   "localhost"                  → null        (landing page)
- *   "cid.app.dot.li"            → null        (handled by app-main.ts)
- *   "cid.app.dot.li.localhost"  → null        (handled by app-main.ts)
- *   "cid.app.localhost"         → null        (handled by app-main.ts)
+ *   "myapp.dot.li"            → "myapp"
+ *   "myapp.localhost"          → "myapp"    (local dev)
+ *   "dot.li"                  → null        (landing page)
+ *   "localhost"                → null        (landing page)
+ *   "cid.app.dot.li"          → null        (handled by app-main.ts)
+ *   "cid.app.localhost"       → null        (handled by app-main.ts)
  */
 function parseDotLabel(): string | null {
   const hostname = window.location.hostname;
@@ -156,24 +153,8 @@ function parseDotLabel(): string | null {
     return label || null;
   }
 
-  // Local gateway: name.{BASE_DOMAIN}.localhost — production-shaped URLs
-  // served by local_gateway/ (Caddy fronting the preview server).
-  const gatewaySuffix = `.${BASE_DOMAIN}.localhost`;
-  if (hostname.endsWith(gatewaySuffix)) {
-    if (hostname.endsWith(`.app${gatewaySuffix}`)) {
-      return null;
-    }
-    const label = hostname.slice(0, -gatewaySuffix.length);
-    return label || null;
-  }
-
-  // Local dev: name.localhost (but NOT cid.app.localhost, and NOT the
-  // bare gateway base `dot.li.localhost`, which should fall through to
-  // the path matcher so /<name>.dot URLs still work).
-  if (
-    hostname.endsWith(".localhost") &&
-    hostname !== `${BASE_DOMAIN}.localhost`
-  ) {
+  // Local dev: name.localhost (but NOT cid.app.localhost)
+  if (hostname.endsWith(".localhost")) {
     if (hostname.endsWith(".app.localhost")) {
       return null;
     }

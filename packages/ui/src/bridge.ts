@@ -259,14 +259,6 @@ export async function renderAppSubdomain(
 
 function getAppOrigin(cid: string): string {
   const hostname = window.location.hostname;
-  // Local gateway: HTTPS via Caddy fronting the preview server.
-  if (
-    hostname === `${BASE_DOMAIN}.localhost` ||
-    hostname.endsWith(`.${BASE_DOMAIN}.localhost`)
-  ) {
-    const portSuffix = window.location.port ? `:${window.location.port}` : "";
-    return `${window.location.protocol}//${cid}.app.${BASE_DOMAIN}.localhost${portSuffix}`;
-  }
   if (hostname.endsWith(".localhost") || hostname === "localhost") {
     const port = import.meta.env.DEV ? "5174" : window.location.port;
     return `http://${cid}.app.localhost:${port}`;
