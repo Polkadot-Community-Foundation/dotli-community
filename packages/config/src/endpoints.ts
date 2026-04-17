@@ -12,25 +12,25 @@
 // end-to-end, the config values are the only truth.
 
 import {
-  ASSET_HUB_PASEO_RPC_ENDPOINT,
+  ASSET_HUB_PASEO_RPC,
   BULLETIN_PEERS,
   IPFS_GATEWAY,
-  PASEO_RELAY_RPC_ENDPOINT,
+  PASEO_RELAY_RPC,
 } from "./config";
 
 /**
  * The single RPC endpoint the runtime dials for Asset Hub Paseo.
  */
-export function getActiveAssetHubRpcEndpoint(): string {
-  return ASSET_HUB_PASEO_RPC_ENDPOINT;
+export function getActiveAssetHubRpcEndpoints(): string[] {
+  return ASSET_HUB_PASEO_RPC;
 }
 
 /**
  * Companion relay-chain endpoint shown alongside the Asset Hub endpoint
  * in the RPC-mode diagnostics. Not dialed by the runtime today.
  */
-export function getActivePaseoRelayRpcEndpoint(): string {
-  return PASEO_RELAY_RPC_ENDPOINT;
+export function getActivePaseoRelayRpcEndpoints(): string[] {
+  return PASEO_RELAY_RPC;
 }
 
 /** The single IPFS gateway base URL the runtime fetches from. */

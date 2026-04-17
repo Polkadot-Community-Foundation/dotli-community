@@ -170,44 +170,21 @@ export const BULLETIN_PEERS = BULLETIN_PEERS_PASEO;
 export const IPFS_GATEWAY = "https://paseo-ipfs.polkadot.io";
 
 // --- Asset Hub Paseo JSON-RPC endpoints (gateway mode) ---
-//
-// Used in gateway mode for trusted name resolution. Direct WSS JSON-RPC
-// to a known RPC node — faster but introduces a trust assumption.
-//
-// `ASSET_HUB_PASEO_RPC_ENDPOINT` is the single primary endpoint dialed when
-// the user is on the default endpoint profile. The full curated list lives
-// in `ASSET_HUB_PASEO_RPC_CANDIDATES` for the (future) custom-endpoints
-// picker UI; it is NOT dialable as a list because polkadot-api's
-// `getWsProvider` silently round-robins any list it's handed, which
-// contradicts the "what the user chose is what runs" principle. Active
-// endpoint resolution lives in `./endpoints.ts`
-// (`getActiveAssetHubRpcEndpoint`).
+export const PASEO_RELAY_RPC = [
+  "wss://paseo-rpc.n.dwellir.com",
+  "wss://paseo.dotters.network",
+  "wss://paseo.ibp.network",
+  "wss://paseo.rpc.amforc.com",
+];
 
-export const ASSET_HUB_PASEO_RPC_ENDPOINT =
-  "wss://sys.ibp.network/asset-hub-paseo";
-
-/**
- * Paseo relay chain JSON-RPC endpoint. Used for diagnostic display only
- * right now (dotNS resolution happens entirely on Asset Hub, so RPC mode
- * never actually dials this). Kept alongside the Asset Hub endpoint so
- * the settings popover can report both when the user is on `chain=rpc`.
- */
-export const PASEO_RELAY_RPC_ENDPOINT = "wss://rpc.ibp.network/paseo";
-
-/**
- * Curated alternates for the user-driven custom-endpoints picker. NOT for
- * automatic dialing — pass `ASSET_HUB_PASEO_RPC_ENDPOINT` (or the user's
- * explicit override) to `getWsProvider` instead.
- */
-export const ASSET_HUB_PASEO_RPC_CANDIDATES = [
-  ASSET_HUB_PASEO_RPC_ENDPOINT,
+export const ASSET_HUB_PASEO_RPC = [
   "wss://asset-hub-paseo-rpc.n.dwellir.com",
   "wss://asset-hub-paseo.dotters.network",
+  "wss://asset-hub-paseo.ibp.network",
   "wss://sys.turboflakes.io/asset-hub-paseo",
 ];
 
 // --- SW archive cache ---
-
 /** Max number of domain archives kept in the SW in-memory LRU cache. */
 export const SW_ARCHIVE_CACHE_MAX = 8;
 
@@ -218,15 +195,11 @@ export const MAX_CONNECTIONS_PER_ORIGIN = 3;
 export const MAX_NESTED_BRIDGES = 5;
 
 // --- Timeouts (ms) ---
-
 export const TIMEOUTS = {
-  // ── Shared (both modes) ──
   /** SW cache lookup before falling through */
   SW_CACHE_LOOKUP: 3_000,
   /** Waiting for SW controllerchange after registration */
   SW_READY: 10_000,
-
-  // ── P2P mode ──
   /** P2P fetch abort (per attempt) */
   P2P_FETCH: 30_000,
   /** SharedWorker readiness timeout (must cover full cold-start chain sync, up to ~60s) */

@@ -10,9 +10,8 @@
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws-provider";
 import { CONTRACTS, STORAGE_SLOTS } from "@dotli/config/config";
-import { getActiveAssetHubRpcEndpoint } from "@dotli/config/endpoints";
+import { getActiveAssetHubRpcEndpoints } from "@dotli/config/endpoints";
 import { log } from "@dotli/shared/log";
-import { m } from "@dotli/metrics/metrics";
 import { dur } from "@dotli/shared/perf";
 import { namehash, toHex, decodeIpfsContenthashResult } from "./abi";
 import { readMappingBytes, readMappingAddress } from "./storage";
@@ -22,9 +21,20 @@ export type { StatusCallback } from "./storage";
 
 // ── Client lifecycle ─────────────────────────────────────────
 
+/**
+ * `WsJsonRpcProvider` from `polkadot-api/ws-provider` — its type is not
+ * re-exported from the top-level entry point, so we derive it here.
+ * Gives us `.getStatus()` which returns `{ type: "CONNECTED"|..., uri }`
+ * so callers can read which node polkadot-api actually dialed (the
+ * round-robin rotates on failure, so the first entry of the candidate
+ * list may not be the currently answering endpoint).
+ */
+type WsProviderHandle = ReturnType<typeof getWsProvider>;
+
 let clientInstance: PolkadotClient | null = null;
 let apiInstance: UnsafeApi | null = null;
 let clientPromise: Promise<UnsafeApi> | null = null;
+let providerInstance: WsProviderHandle | null = null;
 
 function ensureClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
   if (apiInstance !== null) {
@@ -44,15 +54,13 @@ async function doCreateClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
   // Dial a single endpoint — silent round-robin would hide which node is
   // responsible for any failure, defeating the whole point of gateway mode's
   // "trusted, deterministic" contract.
-  const endpoint = getActiveAssetHubRpcEndpoint();
-  m.setDefaults({ rpc_endpoint: endpoint });
-  onStatus?.(`Connecting to Asset Hub RPC (${endpoint})...`);
-
-  const provider = getWsProvider([endpoint], {
+  onStatus?.(`Connecting to Asset Hub RPC...`);
+  const provider = getWsProvider(getActiveAssetHubRpcEndpoints(), {
     // Public RPC endpoints can be tunnel-gated; the default 40s heartbeat
     // is occasionally too tight.
     heartbeatTimeout: 120_000,
   });
+  providerInstance = provider;
 
   clientInstance = createClient(provider);
   apiInstance = clientInstance.getUnsafeApi();
@@ -71,6 +79,7 @@ async function doCreateClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
     // Reset state so the next call can retry a fresh client.
     clientInstance = null;
     apiInstance = null;
+    providerInstance = null;
     throw err;
   }
 
@@ -166,6 +175,33 @@ export async function resolveOwnerViaRpc(
 }
 
 /**
+ * Return the Asset Hub RPC endpoint URI the shared ws-provider is
+ * currently dialing, or `null` when no client has been instantiated
+ * yet. The URI may not be the first entry of the candidate list —
+ * polkadot-api's ws-provider rotates on failure — so callers that
+ * want to display which node is actually answering (e.g. the
+ * diagnostics popover) should read this instead of the config list.
+ *
+ * Returns `null` while in CONNECTING / ERROR / CLOSE states too, so
+ * the caller can decide whether to fall back to a placeholder.
+ */
+export function getConnectedAssetHubRpcEndpoint(): string | null {
+  if (providerInstance === null) {
+    return null;
+  }
+  const status = providerInstance.getStatus();
+  // Discriminated union: the CONNECTED and CONNECTING variants carry a
+  // `uri` field, ERROR and CLOSE don't. `"uri" in status` is the
+  // narrowing path that doesn't require importing the `WsEvent` enum.
+  // We surface CONNECTING too so the popover shows the URI the provider
+  // is currently trying, not a stale "n/a" during transient reconnects.
+  if ("uri" in status) {
+    return status.uri;
+  }
+  return null;
+}
+
+/**
  * Tear down the RPC client. Safe to call multiple times.
  */
 export function destroyRpcClient(): void {
@@ -178,5 +214,6 @@ export function destroyRpcClient(): void {
     }
     clientInstance = null;
     apiInstance = null;
+    providerInstance = null;
   }
 }

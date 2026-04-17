@@ -19,7 +19,7 @@
 import { getWsProvider } from "polkadot-api/ws-provider";
 import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 import { ASSET_HUB_PASEO_GENESIS } from "@dotli/config/config";
-import { getActiveAssetHubRpcEndpoint } from "@dotli/config/endpoints";
+import { getActiveAssetHubRpcEndpoints } from "@dotli/config/endpoints";
 
 const SUPPORTED_GENESIS = new Set<string>([
   ASSET_HUB_PASEO_GENESIS.toLowerCase(),
@@ -37,7 +37,7 @@ export function createRpcChainProvider(
     // Single active endpoint — no silent round-robin.
     // Public RPC endpoints are occasionally tunnel-gated; the default 40s
     // heartbeat is too tight. Match the timeout used in `./rpc-resolve.ts`.
-    return getWsProvider([getActiveAssetHubRpcEndpoint()], {
+    return getWsProvider(getActiveAssetHubRpcEndpoints(), {
       heartbeatTimeout: 120_000,
     });
   }

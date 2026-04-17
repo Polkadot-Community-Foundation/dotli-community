@@ -29,8 +29,8 @@ import {
   type CacheSettings,
 } from "@dotli/config/mode";
 import {
-  getActiveAssetHubRpcEndpoint,
-  getActivePaseoRelayRpcEndpoint,
+  getActiveAssetHubRpcEndpoints,
+  getActivePaseoRelayRpcEndpoints,
 } from "@dotli/config/endpoints";
 import {
   ALL_PERMISSIONS,
@@ -1012,8 +1012,34 @@ declare const __NOVASAMATECH_VERSIONS__:
  */
 function renderDiagnostics(parent: HTMLElement): void {
   const base = buildBaseDiagnosticsRows();
-  for (const [label, value] of base) {
-    renderInfoRow(parent, label, value);
+  const rowHandles = new Map<string, InfoRowHandle>();
+  for (const entry of base) {
+    rowHandles.set(entry[0], renderInfoRow(parent, entry[0], entry[1]));
+  }
+
+  // When running in RPC chain mode, ask the live ws-provider which URI
+  // it actually connected to — polkadot-api rotates across the curated
+  // candidate list on failure, so the first entry of the config array
+  // may not be the node currently answering. Lazy-imported so the
+  // resolver bundle (polkadot-api + ws-provider) isn't pulled into the
+  // popover's own chunk; by the time the popover opens under RPC mode,
+  // `@dotli/resolver/rpc-resolve` is already warm because host main
+  // imported it to resolve the name. Both the DOM row and the base
+  // snapshot are updated so the Share-diagnostic export stays honest.
+  if (getChainBackend() === "rpc") {
+    void import("@dotli/resolver/rpc-resolve").then(
+      ({ getConnectedAssetHubRpcEndpoint }) => {
+        const live = getConnectedAssetHubRpcEndpoint();
+        if (live === null) {
+          return;
+        }
+        rowHandles.get("AssetHub node")?.update(live);
+        const row = base.find((r) => r[0] === "AssetHub node");
+        if (row !== undefined) {
+          row[1] = live;
+        }
+      },
+    );
   }
 
   // ── @smoldot ──
@@ -1205,10 +1231,12 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
   //     so the two match; the row still lets us spot a divergence in the
   //     field.)
   //   - smoldot-direct: no sub-row; smoldot is torn down every page load.
-  //   - rpc: both WSS endpoints (Relay + Asset Hub). dotNS resolution
-  //     only dials the Asset Hub node today, but the relay endpoint is
-  //     shown so the user sees the full RPC-mode surface area rather
-  //     than having to infer it.
+  //   - rpc: both WSS endpoints (Relay + Asset Hub). The curated lists
+  //     are candidate endpoints — polkadot-api's ws-provider rotates
+  //     on failure, so `renderDiagnostics` later replaces the Asset Hub
+  //     entry with the one the provider is actually connected to.
+  //     Relay isn't dialed at all in RPC mode today (dotNS is Asset Hub
+  //     only), so it just shows the first candidate for reference.
   if (chain === "smoldot-shared-worker") {
     if (typeof SharedWorker === "undefined") {
       rows.push(["Worker", "unavailable"]);
@@ -1216,8 +1244,10 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
       rows.push(["Worker", shortSha(sha)]);
     }
   } else if (chain === "rpc") {
-    rows.push(["Relay node", getActivePaseoRelayRpcEndpoint()]);
-    rows.push(["AssetHub node", getActiveAssetHubRpcEndpoint()]);
+    const relay = getActivePaseoRelayRpcEndpoints()[0] ?? "n/a";
+    const assetHub = getActiveAssetHubRpcEndpoints()[0] ?? "n/a";
+    rows.push(["Relay node", relay]);
+    rows.push(["AssetHub node", assetHub]);
   }
 
   rows.push(["Content", contentBackendLabel(content)]);
