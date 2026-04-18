@@ -109,7 +109,7 @@ export function getChainBackend(): ChainBackend {
  * localStorage so this function is not consulted again.
  */
 function defaultChainBackend(): ChainBackend {
-  return PRESETS.gateway.chain;
+  return PRESETS["p2p-shared-worker"].chain;
 }
 
 export function setChainBackend(backend: ChainBackend): void {
@@ -140,7 +140,7 @@ export function getContentBackend(): ContentBackend {
   } catch {
     /* localStorage unavailable — intentionally non-fatal. */
   }
-  return PRESETS.gateway.content;
+  return PRESETS["p2p-shared-worker"].content;
 }
 
 export function setContentBackend(backend: ContentBackend): void {
