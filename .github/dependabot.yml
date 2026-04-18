@@ -4,8 +4,8 @@ updates:
     directory: "/"
     schedule:
       interval: daily
-    assignees: ["BigTava", "leonardocustodio", "ba1uev", "piggydoughnut"]
-    reviewers: ["BigTava", "leonardocustodio", "ba1uev", "piggydoughnut"]
+    assignees: ["BigTava", "leonardocustodio", "ba1uev"]
+    reviewers: ["BigTava", "leonardocustodio", "ba1uev"]
     labels: ["dependencies"]
     groups:
       npm-packages:
@@ -16,8 +16,8 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    assignees: ["BigTava", "leonardocustodio", "ba1uev", "piggydoughnut"]
-    reviewers: ["BigTava", "leonardocustodio", "ba1uev", "piggydoughnut"]
+    assignees: ["BigTava", "leonardocustodio", "ba1uev"]
+    reviewers: ["BigTava", "leonardocustodio", "ba1uev"]
     labels: ["dependencies"]
     groups:
       gh-actions:
