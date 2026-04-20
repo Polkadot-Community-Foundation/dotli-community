@@ -9,6 +9,9 @@ export default defineConfig({
     browserName: "chromium",
     headless: process.env.HEADED !== "1",
     bypassCSP: true,
+    launchOptions: {
+      slowMo: process.env.SLOWMO ? Number(process.env.SLOWMO) : 0,
+    },
   },
   reporter: [["list"], ["json", { outputFile: "tests/results.json" }]],
   webServer: {

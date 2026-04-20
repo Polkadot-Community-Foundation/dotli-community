@@ -285,20 +285,33 @@ export function listenForSandboxStatus(): void {
   });
 }
 
+export interface ErrorAction {
+  label: string;
+  onClick: () => void;
+}
+
 /**
- * Show an error state with an optional retry button.
+ * Show an error state with an optional action link.
+ *
+ * `detail` is an optional paragraph below the title; omit for a
+ * title-only screen (e.g. the generic "Something went wrong" + backend
+ * switch). `action` renders a text+arrow link — label is free-form so
+ * the same slot serves retry, reload, backend-switch, etc.
  */
 export function showError(
   title: string,
-  detail: string,
-  onRetry?: () => void,
+  detail?: string,
+  action?: ErrorAction | (() => void),
 ): void {
+  if (typeof action === "function") {
+    action = { label: "Retry", onClick: action };
+  }
   app.innerHTML = `
     <div class="error-page">
       <div class="error-page-inner">
         <h1 class="error-page-title">${escapeHtml(title)}</h1>
-        <p class="error-page-detail">${escapeHtml(detail)}</p>
-        ${onRetry !== undefined ? '<button class="error-page-retry" id="error-retry-btn">Retry</button>' : ""}
+        ${detail !== undefined ? `<p class="error-page-detail">${escapeHtml(detail)}</p>` : ""}
+        ${action !== undefined ? `<button class="error-page-retry" id="error-retry-btn">${escapeHtml(action.label)} <span aria-hidden="true">→</span></button>` : ""}
         <div class="error-page-tags">
           <span class="error-page-tag">${SITE_ID}</span>
           <span class="error-page-tag">dotNS</span>
@@ -308,10 +321,10 @@ export function showError(
     </div>
   `;
 
-  if (onRetry !== undefined) {
+  if (action !== undefined) {
     document
       .getElementById("error-retry-btn")
-      ?.addEventListener("click", onRetry);
+      ?.addEventListener("click", action.onClick);
   }
 }
 

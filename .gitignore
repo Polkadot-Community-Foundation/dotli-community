@@ -32,7 +32,7 @@ pnpm-lock.yaml
 *.tsbuildinfo
 test-results/
 playwright-report/
-tests/results.json
+**/tests/results.json
 
 # PAPI
 .papi/descriptors

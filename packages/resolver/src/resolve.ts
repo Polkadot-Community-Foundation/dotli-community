@@ -3,7 +3,7 @@
 // Uses polkadot-api with the shared Asset Hub provider from smoldot.ts.
 
 import { createClient, type PolkadotClient } from "polkadot-api";
-import { CONTRACTS, STORAGE_SLOTS } from "@dotli/config/config";
+import { CONTRACTS, STORAGE_SLOTS, TIMEOUTS } from "@dotli/config/config";
 import { namehash, toHex, decodeIpfsContenthashResult } from "./abi";
 import { dur } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
@@ -137,9 +137,25 @@ async function doCreateClient(
     // silently keep a smoldot chain subscription alive, and the next
     // `ensureClient()` call would still see `apiInstance === null` and
     // loop on the same dead provider.
+    //
+    // Bound the wait: without the race, an unreachable peer set leaves
+    // `getFinalizedBlock()` pending forever and the UI sits on the
+    // "Syncing…" overlay indefinitely. The timeout throws so the
+    // outer catch can surface a visible error via `showError`.
     try {
       const block = await m.span(S.SMOLDOT_FINALIZED_BLOCK, () =>
-        newClient.getFinalizedBlock(),
+        Promise.race([
+          newClient.getFinalizedBlock(),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              reject(
+                new Error(
+                  `Sync to Asset Hub Paseo timed out after ${String(TIMEOUTS.ASSET_HUB_FINALIZED_SYNC / 1000)}s — unable to reach peers`,
+                ),
+              );
+            }, TIMEOUTS.ASSET_HUB_FINALIZED_SYNC);
+          }),
+        ]),
       );
       const syncMs = performance.now() - syncStart;
       m.measure(S.SMOLDOT_FINALIZED_BLOCK, syncMs);

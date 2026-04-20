@@ -417,9 +417,11 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 // settings" affordance. Waiting longer than 5 min is fine; silently
 // killing the request is not.
 const UNTIMED_METHODS: ReadonlySet<ProtocolRequestMethod> =
-  new Set<ProtocolRequestMethod>(["warmup", "resolveDotName", "resolveOwner"]);
+  new Set<ProtocolRequestMethod>(["warmup"]);
 const METHOD_TIMEOUTS: Partial<Record<ProtocolRequestMethod, number>> = {
   chainConnect: 30_000,
+  resolveDotName: 90_000,
+  resolveOwner: 90_000,
 };
 
 async function postRequest<M extends ProtocolRequestMethod>(

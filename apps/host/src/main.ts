@@ -39,7 +39,9 @@ import {
   isVerifiedSession,
   getCacheSettings,
   getChainBackend,
+  setChainBackend,
   getContentBackend,
+  type ChainBackend,
 } from "@dotli/config/mode";
 
 // Surface chunk-load failures explicitly: capture the original cause to
@@ -675,10 +677,25 @@ async function main(): Promise<void> {
       dependency,
       dotli_mode: mode,
     });
-    // Walk the full `.cause` chain so the user sees not just the outermost
-    // message but the underlying transport / decode reason too.
-    const message = serializeError(err);
-    showError("Resolution failed", `${message} (via ${dependency})`);
+    // Full cause chain to console for devs.
+    log.error(
+      `[dot.li] Resolution failed via ${dependency}: ${serializeError(err)}`,
+    );
+    // Tiered failover: any smoldot → rpc; rpc → smoldot-shared-worker.
+    const currentChainBackend = getChainBackend();
+    const nextChainBackend: ChainBackend =
+      currentChainBackend === "rpc" ? "smoldot-shared-worker" : "rpc";
+    const label =
+      nextChainBackend === "rpc"
+        ? "Try with RPC Node (trusted provider)"
+        : "Try Light Client (smoldot worker)";
+    showError("Something went wrong", undefined, {
+      label,
+      onClick: () => {
+        setChainBackend(nextChainBackend);
+        window.location.reload();
+      },
+    });
   }
 }
 
