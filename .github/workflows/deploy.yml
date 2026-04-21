@@ -60,6 +60,7 @@ jobs:
         env:
           VITE_APP_ENV: ${{ inputs.app_env }}
           VITE_APP_URL: ${{ secrets.APP_URL }}
+          VITE_APP_DEBUG: ${{ secrets.APP_DEBUG }}
           VITE_COMMIT_SHA: ${{ github.sha }}
           VITE_SENTRY_DSN_HOST: ${{ secrets.SENTRY_DSN_HOST }}
           VITE_SENTRY_DSN_SANDBOX: ${{ secrets.SENTRY_DSN_SANDBOX }}
