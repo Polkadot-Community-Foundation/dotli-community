@@ -101,15 +101,16 @@ export function getChainBackend(): ChainBackend {
  * Default chain backend for first-load users (i.e. no persisted
  * preference + no legacy mode key).
  *
- * Paired with `ipfs-gateway` content this forms the `gateway` preset —
- * the fastest cold-start path because it skips smoldot entirely and
- * avoids the WASM + light-client sync budget. Users who want the
- * trustless path switch to `smoldot-shared-worker` / `smoldot-direct`
- * via the settings popover, and their choice is persisted in
- * localStorage so this function is not consulted again.
+ * Paired with `p2p-helia` content this forms the `p2p-direct` preset —
+ * smoldot runs per-tab instead of in a SharedWorker, trading shared
+ * sync state across tabs for a simpler lifecycle that avoids
+ * SharedWorker lifetime quirks on first-load. Users who want the
+ * cross-tab shared-worker path or the fast gateway path switch via
+ * the settings popover, and their choice is persisted in localStorage
+ * so this function is not consulted again.
  */
 function defaultChainBackend(): ChainBackend {
-  return PRESETS["p2p-shared-worker"].chain;
+  return PRESETS["p2p-direct"].chain;
 }
 
 export function setChainBackend(backend: ChainBackend): void {
