@@ -9,5 +9,5 @@ export const TIMEOUTS = {
   /** SharedWorker readiness timeout (must cover full cold-start chain sync, up to ~60s) */
   SHARED_WORKER_READY: 90_000,
   /** Upper bound on `getFinalizedBlock()` while bootstrapping smoldot. */
-  ASSET_HUB_FINALIZED_SYNC: 30_000,
+  ASSET_HUB_FINALIZED_SYNC: 45_000,
 } as const;

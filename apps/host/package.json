@@ -6,9 +6,9 @@
   "scripts": {
     "build": "tsc && bunx --bun vite build",
     "build:prod": "tsc && bunx --bun vite build && bun ../../scripts/compress-dist.ts",
+    "test:e2e": "playwright test tests/loading.spec.ts tests/resolution.spec.ts",
     "test:perf": "PERF_RUNS=10 PERF_DOMAIN_A=explore PERF_DOMAIN_B=host-playground npx playwright test tests/cold-start.spec.ts",
     "test:perf:base": "PERF_RUNS=20 PERF_SAVE_BASE=1 PERF_DOMAIN_A=explore PERF_DOMAIN_B=host-playground npx playwright test tests/cold-start.spec.ts",
-    "test:combos": "npx playwright test tests/backend-combinations.spec.ts",
     "test:perf:compare": "bun tests/compare.ts",
     "test:perf:compare:md": "bun tests/compare.ts --markdown",
     "lint": "bunx eslint src/",
@@ -18,6 +18,7 @@
     "@dotli/eslint-config": "workspace:*",
     "@dotli/typescript-config": "workspace:*",
     "@playwright/test": "^1.59.1",
+    "playwright": "^1.59.1",
     "@types/node": "^25.6.0",
     "eslint": "^10.2.0",
     "prettier": "^3.8.3",

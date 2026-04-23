@@ -30,6 +30,7 @@
         "@playwright/test": "^1.59.1",
         "@types/node": "^25.6.0",
         "eslint": "^10.2.0",
+        "playwright": "^1.59.1",
         "prettier": "^3.8.3",
         "simple-statistics": "^7.8.8",
         "typescript": "~6.0.3",

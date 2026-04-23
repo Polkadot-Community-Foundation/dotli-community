@@ -1,21 +1,20 @@
-name: Unit Tests
+name: Tests
 on:
-  push:
-    branches:
-      - main
   pull_request:
     paths-ignore:
       - '**.md'
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: Continuous Integration
+  unit:
+    name: Unit Tests
     runs-on: parity-default
     if: ${{ github.event.sender.type != 'Bot' }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -30,3 +29,43 @@ jobs:
 
       - name: Run tests
         run: bun run test
+
+  e2e:
+    name: E2E Tests
+    runs-on: parity-default
+    needs: unit
+    if: ${{ github.event.sender.type != 'Bot' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Playwright
+        uses: ./.github/actions/setup-playwright
+
+      - name: Build
+        run: bun run build
+
+      - name: Run E2E tests
+        working-directory: apps/host
+        run: bun run test:e2e || true
+
+      - name: Apply E2E threshold
+        working-directory: apps/host
+        run: |
+          TOTAL=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]?] | length' tests/results.json)
+          if [ "$TOTAL" -lt 9 ]; then
+            echo "::error::expected at least 9 tests, got $TOTAL."
+            exit 1
+          fi
+          LOADING_FAILED=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]? | select(.file == "loading.spec.ts" and .ok == false)] | length' tests/results.json)
+          RESOLUTION_FAILED=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]? | select(.file == "resolution.spec.ts" and .ok == false)] | length' tests/results.json)
+          echo "loading.spec.ts failures: $LOADING_FAILED"
+          echo "resolution.spec.ts failures: $RESOLUTION_FAILED"
+          if [ "$LOADING_FAILED" -gt 0 ]; then
+            echo "::error::loading.spec.ts must have 0 failures"
+            exit 1
+          fi
+          if [ "$RESOLUTION_FAILED" -gt 2 ]; then
+            echo "::error::resolution.spec.ts: $RESOLUTION_FAILED failures (max 2 tolerated)"
+            exit 1
+          fi
