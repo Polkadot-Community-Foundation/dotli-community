@@ -294,7 +294,7 @@ export interface ErrorAction {
  * Show an error state with an optional action link.
  *
  * `detail` is an optional paragraph below the title; omit for a
- * title-only screen (e.g. the generic "Something went wrong" + backend
+ * title-only screen (e.g. the generic "Domain can't be reached" + backend
  * switch). `action` renders a text+arrow link — label is free-form so
  * the same slot serves retry, reload, backend-switch, etc.
  */

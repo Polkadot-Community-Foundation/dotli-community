@@ -2,6 +2,7 @@ import type {
   JsonRpcConnection,
   JsonRpcProvider,
 } from "@polkadot-api/json-rpc-provider";
+import { ProtocolFatalError, ProtocolInitFailedError } from "./errors";
 import {
   BASE_DOMAIN,
   SUPPORTED_GENESIS_HASHES,
@@ -171,11 +172,10 @@ function bindMessageListener(): void {
         // orphaned: the chain is gone, nothing will ever respond.
         const kind = msg.kind === "fatal" ? "Fatal" : "Init failed";
         log.error(`[dot.li protocol] ${kind}: ${msg.message}`);
-        const err = new Error(`${kind}: ${msg.message}`);
-        err.name =
+        const err =
           msg.kind === "fatal"
-            ? "ProtocolFatalError"
-            : "ProtocolInitFailedError";
+            ? new ProtocolFatalError(`${kind}: ${msg.message}`)
+            : new ProtocolInitFailedError(`${kind}: ${msg.message}`);
 
         // Reject each pending request with the underlying cause so the
         // loading UI fails fast instead of spinning until per-request

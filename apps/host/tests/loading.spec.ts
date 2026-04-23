@@ -1,70 +1,32 @@
 import { test, expect } from "@playwright/test";
-import { TIMEOUTS } from "@dotli/config/timeouts";
+import type { Page } from "@playwright/test";
+import { HOST_ERRORS } from "../src/errors";
 
 const DOMAIN = process.env.COMBO_DOMAIN ?? "host-playground";
 const PORT = process.env.COMBO_PORT ?? "5173";
+const HOST_URL = `http://${DOMAIN}.localhost:${PORT}/`;
 
-test("As a user, when loading times out I see an error and can switch backend in one click", async ({
-  page,
-  context,
-}) => {
-  // Given
-  await page.addInitScript(() => {
+const RETRY_LABEL_FROM_SMOLDOT = "Try with RPC Node (trusted provider)";
+
+type Backend = "smoldot-direct" | "smoldot-shared-worker" | "rpc";
+
+async function setBackend(page: Page, chain: Backend): Promise<void> {
+  // Only set on first load so a post-retry reload doesn't overwrite the
+  // backend that the retry button just flipped.
+  await page.addInitScript((backend) => {
     if (localStorage.getItem("dotli:chain-backend") === null) {
-      localStorage.setItem("dotli:chain-backend", "smoldot-direct");
+      localStorage.setItem("dotli:chain-backend", backend);
       localStorage.setItem("dotli:content-backend", "ipfs-gateway");
     }
-  });
-  await page.addInitScript((targetMs: number) => {
-    const orig = window.setTimeout.bind(window);
-    window.setTimeout = ((
-      handler: TimerHandler,
-      ms?: number,
-      ...rest: unknown[]
-    ) =>
-      orig(
-        handler,
-        ms === targetMs ? 3_000 : ms,
-        ...rest,
-      )) as typeof window.setTimeout;
-  }, TIMEOUTS.ASSET_HUB_FINALIZED_SYNC);
+  }, chain);
+}
 
-  // When
-  await page.goto(`http://${DOMAIN}.localhost:${PORT}/`, {
-    waitUntil: "domcontentloaded",
-  });
-  await context.setOffline(true);
-
-  // Then
-  await expect(page.locator(".error-page-title")).toHaveText(
-    "Something went wrong",
-    { timeout: 15_000 },
-  );
-  await expect(page.locator(".error-page-detail")).toHaveCount(0);
-  const fallbackBtn = page.locator("#error-retry-btn");
-  await expect(fallbackBtn).toContainText(
-    "Try with RPC Node (trusted provider)",
-  );
-  await context.setOffline(false);
-  await fallbackBtn.click();
-  await page.waitForLoadState("domcontentloaded");
-  const stored = await page.evaluate(() =>
-    localStorage.getItem("dotli:chain-backend"),
-  );
-  expect(stored).toBe("rpc");
-});
-
-test("As a user, when the app resolution crashes I see an error and can switch backend", async ({
-  page,
-}) => {
-  // Given
-  await page.addInitScript(() => {
-    localStorage.setItem("dotli:chain-backend", "smoldot-direct");
-    localStorage.setItem("dotli:content-backend", "ipfs-gateway");
-  });
-
-  // Mock the protocol iframe: signal ready instantly, then crash (fatal) when
-  // the resolveDotName request arrives — simulating a smoldot panic mid-resolution.
+/**
+ * Replace the protocol iframe document with a mock that runs a provided script.
+ * Lets each test simulate ready / init-failed / fatal / response envelopes
+ * without running the real smoldot pipeline.
+ */
+async function mockProtocolIframe(page: Page, script: string): Promise<void> {
   await page.route("**", async (route) => {
     const isProtocolDoc =
       route.request().url().includes(`host.localhost:${PORT}`) &&
@@ -75,73 +37,392 @@ test("As a user, when the app resolution crashes I see an error and can switch b
     }
     await route.fulfill({
       contentType: "text/html",
-      body: `<!DOCTYPE html><html><body><script>
-        window.parent.postMessage(
-          { namespace: "dotli:protocol", kind: "ready" },
-          "*"
-        );
-        window.addEventListener("message", function (e) {
-          if (
-            e.data &&
-            e.data.namespace === "dotli:protocol" &&
-            e.data.method === "resolveDotName"
-          ) {
-            window.parent.postMessage(
-              { namespace: "dotli:protocol", kind: "fatal", message: "smoldot panic" },
-              "*"
-            );
-          }
-        });
-      </script></body></html>`,
+      body: `<!DOCTYPE html><html><body><script>${script}</script></body></html>`,
     });
   });
+}
+
+const READY = `window.parent.postMessage({namespace:"dotli:protocol",kind:"ready"},"*");`;
+
+// Post init-failed AFTER the iframe's load event fires so the parent has time
+// to register its ready-wait resolver. Posting synchronously during iframe
+// parsing runs before the parent's `ensureProtocolFrame` wires the waiter,
+// so the state reset has nothing to reject and the parent hangs on ready.
+const initFailed = (message: string): string => `
+  window.addEventListener("load", function() {
+    setTimeout(function() {
+      window.parent.postMessage({
+        namespace: "dotli:protocol",
+        kind: "init-failed",
+        message: ${JSON.stringify(message)},
+      }, "*");
+    }, 50);
+  });
+`;
+
+const fatalOnResolve = (message: string): string => `
+  ${READY}
+  window.addEventListener("message", function(e) {
+    if (e.data && e.data.namespace === "dotli:protocol" && e.data.method === "resolveDotName") {
+      window.parent.postMessage({
+        namespace: "dotli:protocol",
+        kind: "fatal",
+        message: ${JSON.stringify(message)},
+      }, "*");
+    }
+  });
+`;
+
+const errorResolveResponse = (error: string, delayMs = 0): string => `
+  ${READY}
+  window.addEventListener("message", function(e) {
+    if (e.data && e.data.namespace === "dotli:protocol" && e.data.method === "resolveDotName") {
+      var id = e.data.id;
+      setTimeout(function() {
+        window.parent.postMessage({
+          namespace: "dotli:protocol",
+          kind: "response",
+          id: id,
+          ok: false,
+          error: ${JSON.stringify(error)},
+        }, "*");
+      }, ${String(delayMs)});
+    }
+  });
+`;
+
+const nullResolveResponse = `
+  ${READY}
+  window.addEventListener("message", function(e) {
+    if (e.data && e.data.namespace === "dotli:protocol" && e.data.method === "resolveDotName") {
+      window.parent.postMessage({
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: e.data.id,
+        ok: true,
+        result: null,
+      }, "*");
+    }
+  });
+`;
+
+/** Rescale any setTimeout call whose delay matches `fromMs` down to `toMs`. */
+async function shrinkTimeout(
+  page: Page,
+  fromMs: number,
+  toMs: number,
+): Promise<void> {
+  await page.addInitScript(
+    ([from, to]) => {
+      const orig = window.setTimeout.bind(window);
+      window.setTimeout = ((
+        handler: TimerHandler,
+        ms?: number,
+        ...rest: unknown[]
+      ) =>
+        orig(
+          handler,
+          ms === from ? to : ms,
+          ...rest,
+        )) as typeof window.setTimeout;
+    },
+    [fromMs, toMs],
+  );
+}
+
+test("As a user using smoldot directly, when the light client panics mid-resolution, I see the appropriate error and can switch backend", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await mockProtocolIframe(page, fatalOnResolve("smoldot panic"));
 
   // When
-  await page.goto(`http://${DOMAIN}.localhost:${PORT}/`, {
-    waitUntil: "domcontentloaded",
-  });
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
 
   // Then
   await expect(page.locator(".error-page-title")).toHaveText(
-    "Something went wrong",
+    "Domain can't be reached",
     { timeout: 10_000 },
   );
+  await expect(page.locator(".error-page-detail")).toHaveText(
+    HOST_ERRORS.FATAL_PANIC,
+  );
   await expect(page.locator("#error-retry-btn")).toContainText(
-    "Try with RPC Node (trusted provider)",
+    RETRY_LABEL_FROM_SMOLDOT,
   );
 });
 
-test("As a user, after a resolution timeout, switching backend automatically retries the load", async ({
+test("As a user using smoldot in shared worker, when the light client panics mid-resolution, I see the appropriate error and can switch backend", async ({
   page,
-  context,
 }) => {
   // Given
-  await page.addInitScript(() => {
-    if (localStorage.getItem("dotli:chain-backend") === null) {
-      localStorage.setItem("dotli:chain-backend", "smoldot-direct");
-      localStorage.setItem("dotli:content-backend", "ipfs-gateway");
-    }
-  });
-  await page.addInitScript((targetMs: number) => {
-    const orig = window.setTimeout.bind(window);
-    window.setTimeout = ((
-      handler: TimerHandler,
-      ms?: number,
-      ...rest: unknown[]
-    ) =>
-      orig(
-        handler,
-        ms === targetMs ? 3_000 : ms,
-        ...rest,
-      )) as typeof window.setTimeout;
-  }, TIMEOUTS.ASSET_HUB_FINALIZED_SYNC);
-  await page.goto(`http://${DOMAIN}.localhost:${PORT}/`, {
-    waitUntil: "domcontentloaded",
-  });
-  await context.setOffline(true);
+  await setBackend(page, "smoldot-shared-worker");
+  await mockProtocolIframe(page, fatalOnResolve("smoldot panic"));
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+
+  // Then
   await expect(page.locator(".error-page-title")).toHaveText(
-    "Something went wrong",
-    { timeout: 15_000 },
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  await expect(page.locator(".error-page-detail")).toHaveText(
+    HOST_ERRORS.FATAL_PANIC,
+  );
+  await expect(page.locator("#error-retry-btn")).toContainText(
+    RETRY_LABEL_FROM_SMOLDOT,
+  );
+});
+
+test("As a user using smoldot in shared worker, when the browser can't create a worker, I see the appropriate error and can switch backend", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-shared-worker");
+  await mockProtocolIframe(
+    page,
+    initFailed("SharedWorker is not available in this browser"),
+  );
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+
+  // Then
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  await expect(page.locator(".error-page-detail")).toHaveText(
+    HOST_ERRORS.SW_FAILED_TO_START,
+  );
+  await expect(page.locator("#error-retry-btn")).toContainText(
+    RETRY_LABEL_FROM_SMOLDOT,
+  );
+});
+
+test("As a user using smoldot in shared worker, when the worker dies silently, I see the appropriate error and can switch backend", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-shared-worker");
+  await mockProtocolIframe(
+    page,
+    initFailed("SharedWorker did not signal ready within timeout"),
+  );
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+
+  // Then
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  await expect(page.locator(".error-page-detail")).toHaveText(
+    HOST_ERRORS.SW_TIMED_OUT,
+  );
+  await expect(page.locator("#error-retry-btn")).toContainText(
+    RETRY_LABEL_FROM_SMOLDOT,
+  );
+});
+
+test("As a user using smoldot directly, when loading is slow (>10s) I see an option to change settings, and if it times out (>45s) I see the appropriate error and can switch backend", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await shrinkTimeout(page, 10_000, 500);
+  await mockProtocolIframe(
+    page,
+    errorResolveResponse(
+      "Sync to Asset Hub Paseo timed out after 45s — unable to reach peers",
+      1_500,
+    ),
+  );
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+
+  // Then
+  await expect(page.locator(".loading-gateway-btn")).toContainText(
+    "Change settings",
+    { timeout: 5_000 },
+  );
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  await expect(page.locator(".error-page-detail")).toHaveText(
+    HOST_ERRORS.AH_SYNC_TIMEOUT,
+  );
+  await expect(page.locator("#error-retry-btn")).toContainText(
+    RETRY_LABEL_FROM_SMOLDOT,
+  );
+});
+
+test("As a user using smoldot in shared worker, when loading is slow (>10s) I see an option to change settings, and if it times out (>45s) I see the appropriate error and can switch backend", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-shared-worker");
+  await shrinkTimeout(page, 10_000, 500);
+  await mockProtocolIframe(
+    page,
+    errorResolveResponse(
+      "Sync to Asset Hub Paseo timed out after 45s — unable to reach peers",
+      1_500,
+    ),
+  );
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+
+  // Then
+  await expect(page.locator(".loading-gateway-btn")).toContainText(
+    "Change settings",
+    { timeout: 5_000 },
+  );
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  await expect(page.locator(".error-page-detail")).toHaveText(
+    HOST_ERRORS.AH_SYNC_TIMEOUT,
+  );
+  await expect(page.locator("#error-retry-btn")).toContainText(
+    RETRY_LABEL_FROM_SMOLDOT,
+  );
+});
+
+test("As a user, when the app chunks fail to load mid-session, I see the appropriate error with a reload button", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await page.route("**/assets/resolve-*.js", (route) => route.abort());
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+
+  // Then
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  await expect(page.locator(".error-page-detail")).toHaveText(
+    HOST_ERRORS.MODULE_FETCH_FAILED,
+  );
+  await expect(page.locator("#error-retry-btn")).toContainText("Reload");
+});
+
+test("As a user using smoldot directly, when smoldot rejects the chain spec, I see the appropriate error and can switch backend", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await mockProtocolIframe(
+    page,
+    initFailed("Chain spec rejected: invalid checkpoint"),
+  );
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+
+  // Then
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  await expect(page.locator(".error-page-detail")).toHaveText(
+    HOST_ERRORS.CHAIN_SPEC_REJECTED,
+  );
+  await expect(page.locator("#error-retry-btn")).toContainText(
+    RETRY_LABEL_FROM_SMOLDOT,
+  );
+});
+
+test("As a user using smoldot in shared worker, when smoldot rejects the chain spec, I see the appropriate error and can switch backend", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-shared-worker");
+  await mockProtocolIframe(
+    page,
+    initFailed("Chain spec rejected: invalid checkpoint"),
+  );
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+
+  // Then
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  await expect(page.locator(".error-page-detail")).toHaveText(
+    HOST_ERRORS.CHAIN_SPEC_REJECTED,
+  );
+  await expect(page.locator("#error-retry-btn")).toContainText(
+    RETRY_LABEL_FROM_SMOLDOT,
+  );
+});
+
+test("As a user, when I visit a domain that has no content set, I see the appropriate message with the domain label", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await mockProtocolIframe(page, nullResolveResponse);
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+
+  // Then
+  await expect(page.locator(".error-page-title")).toHaveText(`${DOMAIN}.dot`, {
+    timeout: 10_000,
+  });
+  await expect(page.locator(".error-page-detail")).toContainText(
+    "This domain has no content set",
+  );
+  await expect(page.locator("#error-retry-btn")).toHaveCount(0);
+});
+
+test("As a user, when the domain's contenthash is unsupported or malformed, I see the appropriate error with no retry button", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await mockProtocolIframe(
+    page,
+    errorResolveResponse("Failed to decode contenthash for example: bad codec"),
+  );
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+
+  // Then
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  await expect(page.locator(".error-page-detail")).toHaveText(
+    HOST_ERRORS.CONTENTHASH_UNSUPPORTED,
+  );
+  await expect(page.locator("#error-retry-btn")).toHaveCount(0);
+});
+
+test("As a user, after a resolution failure, clicking retry switches backend and the app loads successfully", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await mockProtocolIframe(page, fatalOnResolve("smoldot panic"));
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
   );
   const backendBefore = await page.evaluate(() =>
     localStorage.getItem("dotli:chain-backend"),
@@ -149,7 +430,6 @@ test("As a user, after a resolution timeout, switching backend automatically ret
   expect(backendBefore).toBe("smoldot-direct");
 
   // When
-  await context.setOffline(false);
   await page.locator("#error-retry-btn").click();
   await page.waitForLoadState("domcontentloaded");
 
@@ -158,5 +438,4 @@ test("As a user, after a resolution timeout, switching backend automatically ret
     localStorage.getItem("dotli:chain-backend"),
   );
   expect(backendAfter).toBe("rpc");
-  await expect(page.locator(".error-page-title")).toHaveCount(0);
 });

@@ -43,6 +43,7 @@ import {
   getContentBackend,
   type ChainBackend,
 } from "@dotli/config/mode";
+import { describeError } from "./errors";
 
 // Surface chunk-load failures explicitly: capture the original cause to
 // Sentry and let the user opt into a reload, instead of reloading silently.
@@ -681,16 +682,30 @@ async function main(): Promise<void> {
     log.error(
       `[dot.li] Resolution failed via ${dependency}: ${serializeError(err)}`,
     );
+    const error = describeError(err, isP2pMode(mode));
+    if (error.recovery === "none") {
+      showError("Domain can't be reached", error.message);
+      return;
+    }
+    if (error.recovery === "reload") {
+      showError("Domain can't be reached", error.message, {
+        label: "Reload",
+        onClick: () => {
+          window.location.reload();
+        },
+      });
+      return;
+    }
     // Tiered failover: any smoldot → rpc; rpc → smoldot-shared-worker.
     const currentChainBackend = getChainBackend();
     const nextChainBackend: ChainBackend =
       currentChainBackend === "rpc" ? "smoldot-shared-worker" : "rpc";
-    const label =
+    const btnLabel =
       nextChainBackend === "rpc"
         ? "Try with RPC Node (trusted provider)"
         : "Try Light Client (smoldot worker)";
-    showError("Something went wrong", undefined, {
-      label,
+    showError("Domain can't be reached", error.message, {
+      label: btnLabel,
       onClick: () => {
         setChainBackend(nextChainBackend);
         window.location.reload();
