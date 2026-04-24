@@ -15,49 +15,25 @@ import { serializeError, fullErrorChain } from "@dotli/shared/errors";
 import { m } from "./metrics";
 
 /**
- * Logical Sentry project name.
- * Maps 1-to-1 to `VITE_SENTRY_DSN_<PROJECT>` + a distinct tunnel path.
+ * Logical source of a Sentry event. All surfaces report to a single Sentry
+ * project ("dotli"); this value drives the `source` tag so events from host,
+ * worker and sandbox stay distinguishable inside that single project.
  */
 export type SentryProject = "host" | "worker" | "sandbox";
 
-interface ProjectEnv {
-  dsn: string | undefined;
-  tunnel: string;
-}
-
-function resolveProject(project: SentryProject): ProjectEnv {
-  switch (project) {
-    case "host":
-      return {
-        dsn: import.meta.env.VITE_SENTRY_DSN_HOST as string | undefined,
-        tunnel: "/t/host",
-      };
-    case "worker":
-      return {
-        dsn: import.meta.env.VITE_SENTRY_DSN_WORKER as string | undefined,
-        tunnel: "/t/worker",
-      };
-    case "sandbox":
-      return {
-        dsn: import.meta.env.VITE_SENTRY_DSN_SANDBOX as string | undefined,
-        tunnel: "/t/sandbox",
-      };
-  }
-}
-
 /**
- * Initialize Sentry with the dot.li-standard config for the given project
+ * Initialize Sentry with the dot.li-standard config for the given source
  * and bind it to `@dotli/metrics` so spans/counters flow through. Safe to
  * call unconditionally — when the DSN env var is unset, Sentry becomes a
  * no-op, but we warn loudly instead of silently disabling reporting.
  */
 export function initSentry(project: SentryProject): void {
-  const { dsn, tunnel } = resolveProject(project);
+  const dsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
   const env =
     (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development";
   Sentry.init({
     dsn,
-    tunnel,
+    tunnel: "/t",
     environment: env,
     release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
     sendDefaultPii: false,
@@ -74,7 +50,7 @@ export function initSentry(project: SentryProject): void {
   // an operator doesn't lose hours wondering why the dashboard is empty.
   if ((dsn === undefined || dsn === "") && env !== "development") {
     console.warn(
-      `[dot.li sentry] DSN missing for project "${project}" in env "${env}" — error reporting is DISABLED. Set VITE_SENTRY_DSN_${project.toUpperCase()} to enable.`,
+      `[dot.li sentry] VITE_SENTRY_DSN missing in env "${env}" — error reporting is DISABLED.`,
     );
   }
 

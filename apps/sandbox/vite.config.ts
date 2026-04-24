@@ -26,11 +26,11 @@ const OUT_DIR = "dist";
  * Sentry plugin — only active when SENTRY_AUTH_TOKEN is set (CI deploys).
  * Skipped locally so source maps are preserved for debugging.
  */
-function sentry(project: string): Plugin | false {
+function sentry(): Plugin | false {
   if (!process.env.SENTRY_AUTH_TOKEN) return false;
   return sentryVitePlugin({
     org: "paritytech",
-    project,
+    project: "dotli",
     telemetry: false,
     authToken: process.env.SENTRY_AUTH_TOKEN,
     release: { name: process.env.VITE_COMMIT_SHA },
@@ -139,7 +139,7 @@ export default defineConfig({
     wasm(),
     preloadCriticalAssets(),
     buildServiceWorker(),
-    sentry("dotli-sandbox"),
+    sentry(),
   ],
   resolve: {
     alias: {

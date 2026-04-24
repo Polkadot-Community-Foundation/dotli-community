@@ -5,11 +5,11 @@ import wasm from "vite-plugin-wasm";
 
 const OUT_DIR = "dist";
 
-function sentry(project: string): Plugin | false {
+function sentry(): Plugin | false {
   if (!process.env.SENTRY_AUTH_TOKEN) return false;
   return sentryVitePlugin({
     org: "paritytech",
-    project,
+    project: "dotli",
     telemetry: false,
     authToken: process.env.SENTRY_AUTH_TOKEN,
     release: { name: process.env.VITE_COMMIT_SHA },
@@ -23,7 +23,7 @@ export default defineConfig({
   base: process.env.VITE_APP_URL
     ? new URL(process.env.VITE_APP_URL).pathname
     : "/",
-  plugins: [wasm(), sentry("dotli-protocol")],
+  plugins: [wasm(), sentry()],
   resolve: {
     alias: {
       "@dotli/config": resolve(PACKAGES, "config/src"),
