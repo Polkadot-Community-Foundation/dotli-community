@@ -135,12 +135,7 @@ export default defineConfig({
   base: process.env.VITE_APP_URL
     ? new URL(process.env.VITE_APP_URL).pathname
     : "/",
-  plugins: [
-    wasm(),
-    preloadCriticalAssets(),
-    buildServiceWorker(),
-    sentry(),
-  ],
+  plugins: [wasm(), preloadCriticalAssets(), buildServiceWorker(), sentry()],
   resolve: {
     alias: {
       "@dotli/config": resolve(PACKAGES, "config/src"),
