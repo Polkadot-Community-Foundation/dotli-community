@@ -19,7 +19,75 @@ import { m } from "./metrics";
  * project ("dotli"); this value drives the `source` tag so events from host,
  * worker and sandbox stay distinguishable inside that single project.
  */
-export type SentryProject = "host" | "worker" | "sandbox";
+export type SentrySource = "host" | "worker" | "sandbox";
+
+// ── smoldot event tagging ────────────────────────────────────
+//
+// The smoldot WASM client panics at the Rust layer and surfaces the
+// crash as a `CrashError` with a `panicked at /__w/smoldot/…` message.
+// These events can arrive via our own handlers or via Sentry's default
+// browser integrations (e.g. `auto.browser.browserapierrors`), so we
+// tag at `beforeSend` time to cover every path into the pipeline.
+
+/** Minimal structural view of a Sentry event — keeps the detector decoupled from `@sentry/browser` internals for testing. */
+interface SmoldotEventLike {
+  exception?: {
+    values?: {
+      type?: string;
+      value?: string;
+      stacktrace?: {
+        frames?: { filename?: string; module?: string; abs_path?: string }[];
+      };
+    }[];
+  };
+  tags?: Record<
+    string,
+    string | number | boolean | bigint | symbol | null | undefined
+  >;
+}
+
+// Stack frames live under `.../smoldot/dist/...` or the Bun-versioned
+// `.../smoldot@2.0.40/node_modules/smoldot/...`; both match this.
+const SMOLDOT_PATH_RE = /[/\\]smoldot(?:@[\w.+-]+)?[/\\]/i;
+// Rust panic messages start with `panicked at /__w/smoldot/…`; the JS
+// wrapper raises "Smoldot has panicked" / "Smoldot has crashed".
+const SMOLDOT_VALUE_RE =
+  /panicked at [^\n]*[/\\]smoldot[/\\]|Smoldot has (?:panicked|crashed)/i;
+
+/**
+ * Return true when a Sentry event originated from smoldot — either a
+ * `CrashError`, a Rust panic message, or a stack frame inside the
+ * smoldot package. Exported for unit tests.
+ */
+export function isSmoldotEvent(event: SmoldotEventLike): boolean {
+  const values = event.exception?.values ?? [];
+  for (const v of values) {
+    if (v.type === "CrashError") {
+      return true;
+    }
+    if (typeof v.value === "string" && SMOLDOT_VALUE_RE.test(v.value)) {
+      return true;
+    }
+    const frames = v.stacktrace?.frames ?? [];
+    for (const f of frames) {
+      const paths = [f.filename, f.module, f.abs_path];
+      for (const p of paths) {
+        if (typeof p === "string" && SMOLDOT_PATH_RE.test(p)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/** `beforeSend` hook: stamps `smoldot: "true"` on any event we detect as smoldot-origin. */
+function tagSmoldotEvents<E extends SmoldotEventLike>(event: E): E {
+  if (isSmoldotEvent(event)) {
+    event.tags = { ...(event.tags ?? {}), smoldot: "true" };
+  }
+  return event;
+}
 
 /**
  * Initialize Sentry with the dot.li-standard config for the given source
@@ -27,7 +95,7 @@ export type SentryProject = "host" | "worker" | "sandbox";
  * call unconditionally — when the DSN env var is unset, Sentry becomes a
  * no-op, but we warn loudly instead of silently disabling reporting.
  */
-export function initSentry(project: SentryProject): void {
+export function initSentry(source: SentrySource): void {
   const dsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
   const env =
     (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development";
@@ -37,6 +105,7 @@ export function initSentry(project: SentryProject): void {
     environment: env,
     release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
     sendDefaultPii: false,
+    beforeSend: tagSmoldotEvents,
   });
   m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
   // Use the canonical schema keys documented in `metrics.ts` (`source`,
@@ -44,7 +113,7 @@ export function initSentry(project: SentryProject): void {
   // bare keys here — previously we used `dotli_source` / `dotli_env`,
   // which became `dotli.dotli_source` / `dotli.dotli_env` after the
   // mirroring layer's prefix, drifting away from the documented schema.
-  m.setDefaults({ source: project, env });
+  m.setDefaults({ source, env });
 
   // If the DSN is missing in any non-development build, warn loudly once so
   // an operator doesn't lose hours wondering why the dashboard is empty.
@@ -94,7 +163,7 @@ export function initSentry(project: SentryProject): void {
  *   - For `ErrorEvent`, capture `event.filename`/`lineno`/`colno` even when
  *     `event.error` is null (resource-load failures, CORS-tainted scripts).
  */
-export function installGlobalErrorHandlers(source: SentryProject): void {
+export function installGlobalErrorHandlers(source: SentrySource): void {
   if (typeof self === "undefined") {
     return;
   }
