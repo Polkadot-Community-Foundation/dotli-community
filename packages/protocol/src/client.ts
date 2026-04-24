@@ -8,6 +8,7 @@ import {
   SUPPORTED_GENESIS_HASHES,
   type SiteId,
 } from "@dotli/config/config";
+import { getChainBackend, type ChainBackend } from "@dotli/config/mode";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
@@ -62,7 +63,21 @@ let pendingReadyResolvers: ReadyWaiter[] = [];
  *  `"shared-worker"` and `"direct"` are P2P (smoldot-backed) submodes.
  *  `"rpc"` is the gateway submode: chain calls are bridged over trusted
  *  WSS JSON-RPC instead of smoldot. */
-let protocolSubMode: "shared-worker" | "direct" | "rpc" | null = null;
+type ProtocolSubMode = "shared-worker" | "direct" | "rpc";
+let protocolSubMode: ProtocolSubMode | null = null;
+
+/** Map the user-facing `ChainBackend` to the protocol iframe sub-mode.
+ *  Same semantic axis, just without the `smoldot-` prefix that the iframe
+ *  doesn't need (it already lives on the chain side of the split). */
+function chainBackendToSubMode(backend: ChainBackend): ProtocolSubMode {
+  if (backend === "smoldot-shared-worker") {
+    return "shared-worker";
+  }
+  if (backend === "smoldot-direct") {
+    return "direct";
+  }
+  return "rpc";
+}
 
 /** When true, ask the protocol iframe to purge its IDB caches before
  *  starting up — i.e. every cold start from scratch, no warm-start state. */
@@ -72,7 +87,7 @@ let protocolSkipWorkerCache = false;
  * Set the sub-mode for the protocol iframe.
  */
 export function setProtocolSubMode(
-  mode: "shared-worker" | "direct" | "rpc",
+  mode: ProtocolSubMode,
   opts: { skipWorkerCache?: boolean } = {},
 ): void {
   protocolSubMode = mode;
@@ -262,9 +277,11 @@ function createHostIframe(): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const iframe = document.createElement("iframe");
     const params = new URLSearchParams();
-    if (protocolSubMode !== null) {
-      params.set("mode", protocolSubMode);
-    }
+    // Fall back to the stored ChainBackend when the async
+    // setProtocolSubMode() has not run yet.
+    const mode: ProtocolSubMode =
+      protocolSubMode ?? chainBackendToSubMode(getChainBackend());
+    params.set("mode", mode);
     if (protocolSkipWorkerCache) {
       params.set("skipWorkerCache", "1");
     }
