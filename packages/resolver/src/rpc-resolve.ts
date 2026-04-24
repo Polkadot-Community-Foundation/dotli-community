@@ -8,7 +8,7 @@
 // smoldot worker out of any bundle that only pulls in this module.
 
 import { createClient, type PolkadotClient } from "polkadot-api";
-import { getWsProvider } from "polkadot-api/ws-provider";
+import { getWsProvider } from "polkadot-api/ws";
 import { CONTRACTS, STORAGE_SLOTS } from "@dotli/config/config";
 import { getActiveAssetHubRpcEndpoints } from "@dotli/config/endpoints";
 import { log } from "@dotli/shared/log";

@@ -1,7 +1,7 @@
 {
   "name": "@dotli/ui",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.3.3",
   "type": "module",
   "exports": {
     "./*": "./src/*"
@@ -14,9 +14,9 @@
     "@dotli/eslint-config": "workspace:*",
     "@dotli/typescript-config": "workspace:*",
     "@types/qrcode": "^1.5.6",
-    "eslint": "^10.2.0",
+    "eslint": "^10.2.1",
     "typescript": "~6.0.3",
-    "vite": "^8.0.8"
+    "vite": "^8.0.10"
   },
   "dependencies": {
     "@dotli/config": "workspace:*",
@@ -25,14 +25,14 @@
     "@dotli/protocol": "workspace:*",
     "@dotli/sandbox-checker": "workspace:*",
     "@dotli/shared": "workspace:*",
-    "@novasamatech/host-api": "^0.6.18",
-    "@novasamatech/host-container": "^0.6.18",
-    "@novasamatech/host-papp": "^0.6.18",
+    "@novasamatech/host-api": "^0.7.0",
+    "@novasamatech/host-container": "^0.7.0",
+    "@novasamatech/host-papp": "^0.7.0",
     "@noble/hashes": "^2.2.0",
-    "@novasamatech/sdk-statement": "^0.5.0",
-    "@novasamatech/statement-store": "^0.6.18",
+    "@novasamatech/sdk-statement": "^0.6.0",
+    "@novasamatech/statement-store": "^0.7.0",
     "neverthrow": "^8.2.0",
-    "polkadot-api": "^1.23.3",
+    "polkadot-api": "^2.1.0",
     "qrcode": "^1.5.4"
   },
   "peerDependencies": {

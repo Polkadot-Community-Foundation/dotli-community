@@ -37,10 +37,8 @@ window.addEventListener("vite:preloadError", (event) => {
     );
   }
 });
-import type {
-  JsonRpcConnection,
-  JsonRpcProvider,
-} from "@polkadot-api/json-rpc-provider";
+import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
+import type { StringJsonRpcConnection } from "@dotli/protocol/broker";
 import {
   BASE_DOMAIN,
   MAX_CONNECTIONS_PER_ORIGIN,
@@ -861,7 +859,7 @@ interface EngineOptions {
 
 function createEngine(options: EngineOptions): ProtocolEngine {
   const MAX_CONNS = 10;
-  const connections = new Map<string, JsonRpcConnection>();
+  const connections = new Map<string, StringJsonRpcConnection>();
   const originConns = new Map<string, Set<string>>();
   const broker = createChainBrokerManager(options.createChainProvider);
   options.onInit?.();

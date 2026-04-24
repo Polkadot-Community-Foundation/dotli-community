@@ -7,7 +7,6 @@
 
 import { getSmProvider } from "polkadot-api/sm-provider";
 import { createClient, type PolkadotClient } from "polkadot-api";
-import { Binary } from "polkadot-api";
 import { getPolkadotSigner } from "@polkadot-api/signer";
 import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
 import {
@@ -34,7 +33,8 @@ export async function ensureBulletinClient(): Promise<PolkadotClient> {
   }
   bulletinClientPromise ??= (async () => {
     const chain = await getBulletinChain();
-    const provider = getSmProvider(makeNonRemovingChain(chain));
+    const nonRemoving = makeNonRemovingChain(chain);
+    const provider = getSmProvider(() => nonRemoving);
     const candidate = createClient(provider);
     try {
       await candidate.getFinalizedBlock();
@@ -85,29 +85,48 @@ export async function submitPreimageTransaction(
 ): Promise<void> {
   const client = await ensureBulletinClient();
   const api = client.getUnsafeApi();
-  const tx = api.tx.TransactionStorage.store({
-    data: Binary.fromBytes(data),
-  });
+  const tx = api.tx.TransactionStorage.store({ data });
 
   await new Promise<void>((resolve, reject) => {
     let resolved = false;
 
     const subscription = tx.signSubmitAndWatch(signer).subscribe({
-      next: (ev: { type: string; found?: boolean }) => {
-        if (!resolved && ev.type === "txBestBlocksState" && ev.found === true) {
-          resolved = true;
-          clearTimeout(timeoutId);
-          subscription.unsubscribe();
-          resolve();
+      next: (ev: {
+        type: string;
+        found?: boolean;
+        ok?: boolean;
+        dispatchError?: { type: string; value: unknown };
+        isValid?: boolean;
+      }) => {
+        log.debug(`[dot.li bulletin] tx event`, { type: ev.type });
+        if (resolved || ev.type !== "txBestBlocksState" || ev.found !== true) {
+          return;
         }
+        resolved = true;
+        clearTimeout(timeoutId);
+        subscription.unsubscribe();
+        // When `found: true`, `ok` tells us whether the extrinsic dispatch
+        // succeeded. `ok: false` means the tx landed but the pallet
+        // rejected it (e.g. unauthorized signer, insufficient funds).
+        if (ev.ok === false) {
+          reject(
+            new Error(
+              `TransactionStorage.store dispatch failed: ${ev.dispatchError?.type ?? "Unknown"}`,
+              { cause: ev.dispatchError },
+            ),
+          );
+          return;
+        }
+        resolve();
       },
       error: (e: unknown) => {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(timeoutId);
-          subscription.unsubscribe();
-          reject(e instanceof Error ? e : new Error(String(e)));
+        if (resolved) {
+          return;
         }
+        resolved = true;
+        clearTimeout(timeoutId);
+        subscription.unsubscribe();
+        reject(new Error("Bulletin tx failed", { cause: e }));
       },
     });
 

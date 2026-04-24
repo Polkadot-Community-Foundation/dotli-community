@@ -1,13 +1,9 @@
 // dot.li — Signing confirmation modals (vanilla DOM)
 //
-// Shows Sign/Cancel modals for signPayload and signRaw requests.
-// Returns a Promise that resolves with the signing result or rejects on cancel.
-//
-// Input shapes come from @novasamatech/host-container v0.6's signing
-// callbacks, which use a flat structure: { address, genesisHash, method, ... }.
-// host-papp's `session.signPayload` / `session.signRaw` expect the same flat
-// `{ address, ...payload }` object. The display label (dApp name) is passed
-// separately by the caller.
+// Bridges host-container's `{ account, payload }` signing request to
+// host-papp's flat `{ address, ...payload }` by flattening and overriding
+// `address` with the session's remote account id (the only value papp
+// accepts). The display label (dApp name) is passed separately.
 
 import { SigningErr, toHex } from "@novasamatech/host-api";
 import { log } from "@dotli/shared/log";
@@ -18,30 +14,32 @@ export interface SigningResult {
   signedTransaction?: `0x${string}`;
 }
 
-/** Flat v0.6 container shape for sign-payload requests. */
 export interface ContainerSignPayloadRequest {
-  address: string;
-  blockHash: `0x${string}`;
-  blockNumber: `0x${string}`;
-  era: `0x${string}`;
-  genesisHash: `0x${string}`;
-  method: `0x${string}`;
-  nonce: `0x${string}`;
-  specVersion: `0x${string}`;
-  tip: `0x${string}`;
-  transactionVersion: `0x${string}`;
-  signedExtensions: string[];
-  version: number;
-  assetId: `0x${string}` | undefined;
-  metadataHash: `0x${string}` | undefined;
-  mode: number | undefined;
-  withSignedTransaction: boolean | undefined;
+  account: [string, number];
+  payload: {
+    blockHash: `0x${string}`;
+    blockNumber: `0x${string}`;
+    era: `0x${string}`;
+    genesisHash: `0x${string}`;
+    method: `0x${string}`;
+    nonce: `0x${string}`;
+    specVersion: `0x${string}`;
+    tip: `0x${string}`;
+    transactionVersion: `0x${string}`;
+    signedExtensions: string[];
+    version: number;
+    assetId: `0x${string}` | undefined;
+    metadataHash: `0x${string}` | undefined;
+    mode: number | undefined;
+    withSignedTransaction: boolean | undefined;
+  };
 }
 
-/** Flat v0.6 container shape for sign-raw requests. */
 export interface ContainerSignRawRequest {
-  address: string;
-  data: { tag: "Bytes"; value: Uint8Array } | { tag: "Payload"; value: string };
+  account: [string, number];
+  payload:
+    | { tag: "Bytes"; value: Uint8Array }
+    | { tag: "Payload"; value: string };
 }
 
 /** Timeout for the wallet to respond (ms). Covers WS drops and unresponsive wallets. */
@@ -149,24 +147,29 @@ function removeModal(backdrop: HTMLDivElement): void {
   backdrop.remove();
 }
 
+/**
+ * Sign-payload modal. Handles both the product-account and the
+ * legacy-account container callbacks — in both cases dot.li signs with
+ * the paired remote account, so callers only need to supply the
+ * payload body. host-papp validates the resolved address internally
+ * and rejects if the session key can't sign for it.
+ */
 export function showSignPayloadModal(
   session: UserSession,
-  request: ContainerSignPayloadRequest,
+  payload: ContainerSignPayloadRequest["payload"],
   appLabel: string,
 ): Promise<SigningResult> {
   return new Promise((resolve, reject) => {
-    // host-papp validates address against remoteAccount.accountId, so the
-    // only accepted value is the hex-encoded remote account id.
     const address = toHex(session.remoteAccount.accountId);
 
     log.warn("[dot.li signing] signPayload request received:", {
       appLabel,
-      genesisHash: request.genesisHash,
-      method: request.method.slice(0, 40) + "...",
-      mode: request.mode,
-      withSignedTransaction: request.withSignedTransaction,
-      metadataHash: request.metadataHash,
-      assetId: request.assetId,
+      genesisHash: payload.genesisHash,
+      method: payload.method.slice(0, 40) + "...",
+      mode: payload.mode,
+      withSignedTransaction: payload.withSignedTransaction,
+      metadataHash: payload.metadataHash,
+      assetId: payload.assetId,
     });
     log.warn("[dot.li signing] session info:", {
       localAccountId: toHex(session.localAccount.accountId),
@@ -177,8 +180,8 @@ export function showSignPayloadModal(
     const fields: { label: string; value: string; mono?: boolean }[] = [
       { label: "App", value: appLabel },
       { label: "Signer", value: truncateAddress(address) },
-      { label: "Genesis Hash", value: request.genesisHash, mono: true },
-      { label: "Call Data", value: request.method, mono: true },
+      { label: "Genesis Hash", value: payload.genesisHash, mono: true },
+      { label: "Call Data", value: payload.method, mono: true },
     ];
 
     const { backdrop, signBtn, cancelBtn } = createModalDOM(
@@ -196,12 +199,7 @@ export function showSignPayloadModal(
       signBtn.disabled = true;
       signBtn.textContent = "Signing...";
 
-      // The v0.6 container already provides a flat payload — just override
-      // address with the session's remote account id (the only one host-papp accepts).
-      const signRequest = {
-        ...request,
-        address,
-      };
+      const signRequest = { address, ...payload };
       log.warn("[dot.li signing] dispatching signPayload to session:", {
         method: signRequest.method.slice(0, 40) + "...",
         mode: signRequest.mode,
@@ -221,7 +219,7 @@ export function showSignPayloadModal(
                 signature: toHex(signature),
                 signedTransaction: signedTransaction
                   ? typeof signedTransaction === "string"
-                    ? (signedTransaction as `0x${string}`)
+                    ? signedTransaction
                     : toHex(signedTransaction)
                   : undefined,
               });
@@ -244,13 +242,13 @@ export function showSignPayloadModal(
   });
 }
 
+/** Sign-raw counterpart of `showSignPayloadModal`; see that function for rationale. */
 export function showSignRawModal(
   session: UserSession,
-  request: ContainerSignRawRequest,
+  data: ContainerSignRawRequest["payload"],
   appLabel: string,
 ): Promise<SigningResult> {
   return new Promise((resolve, reject) => {
-    const { data } = request;
     const address = toHex(session.remoteAccount.accountId);
     const message = data.tag === "Payload" ? data.value : toHex(data.value);
 
@@ -302,7 +300,7 @@ export function showSignRawModal(
                 signature: toHex(signature),
                 signedTransaction: signedTransaction
                   ? typeof signedTransaction === "string"
-                    ? (signedTransaction as `0x${string}`)
+                    ? signedTransaction
                     : toHex(signedTransaction)
                   : undefined,
               });

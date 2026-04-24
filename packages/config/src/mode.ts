@@ -141,7 +141,7 @@ export function getContentBackend(): ContentBackend {
   } catch {
     /* localStorage unavailable — intentionally non-fatal. */
   }
-  return PRESETS["p2p-shared-worker"].content;
+  return PRESETS["p2p-direct"].content;
 }
 
 export function setContentBackend(backend: ContentBackend): void {

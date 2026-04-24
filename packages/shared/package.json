@@ -1,7 +1,7 @@
 {
   "name": "@dotli/shared",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.3.3",
   "type": "module",
   "exports": {
     "./*": "./src/*"
@@ -14,11 +14,11 @@
   "devDependencies": {
     "@dotli/eslint-config": "workspace:*",
     "@dotli/typescript-config": "workspace:*",
-    "eslint": "^10.2.0",
+    "eslint": "^10.2.1",
     "happy-dom": "^20.9.0",
     "typescript": "~6.0.3",
-    "vite": "^8.0.8",
-    "vitest": "^4.1.4"
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "@dotli/config": "workspace:*"

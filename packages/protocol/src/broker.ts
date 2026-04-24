@@ -1,7 +1,20 @@
 import type {
   JsonRpcConnection,
   JsonRpcProvider,
+  JsonRpcRequest as UpstreamJsonRpcRequest,
 } from "@polkadot-api/json-rpc-provider";
+
+/**
+ * String-wire variant of `JsonRpcConnection` exposed by `connectRemote`.
+ *
+ * The postMessage relay ships `message` as a string, while the upstream
+ * `JsonRpcConnection.send` now takes `JsonRpcRequest` objects — we keep the
+ * string variant local so `connectRemote`'s signature matches the wire.
+ */
+export interface StringJsonRpcConnection {
+  send: (message: string) => void;
+  disconnect: () => void;
+}
 
 type JsonRpcId = string | number | null;
 
@@ -76,11 +89,17 @@ const DEFAULT_WIRE_MODE: WireMode = "string";
 
 interface Session {
   id: string;
-  onMessage: (message: string) => void;
+  onMessage: (message: unknown) => void;
   ownedTokens: Set<string>;
   connected: boolean;
-  /** Set from `DEFAULT_WIRE_MODE` at session creation — never inferred later. */
+  /** Fixed at session creation — never inferred from message shape later. */
   wireMode: WireMode;
+}
+
+/** Internal session handle returned by `ChainBroker.connect()`. */
+interface BrokerConnection {
+  send: (message: unknown) => void;
+  disconnect: () => void;
 }
 
 const TOKEN_METHODS = new Map<string, string>([
@@ -160,7 +179,7 @@ export interface ChainBrokerManager {
     genesisHash: string,
     connectionId: string,
     onMessage: (message: string) => void,
-  ): JsonRpcConnection | null;
+  ): StringJsonRpcConnection | null;
   getLocalProvider(genesisHash: string): JsonRpcProvider | null;
   disconnectAll(): void;
 }
@@ -187,8 +206,6 @@ class ChainBroker {
   private readonly upstreamFollowTokens = new Map<string, SharedFollow>();
   private requestCounter = 0;
   private tokenCounter = 0;
-  /** Wire format used by the upstream sm-provider — fixed at construction. */
-  private readonly upstreamMode: WireMode = DEFAULT_WIRE_MODE;
 
   constructor(provider: JsonRpcProvider, onEmpty: () => void) {
     this.provider = provider;
@@ -197,18 +214,18 @@ class ChainBroker {
 
   /** Send a JSON-RPC object to a session in its configured wire format. */
   private sendToSession(session: Session, obj: unknown): void {
-    session.onMessage(encode(obj, session.wireMode) as string);
+    session.onMessage(encode(obj, session.wireMode));
   }
 
-  /** Send a JSON-RPC object to the upstream provider in its detected wire format. */
   private sendUpstream(obj: unknown): void {
-    this.upstream?.send(encode(obj, this.upstreamMode) as string);
+    this.upstream?.send(obj as UpstreamJsonRpcRequest);
   }
 
   connect(
     sessionId: string,
-    onMessage: (message: string) => void,
-  ): JsonRpcConnection {
+    onMessage: (message: unknown) => void,
+    wireMode: WireMode = DEFAULT_WIRE_MODE,
+  ): BrokerConnection {
     if (this.sessions.has(sessionId)) {
       throw new Error(`Duplicate broker session: ${sessionId}`);
     }
@@ -222,7 +239,7 @@ class ChainBroker {
       onMessage,
       ownedTokens: new Set<string>(),
       connected: true,
-      wireMode: DEFAULT_WIRE_MODE,
+      wireMode,
     });
 
     return {
@@ -257,7 +274,7 @@ class ChainBroker {
     );
   }
 
-  private sendFromSession(sessionId: string, message: string): void {
+  private sendFromSession(sessionId: string, message: unknown): void {
     const session = this.sessions.get(sessionId);
     if (session?.connected !== true) {
       brokerLog(
@@ -398,10 +415,9 @@ class ChainBroker {
     return null;
   }
 
-  private handleUpstreamMessage(message: string): void {
-    // `upstreamMode` was fixed at construction, so don't overwrite it
-    // based on the observed shape — `parseInbound` just normalizes
-    // strings into objects for the downstream switch below.
+  private handleUpstreamMessage(message: unknown): void {
+    // `parseInbound` tolerates both objects (the provider's wire since
+    // 0.2.x) and strings (some test harnesses still feed serialized JSON).
     let parsed: unknown;
     try {
       parsed = parseInbound(message);
@@ -411,27 +427,31 @@ class ChainBroker {
       // arrives. Best-effort recover the JSON-RPC `id` from the raw text
       // so we can reject the matching pending request.
       const reason = err instanceof Error ? err.message : String(err);
-      brokerLog(
-        `← upstream: unparseable message: ${message.slice(0, 200)} (${reason})`,
-      );
-      const idMatch = /"id"\s*:\s*("?)([^",}\s]+)\1/.exec(message);
-      if (idMatch !== null) {
-        const candidates = [idMatch[2]];
-        for (const idKey of candidates) {
-          const pending = this.pending.get(idKey);
-          if (pending !== undefined) {
-            this.pending.delete(idKey);
-            const session = this.sessions.get(pending.sessionId);
-            if (session !== undefined) {
-              this.sendToSession(
-                session,
-                buildJsonRpcError(
-                  pending.clientId,
-                  `Upstream returned unparseable response: ${reason}`,
-                ),
-              );
+      const preview =
+        typeof message === "string"
+          ? message.slice(0, 200)
+          : JSON.stringify(message).slice(0, 200);
+      brokerLog(`← upstream: unparseable message: ${preview} (${reason})`);
+      if (typeof message === "string") {
+        const idMatch = /"id"\s*:\s*("?)([^",}\s]+)\1/.exec(message);
+        if (idMatch !== null) {
+          const candidates = [idMatch[2]];
+          for (const idKey of candidates) {
+            const pending = this.pending.get(idKey);
+            if (pending !== undefined) {
+              this.pending.delete(idKey);
+              const session = this.sessions.get(pending.sessionId);
+              if (session !== undefined) {
+                this.sendToSession(
+                  session,
+                  buildJsonRpcError(
+                    pending.clientId,
+                    `Upstream returned unparseable response: ${reason}`,
+                  ),
+                );
+              }
+              break;
             }
-            break;
           }
         }
       }
@@ -1057,7 +1077,14 @@ export function createChainBrokerManager(
   return {
     connectRemote(genesisHash, connectionId, onMessage) {
       const broker = getBroker(genesisHash);
-      return broker?.connect(connectionId, onMessage) ?? null;
+      if (!broker) {
+        return null;
+      }
+      return broker.connect(
+        connectionId,
+        onMessage as (message: unknown) => void,
+        "string",
+      );
     },
     getLocalProvider(genesisHash) {
       const broker = getBroker(genesisHash);
@@ -1068,7 +1095,11 @@ export function createChainBrokerManager(
       return (onMessage) => {
         const connectionId = `local:${localConnectionCounter.toString(36)}`;
         localConnectionCounter += 1;
-        return broker.connect(connectionId, onMessage);
+        return broker.connect(
+          connectionId,
+          onMessage as (message: unknown) => void,
+          "object",
+        ) as JsonRpcConnection;
       };
     },
     disconnectAll() {

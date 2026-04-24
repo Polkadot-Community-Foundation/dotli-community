@@ -8,7 +8,7 @@
 // chain is already synced by the time a dApp loads).
 
 import { getSmProvider } from "polkadot-api/sm-provider";
-import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
+import type { JsonRpcProvider } from "polkadot-api";
 import {
   PASEO_RELAY_GENESIS as PASEO_RELAY,
   ASSET_HUB_PASEO_GENESIS as ASSET_HUB_PASEO,
@@ -55,12 +55,12 @@ export function createChainProvider(
 
   if (key === PASEO_RELAY.toLowerCase()) {
     log.warn("[dot.li chains] Returning shared relay chain provider");
-    return getSmProvider(getRelayChain());
+    return getSmProvider(() => getRelayChain());
   }
 
   if (key === BULLETIN_PASEO.toLowerCase()) {
     log.warn("[dot.li chains] Returning Bulletin Paseo provider (smoldot)");
-    return getSmProvider(
+    return getSmProvider(() =>
       getBulletinChain().then((chain) => makeNonRemovingChain(chain)),
     );
   }

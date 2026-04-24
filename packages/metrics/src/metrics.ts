@@ -186,7 +186,7 @@ function span<T>(name: string, fn: () => T | Promise<T>): T | Promise<T> {
             emit("error", err instanceof Error ? err.name : "unknown");
             throw err;
           },
-        ) as T | Promise<T>;
+        );
       }
       emit("ok");
       return result;

@@ -16,8 +16,8 @@
 // `null`, meaning sandboxed apps will see an immediate "chain unsupported"
 // error instead of silently hanging. Add more endpoints to config to widen
 // coverage.
-import { getWsProvider } from "polkadot-api/ws-provider";
-import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
+import { getWsProvider } from "polkadot-api/ws";
+import type { JsonRpcProvider } from "polkadot-api";
 import { ASSET_HUB_PASEO_GENESIS } from "@dotli/config/config";
 import { getActiveAssetHubRpcEndpoints } from "@dotli/config/endpoints";
 

@@ -1,6 +1,8 @@
 import type {
   JsonRpcConnection,
+  JsonRpcMessage,
   JsonRpcProvider,
+  JsonRpcRequest,
 } from "@polkadot-api/json-rpc-provider";
 import { ProtocolFatalError, ProtocolInitFailedError } from "./errors";
 import {
@@ -28,8 +30,8 @@ interface PendingRequest {
 }
 
 interface RemoteChainConnection {
-  onMessage: (message: string) => void;
-  pendingMessages: string[];
+  onMessage: (message: JsonRpcMessage) => void;
+  pendingMessages: JsonRpcRequest[];
   connected: boolean;
 }
 
@@ -220,8 +222,20 @@ function bindMessageListener(): void {
           );
           return;
         }
+        // Envelope ships `message` as a string; the provider contract
+        // wants the consumer to receive a parsed `JsonRpcMessage`.
+        let parsed: JsonRpcMessage;
         try {
-          conn.onMessage(msg.message);
+          parsed = JSON.parse(msg.message) as JsonRpcMessage;
+        } catch (err: unknown) {
+          log.error(
+            `[dot.li protocol] chain-message JSON parse failed (conn=${msg.connectionId.slice(-8)}):`,
+            err instanceof Error ? err.message : err,
+          );
+          return;
+        }
+        try {
+          conn.onMessage(parsed);
         } catch (err: unknown) {
           log.error(
             `[dot.li protocol] onMessage threw (conn=${msg.connectionId.slice(-8)}):`,
@@ -266,9 +280,10 @@ function createRequestId(): string {
 }
 
 const IFRAME_LOAD_TIMEOUT_MS = 30_000;
-// The iframe signals "ready" only after the SharedWorker pre-syncs the chain.
-// Cold-start chain sync can take up to ~60s, so allow enough time.
-const IFRAME_READY_TIMEOUT_MS = 120_000;
+// The iframe signals "ready" only after the SharedWorker pre-syncs the
+// chain — must exceed `TIMEOUTS.SHARED_WORKER_READY` so the outer wait
+// doesn't race the inner presync.
+const IFRAME_READY_TIMEOUT_MS = 240_000;
 // NO automatic retries. The user picked this protocol path; if the iframe
 // load fails the cause must surface immediately so the user (or a
 // higher-level UI affordance) can decide whether to retry.
@@ -585,27 +600,20 @@ export function isRemoteChainSupported(genesisHash: string): boolean {
 }
 
 /**
- * Build a JSON-RPC error response string for a given request.
- * Parses the request to extract its `id`, then wraps the error message.
- * If the request can't be parsed, returns null (nothing to respond to).
+ * Notification-style requests (no `id`) get `null` — nothing to respond to.
  */
 function buildJsonRpcError(
-  request: string,
+  request: JsonRpcRequest,
   errorMessage: string,
-): string | null {
-  try {
-    const parsed = JSON.parse(request) as { id?: unknown };
-    if (parsed.id === undefined || parsed.id === null) {
-      return null;
-    }
-    return JSON.stringify({
-      jsonrpc: "2.0",
-      id: parsed.id,
-      error: { code: -32603, message: errorMessage },
-    });
-  } catch {
+): JsonRpcMessage | null {
+  if (request.id === undefined || request.id === null) {
     return null;
   }
+  return {
+    jsonrpc: "2.0",
+    id: request.id,
+    error: { code: -32603, message: errorMessage },
+  };
 }
 
 export function createRemoteChainProvider(
@@ -630,7 +638,10 @@ export function createRemoteChainProvider(
         await postRequest("chainConnect", { genesisHash, connectionId });
         remote.connected = true;
         for (const message of remote.pendingMessages) {
-          void postRequest("chainSend", { connectionId, message });
+          void postRequest("chainSend", {
+            connectionId,
+            message: JSON.stringify(message),
+          });
         }
         remote.pendingMessages = [];
       })
@@ -669,16 +680,17 @@ export function createRemoteChainProvider(
           current.pendingMessages.push(message);
           return;
         }
-        void postRequest("chainSend", { connectionId, message }).catch(
-          (error: unknown) => {
-            const reason = serializeError(error);
-            log.error("[dot.li protocol] Remote chain send failed:", error);
-            const errResponse = buildJsonRpcError(message, reason);
-            if (errResponse !== null) {
-              onMessage(errResponse);
-            }
-          },
-        );
+        void postRequest("chainSend", {
+          connectionId,
+          message: JSON.stringify(message),
+        }).catch((error: unknown) => {
+          const reason = serializeError(error);
+          log.error("[dot.li protocol] Remote chain send failed:", error);
+          const errResponse = buildJsonRpcError(message, reason);
+          if (errResponse !== null) {
+            onMessage(errResponse);
+          }
+        });
       },
       disconnect() {
         const current = chainConnections.get(connectionId);

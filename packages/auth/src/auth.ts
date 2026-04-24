@@ -20,7 +20,7 @@ import {
 } from "@novasamatech/statement-store";
 import type { Statement } from "@novasamatech/sdk-statement";
 import { toHex } from "@novasamatech/host-api";
-import { getWsProvider } from "polkadot-api/ws-provider";
+import { getWsProvider } from "polkadot-api/ws";
 import { getPeopleChainProvider } from "@dotli/resolver/smoldot";
 import { SITE_ID, SS_USE_SMOLDOT } from "@dotli/config/config";
 import { getMode, isP2pMode } from "@dotli/config/mode";
@@ -132,7 +132,8 @@ function createLoggingStatementStore(
 ): StatementStoreAdapter {
   return {
     queryStatements: inner.queryStatements.bind(inner),
-    subscribeStatements(topics, callback) {
+    subscribeStatements(filter, callback) {
+      const topics = "matchAll" in filter ? filter.matchAll : filter.matchAny;
       log.warn(
         "[dotli ss] subscribeStatements called, topics count:",
         topics.length,
@@ -143,12 +144,18 @@ function createLoggingStatementStore(
           toHexSafe(topics[i]),
         );
       }
-      return inner.subscribeStatements(topics, (statements) => {
-        log.warn("[dotli ss] >>> RECEIVED", statements.length, "statements");
-        for (let i = 0; i < statements.length; i++) {
-          logStatement(`[dotli ss]   stmt[${String(i)}]`, statements[i]);
+      return inner.subscribeStatements(filter, (page) => {
+        log.warn(
+          "[dotli ss] >>> RECEIVED",
+          page.statements.length,
+          "statements (isComplete:",
+          page.isComplete,
+          ")",
+        );
+        for (let i = 0; i < page.statements.length; i++) {
+          logStatement(`[dotli ss]   stmt[${String(i)}]`, page.statements[i]);
         }
-        return callback(statements);
+        return callback(page);
       });
     },
     submitStatement(statement) {
@@ -406,6 +413,43 @@ export async function disconnect(): Promise<void> {
   const session = currentState.session;
   await adapter.sessions.disconnect(session);
   setState({ status: "idle" });
+}
+
+// Host-API wire codec (`LoginResult`) is `"success" | "alreadyConnected"
+// | "rejected"` — keep this union aligned with it.
+export type LoginFlowResult = "success" | "alreadyConnected" | "rejected";
+
+/**
+ * RFC-0009 bridge — products call this through `handleRequestLogin`
+ * in the container. We dispatch a DOM event so the topbar (which
+ * owns the QR pairing modal) can open the UI without this module
+ * pulling in any DOM, and resolve once the auth state settles.
+ */
+export function requestLogin(
+  reason: string | undefined,
+): Promise<LoginFlowResult> {
+  if (currentState.status === "authenticated") {
+    return Promise.resolve("alreadyConnected");
+  }
+
+  return new Promise((resolve) => {
+    // Dispatch first so the topbar transitions us out of `idle` before
+    // the subscription is installed — that way any post-subscribe
+    // `idle` callback is unambiguously a user cancellation.
+    window.dispatchEvent(
+      new CustomEvent("dotli:request-login", { detail: { reason } }),
+    );
+
+    const unsubscribe = onAuthStateChange((state) => {
+      if (state.status === "authenticated") {
+        unsubscribe();
+        resolve("success");
+      } else if (state.status === "error" || state.status === "idle") {
+        unsubscribe();
+        resolve("rejected");
+      }
+    });
+  });
 }
 
 // ── Helpers ────────────────────────────────────────────────

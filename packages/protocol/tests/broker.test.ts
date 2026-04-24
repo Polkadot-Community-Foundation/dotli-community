@@ -1,19 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
   JsonRpcConnection,
+  JsonRpcMessage,
   JsonRpcProvider,
+  JsonRpcRequest,
 } from "@polkadot-api/json-rpc-provider";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
 
 function createProviderHarness(): {
   provider: JsonRpcProvider;
-  sent: string[];
+  sent: JsonRpcRequest[];
   disconnect: ReturnType<typeof vi.fn>;
-  emit: (message: unknown) => void;
+  emit: (message: JsonRpcMessage) => void;
 } {
-  const sent: string[] = [];
+  const sent: JsonRpcRequest[] = [];
   const disconnect = vi.fn();
-  let onMessage: ((message: string) => void) | null = null;
+  let onMessage: ((message: JsonRpcMessage) => void) | null = null;
 
   const provider: JsonRpcProvider = (listener): JsonRpcConnection => {
     onMessage = listener;
@@ -30,7 +32,7 @@ function createProviderHarness(): {
     sent,
     disconnect,
     emit(message) {
-      onMessage?.(JSON.stringify(message));
+      onMessage?.(message);
     },
   };
 }
@@ -79,8 +81,8 @@ describe("createChainBrokerManager", () => {
       }),
     );
 
-    const upstreamA = JSON.parse(harness.sent[0] ?? "{}") as { id: string };
-    const upstreamB = JSON.parse(harness.sent[1] ?? "{}") as { id: string };
+    const upstreamA = harness.sent[0] as { id: string };
+    const upstreamB = harness.sent[1] as { id: string };
 
     harness.emit({ jsonrpc: "2.0", id: upstreamB.id, result: "header-b" });
     harness.emit({ jsonrpc: "2.0", id: upstreamA.id, result: "header-a" });
@@ -131,7 +133,7 @@ describe("createChainBrokerManager", () => {
     );
 
     expect(harness.sent).toHaveLength(1);
-    const upstream = JSON.parse(harness.sent[0] ?? "{}") as { id: string };
+    const upstream = harness.sent[0] as { id: string };
     harness.emit({ jsonrpc: "2.0", id: upstream.id, result: "up-a" });
 
     const localTokenA = (JSON.parse(messagesA[0] ?? "{}") as { result: string })
@@ -182,17 +184,12 @@ describe("createChainBrokerManager", () => {
       }),
     );
 
-    const upstreamRequest = JSON.parse(harness.sent[0] ?? "{}") as {
-      id: string;
-    };
+    const upstreamRequest = harness.sent[0] as { id: string };
     harness.emit({ jsonrpc: "2.0", id: upstreamRequest.id, result: "up-a" });
 
     connection?.disconnect();
 
-    const release = JSON.parse(harness.sent[1] ?? "{}") as {
-      method: string;
-      params: string[];
-    };
+    const release = harness.sent[1] as { method: string; params: string[] };
     expect(release.method).toBe("chainHead_v1_unfollow");
     expect(release.params[0]).toBe("up-a");
     expect(harness.disconnect).toHaveBeenCalledTimes(1);
@@ -227,7 +224,7 @@ describe("createChainBrokerManager", () => {
       }),
     );
 
-    const upstream = JSON.parse(harness.sent[0] ?? "{}") as { id: string };
+    const upstream = harness.sent[0] as { id: string };
     harness.emit({ jsonrpc: "2.0", id: upstream.id, result: "up-a" });
     harness.emit({
       jsonrpc: "2.0",
@@ -347,7 +344,8 @@ describe("createChainBrokerManager", () => {
 
     expect(localProvider).not.toBeNull();
 
-    const localMessages: string[] = [];
+    // `getLocalProvider` uses the object wire; `connectRemote` the string wire.
+    const localMessages: JsonRpcMessage[] = [];
     const localConnection = localProvider?.((message) => {
       localMessages.push(message);
     });
@@ -359,14 +357,12 @@ describe("createChainBrokerManager", () => {
       },
     );
 
-    localConnection?.send(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: "local-1",
-        method: "chainHead_v1_header",
-        params: ["token", "0xabc"],
-      }),
-    );
+    localConnection?.send({
+      jsonrpc: "2.0",
+      id: "local-1",
+      method: "chainHead_v1_header",
+      params: ["token", "0xabc"],
+    });
     remoteConnection?.send(
       JSON.stringify({
         jsonrpc: "2.0",
@@ -376,10 +372,8 @@ describe("createChainBrokerManager", () => {
       }),
     );
 
-    const localUpstream = JSON.parse(harness.sent[0] ?? "{}") as { id: string };
-    const remoteUpstream = JSON.parse(harness.sent[1] ?? "{}") as {
-      id: string;
-    };
+    const localUpstream = harness.sent[0] as { id: string };
+    const remoteUpstream = harness.sent[1] as { id: string };
 
     harness.emit({
       jsonrpc: "2.0",
@@ -393,7 +387,7 @@ describe("createChainBrokerManager", () => {
     });
 
     expect(localMessages).toEqual([
-      JSON.stringify({ jsonrpc: "2.0", id: "local-1", result: "local-result" }),
+      { jsonrpc: "2.0", id: "local-1", result: "local-result" },
     ]);
     expect(remoteMessages).toEqual([
       JSON.stringify({

@@ -10,7 +10,7 @@
 /// <reference lib="webworker" />
 declare const self: SharedWorkerGlobalScope;
 
-import type { JsonRpcConnection } from "@polkadot-api/json-rpc-provider";
+import type { StringJsonRpcConnection } from "@dotli/protocol/broker";
 import { MAX_CONNECTIONS_PER_ORIGIN } from "@dotli/config/config";
 import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
 import {
@@ -82,7 +82,7 @@ function swError(...args: unknown[]): void {
 // ── Engine state ─────────────────────────────────────────────
 
 const MAX_CHAIN_CONNECTIONS = 10;
-const chainConnections = new Map<string, JsonRpcConnection>();
+const chainConnections = new Map<string, StringJsonRpcConnection>();
 const originConnections = new Map<string, Set<string>>();
 const connectionPorts = new Map<string, MessagePort>();
 const ports = new Set<MessagePort>();

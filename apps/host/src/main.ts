@@ -6,7 +6,7 @@
 if (typeof globalThis.requestIdleCallback !== "function") {
   globalThis.requestIdleCallback = (cb: IdleRequestCallback): number =>
     setTimeout(() => {
-      cb({ didTimeout: false, timeRemaining: () => 50 } as IdleDeadline);
+      cb({ didTimeout: false, timeRemaining: () => 50 });
     }, 1) as unknown as number;
 }
 

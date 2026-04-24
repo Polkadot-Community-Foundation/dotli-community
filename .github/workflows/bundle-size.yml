@@ -37,29 +37,36 @@ jobs:
       - name: Remove source maps
         run: find apps/*/dist -name '*.map' -delete
 
-      # Enforce that mode-specific bundles stay within budget. If
+      # Flag mode-specific bundles that exceed budget. If
       # `apps/protocol/dist/assets/index-*.js` exceeds 600 KB raw, it
       # almost certainly means a static smoldot or chain-specs import
       # crept back into the protocol iframe's cold-start chunk — which
-      # silently inflates RPC-mode users by ~3 MB. The thresholds below
-      # have headroom above the current sizes; tighten once they've
-      # soaked.
-      - name: Enforce mode-specific bundle budgets
+      # silently inflates RPC-mode users by ~3 MB. Overages emit a
+      # workflow warning and surface in the PR comment, but do NOT fail
+      # the job — the signal belongs in review, not the required-checks
+      # gate. The thresholds below have headroom above the current
+      # sizes; tighten once they've soaked.
+      - name: Check mode-specific bundle budgets
         run: |
-          fail=0
+          : > /tmp/budget-warnings.md
           check() {
             local label=$1 glob=$2 max=$3
             local file
             file=$(ls $glob 2>/dev/null | head -1)
             if [[ -z "$file" ]]; then
               echo "::warning::${label}: no file matched $glob"
+              echo "- \`${label}\`: no file matched \`${glob}\`" >> /tmp/budget-warnings.md
               return
             fi
             local size
             size=$(stat --format=%s "$file")
             if (( size > max )); then
-              echo "::error::${label} exceeded budget: ${size} B > ${max} B (${file})"
-              fail=1
+              echo "::warning::${label} exceeded budget: ${size} B > ${max} B (${file})"
+              local fmt_size fmt_max fmt_over
+              fmt_size=$(awk "BEGIN {printf \"%.1f KB\", $size/1024}")
+              fmt_max=$(awk "BEGIN {printf \"%.1f KB\", $max/1024}")
+              fmt_over=$(awk "BEGIN {printf \"%.1f KB\", ($size-$max)/1024}")
+              echo "- \`${label}\` exceeded budget: **${fmt_size}** > ${fmt_max} (+${fmt_over}) — \`${file#apps/}\`" >> /tmp/budget-warnings.md
             else
               echo "${label}: ${size} B (budget ${max} B) — ok"
             fi
@@ -74,7 +81,6 @@ jobs:
           check "host-entry" \
                 "apps/host/dist/assets/index-*.js" \
                 $((600 * 1024))
-          exit $fail
 
       # ── PR: download baseline from main ────────────────────────
       - name: Download baseline from main
@@ -233,6 +239,13 @@ jobs:
           {
             echo "## Bundle Size Report"
             echo ""
+            if [[ -s /tmp/budget-warnings.md ]]; then
+              echo "> [!WARNING]"
+              echo "> **Bundle budget exceeded** — not a blocker, but please confirm the regression is intentional."
+              echo ">"
+              while IFS= read -r line; do echo "> ${line}"; done < /tmp/budget-warnings.md
+              echo ""
+            fi
             if ! $HAS_BASELINE; then
               echo "> No baseline found on \`main\`. Merge to \`main\` to establish a baseline."
               echo ""

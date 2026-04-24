@@ -9,7 +9,13 @@
 
 import {
   createDefaultLogger,
+  DeriveEntropyErr,
   GenericError,
+  LoginErr,
+  PaymentBalanceErr,
+  PaymentRequestErr,
+  PaymentStatusErr,
+  PaymentTopUpErr,
   PreimageSubmitErr,
   RequestCredentialsErr,
   SigningErr,
@@ -17,18 +23,28 @@ import {
   StorageErr,
 } from "@novasamatech/host-api";
 import type { Provider } from "@novasamatech/host-api";
-import { createIframeProvider } from "@novasamatech/host-container";
-import { createContainer } from "@novasamatech/host-container";
+import {
+  createContainer,
+  createIframeProvider,
+  deriveProductEntropy,
+} from "@novasamatech/host-container";
 import type { Container } from "@novasamatech/host-container";
 import type { SignedStatement } from "@novasamatech/sdk-statement";
 import {
   createSr25519Prover,
   type StatementStoreAdapter,
 } from "@novasamatech/statement-store";
-import { errAsync, fromPromise, okAsync } from "neverthrow";
+import { errAsync, fromPromise, okAsync, type ResultAsync } from "neverthrow";
 import { isLocalhost, BASE_DOMAIN } from "@dotli/config/config";
-import { getPermissionStatus, setPermissionStatus } from "./permissions";
-import { showPermissionRequestModal } from "./permission-modal";
+import {
+  getPermissionStatus,
+  setPermissionStatus,
+  type PermissionName,
+} from "./permissions";
+import {
+  showPermissionRequestModal,
+  showRemotePermissionModal,
+} from "./permission-modal";
 
 import type { UserSession } from "@novasamatech/host-papp";
 import {
@@ -37,6 +53,7 @@ import {
   onAuthStateChange,
   onStatementStoreReady,
   readSessionSecret,
+  requestLogin,
   type AuthState,
 } from "@dotli/auth/auth";
 import { showSignPayloadModal, showSignRawModal } from "@dotli/auth/signing";
@@ -152,7 +169,7 @@ function wireContainerHandlers(
     },
   );
 
-  container.handleGetNonProductAccounts((_, { ok }) => {
+  container.handleGetLegacyAccounts((_, { ok }) => {
     const state = getAuthState();
     if (state.status === "authenticated") {
       return ok([
@@ -163,6 +180,36 @@ function wireContainerHandlers(
       ]);
     }
     return ok([]);
+  });
+
+  // RFC-0010 — return the user's root (primary) account. The host
+  // associates the DotNS identity with the paired remote account, so
+  // we mirror the shape used by `handleGetLegacyAccounts`. No prompt
+  // is shown: the legacy-accounts handler above already leaks the
+  // same `liteUsername`, so a silent grant matches today's threat
+  // model. Revisit if legacy accounts ever become gated.
+  container.handleAccountGetRoot((_, { ok, err }) => {
+    const state = getAuthState();
+    if (state.status !== "authenticated") {
+      return err(new RequestCredentialsErr.NotConnected(undefined));
+    }
+    return ok({
+      publicKey: state.session.remoteAccount.accountId,
+      name: state.identity?.liteUsername,
+    });
+  });
+
+  // RFC-0009 — products can trigger the host login flow. `requestLogin`
+  // dispatches a DOM event that the topbar listens for (it owns the QR
+  // modal), and resolves once the auth state settles.
+  container.handleRequestLogin((reason, { ok }) => {
+    return fromPromise(
+      requestLogin(reason),
+      (e) =>
+        new LoginErr.Unknown({
+          reason: e instanceof Error ? e.message : "Login flow failed",
+        }),
+    ).andThen((result) => ok(result));
   });
 
   container.handleAccountConnectionStatusSubscribe((_, send) => {
@@ -222,9 +269,9 @@ function wireContainerHandlers(
 
   container.handleSignPayload((payload, { ok, err }) => {
     log.warn(`[${label}] handleSignPayload invoked:`, {
-      address: payload.address,
-      genesisHash: payload.genesisHash,
-      method: payload.method.slice(0, 40) + "...",
+      account: payload.account,
+      genesisHash: payload.payload.genesisHash,
+      method: payload.payload.method.slice(0, 40) + "...",
     });
     if (getPermissionStatus(label, "TransactionSubmit") !== "granted") {
       log.warn(`[${label}] handleSignPayload — TransactionSubmit not granted`);
@@ -243,7 +290,7 @@ function wireContainerHandlers(
     }
 
     return fromPromise(
-      showSignPayloadModal(session, payload, label),
+      showSignPayloadModal(session, payload.payload, label),
       (e) => e as never,
     )
       .andThen((result) => {
@@ -261,8 +308,8 @@ function wireContainerHandlers(
 
   container.handleSignRaw((payload, { ok, err }) => {
     log.warn(`[${label}] handleSignRaw invoked:`, {
-      address: payload.address,
-      dataTag: payload.data.tag,
+      account: payload.account,
+      dataTag: payload.payload.tag,
     });
     const session = getSession();
     if (!session) {
@@ -271,7 +318,7 @@ function wireContainerHandlers(
     }
 
     return fromPromise(
-      showSignRawModal(session, payload, label),
+      showSignRawModal(session, payload.payload, label),
       (e) => e as never,
     )
       .andThen((result) => {
@@ -285,6 +332,64 @@ function wireContainerHandlers(
         log.warn(`[${label}] handleSignRaw — rejected:`, e);
         return err(e);
       });
+  });
+
+  // Legacy-account signing — products that still identify the signer
+  // by address land here. dot.li only ever signs with the paired
+  // remote account, so we drop the `signer` field and reuse the same
+  // modal as the product-account path. host-papp rejects internally
+  // if the session key can't cover the resolved address.
+  container.handleSignPayloadWithLegacyAccount((request, { ok, err }) => {
+    log.warn(`[${label}] handleSignPayloadWithLegacyAccount invoked:`, {
+      signer: request.signer,
+      genesisHash: request.payload.genesisHash,
+      method: request.payload.method.slice(0, 40) + "...",
+    });
+    if (getPermissionStatus(label, "TransactionSubmit") !== "granted") {
+      log.warn(
+        `[${label}] handleSignPayloadWithLegacyAccount — TransactionSubmit not granted`,
+      );
+      return err(new SigningErr.PermissionDenied(undefined));
+    }
+    const session = getSession();
+    if (!session) {
+      return err(new SigningErr.PermissionDenied(undefined));
+    }
+
+    return fromPromise(
+      showSignPayloadModal(session, request.payload, label),
+      (e) => e as never,
+    )
+      .andThen((result) =>
+        ok({
+          signature: result.signature,
+          signedTransaction: result.signedTransaction,
+        }),
+      )
+      .orElse((e) => err(e));
+  });
+
+  container.handleSignRawWithLegacyAccount((request, { ok, err }) => {
+    log.warn(`[${label}] handleSignRawWithLegacyAccount invoked:`, {
+      signer: request.signer,
+      dataTag: request.payload.tag,
+    });
+    const session = getSession();
+    if (!session) {
+      return err(new SigningErr.PermissionDenied(undefined));
+    }
+
+    return fromPromise(
+      showSignRawModal(session, request.payload, label),
+      (e) => e as never,
+    )
+      .andThen((result) =>
+        ok({
+          signature: result.signature,
+          signedTransaction: result.signedTransaction,
+        }),
+      )
+      .orElse((e) => err(e));
   });
 
   // ── Local Storage (scoped per dApp) ────────────────────
@@ -323,6 +428,41 @@ function wireContainerHandlers(
     } catch {
       return err(new StorageErr.Unknown({ reason: "Failed to clear storage" }));
     }
+  });
+
+  // ── Entropy derivation (RFC-0007) ──────────────────────
+  //
+  // Deterministic 32-byte entropy scoped to the calling product and
+  // a caller-chosen key. We feed `deriveProductEntropy` the user's
+  // session secret (the same material we use to sign statement
+  // proofs) so the output is stable across calls for the same
+  // session, but distinct per-product via the `${label}.dot`
+  // productId.
+  container.handleDeriveEntropy((key, { ok, err }) => {
+    const session = getSession();
+    if (!session) {
+      return err(new DeriveEntropyErr.Unknown({ reason: "Not connected" }));
+    }
+
+    return fromPromise(readSessionSecret(session.id), (e) => e as Error)
+      .mapErr((e) => new DeriveEntropyErr.Unknown({ reason: e.message }))
+      .andThen((secret) => {
+        if (!secret) {
+          return err(
+            new DeriveEntropyErr.Unknown({ reason: "Session secret missing" }),
+          );
+        }
+        try {
+          const entropy = deriveProductEntropy(secret, `${label}.dot`, key);
+          return ok(entropy);
+        } catch (e) {
+          return err(
+            new DeriveEntropyErr.Unknown({
+              reason: e instanceof Error ? e.message : String(e),
+            }),
+          );
+        }
+      });
   });
 
   // ── Navigation ─────────────────────────────────────────
@@ -410,52 +550,40 @@ function wireContainerHandlers(
       });
   });
 
-  // remote_permission — only TransactionSubmit is enforced;
-  // ExternalRequest has no enforcement mechanism in browser context.
   container.handlePermission((request, { ok }) => {
-    if (request.tag !== "TransactionSubmit") {
-      return ok(false);
-    }
+    log.warn(
+      `[${label}] remote_permission incoming: tag=${request.tag}, value=${JSON.stringify(request.value)}`,
+    );
 
     if (!permissionLimiter.allow()) {
+      log.warn(`[${label}] remote_permission ${request.tag} rate-limited`);
       return okAsync(false);
     }
 
-    const status = getPermissionStatus(label, "TransactionSubmit");
-
-    if (status === "granted") {
-      return ok(true);
+    if (request.tag === "Remote") {
+      const patterns = request.value;
+      log.warn(
+        `[${label}] remote_permission Remote, patterns=${JSON.stringify(patterns)}`,
+      );
+      return fromPromise(
+        showRemotePermissionModal(label, patterns),
+        () => "denied" as const,
+      )
+        .map(() => true)
+        .orElse(() => ok(false));
     }
 
-    if (status === "denied") {
-      showNotification({
-        label: `${label}.dot`,
-        text: "Transaction signing is blocked. Use the permissions menu in the top bar to change this.",
-        dismissMs: 6000,
-        browserNotification: false,
-      });
-      return ok(false);
+    if (request.tag in CACHED_SUBMIT_PERMISSIONS) {
+      return promptCachedSubmitPermission(
+        label,
+        request.tag as keyof typeof CACHED_SUBMIT_PERMISSIONS,
+      );
     }
 
-    // status === 'ask' — show consent modal
-    return fromPromise(
-      showPermissionRequestModal(label, "TransactionSubmit").then(() => {
-        setPermissionStatus(label, "TransactionSubmit", "granted");
-        // No iframe reload needed — signing handlers read permission at call time.
-        // But dispatch event so topbar updates.
-        window.dispatchEvent(
-          new CustomEvent("dotli:permission-changed", {
-            detail: { label },
-          }),
-        );
-      }),
-      () => "denied" as const,
-    )
-      .map(() => true)
-      .orElse(() => {
-        setPermissionStatus(label, "TransactionSubmit", "denied");
-        return ok(false);
-      });
+    // WebRTC: browser gates the underlying APIs via iframe `allow`,
+    // no need for a host-side prompt.
+    log.warn(`[${label}] remote_permission ${request.tag} auto-granted`);
+    return ok(true);
   });
 
   // ── Push notifications ─────────────────────────────────
@@ -474,7 +602,7 @@ function wireContainerHandlers(
 
   const submitLimiter = createSubmitRateLimiter();
 
-  container.handleStatementStoreSubscribe((topics, send) => {
+  container.handleStatementStoreSubscribe((topicFilter, send) => {
     let innerUnsub: (() => void) | null = null;
     let cancelled = false;
 
@@ -482,16 +610,26 @@ function wireContainerHandlers(
       if (cancelled) {
         return;
       }
+      // Bridge the wire-side tagged union to the adapter's discriminator-free
+      // `{ matchAll }`/`{ matchAny }` shape.
+      const topics = topicFilter.value;
+      const filter =
+        topicFilter.tag === "MatchAny"
+          ? { matchAny: topics }
+          : { matchAll: topics };
       log.warn(`[${label}] Statement store subscribe, topics:`, topics.length);
-      innerUnsub = store.subscribeStatements(topics, (statements) => {
+      innerUnsub = store.subscribeStatements(filter, (page) => {
         log.warn(
-          `[${label}] Statement store received ${String(statements.length)} statements`,
+          `[${label}] Statement store received ${String(page.statements.length)} statements (isComplete=${String(page.isComplete)})`,
         );
-        const signed = statements.filter(
+        const signed = page.statements.filter(
           (s): s is SignedStatement => s.proof !== undefined,
         );
         if (signed.length > 0) {
-          send(signed.map(mapSdkSignedStatement));
+          send({
+            statements: signed.map(mapSdkSignedStatement),
+            isComplete: page.isComplete,
+          });
         }
       });
     }
@@ -597,7 +735,14 @@ function wireContainerHandlers(
           return key;
         });
       })
-      .mapErr((reason) => new PreimageSubmitErr.Unknown({ reason }));
+      .mapErr((reason) => {
+        // Surface the real failure reason on the host console — the
+        // product-side only receives the opaque `PreimageSubmitErr.Unknown`
+        // class, so without this log there is no way to diagnose why a
+        // submit got rejected.
+        log.error(`[${label}] Preimage submit failed: ${reason}`);
+        return new PreimageSubmitErr.Unknown({ reason });
+      });
   });
 
   // Preimage lookup subscribe contract:
@@ -698,6 +843,102 @@ function wireContainerHandlers(
       clearTimeout(initialTimeoutId);
     };
   });
+
+  // ── Payments (RFC-0006) — not implemented ──────────────
+  //
+  // dot.li does not own a payment rail yet. Register explicit
+  // "not implemented" responses so products see a specific reason
+  // rather than a generic transport error, and subscription starts
+  // fail fast via `interrupt` with a typed error.
+  container.handlePaymentBalanceSubscribe((_, _send, interrupt) => {
+    interrupt(new PaymentBalanceErr.PermissionDenied());
+    return NOOP;
+  });
+
+  container.handlePaymentTopUp((_, { err }) => {
+    return err(
+      new PaymentTopUpErr.Unknown({ reason: PAYMENTS_NOT_IMPLEMENTED }),
+    );
+  });
+
+  container.handlePaymentRequest((_, { err }) => {
+    return err(
+      new PaymentRequestErr.Unknown({ reason: PAYMENTS_NOT_IMPLEMENTED }),
+    );
+  });
+
+  container.handlePaymentStatusSubscribe((_, _send, interrupt) => {
+    interrupt(
+      new PaymentStatusErr.Unknown({ reason: PAYMENTS_NOT_IMPLEMENTED }),
+    );
+    return NOOP;
+  });
+}
+
+const PAYMENTS_NOT_IMPLEMENTED = "Payments are not supported in dot.li";
+const NOOP: VoidFunction = () => undefined;
+
+// ── Cached remote-permission prompts ─────────────────────
+//
+// Each submit-style wire tag caches a per-product decision in
+// localStorage under the `storageKey` below, prompting once via
+// `showPermissionRequestModal` when the cache is empty. `Remote`
+// intentionally prompts every call (the domain-pattern list is
+// dynamic); `WebRTC` is auto-granted (browser gates it via the
+// iframe `allow` attribute).
+
+const CACHED_SUBMIT_PERMISSIONS = {
+  // `ChainSubmit` stores under the legacy `TransactionSubmit` key so
+  // grants carried over from the v0.6 wire tag rename still apply.
+  ChainSubmit: {
+    storageKey: "TransactionSubmit",
+    label: "Transaction signing",
+  },
+  PreimageSubmit: { storageKey: "PreimageSubmit", label: "Preimage submit" },
+  StatementSubmit: { storageKey: "StatementSubmit", label: "Statement submit" },
+} satisfies Record<string, { storageKey: PermissionName; label: string }>;
+
+function promptCachedSubmitPermission(
+  productLabel: string,
+  tag: keyof typeof CACHED_SUBMIT_PERMISSIONS,
+): ResultAsync<boolean, never> {
+  const { storageKey, label: humanLabel } = CACHED_SUBMIT_PERMISSIONS[tag];
+  const status = getPermissionStatus(productLabel, storageKey);
+  log.warn(`[${productLabel}] remote_permission ${tag}, status=${status}`);
+
+  if (status === "granted") {
+    return okAsync(true);
+  }
+
+  if (status === "denied") {
+    log.warn(
+      `[${productLabel}] ${tag} cached as denied — toggle the permission in the top-bar menu to re-prompt`,
+    );
+    showNotification({
+      label: `${productLabel}.dot`,
+      text: `${humanLabel} is blocked. Use the permissions menu in the top bar to change this.`,
+      dismissMs: 6000,
+      browserNotification: false,
+    });
+    return okAsync(false);
+  }
+
+  return fromPromise(
+    showPermissionRequestModal(productLabel, storageKey).then(() => {
+      setPermissionStatus(productLabel, storageKey, "granted");
+      window.dispatchEvent(
+        new CustomEvent("dotli:permission-changed", {
+          detail: { label: productLabel },
+        }),
+      );
+    }),
+    () => "denied" as const,
+  )
+    .map(() => true)
+    .orElse(() => {
+      setPermissionStatus(productLabel, storageKey, "denied");
+      return okAsync(false);
+    });
 }
 
 // ── Rate limiter (sliding window) ─────────────────────────

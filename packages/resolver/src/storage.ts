@@ -4,7 +4,7 @@
 // (EVM-on-Polkadot) contract via polkadot-api's UnsafeApi. Used by both
 // the smoldot-based resolver and the trusted RPC resolver.
 
-import { Binary, type PolkadotClient } from "polkadot-api";
+import type { PolkadotClient } from "polkadot-api";
 import {
   computeMappingSlot,
   addToSlot,
@@ -86,9 +86,6 @@ export function extractBytes(result: unknown): Uint8Array | null {
     return null;
   }
   const obj = result as Record<string, unknown>;
-  if (typeof obj.asBytes === "function") {
-    return new Uint8Array((result as Binary).asBytes());
-  }
   if ("success" in obj) {
     if (obj.success !== true) {
       return null;
@@ -106,11 +103,15 @@ export async function readStorageSlot(
   contractAddress: string,
   slotKey: `0x${string}`,
 ): Promise<Uint8Array | null> {
-  // Use at:"best" to read from the latest block, not the finalized block.
-  // During cold sync, the finalized block may be behind the chain tip.
+  // `at: "best"` reads from the chain tip — during cold sync the
+  // finalized block can lag far behind.
+  //
+  // H160/H256 runtime call args must be `SizedHex<N>` strings; passing
+  // `Uint8Array` (from `Binary.fromHex`) fails the runtime-entry
+  // compatibility check as "Incompatible runtime entry RuntimeCall(…)".
   const result: unknown = await api.apis.ReviveApi.get_storage(
-    Binary.fromHex(contractAddress as `0x${string}`),
-    Binary.fromHex(slotKey),
+    contractAddress,
+    slotKey,
     { at: "best" },
   );
   return extractBytes(result);

@@ -8,7 +8,6 @@
 // Chain DB persistence is handled by smoldot internally — we do NOT
 // manually save/load chain databases to IndexedDB.
 
-import type { AddChainOptions } from "polkadot-api/smoldot";
 import { start as startSmoldotDirect } from "polkadot-api/smoldot";
 import { startFromWorker } from "polkadot-api/smoldot/from-worker";
 import SmWorker from "polkadot-api/smoldot/worker?worker";
@@ -20,7 +19,7 @@ import {
   getCustomRelayChainSpec,
 } from "./chain-specs";
 import { getSmProvider } from "polkadot-api/sm-provider";
-import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
+import type { JsonRpcProvider } from "polkadot-api";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
@@ -321,8 +320,6 @@ export function getPeopleChain(): Promise<SmoldotChain> {
         chainSpec,
         potentialRelayChains: [relayChain],
         statementStore: { maxSeenStatements: 65536 },
-      } as AddChainOptions & {
-        statementStore: { maxSeenStatements: number };
       }),
     )
     .catch((error: unknown) => {
@@ -338,7 +335,7 @@ export function getPeopleChain(): Promise<SmoldotChain> {
  * Used by the auth module as a drop-in replacement for the WS provider.
  */
 export function getPeopleChainProvider(): JsonRpcProvider {
-  return getSmProvider(getPeopleChain().then(makeNonRemovingChain));
+  return getSmProvider(() => getPeopleChain().then(makeNonRemovingChain));
 }
 
 // ── Dedicated provider factories ─────────────────────────────
@@ -381,7 +378,7 @@ function getResolverAssetHubChain(): Promise<SmoldotChain> {
 }
 
 export function getResolverAssetHubProvider(): JsonRpcProvider {
-  assetHubProvider ??= getSmProvider(getResolverAssetHubChain());
+  assetHubProvider ??= getSmProvider(() => getResolverAssetHubChain());
   return assetHubProvider;
 }
 
@@ -451,5 +448,5 @@ export function getDappAssetHubChain(): Promise<SmoldotChain> {
  * Used by `createChainProvider()` for remote dApp connections.
  */
 export function getDappAssetHubProvider(): JsonRpcProvider {
-  return getSmProvider(getDappAssetHubChain());
+  return getSmProvider(() => getDappAssetHubChain());
 }

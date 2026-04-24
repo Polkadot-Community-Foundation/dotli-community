@@ -1,34 +1,73 @@
 // dot.li — Permission storage
 //
 // Persists host-level permission decisions per product in localStorage.
-// Two categories:
-//   - Device permissions (Camera, Microphone, Location, Bluetooth) —
-//     gated via iframe `allow` attribute; granting/revoking reloads iframe.
-//   - Transaction Submit — gated in signing handlers; revoking reloads iframe
-//     so the product restarts in the correct state.
+// Device permissions that map to a Permissions Policy directive also
+// gate the iframe `allow` attribute (granting/revoking reloads the
+// iframe); variants without a directive are policy-only.
+//
+// `TransactionSubmit` is an internal alias kept after the
+// `ChainSubmit` wire-tag rename so grants persisted in localStorage
+// from earlier versions keep working.
 //
 // Permission status: 'ask' (default), 'granted', or 'denied'.
 
+import type { CodecType } from "@novasamatech/host-api";
+import type { DevicePermission as DevicePermissionCodec } from "@novasamatech/host-api";
+
+export type DevicePermissionName = CodecType<typeof DevicePermissionCodec>;
+
+export type PermissionName =
+  | DevicePermissionName
+  | "TransactionSubmit"
+  | "PreimageSubmit"
+  | "StatementSubmit";
+
 export type PermissionStatus = "ask" | "granted" | "denied";
 
-/** Map from Host API device permission names to Permissions Policy directives. */
-export const DEVICE_PERMISSION_POLICY: Record<string, string> = {
+/**
+ * Map from Host API device permission names to Permissions Policy directives.
+ *
+ * Only variants with a browser-level enforcement point are listed. Granting
+ * a variant absent from this map is still recorded in localStorage but
+ * does not alter the iframe `allow` attribute.
+ */
+export const DEVICE_PERMISSION_POLICY: Partial<
+  Record<DevicePermissionName, string>
+> = {
   Camera: "camera",
   Microphone: "microphone",
   Location: "geolocation",
   Bluetooth: "bluetooth",
+  // Clipboard write is always granted by dot.li (see buildAllowAttribute);
+  // the read directive requires explicit consent.
+  Clipboard: "clipboard-read",
+  // WebAuthn — covers the Biometrics variant for hosts that expose it via
+  // passkeys / platform authenticators.
+  Biometrics: "publickey-credentials-get",
+  // Chromium-only; harmless to include on browsers that ignore it.
+  NFC: "nfc",
+  // Notifications and OpenUrl are not gated by a Permissions Policy
+  // directive — the browser Notifications API has its own prompt, and
+  // cross-origin navigation is controlled by the anchor/window.open path.
 };
 
 /** All permissions shown in the topbar menu, in display order. */
 export const ALL_PERMISSIONS: readonly {
-  name: string;
+  name: PermissionName;
   label: string;
 }[] = [
   { name: "Camera", label: "Camera" },
   { name: "Microphone", label: "Microphone" },
   { name: "Location", label: "Location" },
   { name: "Bluetooth", label: "Bluetooth" },
+  { name: "Notifications", label: "Notifications" },
+  { name: "NFC", label: "NFC" },
+  { name: "Clipboard", label: "Clipboard" },
+  { name: "OpenUrl", label: "Open External Links" },
+  { name: "Biometrics", label: "Biometrics" },
   { name: "TransactionSubmit", label: "Sign Transactions" },
+  { name: "PreimageSubmit", label: "Submit Preimages" },
+  { name: "StatementSubmit", label: "Submit Statements" },
 ];
 
 /** Returns true if the permission name maps to an iframe `allow` directive. */
@@ -66,14 +105,14 @@ function writeStored(label: string, data: StoredPermissions): void {
 
 export function getPermissionStatus(
   label: string,
-  permission: string,
+  permission: PermissionName,
 ): PermissionStatus {
   return readStored(label)[permission] ?? "ask";
 }
 
 export function setPermissionStatus(
   label: string,
-  permission: string,
+  permission: PermissionName,
   status: PermissionStatus,
 ): void {
   const data = readStored(label);
@@ -81,20 +120,25 @@ export function setPermissionStatus(
   writeStored(label, data);
 }
 
-export function resetPermission(label: string, permission: string): void {
+export function resetPermission(
+  label: string,
+  permission: PermissionName,
+): void {
   const data = readStored(label);
   const { [permission]: _, ...rest } = data;
   writeStored(label, rest);
 }
 
 /** Returns the list of device permission names that have been granted. */
-export function getGrantedDevicePermissions(label: string): string[] {
+export function getGrantedDevicePermissions(
+  label: string,
+): DevicePermissionName[] {
   const data = readStored(label);
   return Object.entries(data)
     .filter(
       ([name, status]) => status === "granted" && isDevicePermission(name),
     )
-    .map(([name]) => name);
+    .map(([name]) => name as DevicePermissionName);
 }
 
 /** Returns true if any permission (device or remote) is granted. */
@@ -111,7 +155,7 @@ export function hasAnyGrant(label: string): boolean {
 export function buildAllowAttribute(label: string): string {
   const policies = ["clipboard-write"];
   for (const name of getGrantedDevicePermissions(label)) {
-    const directive = DEVICE_PERMISSION_POLICY[name] as string | undefined;
+    const directive = DEVICE_PERMISSION_POLICY[name];
     if (directive !== undefined) {
       policies.push(directive);
     }

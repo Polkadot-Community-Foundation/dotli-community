@@ -1,7 +1,7 @@
 {
   "name": "@dotli/sandbox-checker",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.3.3",
   "type": "module",
   "exports": {
     "./*": "./src/*"
@@ -13,8 +13,8 @@
   "devDependencies": {
     "@dotli/eslint-config": "workspace:*",
     "@dotli/typescript-config": "workspace:*",
-    "eslint": "^10.2.0",
+    "eslint": "^10.2.1",
     "typescript": "~6.0.3",
-    "vite": "^8.0.8"
+    "vite": "^8.0.10"
   }
 }
