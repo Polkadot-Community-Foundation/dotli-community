@@ -1,5 +1,4 @@
 name: Deploy Development
-
 on:
   workflow_dispatch:
     inputs:
@@ -8,8 +7,10 @@ on:
         required: true
         type: choice
         options:
+          - westend.li
           - dotli.dev
           - paseoli.dev
+          - testnet.li
 
 concurrency:
   group: deploy-dev-${{ github.event.inputs.target }}
@@ -19,6 +20,12 @@ jobs:
   deploy:
     uses: ./.github/workflows/deploy.yml
     with:
-      environment: ${{ github.event.inputs.target == 'paseoli.dev' && 'dev-paseo' || 'dev-polkadot' }}
+      environment: >-
+        ${{
+          github.event.inputs.target == 'westend.li' && 'development'
+          || github.event.inputs.target == 'paseoli.dev' && 'dev-paseo'
+          || github.event.inputs.target == 'testnet.li' && 'dev-test'
+          || 'dev-polkadot'
+        }}
       app_env: development
     secrets: inherit

@@ -73,19 +73,8 @@ jobs:
       - run: ssh-keyscan ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
 
       - name: Deploy
-        run: |
-          # --filter='P /assets/' protects old hashed chunks from deletion
-          # while still uploading new ones. Old HTML pages reference previous
-          # chunk filenames, so deleting them causes "Failed to fetch
-          # dynamically imported module" errors for users with cached HTML.
-          rsync -avz --delete --filter='P /assets/' apps/host/dist/ \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/host/
-          rsync -avz --delete --filter='P /assets/' apps/sandbox/dist/ \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/app/
-          rsync -avz --delete --filter='P /assets/' apps/protocol/dist/ \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/protocol/
-
-      - name: Clean old assets (>7 days)
-        run: |
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'find ${{ secrets.DEPLOY_PATH }}/*/assets/ -type f -mtime +7 -delete 2>/dev/null || true'
+        run: make ci-deploy
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
