@@ -22,7 +22,7 @@ import type { Statement } from "@novasamatech/sdk-statement";
 import { toHex } from "@novasamatech/host-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { getPeopleChainProvider } from "@dotli/resolver/smoldot";
-import { SITE_ID, SS_USE_SMOLDOT } from "@dotli/config/config";
+import { SITE_ID, SS_USE_SMOLDOT, isLocalhost } from "@dotli/config/config";
 import { getMode, isP2pMode } from "@dotli/config/mode";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
@@ -30,7 +30,20 @@ import * as S from "@dotli/metrics/spans";
 
 // ── Metadata file selection ────────────────────────────────
 
+// The metadata URL is SCALE-encoded into the QR handshake payload and
+// fetched by the Polkadot App over the public internet. On localhost the
+// phone can't reach `http://<x>.localhost:<port>/metadata.json` (and iOS
+// ATS blocks plain HTTP anyway), so dev pairing silently fails. Map
+// `<x>.localhost:<port>` → `<x>.dot.li` so the phone fetches metadata
+// from the deployed copy of the same shell.
 function getMetadataUrl(): string {
+  if (isLocalhost) {
+    const host = window.location.hostname;
+    const subdomain = host.endsWith(".localhost")
+      ? `${host.slice(0, -".localhost".length)}.`
+      : "";
+    return `https://${subdomain}dot.li/metadata.json`;
+  }
   return `${window.location.origin}/metadata.json`;
 }
 
