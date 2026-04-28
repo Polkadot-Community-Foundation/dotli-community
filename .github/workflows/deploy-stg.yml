@@ -12,6 +12,6 @@ jobs:
   deploy:
     uses: ./.github/workflows/deploy.yml
     with:
-      environment: staging
+      environment: paseo
       app_env: staging
     secrets: inherit

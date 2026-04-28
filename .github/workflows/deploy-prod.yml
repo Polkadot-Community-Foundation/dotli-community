@@ -12,7 +12,7 @@ jobs:
   deploy:
     uses: ./.github/workflows/deploy.yml
     with:
-      environment: production
+      environment: polkadot
       app_env: production
       ref: ${{ github.event.release.tag_name }}
     secrets: inherit
