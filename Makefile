@@ -6,33 +6,36 @@ SITE_polkadot      := dot.li
 SITE_dev-polkadot  := dotli.dev
 SITE_paseo         := paseo.li
 SITE_dev-paseo     := paseoli.dev
-SITE_dev-testnet   := testnet.li
+SITE_dev-test      := testnet.li
 SITE_westend       := westend.li
+SITE_dev-westend   := westendli.dev
 
 # env tag → remote (only polkadot is prod; the rest share the staging box)
 REMOTE_FOR_polkadot      := $(REMOTE_PRD)
 REMOTE_FOR_dev-polkadot  := $(REMOTE_STG)
 REMOTE_FOR_paseo         := $(REMOTE_STG)
 REMOTE_FOR_dev-paseo     := $(REMOTE_STG)
-REMOTE_FOR_dev-testnet   := $(REMOTE_STG)
+REMOTE_FOR_dev-test      := $(REMOTE_STG)
 REMOTE_FOR_westend       := $(REMOTE_STG)
+REMOTE_FOR_dev-westend   := $(REMOTE_STG)
 
 # env tag → web root on the remote (matches the `root` directive in nginx.<env>)
 DEPLOY_PATH_polkadot      := /var/www/dotli
 DEPLOY_PATH_dev-polkadot  := /var/www/dotlidev
 DEPLOY_PATH_paseo         := /var/www/paseoli
 DEPLOY_PATH_dev-paseo     := /var/www/paseolidev
-DEPLOY_PATH_dev-testnet   := /var/www/testnetli
+DEPLOY_PATH_dev-test      := /var/www/testnetli
 DEPLOY_PATH_westend       := /var/www/westendli
+DEPLOY_PATH_dev-westend   := /var/www/westendlidev
 
-VALID_ENVS := polkadot dev-polkadot paseo dev-paseo dev-testnet westend
+VALID_ENVS := polkadot dev-polkadot paseo dev-paseo dev-test westend dev-westend
 
 .PHONY: build deploy ci-deploy deploy-nginx
 
 build:
 	bun run build
 
-# Usage: make deploy ENV=<polkadot|dev-polkadot|paseo|dev-paseo|dev-testnet|westend>
+# Usage: make deploy ENV=<polkadot|dev-polkadot|paseo|dev-paseo|dev-test|westend|dev-westend>
 deploy: build
 	@test -n "$(ENV)" || (echo "Usage: make deploy ENV=<$(subst $() ,|,$(VALID_ENVS))> [REMOTE=user@host]"; exit 1)
 	@test -n "$(DEPLOY_PATH_$(ENV))" || (echo "Unknown ENV: $(ENV). Valid: $(VALID_ENVS)"; exit 1)
@@ -41,7 +44,7 @@ deploy: build
 	ssh $(REMOTE_TARGET) 'sudo install -d -m 0755 -o $$(whoami) -g $$(id -gn) $(REMOTE_PATH) $(REMOTE_PATH)/host $(REMOTE_PATH)/app $(REMOTE_PATH)/protocol'
 	$(call _rsync_dist,$(REMOTE_TARGET),$(REMOTE_PATH))
 
-# Usage: make deploy-nginx ENV=<polkadot|dev-polkadot|paseo|dev-paseo|dev-testnet|westend>
+# Usage: make deploy-nginx ENV=<polkadot|dev-polkadot|paseo|dev-paseo|dev-test|westend|dev-westend>
 deploy-nginx:
 	@test -n "$(ENV)" || (echo "Usage: make deploy-nginx ENV=<$(subst $() ,|,$(VALID_ENVS))> [REMOTE=user@host]"; exit 1)
 	@test -n "$(SITE_$(ENV))" || (echo "Unknown ENV: $(ENV). Valid: $(VALID_ENVS)"; exit 1)

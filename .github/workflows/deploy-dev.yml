@@ -7,10 +7,11 @@ on:
         required: true
         type: choice
         options:
-          - westend.li
-          - dotli.dev
-          - paseoli.dev
-          - testnet.li
+          - westend
+          - dev-polkadot
+          - dev-paseo
+          - dev-westend
+          - dev-test
 
 concurrency:
   group: deploy-dev-${{ github.event.inputs.target }}
@@ -22,10 +23,8 @@ jobs:
     with:
       environment: >-
         ${{
-          github.event.inputs.target == 'westend.li' && 'development'
-          || github.event.inputs.target == 'paseoli.dev' && 'dev-paseo'
-          || github.event.inputs.target == 'testnet.li' && 'dev-test'
-          || 'dev-polkadot'
+          github.event.inputs.target == 'westend' && 'development'
+          || github.event.inputs.target
         }}
       app_env: development
     secrets: inherit
