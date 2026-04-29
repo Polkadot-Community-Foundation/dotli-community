@@ -285,8 +285,7 @@
   font-size: 0.75rem;
   color: #ccc;
   font-family:
-    ui-monospace, "Cascadia Code", "Source Code Pro", Menlo,
-    Consolas, monospace;
+    ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
   word-break: break-all;
   line-height: 1.4;
 }
@@ -661,7 +660,9 @@
   color: #aaa;
   font-size: 0.72rem;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
 }
 .mode-clear-btn:hover {
   border-color: #555;
@@ -737,12 +738,14 @@
      visually attaches to its trigger button. */
   top: 36px;
   right: 12px;
-  width: 260px;
+  width: 340px;
   background: #171717;
   border: 1px solid #404040;
   border-radius: 12px;
   z-index: 1500;
-  overflow: hidden;
+  /* `overflow: visible` lets the dropdown menus escape the popover's
+     bounds; rows handle their own clipping via hover background. */
+  overflow: visible;
 }
 .permissions-popover.open {
   display: block;
@@ -760,12 +763,8 @@
 .permissions-popover-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
-  transition: background 0.1s;
-}
-.permissions-popover-row:hover {
-  background: #222;
+  gap: 10px;
+  padding: 8px 14px;
 }
 .permissions-popover-icon {
   display: flex;
@@ -777,45 +776,77 @@
   font-size: 0.8rem;
   color: #e0e0e0;
   flex: 1;
+  min-width: 0;
 }
-/* Toggle switch */
-.permissions-popover-toggle {
+/* Tri-state dropdown */
+.permissions-popover-select-wrap {
+  position: relative;
   flex-shrink: 0;
-  padding: 0;
-  background: none;
-  border: none;
-  cursor: pointer;
+}
+.permissions-popover-select {
   display: flex;
   align-items: center;
-}
-.permissions-toggle-track {
-  display: block;
-  width: 28px;
-  height: 16px;
-  border-radius: 8px;
-  background: #333;
-  position: relative;
-  transition: background 0.15s;
-}
-.permissions-popover-toggle.on .permissions-toggle-track {
-  background: #4ade80;
-}
-.permissions-toggle-knob {
-  display: block;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #888;
-  position: absolute;
-  top: 2px;
-  left: 2px;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #1f1f1f;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 0.72rem;
+  cursor: pointer;
   transition:
-    transform 0.15s,
-    background 0.15s;
+    background 0.1s,
+    border-color 0.1s;
 }
-.permissions-popover-toggle.on .permissions-toggle-knob {
-  transform: translateX(12px);
-  background: #fff;
+.permissions-popover-select:hover {
+  background: #262626;
+  border-color: #444;
+}
+.permissions-popover-select[aria-expanded="true"] {
+  background: #262626;
+  border-color: #555;
+}
+.permissions-popover-select-caret {
+  display: flex;
+  color: #888;
+}
+.permissions-popover-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 140px;
+  background: #1f1f1f;
+  border: 1px solid #404040;
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 1600;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+}
+.permissions-popover-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 0.75rem;
+  cursor: pointer;
+  text-align: left;
+}
+.permissions-popover-menu-item:hover {
+  background: #2a2a2a;
+}
+.permissions-popover-menu-item.selected {
+  color: #fff;
+}
+.permissions-popover-menu-check {
+  display: flex;
+  color: #4ade80;
 }
 /* Footer */
 .permissions-popover-footer {

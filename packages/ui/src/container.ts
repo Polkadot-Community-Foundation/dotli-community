@@ -38,13 +38,11 @@ import { errAsync, fromPromise, okAsync, type ResultAsync } from "neverthrow";
 import { isLocalhost, BASE_DOMAIN } from "@dotli/config/config";
 import {
   getPermissionStatus,
+  isEnforceableDevicePermission,
   setPermissionStatus,
   type PermissionName,
 } from "./permissions";
-import {
-  showPermissionRequestModal,
-  showRemotePermissionModal,
-} from "./permission-modal";
+import { showPermissionRequestModal } from "./permission-modal";
 
 import type { UserSession } from "@novasamatech/host-papp";
 import {
@@ -204,7 +202,7 @@ function wireContainerHandlers(
   // modal), and resolves once the auth state settles.
   container.handleRequestLogin((reason, { ok }) => {
     return fromPromise(
-      requestLogin(reason),
+      requestLogin(reason, label),
       (e) =>
         new LoginErr.Unknown({
           reason: e instanceof Error ? e.message : "Login flow failed",
@@ -273,8 +271,8 @@ function wireContainerHandlers(
       genesisHash: payload.payload.genesisHash,
       method: payload.payload.method.slice(0, 40) + "...",
     });
-    if (getPermissionStatus(label, "TransactionSubmit") !== "granted") {
-      log.warn(`[${label}] handleSignPayload — TransactionSubmit not granted`);
+    if (getPermissionStatus(label, "ChainSubmit") !== "granted") {
+      log.warn(`[${label}] handleSignPayload — ChainSubmit not granted`);
       showNotification({
         label: `${label}.dot`,
         text: 'Transaction blocked — enable "Sign Transactions" in the permissions menu.',
@@ -345,9 +343,9 @@ function wireContainerHandlers(
       genesisHash: request.payload.genesisHash,
       method: request.payload.method.slice(0, 40) + "...",
     });
-    if (getPermissionStatus(label, "TransactionSubmit") !== "granted") {
+    if (getPermissionStatus(label, "ChainSubmit") !== "granted") {
       log.warn(
-        `[${label}] handleSignPayloadWithLegacyAccount — TransactionSubmit not granted`,
+        `[${label}] handleSignPayloadWithLegacyAccount — ChainSubmit not granted`,
       );
       return err(new SigningErr.PermissionDenied(undefined));
     }
@@ -501,6 +499,14 @@ function wireContainerHandlers(
   const permissionLimiter = createSubmitRateLimiter();
 
   container.handleDevicePermission((permission, { ok }) => {
+    // Notifications / OpenUrl have no host-level enforcement point
+    // (browser owns the Notifications prompt; cross-origin navigation
+    // happens via anchor / window.open). Auto-grant rather than show
+    // a modal whose "Deny" button can't be honoured.
+    if (!isEnforceableDevicePermission(permission)) {
+      return ok(true);
+    }
+
     if (!permissionLimiter.allow()) {
       return okAsync(false);
     }
@@ -560,19 +566,6 @@ function wireContainerHandlers(
       return okAsync(false);
     }
 
-    if (request.tag === "Remote") {
-      const patterns = request.value;
-      log.warn(
-        `[${label}] remote_permission Remote, patterns=${JSON.stringify(patterns)}`,
-      );
-      return fromPromise(
-        showRemotePermissionModal(label, patterns),
-        () => "denied" as const,
-      )
-        .map(() => true)
-        .orElse(() => ok(false));
-    }
-
     if (request.tag in CACHED_SUBMIT_PERMISSIONS) {
       return promptCachedSubmitPermission(
         label,
@@ -580,8 +573,10 @@ function wireContainerHandlers(
       );
     }
 
-    // WebRTC: browser gates the underlying APIs via iframe `allow`,
-    // no need for a host-side prompt.
+    // Remote (HTTP/WS) and WebRTC are auto-granted: the browser can't
+    // reliably intercept fetch/XHR/WebSocket from inside an iframe, and
+    // WebRTC is already gated by the iframe `allow` attribute. Any
+    // future unknown wire tag lands here too and auto-grants.
     log.warn(`[${label}] remote_permission ${request.tag} auto-granted`);
     return ok(true);
   });
@@ -844,6 +839,26 @@ function wireContainerHandlers(
     };
   });
 
+  // ── Theme ─────────────────────────────────────────────
+
+  container.handleThemeSubscribe((_params, send) => {
+    const readTheme = (): "light" | "dark" =>
+      document.documentElement.getAttribute("data-theme") === "light"
+        ? "light"
+        : "dark";
+
+    send(readTheme());
+
+    const listener = (): void => {
+      send(readTheme());
+    };
+    window.addEventListener("dotli:theme-changed", listener);
+
+    return () => {
+      window.removeEventListener("dotli:theme-changed", listener);
+    };
+  });
+
   // ── Payments (RFC-0006) — not implemented ──────────────
   //
   // dot.li does not own a payment rail yet. Register explicit
@@ -888,12 +903,7 @@ const NOOP: VoidFunction = () => undefined;
 // iframe `allow` attribute).
 
 const CACHED_SUBMIT_PERMISSIONS = {
-  // `ChainSubmit` stores under the legacy `TransactionSubmit` key so
-  // grants carried over from the v0.6 wire tag rename still apply.
-  ChainSubmit: {
-    storageKey: "TransactionSubmit",
-    label: "Transaction signing",
-  },
+  ChainSubmit: { storageKey: "ChainSubmit", label: "Transaction signing" },
   PreimageSubmit: { storageKey: "PreimageSubmit", label: "Preimage submit" },
   StatementSubmit: { storageKey: "StatementSubmit", label: "Statement submit" },
 } satisfies Record<string, { storageKey: PermissionName; label: string }>;

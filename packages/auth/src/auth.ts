@@ -440,6 +440,7 @@ export type LoginFlowResult = "success" | "alreadyConnected" | "rejected";
  */
 export function requestLogin(
   reason: string | undefined,
+  label?: string,
 ): Promise<LoginFlowResult> {
   if (currentState.status === "authenticated") {
     return Promise.resolve("alreadyConnected");
@@ -450,7 +451,7 @@ export function requestLogin(
     // the subscription is installed — that way any post-subscribe
     // `idle` callback is unambiguously a user cancellation.
     window.dispatchEvent(
-      new CustomEvent("dotli:request-login", { detail: { reason } }),
+      new CustomEvent("dotli:request-login", { detail: { reason, label } }),
     );
 
     const unsubscribe = onAuthStateChange((state) => {

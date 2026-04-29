@@ -5,10 +5,6 @@
 // gate the iframe `allow` attribute (granting/revoking reloads the
 // iframe); variants without a directive are policy-only.
 //
-// `TransactionSubmit` is an internal alias kept after the
-// `ChainSubmit` wire-tag rename so grants persisted in localStorage
-// from earlier versions keep working.
-//
 // Permission status: 'ask' (default), 'granted', or 'denied'.
 
 import type { CodecType } from "@novasamatech/host-api";
@@ -18,9 +14,24 @@ export type DevicePermissionName = CodecType<typeof DevicePermissionCodec>;
 
 export type PermissionName =
   | DevicePermissionName
-  | "TransactionSubmit"
+  | "ChainSubmit"
   | "PreimageSubmit"
   | "StatementSubmit";
+
+/** Device permissions the host can't actually gate (see AUTO_GRANT_DEVICE_PERMISSIONS). */
+export type AutoGrantDevicePermission = "Notifications" | "OpenUrl";
+
+/** Device permissions that DO have a host-side enforcement point. */
+export type EnforceableDevicePermission = Exclude<
+  DevicePermissionName,
+  AutoGrantDevicePermission
+>;
+
+/** Permissions the host actually surfaces to the user (popover + modal). */
+export type EnforceablePermissionName = Exclude<
+  PermissionName,
+  AutoGrantDevicePermission
+>;
 
 export type PermissionStatus = "ask" | "granted" | "denied";
 
@@ -51,21 +62,37 @@ export const DEVICE_PERMISSION_POLICY: Partial<
   // cross-origin navigation is controlled by the anchor/window.open path.
 };
 
+/**
+ * Device permissions whose enforcement is outside the host's reach:
+ *   - Notifications — the browser has its own prompt (Notifications.requestPermission)
+ *   - OpenUrl      — cross-origin navigation happens via anchor / window.open
+ * Requests for these always resolve `true` and they are hidden from the
+ * settings popover — offering a control that can't actually block would
+ * mislead users.
+ */
+export const AUTO_GRANT_DEVICE_PERMISSIONS: ReadonlySet<AutoGrantDevicePermission> =
+  new Set<AutoGrantDevicePermission>(["Notifications", "OpenUrl"]);
+
+/** Type guard: narrows `DevicePermissionName` past the auto-grant set. */
+export function isEnforceableDevicePermission(
+  name: DevicePermissionName,
+): name is EnforceableDevicePermission {
+  return !(AUTO_GRANT_DEVICE_PERMISSIONS as ReadonlySet<string>).has(name);
+}
+
 /** All permissions shown in the topbar menu, in display order. */
 export const ALL_PERMISSIONS: readonly {
-  name: PermissionName;
+  name: EnforceablePermissionName;
   label: string;
 }[] = [
   { name: "Camera", label: "Camera" },
   { name: "Microphone", label: "Microphone" },
   { name: "Location", label: "Location" },
   { name: "Bluetooth", label: "Bluetooth" },
-  { name: "Notifications", label: "Notifications" },
   { name: "NFC", label: "NFC" },
   { name: "Clipboard", label: "Clipboard" },
-  { name: "OpenUrl", label: "Open External Links" },
   { name: "Biometrics", label: "Biometrics" },
-  { name: "TransactionSubmit", label: "Sign Transactions" },
+  { name: "ChainSubmit", label: "Sign Transactions" },
   { name: "PreimageSubmit", label: "Submit Preimages" },
   { name: "StatementSubmit", label: "Submit Statements" },
 ];

@@ -39,6 +39,7 @@ import {
   isDevicePermission,
   resetPermission,
   setPermissionStatus,
+  type PermissionStatus,
 } from "./permissions";
 
 // ── DOM refs ───────────────────────────────────────────────
@@ -55,7 +56,9 @@ function getElement(id: string): HTMLElement {
 // at module scope if the HTML IDs change or the script loads early.
 let authButton: HTMLElement;
 let modalBackdrop: HTMLElement;
+let modalTitle: HTMLElement;
 let modalQr: HTMLElement;
+let modalReason: HTMLElement;
 let modalClose: HTMLElement;
 let userPopover: HTMLElement;
 let userPopoverUsername: HTMLElement;
@@ -152,7 +155,9 @@ function initThemeToggle(): void {
 export function initTopBar(): void {
   authButton = getElement("auth-button");
   modalBackdrop = getElement("auth-modal-backdrop");
+  modalTitle = getElement("auth-modal-title");
   modalQr = getElement("auth-modal-qr");
+  modalReason = getElement("auth-modal-reason");
   modalClose = getElement("auth-modal-close");
   userPopover = getElement("user-popover");
   userPopoverUsername = getElement("user-popover-username");
@@ -178,8 +183,10 @@ export function initTopBar(): void {
   // `handleRequestLogin`. `requestLogin()` in @dotli/auth dispatches
   // this event after checking the already-connected fast path; the
   // topbar owns the QR modal so we open it here and kick off pairing.
-  window.addEventListener("dotli:request-login", () => {
-    openModal();
+  window.addEventListener("dotli:request-login", (e: Event) => {
+    const detail = (e as CustomEvent<{ reason?: string; label?: string }>)
+      .detail;
+    openModal(detail.reason, detail.label);
     void ensureAuth().then(() => {
       // Skip if the flow advanced between dispatch and here.
       const state = authMod?.getAuthState();
@@ -421,14 +428,14 @@ const PERM_ICONS: Record<string, string> = {
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/></svg>',
   Notifications:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
-  NFC: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12a7 7 0 0 1 14 0"/><path d="M8 12a4 4 0 0 1 8 0"/><circle cx="12" cy="12" r="1"/></svg>',
+  NFC: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7a7 7 0 0 1 0 10"/><path d="M13 9a4 4 0 0 1 0 6"/><circle cx="9" cy="12" r="1" fill="currentColor" stroke="none"/></svg>',
   Clipboard:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>',
   OpenUrl:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
   Biometrics:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11a4 4 0 0 0-4 4v2a4 4 0 0 0 8 0v-2a4 4 0 0 0-4-4z"/><path d="M6 11a6 6 0 0 1 12 0"/><path d="M4 11a8 8 0 0 1 16 0"/></svg>',
-  TransactionSubmit:
+  ChainSubmit:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
   PreimageSubmit:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
@@ -493,7 +500,23 @@ function updatePermissionsButtonState(): void {
   );
 }
 
+const STATUS_LABELS: Record<PermissionStatus, string> = {
+  ask: "Ask (Default)",
+  granted: "Allowed",
+  denied: "Denied",
+};
+
+const STATUS_ORDER: readonly PermissionStatus[] = ["ask", "granted", "denied"];
+
+let openDropdownCleanup: (() => void) | null = null;
+
+function closeOpenDropdown(): void {
+  openDropdownCleanup?.();
+  openDropdownCleanup = null;
+}
+
 function renderPermissionsPopover(): void {
+  closeOpenDropdown();
   permissionsPopoverList.innerHTML = "";
 
   if (currentProductLabel === null) {
@@ -506,7 +529,8 @@ function renderPermissionsPopover(): void {
   }
 
   for (const perm of ALL_PERMISSIONS) {
-    const status = getPermissionStatus(currentProductLabel, perm.name);
+    const productLabel = currentProductLabel;
+    const status = getPermissionStatus(productLabel, perm.name);
 
     const row = document.createElement("div");
     row.className = "permissions-popover-row";
@@ -521,44 +545,27 @@ function renderPermissionsPopover(): void {
     nameEl.textContent = perm.label;
     row.appendChild(nameEl);
 
-    // Toggle switch
-    const toggle = document.createElement("button");
-    toggle.className = `permissions-popover-toggle ${status === "granted" ? "on" : ""}`;
-    toggle.setAttribute("role", "switch");
-    toggle.setAttribute("aria-checked", String(status === "granted"));
-    toggle.title =
-      status === "granted" ? "Revoke permission" : "Grant permission";
+    row.appendChild(
+      createPermissionDropdown(status, (next) => {
+        if (next === "ask") {
+          resetPermission(productLabel, perm.name);
+        } else {
+          setPermissionStatus(productLabel, perm.name, next);
+        }
+        // Device permissions need iframe reload (allow attribute changes).
+        // Non-device permissions just update the UI.
+        const event = isDevicePermission(perm.name)
+          ? "dotli:device-permission-changed"
+          : "dotli:permission-changed";
+        window.dispatchEvent(
+          new CustomEvent(event, {
+            detail: { label: productLabel, permission: perm.name },
+          }),
+        );
+        renderPermissionsPopover();
+      }),
+    );
 
-    const track = document.createElement("span");
-    track.className = "permissions-toggle-track";
-    const knob = document.createElement("span");
-    knob.className = "permissions-toggle-knob";
-    track.appendChild(knob);
-    toggle.appendChild(track);
-
-    toggle.addEventListener("click", () => {
-      if (currentProductLabel === null) {
-        return;
-      }
-      if (status === "granted") {
-        resetPermission(currentProductLabel, perm.name);
-      } else {
-        setPermissionStatus(currentProductLabel, perm.name, "granted");
-      }
-      // Device permissions need iframe reload (allow attribute changes).
-      // Non-device permissions just update the UI.
-      const event = isDevicePermission(perm.name)
-        ? "dotli:device-permission-changed"
-        : "dotli:permission-changed";
-      window.dispatchEvent(
-        new CustomEvent(event, {
-          detail: { label: currentProductLabel, permission: perm.name },
-        }),
-      );
-      renderPermissionsPopover();
-    });
-
-    row.appendChild(toggle);
     permissionsPopoverList.appendChild(row);
   }
 
@@ -567,6 +574,103 @@ function renderPermissionsPopover(): void {
   footer.className = "permissions-popover-footer";
   footer.textContent = "Changing permissions will reload the app.";
   permissionsPopoverList.appendChild(footer);
+}
+
+function createPermissionDropdown(
+  currentStatus: PermissionStatus,
+  onChange: (status: PermissionStatus) => void,
+): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "permissions-popover-select-wrap";
+
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "permissions-popover-select";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+
+  const triggerLabel = document.createElement("span");
+  triggerLabel.className = "permissions-popover-select-label";
+  triggerLabel.textContent = STATUS_LABELS[currentStatus];
+  trigger.appendChild(triggerLabel);
+
+  const caret = document.createElement("span");
+  caret.className = "permissions-popover-select-caret";
+  caret.innerHTML =
+    '<svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true">' +
+    '<path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  trigger.appendChild(caret);
+
+  wrap.appendChild(trigger);
+
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    // Clicking the trigger while this row's menu is open should close it.
+    if (wrap.querySelector(".permissions-popover-menu") !== null) {
+      closeOpenDropdown();
+      return;
+    }
+    closeOpenDropdown();
+
+    const menu = document.createElement("div");
+    menu.className = "permissions-popover-menu";
+    menu.setAttribute("role", "listbox");
+
+    for (const status of STATUS_ORDER) {
+      const item = document.createElement("button");
+      item.type = "button";
+      const selected = status === currentStatus;
+      item.className = `permissions-popover-menu-item${selected ? " selected" : ""}`;
+      item.setAttribute("role", "option");
+      item.setAttribute("aria-selected", String(selected));
+
+      const text = document.createElement("span");
+      text.textContent = STATUS_LABELS[status];
+      item.appendChild(text);
+
+      if (selected) {
+        const check = document.createElement("span");
+        check.className = "permissions-popover-menu-check";
+        check.innerHTML =
+          '<svg viewBox="0 0 12 10" width="12" height="10" aria-hidden="true">' +
+          '<path d="M1 5l3.5 3.5L11 1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        item.appendChild(check);
+      }
+
+      item.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        closeOpenDropdown();
+        onChange(status);
+      });
+
+      menu.appendChild(item);
+    }
+
+    wrap.appendChild(menu);
+    trigger.setAttribute("aria-expanded", "true");
+
+    function onDocClick(ev: MouseEvent): void {
+      if (!wrap.contains(ev.target as Node)) {
+        closeOpenDropdown();
+      }
+    }
+    function onKeyDown(ev: KeyboardEvent): void {
+      if (ev.key === "Escape") {
+        closeOpenDropdown();
+      }
+    }
+    document.addEventListener("click", onDocClick);
+    document.addEventListener("keydown", onKeyDown);
+
+    openDropdownCleanup = (): void => {
+      menu.remove();
+      trigger.setAttribute("aria-expanded", "false");
+      document.removeEventListener("click", onDocClick);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  });
+
+  return wrap;
 }
 
 // ── Resolution Mode Toggle ───────────────────────────────────
@@ -625,6 +729,8 @@ function setPermissionsPopoverOpen(open: boolean): void {
   permissionsPopoverBackdrop?.classList.toggle("open", open);
   if (open) {
     renderPermissionsPopover();
+  } else {
+    closeOpenDropdown();
   }
 }
 
@@ -1583,8 +1689,28 @@ function renderCacheToggle(
 
 // ── Modal ─────────────────────────────────────────────────
 
-function openModal(): void {
+function openModal(reason?: string, label?: string): void {
   modalQr.innerHTML = `<div class="spinner"></div>`;
+  // A bare "localhost:<port>" label means dotli is in localhost-proxy
+  // mode rendering a local dev server directly (apps/host/src/main.ts
+  // localhost-proxy branch) — show it as-is. Deployed dotNs products
+  // served via `<label>.localhost:<port>` still pass through as the bare
+  // label and get the ".dot" suffix.
+  let productLabel = "";
+  if (label !== undefined && label.length > 0) {
+    productLabel = label.startsWith("localhost:") ? label : `${label}.dot`;
+  }
+  modalTitle.innerHTML =
+    productLabel.length > 0
+      ? `${escapeHtml(productLabel)} is asking you <span class="auth-modal-title-nowrap">to sign in</span>`
+      : "Login with Polkadot Mobile";
+  if (reason !== undefined && reason.length > 0) {
+    modalReason.textContent = reason;
+    modalReason.hidden = false;
+  } else {
+    modalReason.textContent = "";
+    modalReason.hidden = true;
+  }
   modalBackdrop.classList.add("open");
 }
 

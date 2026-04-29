@@ -32,6 +32,13 @@
   margin-bottom: 16px;
   line-height: 1.4;
 }
+.auth-modal-reason {
+  font-style: italic;
+  margin-bottom: 4px !important;
+}
+.auth-modal-title-nowrap {
+  white-space: nowrap;
+}
 .auth-modal-qr {
   display: flex;
   align-items: center;

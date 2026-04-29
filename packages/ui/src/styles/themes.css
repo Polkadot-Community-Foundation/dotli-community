@@ -257,14 +257,38 @@
 [data-theme="light"] .permissions-popover-name {
   color: #333;
 }
-[data-theme="light"] .permissions-toggle-track {
-  background: #ddd;
+[data-theme="light"] .permissions-popover-select {
+  background: #f5f5f5;
+  border-color: #ddd;
+  color: #333;
 }
-[data-theme="light"] .permissions-toggle-knob {
-  background: #999;
+[data-theme="light"] .permissions-popover-select:hover {
+  background: #eee;
+  border-color: #bbb;
 }
-[data-theme="light"] .permissions-popover-toggle.on .permissions-toggle-knob {
+[data-theme="light"] .permissions-popover-select[aria-expanded="true"] {
+  background: #eee;
+  border-color: #999;
+}
+[data-theme="light"] .permissions-popover-select-caret {
+  color: #666;
+}
+[data-theme="light"] .permissions-popover-menu {
   background: #fff;
+  border-color: #ddd;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+[data-theme="light"] .permissions-popover-menu-item {
+  color: #333;
+}
+[data-theme="light"] .permissions-popover-menu-item:hover {
+  background: #f5f5f5;
+}
+[data-theme="light"] .permissions-popover-menu-item.selected {
+  color: #111;
+}
+[data-theme="light"] .permissions-popover-menu-check {
+  color: #16a34a;
 }
 [data-theme="light"] .mode-popover {
   background: #fff;
