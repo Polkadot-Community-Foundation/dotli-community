@@ -37,6 +37,12 @@ server {
 
     include /etc/nginx/snippets/sentry-tunnel.conf;
 
+    location = /__preview {
+        set $csp_ancestors "revx.dev stg.revx.dev http://localhost:*";
+        include /etc/nginx/snippets/dotli-headers-iframeable.conf;
+        try_files /index.html =404;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }
@@ -82,7 +88,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/testnet.li/privkey.pem;
     include /etc/nginx/snippets/dotli-ssl.conf;
 
-    set $csp_ancestors "testnet.li *.testnet.li *.app.testnet.li";
+    set $csp_ancestors "testnet.li *.testnet.li *.app.testnet.li revx.dev stg.revx.dev http://localhost:*";
     include /etc/nginx/snippets/dotli-headers-iframeable.conf;
     include /etc/nginx/snippets/dotli-precompressed.conf;
 

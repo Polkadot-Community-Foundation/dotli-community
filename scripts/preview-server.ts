@@ -69,6 +69,9 @@ function serveFile(filePath: string): Response | null {
       "Content-Type": mime,
       "Service-Worker-Allowed": "/",
       "Access-Control-Allow-Origin": "*",
+      "Cross-Origin-Resource-Policy": "cross-origin",
+      "Cross-Origin-Embedder-Policy": "credentialless",
+      "Cross-Origin-Opener-Policy": "same-origin",
       "Cache-Control": "no-cache",
     },
   });

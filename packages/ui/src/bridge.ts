@@ -106,7 +106,7 @@ export async function renderIframe(url: string, label: string): Promise<void> {
     "allow-forms",
     "allow-pointer-lock",
   );
-  iframe.allow = buildAllowAttribute(label);
+  iframe.allow = `${buildAllowAttribute(label)}; cross-origin-isolated`;
   iframe.style.cssText = iframeStyle;
   document.body.style.margin = "0";
   document.body.style.overflow = "hidden";

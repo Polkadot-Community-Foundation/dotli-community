@@ -1,6 +1,7 @@
 // dot.li — Host entry point
 //
-// Flow: parse URL → resolve .dot name via smoldot → iframe to cid.app.dot.li
+// Flow: parse URL → render direct preview/local target, or resolve .dot name
+// via smoldot → iframe to cid.app.dot.li.
 
 // Polyfill for Safari < 18.4 which lacks requestIdleCallback
 if (typeof globalThis.requestIdleCallback !== "function") {
@@ -44,6 +45,7 @@ import {
   type ChainBackend,
 } from "@dotli/config/mode";
 import { describeError } from "./errors";
+import { parsePreviewTargetUrl } from "./preview-route";
 
 // Surface chunk-load failures explicitly: capture the original cause to
 // Sentry and let the user opt into a reload, instead of reloading silently.
@@ -339,9 +341,11 @@ type RenderChunk = typeof RenderModule;
 // ── Main ─────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  const previewTargetUrl = parsePreviewTargetUrl(window.location);
+
   // Guard: if running inside an iframe, bail out to avoid a nested
   // dot.li instance with a duplicate topbar.
-  if (window.self !== window.top) {
+  if (window.self !== window.top && previewTargetUrl === null) {
     return;
   }
 
@@ -412,6 +416,27 @@ async function main(): Promise<void> {
   log.warn(`[dot.li perf] initTopBar() done (${dur(t0)})`);
 
   const label = parseDotLabel();
+
+  if (label === null && previewTargetUrl !== null) {
+    const host = new URL(previewTargetUrl).host;
+    log.warn(`[dot.li perf] Preview route: ${host} (${elapsed(T0)})`);
+
+    const urlBar = document.getElementById("topbar-url");
+    if (urlBar !== null) {
+      urlBar.innerHTML = `<div class="topbar-url-pill localhost-pill" id="url-pill"><svg class="localhost-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="dot-domain">${escapeHtml(host)}</span></div>`;
+    }
+
+    const { renderIframe } = await import("@dotli/ui/bridge");
+    await renderIframe(previewTargetUrl, host);
+    history.replaceState(
+      null,
+      "",
+      `/__preview?url=${encodeURIComponent(previewTargetUrl)}`,
+    );
+    document.title = `${host} — ${SITE_ID}`;
+    performance.mark("dotli:main:end");
+    return;
+  }
 
   // ── Localhost proxy: render local dev server directly in iframe ──
   const localhostUrl = parseLocalhostUrl();
