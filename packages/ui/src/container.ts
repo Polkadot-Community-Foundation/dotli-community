@@ -11,6 +11,7 @@ import {
   createDefaultLogger,
   DeriveEntropyErr,
   GenericError,
+  GetUserIdErr,
   LoginErr,
   PaymentBalanceErr,
   PaymentRequestErr,
@@ -163,7 +164,7 @@ function wireContainerHandlers(
         derivationIndex,
       );
 
-      return ok({ publicKey, name: undefined });
+      return ok({ publicKey });
     },
   );
 
@@ -180,21 +181,26 @@ function wireContainerHandlers(
     return ok([]);
   });
 
-  // RFC-0010 — return the user's root (primary) account. The host
-  // associates the DotNS identity with the paired remote account, so
-  // we mirror the shape used by `handleGetLegacyAccounts`. No prompt
-  // is shown: the legacy-accounts handler above already leaks the
-  // same `liteUsername`, so a silent grant matches today's threat
-  // model. Revisit if legacy accounts ever become gated.
-  container.handleAccountGetRoot((_, { ok, err }) => {
+  // RFC-0014 — return the user's primary username (replaces the
+  // RFC-0010 root-account slot removed in host-api 0.7.4). The host
+  // picks what counts as "primary" per product; dotli surfaces the
+  // same `liteUsername` already exposed via `handleGetLegacyAccounts`,
+  // so no prompt is shown. `NotConnected` strictly precedes
+  // `PermissionDenied` per the RFC.
+  container.handleGetUserId((_, { ok, err }) => {
     const state = getAuthState();
     if (state.status !== "authenticated") {
-      return err(new RequestCredentialsErr.NotConnected(undefined));
+      return err(new GetUserIdErr.NotConnected(undefined));
     }
-    return ok({
-      publicKey: state.session.remoteAccount.accountId,
-      name: state.identity?.liteUsername,
-    });
+    const primaryUsername = state.identity?.liteUsername;
+    if (primaryUsername === undefined || primaryUsername === "") {
+      return err(
+        new GetUserIdErr.Unknown({
+          reason: "No primary username for this session",
+        }),
+      );
+    }
+    return ok({ primaryUsername });
   });
 
   // RFC-0009 — products can trigger the host login flow. `requestLogin`
