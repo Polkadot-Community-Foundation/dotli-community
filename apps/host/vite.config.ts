@@ -300,6 +300,28 @@ function githubPages404(): Plugin {
 }
 
 /**
+ * Mirror nginx scoping: COEP/COOP/CORP only apply to /__preview, not the
+ * whole host build. Applying them server-wide breaks the legacy
+ * /localhost:<port> proxy iframe in browsers that enforce COEP, because
+ * arbitrary localhost dev servers don't ship CORP/COEP.
+ */
+function previewCoepHeaders(): Plugin {
+  return {
+    name: "preview-coep-headers",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url?.startsWith("/__preview")) {
+          res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+          res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
+          res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+        }
+        next();
+      });
+    },
+  };
+}
+
+/**
  * Sentry plugin — only active when SENTRY_AUTH_TOKEN is set (CI deploys).
  * Skipped locally so source maps are preserved for debugging.
  */
@@ -327,6 +349,7 @@ export default defineConfig({
     preconnectBootnodes(),
     preloadCriticalAssets(),
     githubPages404(),
+    previewCoepHeaders(),
     sentry(),
   ],
   resolve: {
@@ -381,9 +404,6 @@ export default defineConfig({
     headers: {
       "Service-Worker-Allowed": "/",
       "Access-Control-Allow-Origin": "*",
-      "Cross-Origin-Resource-Policy": "cross-origin",
-      "Cross-Origin-Embedder-Policy": "credentialless",
-      "Cross-Origin-Opener-Policy": "same-origin",
     },
   },
 });

@@ -57,24 +57,25 @@ const MIME: Record<string, string> = {
   ".map": "application/json",
 };
 
-function serveFile(filePath: string): Response | null {
+function serveFile(filePath: string, coep: boolean): Response | null {
   try {
     if (!existsSync(filePath) || statSync(filePath).isDirectory()) return null;
   } catch {
     return null;
   }
   const mime = MIME[extname(filePath)] ?? "application/octet-stream";
-  return new Response(Bun.file(filePath), {
-    headers: {
-      "Content-Type": mime,
-      "Service-Worker-Allowed": "/",
-      "Access-Control-Allow-Origin": "*",
-      "Cross-Origin-Resource-Policy": "cross-origin",
-      "Cross-Origin-Embedder-Policy": "credentialless",
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cache-Control": "no-cache",
-    },
-  });
+  const headers: Record<string, string> = {
+    "Content-Type": mime,
+    "Service-Worker-Allowed": "/",
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-cache",
+  };
+  if (coep) {
+    headers["Cross-Origin-Resource-Policy"] = "cross-origin";
+    headers["Cross-Origin-Embedder-Policy"] = "credentialless";
+    headers["Cross-Origin-Opener-Policy"] = "same-origin";
+  }
+  return new Response(Bun.file(filePath), { headers });
 }
 
 Bun.serve({
@@ -90,18 +91,24 @@ Bun.serve({
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === "/") pathname = `/${fallback}`;
 
+    // Mirror nginx: COEP applies to the app + protocol builds (iframeable
+    // origins) and to the /__preview location on the host build, but not
+    // to the rest of the host build — otherwise the /localhost:<port>
+    // proxy iframe gets blocked.
+    const coep = isApp || isProtocol || pathname.startsWith("/__preview");
+
     // Try exact file
     const exact = join(baseDir, pathname);
-    const res = serveFile(exact);
+    const res = serveFile(exact, coep);
     if (res) return res;
 
     // Try directory index
-    const res2 = serveFile(join(exact, "index.html"));
+    const res2 = serveFile(join(exact, "index.html"), coep);
     if (res2) return res2;
 
     // SPA fallback
     return (
-      serveFile(join(baseDir, fallback)) ??
+      serveFile(join(baseDir, fallback), coep) ??
       new Response("Not Found", { status: 404 })
     );
   },
