@@ -5,10 +5,15 @@
  */
 
 import { test, expect, type Page, type Frame } from "@playwright/test";
+import {
+  IFRAME_FORWARDER,
+  SHARED_WORKER_FORWARDER,
+  WORKER_FORWARDER,
+} from "./helpers/iframe-logs-forwarder";
 
 const DOMAIN = process.env.COMBO_DOMAIN ?? "host-playground";
 const PORT = process.env.COMBO_PORT ?? "5173";
-const TIMEOUT_MS = parseInt(process.env.COMBO_TIMEOUT_MS ?? "120000", 10);
+const TIMEOUT_MS = parseInt(process.env.COMBO_TIMEOUT_MS ?? "45000", 10);
 
 const CHAIN_BACKENDS = [
   "smoldot-shared-worker",
@@ -122,32 +127,62 @@ test.describe("Resolution with different backend settings", () => {
           },
         );
 
+        await context.route("**", async (route) => {
+          const req = route.request();
+          if (req.resourceType() !== "document") {
+            await route.continue();
+            return;
+          }
+          process.stdout.write(`[route:doc] ${req.url()}\n`);
+          try {
+            const response = await route.fetch();
+            const ct = (response.headers()["content-type"] || "").toLowerCase();
+            const body = await response.text();
+            const injected = body.replace(
+              /<head(\s[^>]*)?>/i,
+              (m) => `${m}${IFRAME_FORWARDER}`,
+            );
+            const finalBody =
+              body.length > 0 && injected !== body
+                ? injected
+                : IFRAME_FORWARDER + body;
+            await route.fulfill({
+              response,
+              body: finalBody,
+              headers: { ...response.headers(), "content-type": "text/html" },
+            });
+            process.stdout.write(
+              `[route:doc:done] ${req.url()} ct=${ct || "(none)"} injected=${finalBody !== body}\n`,
+            );
+          } catch (err) {
+            process.stdout.write(
+              `[route:doc:err] ${req.url()} ${err instanceof Error ? err.message : String(err)}\n`,
+            );
+            await route.continue();
+          }
+        });
+        await context.route("**/*smoldot_worker*.js", async (route) => {
+          try {
+            const response = await route.fetch();
+            const body = await response.text();
+            await route.fulfill({
+              response,
+              body: WORKER_FORWARDER + body,
+              headers: {
+                ...response.headers(),
+                "content-type": "application/javascript",
+              },
+            });
+          } catch {
+            await route.continue();
+          }
+        });
+
         await context.route("**/protocol-shared-worker-*.js", async (route) => {
           const response = await route.fetch();
           const body = await response.text();
-          const forwarder = `
-const __pwOrigWarn = console.warn.bind(console);
-const __pwPorts = [];
-self.addEventListener('connect', (e) => {
-  const port = e.ports[0];
-  __pwPorts.push(port);
-  port.addEventListener('message', (msg) => {
-    if (msg.data && msg.data.__pw_sw_ping__) {
-      port.postMessage({ __pw_sw_pong__: true });
-    }
-  });
-  port.start();
-});
-console.warn = (...args) => {
-  __pwOrigWarn(...args);
-  const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-  for (const p of __pwPorts) {
-    try { p.postMessage({ __pw_sw_log__: true, text }); } catch (_) {}
-  }
-};
-`;
           await route.fulfill({
-            body: forwarder + body,
+            body: SHARED_WORKER_FORWARDER + body,
             contentType: "application/javascript",
           });
         });
@@ -178,8 +213,11 @@ console.warn = (...args) => {
           if (msg.type() === "error") {
             consoleErrors.push(msg.text());
           }
-          if (msg.type() === "warning") {
-            console.log(`[page] ${msg.text()}`);
+          const text = msg.text();
+          if (text.startsWith("[FRAMELOG]")) {
+            console.log(text);
+          } else if (msg.type() === "error") {
+            console.log(`[raw:error] ${text}`);
           }
         });
 

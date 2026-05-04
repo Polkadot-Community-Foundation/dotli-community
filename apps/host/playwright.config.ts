@@ -7,6 +7,7 @@ export default defineConfig({
   use: {
     baseURL: "http://browse.localhost:5173",
     browserName: "chromium",
+    channel: process.env.CHANNEL,
     headless: process.env.HEADED !== "1",
     bypassCSP: true,
     launchOptions: {

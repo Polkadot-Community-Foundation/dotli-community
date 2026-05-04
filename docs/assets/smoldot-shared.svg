@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 970 800" font-family="sans-serif" font-size="12">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#4a4a4a"/>
+    </marker>
+    <marker id="arrow-return" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#808080"/>
+    </marker>
+  </defs>
+
+  <!-- Participants — 6 equal boxes, evenly distributed -->
+  <rect x="15" y="10" width="140" height="50" rx="6" fill="#e8e8e8" stroke="#606060" stroke-width="1.5"/>
+  <text x="85" y="40" text-anchor="middle" font-weight="bold" fill="#3a3a3a">User</text>
+
+  <rect x="175" y="10" width="140" height="50" rx="6" fill="#c0c0c0" stroke="#606060" stroke-width="1.5"/>
+  <text x="245" y="32" text-anchor="middle" font-weight="bold" fill="#3a3a3a">apps/host</text>
+  <text x="245" y="50" text-anchor="middle" font-size="10" fill="#606060">example*.dot.li</text>
+
+  <rect x="335" y="10" width="140" height="50" rx="6" fill="#c0c0c0" stroke="#606060" stroke-width="1.5"/>
+  <text x="405" y="32" text-anchor="middle" font-weight="bold" fill="#3a3a3a">Tab 1 · apps/protocol</text>
+  <text x="405" y="50" text-anchor="middle" font-size="10" fill="#606060">example1.dot.li</text>
+
+  <rect x="495" y="10" width="140" height="50" rx="6" fill="#c0c0c0" stroke="#606060" stroke-width="1.5"/>
+  <text x="565" y="32" text-anchor="middle" font-weight="bold" fill="#3a3a3a">Tab 2 · apps/protocol</text>
+  <text x="565" y="50" text-anchor="middle" font-size="10" fill="#606060">example2.dot.li</text>
+
+  <rect x="655" y="10" width="140" height="50" rx="6" fill="#a8a8a8" stroke="#606060" stroke-width="1.5"/>
+  <text x="725" y="32" text-anchor="middle" font-weight="bold" fill="#3a3a3a">smoldot</text>
+  <text x="725" y="50" text-anchor="middle" font-size="10" fill="#606060">SharedWorker</text>
+
+  <rect x="815" y="10" width="140" height="50" rx="6" fill="#909090" stroke="#606060" stroke-width="1.5"/>
+  <text x="885" y="32" text-anchor="middle" font-weight="bold" fill="#3a3a3a">Polkadot</text>
+  <text x="885" y="50" text-anchor="middle" font-size="10" fill="#3a3a3a">Asset Hub · Bulletin</text>
+
+  <!-- Lifecycle bands -->
+  <rect x="665" y="70" width="120" height="95" rx="4" fill="none" stroke="#606060" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="725" y="87" text-anchor="middle" font-size="11" font-weight="bold" fill="#606060">Cold</text>
+
+  <rect x="665" y="165" width="120" height="310" rx="4" fill="none" stroke="#606060" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="725" y="182" text-anchor="middle" font-size="11" font-weight="bold" fill="#606060">Booting</text>
+
+  <rect x="665" y="475" width="120" height="210" rx="4" fill="none" stroke="#606060" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="725" y="492" text-anchor="middle" font-size="11" font-weight="bold" fill="#606060">Warm</text>
+
+  <rect x="665" y="685" width="120" height="105" rx="4" fill="none" stroke="#606060" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="725" y="702" text-anchor="middle" font-size="11" font-weight="bold" fill="#606060">Cold</text>
+
+  <!-- Lifelines -->
+  <line x1="85"  y1="60" x2="85"  y2="792" stroke="#b0b0b0" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="245" y1="60" x2="245" y2="792" stroke="#b0b0b0" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="405" y1="60" x2="405" y2="792" stroke="#b0b0b0" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="565" y1="60" x2="565" y2="792" stroke="#b0b0b0" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="725" y1="60" x2="725" y2="792" stroke="#b0b0b0" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="885" y1="60" x2="885" y2="792" stroke="#b0b0b0" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- 1. User → apps/host: visit example1 -->
+  <line x1="85" y1="105" x2="239" y2="105" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="162" y="99" text-anchor="middle" fill="#3a3a3a">visit example1.dot.li · opens Tab 1</text>
+  <text x="10" y="108" fill="#909090" font-size="10">1</text>
+
+  <!-- 2. apps/host → Tab1 protocol: iframe -->
+  <line x1="245" y1="140" x2="399" y2="140" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="322" y="134" text-anchor="middle" fill="#3a3a3a">iframe src=host.dot.li?mode=shared-worker</text>
+  <text x="10" y="143" fill="#909090" font-size="10">2</text>
+
+  <!-- 3. Tab1 protocol → smoldot: first port (Cold → Booting) -->
+  <line x1="405" y1="180" x2="719" y2="180" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="562" y="174" text-anchor="middle" fill="#3a3a3a">new SharedWorker · port.start() (first port)</text>
+  <text x="562" y="192" text-anchor="middle" font-size="9" fill="#707070">browser spawns the SharedWorker</text>
+  <text x="10" y="183" fill="#909090" font-size="10">3</text>
+
+  <!-- 4. smoldot self: start + addChain(paseo) -->
+  <path d="M 725 218 H 770 V 232 H 731" fill="none" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="778" y="225" text-anchor="start" fill="#3a3a3a">smoldot.start() · addChain(paseo)</text>
+  <text x="778" y="238" text-anchor="start" font-size="9" fill="#707070">relay chain · chainId = 0</text>
+  <text x="10" y="229" fill="#909090" font-size="10">4</text>
+
+  <!-- 5. smoldot → Polkadot: Paseo warp-sync -->
+  <line x1="725" y1="268" x2="879" y2="268" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="802" y="262" text-anchor="middle" fill="#3a3a3a">libp2p · Paseo warp-sync</text>
+  <text x="10" y="271" fill="#909090" font-size="10">5</text>
+
+  <!-- 6. Polkadot → smoldot: Paseo ready (return) -->
+  <line x1="885" y1="300" x2="731" y2="300" stroke="#808080" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#arrow-return)"/>
+  <text x="808" y="295" text-anchor="middle" fill="#808080">Paseo chain-info built</text>
+  <text x="10" y="303" fill="#909090" font-size="10">6</text>
+
+  <!-- 7. smoldot self: addChain(AH paseo, relay=paseo) -->
+  <path d="M 725 330 H 770 V 344 H 731" fill="none" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="778" y="337" text-anchor="start" fill="#3a3a3a">addChain(asset-hub-paseo, relay=paseo)</text>
+  <text x="778" y="350" text-anchor="start" font-size="9" fill="#707070">parachain · chainId = 1</text>
+  <text x="10" y="341" fill="#909090" font-size="10">7</text>
+
+  <!-- 8. smoldot → Polkadot: AH paraheads subscribe -->
+  <line x1="725" y1="380" x2="879" y2="380" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="802" y="374" text-anchor="middle" fill="#3a3a3a">libp2p · AH paraheads-subscribed</text>
+  <text x="10" y="383" fill="#909090" font-size="10">8</text>
+
+  <!-- 9. Polkadot → smoldot: AH finalized (return) -->
+  <line x1="885" y1="412" x2="731" y2="412" stroke="#808080" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#arrow-return)"/>
+  <text x="808" y="407" text-anchor="middle" fill="#808080">AH finalized block</text>
+  <text x="10" y="415" fill="#909090" font-size="10">9</text>
+
+  <!-- 10. smoldot self: presync complete (Booting → Warm) -->
+  <path d="M 725 446 H 770 V 460 H 731" fill="none" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="778" y="452" text-anchor="start" fill="#3a3a3a">presync complete</text>
+  <text x="778" y="465" text-anchor="start" font-size="9" fill="#707070">Booting → Warm · broadcast ready to every port</text>
+  <text x="10" y="457" fill="#909090" font-size="10">10</text>
+
+  <!-- 11. User → host: visit example2 -->
+  <line x1="85" y1="498" x2="239" y2="498" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="162" y="492" text-anchor="middle" fill="#3a3a3a">visit example2.dot.li · opens Tab 2</text>
+  <text x="10" y="501" fill="#909090" font-size="10">11</text>
+
+  <!-- 12. apps/host → Tab2 protocol: iframe -->
+  <line x1="245" y1="534" x2="559" y2="534" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="402" y="528" text-anchor="middle" fill="#3a3a3a">iframe src=host.dot.li?mode=shared-worker</text>
+  <text x="10" y="537" fill="#909090" font-size="10">12</text>
+
+  <!-- 13. Tab2 protocol → smoldot: connect -->
+  <line x1="565" y1="575" x2="719" y2="575" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="642" y="569" text-anchor="middle" fill="#3a3a3a">port.start() (additional port)</text>
+  <text x="642" y="587" text-anchor="middle" font-size="9" fill="#707070">already Warm — served immediately, no re-sync</text>
+  <text x="10" y="578" fill="#909090" font-size="10">13</text>
+
+  <!-- 14. User closes Tab 1 -->
+  <line x1="85" y1="620" x2="719" y2="620" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="402" y="614" text-anchor="middle" fill="#3a3a3a">user closes Tab 1 · iframe unloads · port.close()</text>
+  <text x="402" y="632" text-anchor="middle" font-size="9" fill="#707070">1 port remains — still Warm · smoldot keeps syncing</text>
+  <text x="10" y="623" fill="#909090" font-size="10">14</text>
+
+  <!-- 15. User closes Tab 2 (last port) -->
+  <line x1="85" y1="665" x2="719" y2="665" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="402" y="659" text-anchor="middle" fill="#3a3a3a">user closes Tab 2 · iframe unloads · port.close() (last port)</text>
+  <text x="402" y="677" text-anchor="middle" font-size="9" fill="#707070">browser tears down the SharedWorker</text>
+  <text x="10" y="668" fill="#909090" font-size="10">15</text>
+
+  <!-- 16. smoldot self: terminate -->
+  <path d="M 725 715 H 770 V 729 H 731" fill="none" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="778" y="725" text-anchor="start" fill="#3a3a3a">smoldot.terminate() · in-memory state lost</text>
+  <text x="10" y="725" fill="#909090" font-size="10">16</text>
+
+  <!-- 17. libp2p drops -->
+  <line x1="725" y1="760" x2="879" y2="760" stroke="#808080" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#arrow-return)"/>
+  <text x="802" y="755" text-anchor="middle" fill="#808080">libp2p drops · peer book lost</text>
+  <text x="10" y="763" fill="#909090" font-size="10">17</text>
+</svg>
