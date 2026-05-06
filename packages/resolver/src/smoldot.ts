@@ -110,9 +110,11 @@ function smoldotLogCallback(
   target: string,
   message: string,
 ): void {
-  // Level 1 = Error, 2 = Warn
+  // Level 1 = Error, 2 = Warn, 3 = Info, 4 = Debug, 5 = Trace
   if (level <= 2) {
     log.warn(`[smoldot:${target}] ${message}`);
+  } else {
+    log.debug(`[smoldot:${target}] ${message}`);
   }
 
   // Panic — terminal, no recovery. Smoldot's log message starts with
@@ -159,7 +161,7 @@ export function getSmoldotDirect(): SmoldotClient {
   }
   log.warn("[dot.li smoldot] Creating smoldot via start() (current thread)");
   smoldotInstance = startSmoldotDirect({
-    maxLogLevel: 2,
+    maxLogLevel: 5,
     logCallback: smoldotLogCallback,
   });
   log.warn("[dot.li smoldot] Smoldot client ready (direct mode)");
@@ -172,7 +174,7 @@ export function getSmoldot(): SmoldotClient {
   }
   log.warn("[dot.li smoldot] Creating smoldot via startFromWorker()");
   smoldotInstance = startFromWorker(new SmWorker(), {
-    maxLogLevel: import.meta.env.DEV ? 3 : 2,
+    maxLogLevel: 5,
     logCallback: smoldotLogCallback,
   });
   return smoldotInstance;
