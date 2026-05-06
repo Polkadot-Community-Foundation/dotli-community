@@ -118,7 +118,9 @@ describe("isDevicePermission", () => {
     expect(isDevicePermission("StatementSubmit")).toBe(false);
   });
 
-  it("rejects auto-granted device permissions absent from the policy map", () => {
+  it("rejects device permissions absent from the policy map", () => {
+    // Notifications is host-gated separately (see handleDevicePermission)
+    // but has no Permissions Policy directive. OpenUrl is auto-granted.
     expect(isDevicePermission("Notifications")).toBe(false);
     expect(isDevicePermission("OpenUrl")).toBe(false);
   });
@@ -126,13 +128,13 @@ describe("isDevicePermission", () => {
 
 describe("isEnforceableDevicePermission", () => {
   it("rejects auto-granted device permissions", () => {
-    expect(isEnforceableDevicePermission("Notifications")).toBe(false);
     expect(isEnforceableDevicePermission("OpenUrl")).toBe(false);
   });
 
   it("accepts gateable device permissions", () => {
     expect(isEnforceableDevicePermission("Camera")).toBe(true);
     expect(isEnforceableDevicePermission("Microphone")).toBe(true);
+    expect(isEnforceableDevicePermission("Notifications")).toBe(true);
   });
 });
 

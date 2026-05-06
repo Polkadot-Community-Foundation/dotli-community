@@ -8,9 +8,9 @@ import {
 // Shows a confirmation dialog when a product requests a permission the
 // host can actually gate: the Permissions-Policy-backed device
 // variants (Camera, Microphone, Location, Bluetooth, NFC, Clipboard,
-// Biometrics) and the internal submit gates (ChainSubmit,
-// PreimageSubmit, StatementSubmit). `Notifications` / `OpenUrl` are
-// auto-granted at the container level and never reach this modal.
+// Biometrics, Notifications) and the internal submit gates (ChainSubmit,
+// PreimageSubmit, StatementSubmit). `OpenUrl` is auto-granted at the
+// container level and never reaches this modal.
 // Returns a Promise that resolves on "Allow" and rejects on "Deny".
 //
 // DOM structure follows the signing modal pattern (signing.css).
@@ -19,6 +19,7 @@ export const PERMISSION_DESCRIPTIONS: Record<
   EnforceablePermissionName,
   string
 > = {
+  Notifications: "Show in-app and system notifications",
   Camera: "Access your camera for photo and video capture",
   Microphone: "Access your microphone for audio input",
   Location: "Access your location for geolocation services",
@@ -32,6 +33,10 @@ export const PERMISSION_DESCRIPTIONS: Record<
 };
 
 const PERMISSION_ICONS: Record<EnforceablePermissionName, string> = {
+  Notifications:
+    '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>' +
+    '<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
   Camera:
     '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>' +

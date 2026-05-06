@@ -19,7 +19,7 @@ export type PermissionName =
   | "StatementSubmit";
 
 /** Device permissions the host can't actually gate (see AUTO_GRANT_DEVICE_PERMISSIONS). */
-export type AutoGrantDevicePermission = "Notifications" | "OpenUrl";
+export type AutoGrantDevicePermission = "OpenUrl";
 
 /** Device permissions that DO have a host-side enforcement point. */
 export type EnforceableDevicePermission = Exclude<
@@ -57,21 +57,20 @@ export const DEVICE_PERMISSION_POLICY: Partial<
   Biometrics: "publickey-credentials-get",
   // Chromium-only; harmless to include on browsers that ignore it.
   NFC: "nfc",
-  // Notifications and OpenUrl are not gated by a Permissions Policy
-  // directive — the browser Notifications API has its own prompt, and
-  // cross-origin navigation is controlled by the anchor/window.open path.
+  // Notifications has no Permissions Policy directive but IS host-gated
+  // separately in handleDevicePermission (tri-state, no iframe reload).
+  // OpenUrl: cross-origin navigation happens via anchor / window.open.
 };
 
 /**
- * Device permissions whose enforcement is outside the host's reach:
- *   - Notifications — the browser has its own prompt (Notifications.requestPermission)
- *   - OpenUrl      — cross-origin navigation happens via anchor / window.open
- * Requests for these always resolve `true` and they are hidden from the
- * settings popover — offering a control that can't actually block would
- * mislead users.
+ * Device permissions whose enforcement is outside the host's reach.
+ * Currently only OpenUrl — cross-origin navigation happens via anchor /
+ * window.open and has no host-side enforcement point. Requests for it
+ * always resolve `true` and it is hidden from the settings popover —
+ * offering a control that can't actually block would mislead users.
  */
 export const AUTO_GRANT_DEVICE_PERMISSIONS: ReadonlySet<AutoGrantDevicePermission> =
-  new Set<AutoGrantDevicePermission>(["Notifications", "OpenUrl"]);
+  new Set<AutoGrantDevicePermission>(["OpenUrl"]);
 
 /** Type guard: narrows `DevicePermissionName` past the auto-grant set. */
 export function isEnforceableDevicePermission(
@@ -85,6 +84,7 @@ export const ALL_PERMISSIONS: readonly {
   name: EnforceablePermissionName;
   label: string;
 }[] = [
+  { name: "Notifications", label: "Notifications" },
   { name: "Camera", label: "Camera" },
   { name: "Microphone", label: "Microphone" },
   { name: "Location", label: "Location" },

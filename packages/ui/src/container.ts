@@ -27,9 +27,10 @@ import type { Provider } from "@novasamatech/host-api";
 import {
   createContainer,
   createIframeProvider,
+  createRateLimiter,
   deriveProductEntropy,
 } from "@novasamatech/host-container";
-import type { Container } from "@novasamatech/host-container";
+import type { Container, RateLimiter } from "@novasamatech/host-container";
 import type { SignedStatement } from "@novasamatech/sdk-statement";
 import {
   createSr25519Prover,
@@ -110,7 +111,36 @@ function wireContainerHandlers(
   container: Container,
   label: string,
   storagePrefix: string,
-): void {
+): () => void {
+  // ── Rate limiters ──────────────────────────────────────
+  //
+  // One queue-strategy limiter per call-site domain. Browser parity
+  // (browser/src/shared/rateLimiter/index.ts): 20 req/s, 100 queued.
+  // Each limiter owns a refill timer that must be released on teardown.
+
+  function makeLimiter(onDrop: () => unknown): RateLimiter {
+    return createRateLimiter({
+      strategy: "queue",
+      maxRequestsPerInterval: 20,
+      intervalMs: 1000,
+      maxQueuedRequests: 100,
+      onDrop,
+    });
+  }
+
+  const aliasLimiter = makeLimiter(
+    () => new RequestCredentialsErr.Unknown({ reason: "Rate limited" }),
+  );
+  const permissionLimiter = makeLimiter(
+    () => new GenericError({ reason: "Rate limited" }),
+  );
+  const submitLimiter = makeLimiter(
+    () => new GenericError({ reason: "Rate limited" }),
+  );
+  const preimageLimiter = makeLimiter(
+    () => new PreimageSubmitErr.Unknown({ reason: "Rate limited" }),
+  );
+
   let chainConnectionWarned = false;
 
   function warnOnRawChainConnection(genesisHash: string): void {
@@ -158,6 +188,10 @@ function wireContainerHandlers(
         return err(new RequestCredentialsErr.NotConnected(undefined));
       }
 
+      if (!dotNsUrl.isProductIdentifier(dotNsIdentifier)) {
+        return err(new RequestCredentialsErr.DomainNotValid(undefined));
+      }
+
       const publicKey = deriveProductPublicKey(
         session.remoteAccount.accountId,
         dotNsIdentifier,
@@ -192,7 +226,8 @@ function wireContainerHandlers(
     if (state.status !== "authenticated") {
       return err(new GetUserIdErr.NotConnected(undefined));
     }
-    const primaryUsername = state.identity?.liteUsername;
+    const primaryUsername =
+      state.identity?.fullUsername ?? state.identity?.liteUsername;
     if (primaryUsername === undefined || primaryUsername === "") {
       return err(
         new GetUserIdErr.Unknown({
@@ -222,52 +257,42 @@ function wireContainerHandlers(
     });
   });
 
-  const aliasLimiter = createSubmitRateLimiter();
+  container.handleAccountGetAlias((productAccountId, { err }) =>
+    aliasLimiter.schedule(() => {
+      const session = getSession();
+      if (!session) {
+        return err(new RequestCredentialsErr.NotConnected(undefined));
+      }
 
-  container.handleAccountGetAlias((productAccountId, { err }) => {
-    if (!aliasLimiter.allow()) {
-      return errAsync(
-        new RequestCredentialsErr.Unknown({ reason: "Rate limited" }),
+      if (!dotNsUrl.isProductIdentifier(productAccountId[0])) {
+        return err(new RequestCredentialsErr.DomainNotValid(undefined));
+      }
+
+      const identifier = label + ".dot";
+      const isOwnDomain = identifier === productAccountId[0];
+
+      if (isOwnDomain) {
+        return session
+          .getRingVrfAlias(productAccountId, identifier)
+          .mapErr(
+            (error) =>
+              new RequestCredentialsErr.Unknown({ reason: error.message }),
+          );
+      }
+
+      return fromPromise(
+        showAliasPermissionModal(identifier, productAccountId[0]),
+        () => new RequestCredentialsErr.Rejected(undefined),
+      ).andThen(() =>
+        session
+          .getRingVrfAlias(productAccountId, identifier)
+          .mapErr(
+            (error) =>
+              new RequestCredentialsErr.Unknown({ reason: error.message }),
+          ),
       );
-    }
-
-    const session = getSession();
-    if (!session) {
-      return err(new RequestCredentialsErr.NotConnected(undefined));
-    }
-
-    if (
-      !Array.isArray(productAccountId) ||
-      typeof productAccountId[0] !== "string" ||
-      !productAccountId[0].endsWith(".dot")
-    ) {
-      return err(new RequestCredentialsErr.DomainNotValid(undefined));
-    }
-
-    const identifier = label + ".dot";
-    const isOwnDomain = identifier === productAccountId[0];
-
-    if (isOwnDomain) {
-      return session
-        .getRingVrfAlias(productAccountId, identifier)
-        .mapErr(
-          (error) =>
-            new RequestCredentialsErr.Unknown({ reason: error.message }),
-        );
-    }
-
-    return fromPromise(
-      showAliasPermissionModal(identifier, productAccountId[0]),
-      () => new RequestCredentialsErr.Rejected(undefined),
-    ).andThen(() =>
-      session
-        .getRingVrfAlias(productAccountId, identifier)
-        .mapErr(
-          (error) =>
-            new RequestCredentialsErr.Unknown({ reason: error.message }),
-        ),
-    );
-  });
+    }),
+  );
 
   // ── Signing ────────────────────────────────────────────
 
@@ -277,37 +302,35 @@ function wireContainerHandlers(
       genesisHash: payload.payload.genesisHash,
       method: payload.payload.method.slice(0, 40) + "...",
     });
-    if (getPermissionStatus(label, "ChainSubmit") !== "granted") {
-      log.warn(`[${label}] handleSignPayload — ChainSubmit not granted`);
-      showNotification({
-        label: `${label}.dot`,
-        text: 'Transaction blocked — enable "Sign Transactions" in the permissions menu.',
-        dismissMs: 6000,
-        browserNotification: false,
-      });
-      return err(new SigningErr.PermissionDenied(undefined));
-    }
-    const session = getSession();
-    if (!session) {
-      log.error(`[${label}] handleSignPayload — no session, rejecting`);
-      return err(new SigningErr.PermissionDenied(undefined));
-    }
+    return promptCachedSubmitPermission(label, "ChainSubmit").andThen(
+      (granted) => {
+        if (!granted) {
+          log.warn(`[${label}] handleSignPayload — ChainSubmit not granted`);
+          return err(new SigningErr.PermissionDenied(undefined));
+        }
+        const session = getSession();
+        if (!session) {
+          log.error(`[${label}] handleSignPayload — no session, rejecting`);
+          return err(new SigningErr.PermissionDenied(undefined));
+        }
 
-    return fromPromise(
-      showSignPayloadModal(session, payload.payload, label),
-      (e) => e as never,
-    )
-      .andThen((result) => {
-        log.warn(`[${label}] handleSignPayload — resolved OK`);
-        return ok({
-          signature: result.signature,
-          signedTransaction: result.signedTransaction,
-        });
-      })
-      .orElse((e) => {
-        log.warn(`[${label}] handleSignPayload — rejected:`, e);
-        return err(e);
-      });
+        return fromPromise(
+          showSignPayloadModal(session, payload.payload, label),
+          (e) => e as never,
+        )
+          .andThen((result) => {
+            log.warn(`[${label}] handleSignPayload — resolved OK`);
+            return ok({
+              signature: result.signature,
+              signedTransaction: result.signedTransaction,
+            });
+          })
+          .orElse((e) => {
+            log.warn(`[${label}] handleSignPayload — rejected:`, e);
+            return err(e);
+          });
+      },
+    );
   });
 
   container.handleSignRaw((payload, { ok, err }) => {
@@ -349,28 +372,32 @@ function wireContainerHandlers(
       genesisHash: request.payload.genesisHash,
       method: request.payload.method.slice(0, 40) + "...",
     });
-    if (getPermissionStatus(label, "ChainSubmit") !== "granted") {
-      log.warn(
-        `[${label}] handleSignPayloadWithLegacyAccount — ChainSubmit not granted`,
-      );
-      return err(new SigningErr.PermissionDenied(undefined));
-    }
-    const session = getSession();
-    if (!session) {
-      return err(new SigningErr.PermissionDenied(undefined));
-    }
+    return promptCachedSubmitPermission(label, "ChainSubmit").andThen(
+      (granted) => {
+        if (!granted) {
+          log.warn(
+            `[${label}] handleSignPayloadWithLegacyAccount — ChainSubmit not granted`,
+          );
+          return err(new SigningErr.PermissionDenied(undefined));
+        }
+        const session = getSession();
+        if (!session) {
+          return err(new SigningErr.PermissionDenied(undefined));
+        }
 
-    return fromPromise(
-      showSignPayloadModal(session, request.payload, label),
-      (e) => e as never,
-    )
-      .andThen((result) =>
-        ok({
-          signature: result.signature,
-          signedTransaction: result.signedTransaction,
-        }),
-      )
-      .orElse((e) => err(e));
+        return fromPromise(
+          showSignPayloadModal(session, request.payload, label),
+          (e) => e as never,
+        )
+          .andThen((result) =>
+            ok({
+              signature: result.signature,
+              signedTransaction: result.signedTransaction,
+            }),
+          )
+          .orElse((e) => err(e));
+      },
+    );
   });
 
   container.handleSignRawWithLegacyAccount((request, { ok, err }) => {
@@ -502,90 +529,109 @@ function wireContainerHandlers(
 
   // ── Permissions ────────────────────────────────────────
 
-  const permissionLimiter = createSubmitRateLimiter();
+  container.handleDevicePermission((permission, { ok }) =>
+    permissionLimiter.schedule(() => {
+      // Notifications: tri-state, no iframe reload, silent on denied.
+      // (No Permissions Policy directive maps to Notifications, so granting
+      // it doesn't change the iframe `allow` attribute. And a denied user
+      // explicitly chose silence — surfacing a "your notifications are
+      // blocked" toast would defeat the point.)
+      if (permission === "Notifications") {
+        const status = getPermissionStatus(label, "Notifications");
+        if (status === "granted") {
+          return ok(true);
+        }
+        if (status === "denied") {
+          return ok(false);
+        }
 
-  container.handleDevicePermission((permission, { ok }) => {
-    // Notifications / OpenUrl have no host-level enforcement point
-    // (browser owns the Notifications prompt; cross-origin navigation
-    // happens via anchor / window.open). Auto-grant rather than show
-    // a modal whose "Deny" button can't be honoured.
-    if (!isEnforceableDevicePermission(permission)) {
-      return ok(true);
-    }
+        return fromPromise(
+          showPermissionRequestModal(label, "Notifications").then(() => {
+            setPermissionStatus(label, "Notifications", "granted");
+          }),
+          () => "denied" as const,
+        )
+          .map(() => true)
+          .orElse(() => {
+            setPermissionStatus(label, "Notifications", "denied");
+            return ok(false);
+          });
+      }
 
-    if (!permissionLimiter.allow()) {
-      return okAsync(false);
-    }
+      // OpenUrl has no host-level enforcement point on the web (cross-origin
+      // navigation happens via anchor / window.open). Auto-grant rather than
+      // show a modal whose "Deny" button can't be honoured.
+      if (!isEnforceableDevicePermission(permission)) {
+        return ok(true);
+      }
 
-    const status = getPermissionStatus(label, permission);
+      const status = getPermissionStatus(label, permission);
 
-    if (status === "granted") {
-      return ok(true);
-    }
+      if (status === "granted") {
+        return ok(true);
+      }
 
-    if (status === "denied") {
-      showNotification({
-        label: `${label}.dot`,
-        text: `${permission} access is blocked. Use the permissions menu in the top bar to change this.`,
-        dismissMs: 6000,
-        browserNotification: false,
-      });
-      return ok(false);
-    }
-
-    // status === 'ask' — show consent modal
-    return fromPromise(
-      showPermissionRequestModal(label, permission).then(() => {
-        setPermissionStatus(label, permission, "granted");
-        // Defer the reload to the next event loop tick so the
-        // container can finish sending the response before being
-        // disposed. Without this, cleanup() runs synchronously
-        // inside the dispatch, disposing the transport mid-response.
-        setTimeout(() => {
-          window.dispatchEvent(
-            new CustomEvent("dotli:device-permission-changed", {
-              detail: { label, permission },
-            }),
-          );
-        }, 0);
-      }),
-      () => "denied" as const,
-    )
-      .map(() => {
-        // User allowed — but iframe reloads, so return false for now
-        return false;
-      })
-      .orElse(() => {
-        // User denied (rejected promise) or dialog dismissed
-        setPermissionStatus(label, permission, "denied");
+      if (status === "denied") {
+        showNotification({
+          label: `${label}.dot`,
+          text: `${permission} access is blocked. Use the permissions menu in the top bar to change this.`,
+          dismissMs: 6000,
+          browserNotification: false,
+        });
         return ok(false);
-      });
-  });
+      }
 
-  container.handlePermission((request, { ok }) => {
-    log.warn(
-      `[${label}] remote_permission incoming: tag=${request.tag}, value=${JSON.stringify(request.value)}`,
-    );
+      // status === 'ask' — show consent modal
+      return fromPromise(
+        showPermissionRequestModal(label, permission).then(() => {
+          setPermissionStatus(label, permission, "granted");
+          // Defer the reload to the next event loop tick so the
+          // container can finish sending the response before being
+          // disposed. Without this, cleanup() runs synchronously
+          // inside the dispatch, disposing the transport mid-response.
+          setTimeout(() => {
+            window.dispatchEvent(
+              new CustomEvent("dotli:device-permission-changed", {
+                detail: { label, permission },
+              }),
+            );
+          }, 0);
+        }),
+        () => "denied" as const,
+      )
+        .map(() => {
+          // User allowed — but iframe reloads, so return false for now
+          return false;
+        })
+        .orElse(() => {
+          // User denied (rejected promise) or dialog dismissed
+          setPermissionStatus(label, permission, "denied");
+          return ok(false);
+        });
+    }),
+  );
 
-    if (!permissionLimiter.allow()) {
-      log.warn(`[${label}] remote_permission ${request.tag} rate-limited`);
-      return okAsync(false);
-    }
-
-    if (request.tag in CACHED_SUBMIT_PERMISSIONS) {
-      return promptCachedSubmitPermission(
-        label,
-        request.tag as keyof typeof CACHED_SUBMIT_PERMISSIONS,
+  container.handlePermission((request, { ok }) =>
+    permissionLimiter.schedule(() => {
+      log.warn(
+        `[${label}] remote_permission incoming: tag=${request.tag}, value=${JSON.stringify(request.value)}`,
       );
-    }
 
-    // Remote (HTTP/WS) and WebRTC are auto-granted: the browser can't
-    // reliably intercept fetch/XHR/WebSocket from inside an iframe, and
-    // WebRTC is already gated by the iframe `allow` attribute. Any
-    // future unknown wire tag lands here too and auto-grants.
-    log.warn(`[${label}] remote_permission ${request.tag} auto-granted`);
-    return ok(true);
-  });
+      if (request.tag in CACHED_SUBMIT_PERMISSIONS) {
+        return promptCachedSubmitPermission(
+          label,
+          request.tag as keyof typeof CACHED_SUBMIT_PERMISSIONS,
+        );
+      }
+
+      // Remote (HTTP/WS) and WebRTC are auto-granted: the browser can't
+      // reliably intercept fetch/XHR/WebSocket from inside an iframe, and
+      // WebRTC is already gated by the iframe `allow` attribute. Any
+      // future unknown wire tag lands here too and auto-grants.
+      log.warn(`[${label}] remote_permission ${request.tag} auto-granted`);
+      return ok(true);
+    }),
+  );
 
   // ── Push notifications ─────────────────────────────────
 
@@ -600,8 +646,6 @@ function wireContainerHandlers(
   //
   // Handlers resolve getStatementStore() lazily (at call time, not setup time)
   // because initAuth() is lazy-loaded and may not have run yet.
-
-  const submitLimiter = createSubmitRateLimiter();
 
   container.handleStatementStoreSubscribe((topicFilter, send) => {
     let innerUnsub: (() => void) | null = null;
@@ -651,21 +695,20 @@ function wireContainerHandlers(
     };
   });
 
-  container.handleStatementStoreSubmit((statement) => {
-    const store = getStatementStore();
-    if (!store) {
-      return errAsync(
-        new GenericError({ reason: "Statement store not initialized" }),
-      );
-    }
-    if (!submitLimiter.allow()) {
-      return errAsync(new GenericError({ reason: "Rate limited" }));
-    }
-    return store
-      .submitStatement(mapFromHostSignedStatement(statement))
-      .map(() => undefined)
-      .mapErr((e: Error) => new GenericError({ reason: e.message }));
-  });
+  container.handleStatementStoreSubmit((statement) =>
+    submitLimiter.schedule(() => {
+      const store = getStatementStore();
+      if (!store) {
+        return errAsync(
+          new GenericError({ reason: "Statement store not initialized" }),
+        );
+      }
+      return store
+        .submitStatement(mapFromHostSignedStatement(statement))
+        .map(() => undefined)
+        .mapErr((e: Error) => new GenericError({ reason: e.message }));
+    }),
+  );
 
   // NOTE: ProductAccountId ([dotNsIdentifier, derivationIndex]) is intentionally
   // unused — the proof is always signed with the root session key because only
@@ -704,7 +747,6 @@ function wireContainerHandlers(
   // Lookup retrieves data by hash via Helia P2P (IPFS gateway fallback).
 
   const preimageCache = new Map<string, Uint8Array>();
-  const preimageLimiter = createSubmitRateLimiter();
 
   // Eagerly start Bulletin chain sync so it's ready by the time
   // a product calls remote_preimage_submit. Only in P2P mode —
@@ -713,38 +755,36 @@ function wireContainerHandlers(
     void ensureBulletinClient();
   }
 
-  container.handlePreimageSubmit((value, { err }) => {
-    log.warn(
-      `[${label}] Preimage submit request, size: ${String(value.byteLength)}`,
-    );
+  container.handlePreimageSubmit((value) =>
+    preimageLimiter.schedule(() => {
+      log.warn(
+        `[${label}] Preimage submit request, size: ${String(value.byteLength)}`,
+      );
 
-    if (!preimageLimiter.allow()) {
-      return err(new PreimageSubmitErr.Unknown({ reason: "Rate limited" }));
-    }
-
-    return fromPromise(showPreimageSubmitModal(value.byteLength), (e) =>
-      e instanceof Error ? e.message : "User denied preimage submit",
-    )
-      .andThen(() => {
-        const key = computePreimageKey(value);
-        return fromPromise(
-          submitPreimageTransaction(value, getTestSigner()),
-          (e) => (e instanceof Error ? e.message : String(e)),
-        ).map(() => {
-          preimageCache.set(key, value);
-          log.warn(`[${label}] Preimage stored, key: ${key}`);
-          return key;
+      return fromPromise(showPreimageSubmitModal(value.byteLength), (e) =>
+        e instanceof Error ? e.message : "User denied preimage submit",
+      )
+        .andThen(() => {
+          const key = computePreimageKey(value);
+          return fromPromise(
+            submitPreimageTransaction(value, getTestSigner()),
+            (e) => (e instanceof Error ? e.message : String(e)),
+          ).map(() => {
+            preimageCache.set(key, value);
+            log.warn(`[${label}] Preimage stored, key: ${key}`);
+            return key;
+          });
+        })
+        .mapErr((reason) => {
+          // Surface the real failure reason on the host console — the
+          // product-side only receives the opaque `PreimageSubmitErr.Unknown`
+          // class, so without this log there is no way to diagnose why a
+          // submit got rejected.
+          log.error(`[${label}] Preimage submit failed: ${reason}`);
+          return new PreimageSubmitErr.Unknown({ reason });
         });
-      })
-      .mapErr((reason) => {
-        // Surface the real failure reason on the host console — the
-        // product-side only receives the opaque `PreimageSubmitErr.Unknown`
-        // class, so without this log there is no way to diagnose why a
-        // submit got rejected.
-        log.error(`[${label}] Preimage submit failed: ${reason}`);
-        return new PreimageSubmitErr.Unknown({ reason });
-      });
-  });
+    }),
+  );
 
   // Preimage lookup subscribe contract:
   //   - Caller (sandboxed app) requests a preimage by key. The lookup runs
@@ -894,6 +934,13 @@ function wireContainerHandlers(
     );
     return NOOP;
   });
+
+  return () => {
+    aliasLimiter.destroy();
+    permissionLimiter.destroy();
+    submitLimiter.destroy();
+    preimageLimiter.destroy();
+  };
 }
 
 const PAYMENTS_NOT_IMPLEMENTED = "Payments are not supported in dot.li";
@@ -955,28 +1002,6 @@ function promptCachedSubmitPermission(
       setPermissionStatus(productLabel, storageKey, "denied");
       return okAsync(false);
     });
-}
-
-// ── Rate limiter (sliding window) ─────────────────────────
-
-const SUBMIT_WINDOW_MS = 10_000;
-const SUBMIT_MAX_PER_WINDOW = 20;
-
-function createSubmitRateLimiter(): { allow: () => boolean } {
-  const timestamps: number[] = [];
-  return {
-    allow() {
-      const now = Date.now();
-      while (timestamps.length > 0 && timestamps[0] <= now - SUBMIT_WINDOW_MS) {
-        timestamps.shift();
-      }
-      if (timestamps.length >= SUBMIT_MAX_PER_WINDOW) {
-        return false;
-      }
-      timestamps.push(now);
-      return true;
-    },
-  };
 }
 
 // ── Helpers ────────────────────────────────────────────────
@@ -1144,9 +1169,10 @@ export function setupNestedBridgeDetector(
     const provider = createWindowProvider(event.source as Window);
     const container = createContainer(provider);
     const nestedPrefix = `dotli:${label}:nested-${nestedId}:`;
-    wireContainerHandlers(container, label, nestedPrefix);
+    const teardown = wireContainerHandlers(container, label, nestedPrefix);
 
     disposers.push(() => {
+      teardown();
       container.dispose();
     });
   }
@@ -1181,9 +1207,10 @@ export function setupContainer(
   const provider = createIframeProvider({ iframe, url: blobUrl });
   const container = createContainer(provider);
   const storagePrefix = `dotli:${label}:`;
-  wireContainerHandlers(container, label, storagePrefix);
+  const teardown = wireContainerHandlers(container, label, storagePrefix);
 
   return () => {
+    teardown();
     container.dispose();
   };
 }

@@ -44,6 +44,11 @@ function isDotDomain(domain: string): boolean {
   return domain.normalize("NFC").toLowerCase().endsWith(".dot");
 }
 
+function isProductIdentifier(id: string): boolean {
+  const n = id.normalize("NFC").toLowerCase();
+  return n.endsWith(".dot") || n === "localhost" || n.startsWith("localhost:");
+}
+
 function parseUrl(url: string): URL | null {
   try {
     return new URL(url);
@@ -217,6 +222,7 @@ function normalizeUrl(url: string): string {
 
 export const dotNsUrl = {
   isDotDomain,
+  isProductIdentifier,
   parseDotNsDomain,
   parseLocalhostUrl,
   normalizeUrl,
