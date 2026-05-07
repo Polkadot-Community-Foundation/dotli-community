@@ -98,6 +98,13 @@ function subscribeSession(
   });
 }
 
+function isProductAccountValid(label: string, accountId: string): boolean {
+  if (label.startsWith("localhost:")) {
+    return dotNsUrl.isProductIdentifier(accountId);
+  }
+  return accountId === `${label}.dot`;
+}
+
 function wireContainerHandlers(
   container: Container,
   label: string,
@@ -285,6 +292,14 @@ function wireContainerHandlers(
       genesisHash: payload.payload.genesisHash,
       method: payload.payload.method.slice(0, 40) + "...",
     });
+
+    if (!isProductAccountValid(label, payload.account[0])) {
+      log.warn(
+        `[${label}] handleSignPayload — invalid account[0]=${payload.account[0]}`,
+      );
+      return errAsync(new SigningErr.PermissionDenied(undefined));
+    }
+
     return promptCachedSubmitPermission(label, "ChainSubmit").andThen(
       (granted) => {
         if (!granted) {
@@ -298,7 +313,12 @@ function wireContainerHandlers(
         }
 
         return fromPromise(
-          showSignPayloadModal(session, payload.payload, label),
+          showSignPayloadModal(
+            session,
+            payload.payload,
+            label,
+            payload.account,
+          ),
           (e) => e as never,
         )
           .andThen((result) => {
@@ -321,6 +341,14 @@ function wireContainerHandlers(
       account: payload.account,
       dataTag: payload.payload.tag,
     });
+
+    if (!isProductAccountValid(label, payload.account[0])) {
+      log.warn(
+        `[${label}] handleSignRaw — invalid account[0]=${payload.account[0]}`,
+      );
+      return err(new SigningErr.PermissionDenied(undefined));
+    }
+
     const session = getSession();
     if (!session) {
       log.error(`[${label}] handleSignRaw — no session, rejecting`);
@@ -328,7 +356,7 @@ function wireContainerHandlers(
     }
 
     return fromPromise(
-      showSignRawModal(session, payload.payload, label),
+      showSignRawModal(session, payload.payload, label, payload.account),
       (e) => e as never,
     )
       .andThen((result) => {
@@ -344,67 +372,13 @@ function wireContainerHandlers(
       });
   });
 
-  // Legacy-account signing — products that still identify the signer
-  // by address land here. dot.li only ever signs with the paired
-  // remote account, so we drop the `signer` field and reuse the same
-  // modal as the product-account path. host-papp rejects internally
-  // if the session key can't cover the resolved address.
-  container.handleSignPayloadWithLegacyAccount((request, { ok, err }) => {
-    log.warn(`[${label}] handleSignPayloadWithLegacyAccount invoked:`, {
-      signer: request.signer,
-      genesisHash: request.payload.genesisHash,
-      method: request.payload.method.slice(0, 40) + "...",
-    });
-    return promptCachedSubmitPermission(label, "ChainSubmit").andThen(
-      (granted) => {
-        if (!granted) {
-          log.warn(
-            `[${label}] handleSignPayloadWithLegacyAccount — ChainSubmit not granted`,
-          );
-          return err(new SigningErr.PermissionDenied(undefined));
-        }
-        const session = getSession();
-        if (!session) {
-          return err(new SigningErr.PermissionDenied(undefined));
-        }
-
-        return fromPromise(
-          showSignPayloadModal(session, request.payload, label),
-          (e) => e as never,
-        )
-          .andThen((result) =>
-            ok({
-              signature: result.signature,
-              signedTransaction: result.signedTransaction,
-            }),
-          )
-          .orElse((e) => err(e));
-      },
-    );
-  });
-
-  container.handleSignRawWithLegacyAccount((request, { ok, err }) => {
-    log.warn(`[${label}] handleSignRawWithLegacyAccount invoked:`, {
-      signer: request.signer,
-      dataTag: request.payload.tag,
-    });
-    const session = getSession();
-    if (!session) {
-      return err(new SigningErr.PermissionDenied(undefined));
-    }
-
-    return fromPromise(
-      showSignRawModal(session, request.payload, label),
-      (e) => e as never,
-    )
-      .andThen((result) =>
-        ok({
-          signature: result.signature,
-          signedTransaction: result.signedTransaction,
-        }),
-      )
-      .orElse((e) => err(e));
-  });
+  // Legacy-account signing handlers (`handleSignPayloadWithLegacyAccount` /
+  // `handleSignRawWithLegacyAccount`) are intentionally NOT wired. host-papp
+  // 0.7.6 dropped the `address: string` shape from `session.signPayload` /
+  // `signRaw` — only `productAccountId: [dotNsIdentifier, derivationIndex]`
+  // is accepted. There is no transport path for an arbitrary legacy `signer`
+  // string, so the host-container default ("Not Implemented") is the correct
+  // response. Browser is on track to do the same when it bumps to 0.7.6.
 
   container.handleLocalStorageRead((key, { ok, err }) => {
     try {

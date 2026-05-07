@@ -1,9 +1,12 @@
 // dot.li — Signing confirmation modals (vanilla DOM)
 //
-// Bridges host-container's `{ account, payload }` signing request to
-// host-papp's flat `{ address, ...payload }` by flattening and overriding
-// `address` with the session's remote account id (the only value papp
-// accepts). The display label (dApp name) is passed separately.
+// Bridges host-container's `{ account, payload }` request to host-papp's
+// `{ productAccountId, ...payload }` shape (host-api 0.7.6+). host-papp
+// derives the signing secret on the wallet side from the product account
+// tuple, so the host only forwards the tuple — no address conversion or
+// local derivation. The modal displays the tuple itself ("my-app.dot / 0")
+// rather than a derived address; computing the address would mean
+// duplicating the wallet's derivation logic for display only.
 
 import { SigningErr, toHex } from "@novasamatech/host-api";
 import { log } from "@dotli/shared/log";
@@ -74,13 +77,6 @@ function withTimeout<T>(thenable: PromiseLike<T>, ms: number): Promise<T> {
   });
 }
 
-function truncateAddress(address: string): string {
-  if (address.length <= 16) {
-    return address;
-  }
-  return `${address.slice(0, 8)}...${address.slice(-8)}`;
-}
-
 function createModalDOM(
   title: string,
   fields: { label: string; value: string; mono?: boolean }[],
@@ -148,22 +144,23 @@ function removeModal(backdrop: HTMLDivElement): void {
 }
 
 /**
- * Sign-payload modal. Handles both the product-account and the
- * legacy-account container callbacks — in both cases dot.li signs with
- * the paired remote account, so callers only need to supply the
- * payload body. host-papp validates the resolved address internally
- * and rejects if the session key can't sign for it.
+ * Sign-payload modal. Receives the calling product's `[dotNsIdentifier,
+ * derivationIndex]` tuple — that's what host-papp requires. The modal
+ * displays the tuple as the "Signer" line; the wallet derives and signs
+ * with the matching secret on its side.
  */
 export function showSignPayloadModal(
   session: UserSession,
   payload: ContainerSignPayloadRequest["payload"],
   appLabel: string,
+  productAccountId: [string, number],
 ): Promise<SigningResult> {
   return new Promise((resolve, reject) => {
-    const address = toHex(session.remoteAccount.accountId);
+    const signerLabel = `${productAccountId[0]} / ${String(productAccountId[1])}`;
 
     log.warn("[dot.li signing] signPayload request received:", {
       appLabel,
+      productAccountId,
       genesisHash: payload.genesisHash,
       method: payload.method.slice(0, 40) + "...",
       mode: payload.mode,
@@ -173,13 +170,12 @@ export function showSignPayloadModal(
     });
     log.warn("[dot.li signing] session info:", {
       localAccountId: toHex(session.localAccount.accountId),
-      remoteAccountId: address,
-      remotePublicKey: toHex(session.remoteAccount.publicKey),
+      sessionRoot: toHex(session.remoteAccount.accountId),
     });
 
     const fields: { label: string; value: string; mono?: boolean }[] = [
       { label: "App", value: appLabel },
-      { label: "Signer", value: truncateAddress(address) },
+      { label: "Signer", value: signerLabel },
       { label: "Genesis Hash", value: payload.genesisHash, mono: true },
       { label: "Call Data", value: payload.method, mono: true },
     ];
@@ -199,8 +195,9 @@ export function showSignPayloadModal(
       signBtn.disabled = true;
       signBtn.textContent = "Signing...";
 
-      const signRequest = { address, ...payload };
+      const signRequest = { productAccountId, ...payload };
       log.warn("[dot.li signing] dispatching signPayload to session:", {
+        productAccountId,
         method: signRequest.method.slice(0, 40) + "...",
         mode: signRequest.mode,
         withSignedTransaction: signRequest.withSignedTransaction,
@@ -247,25 +244,26 @@ export function showSignRawModal(
   session: UserSession,
   data: ContainerSignRawRequest["payload"],
   appLabel: string,
+  productAccountId: [string, number],
 ): Promise<SigningResult> {
   return new Promise((resolve, reject) => {
-    const address = toHex(session.remoteAccount.accountId);
+    const signerLabel = `${productAccountId[0]} / ${String(productAccountId[1])}`;
     const message = data.tag === "Payload" ? data.value : toHex(data.value);
 
     log.warn("[dot.li signing] signRaw request received:", {
       appLabel,
+      productAccountId,
       dataTag: data.tag,
       message: message.slice(0, 80) + (message.length > 80 ? "..." : ""),
     });
     log.warn("[dot.li signing] session info:", {
       localAccountId: toHex(session.localAccount.accountId),
-      remoteAccountId: address,
-      remotePublicKey: toHex(session.remoteAccount.publicKey),
+      sessionRoot: toHex(session.remoteAccount.accountId),
     });
 
     const fields: { label: string; value: string; mono?: boolean }[] = [
       { label: "App", value: appLabel },
-      { label: "Signer", value: truncateAddress(address) },
+      { label: "Signer", value: signerLabel },
       { label: "Message", value: message, mono: true },
     ];
 
@@ -286,7 +284,7 @@ export function showSignRawModal(
 
       log.warn("[dot.li signing] dispatching signRaw to session");
 
-      const signRawRequest = { address, data };
+      const signRawRequest = { productAccountId, data };
       void withTimeout(session.signRaw(signRawRequest), SIGN_TIMEOUT_MS).then(
         (result) => {
           result.match(
