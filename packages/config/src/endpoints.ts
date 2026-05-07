@@ -11,12 +11,7 @@
 // significant additional machinery. Until we're ready to ship that
 // end-to-end, the config values are the only truth.
 
-import {
-  ASSET_HUB_PASEO_RPC,
-  BULLETIN_PEERS,
-  IPFS_GATEWAY,
-  PASEO_RELAY_RPC,
-} from "./config";
+import { ASSET_HUB_PASEO_RPC, IPFS_GATEWAY, PASEO_RELAY_RPC } from "./config";
 
 /**
  * The single RPC endpoint the runtime dials for Asset Hub Paseo.
@@ -27,7 +22,7 @@ export function getActiveAssetHubRpcEndpoints(): string[] {
 
 /**
  * Companion relay-chain endpoint shown alongside the Asset Hub endpoint
- * in the RPC-mode diagnostics. Not dialed by the runtime today.
+ * in the rpc-gateway diagnostics. Not dialed by the runtime today.
  */
 export function getActivePaseoRelayRpcEndpoints(): string[] {
   return PASEO_RELAY_RPC;
@@ -36,9 +31,4 @@ export function getActivePaseoRelayRpcEndpoints(): string[] {
 /** The single IPFS gateway base URL the runtime fetches from. */
 export function getActiveIpfsGateway(): string {
   return IPFS_GATEWAY;
-}
-
-/** The bulletin peer list Helia dials. */
-export function getActiveBulletinPeers(): string[] {
-  return [...BULLETIN_PEERS];
 }

@@ -10,7 +10,7 @@ import {
   SUPPORTED_GENESIS_HASHES,
   type SiteId,
 } from "@dotli/config/config";
-import { getChainBackend, type ChainBackend } from "@dotli/config/mode";
+import { getBackend, type Backend } from "@dotli/config/mode";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
@@ -68,10 +68,10 @@ let pendingReadyResolvers: ReadyWaiter[] = [];
 type ProtocolSubMode = "shared-worker" | "direct" | "rpc";
 let protocolSubMode: ProtocolSubMode | null = null;
 
-/** Map the user-facing `ChainBackend` to the protocol iframe sub-mode.
- *  Same semantic axis, just without the `smoldot-` prefix that the iframe
- *  doesn't need (it already lives on the chain side of the split). */
-function chainBackendToSubMode(backend: ChainBackend): ProtocolSubMode {
+/** Map the user-facing `Backend` to the protocol iframe sub-mode.
+ *  The iframe doesn't carry the `smoldot-` / `rpc-gateway` prefix.
+ *  That prefix already lives on the chain side of the boundary. */
+function backendToSubMode(backend: Backend): ProtocolSubMode {
   if (backend === "smoldot-shared-worker") {
     return "shared-worker";
   }
@@ -292,10 +292,10 @@ function createHostIframe(): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const iframe = document.createElement("iframe");
     const params = new URLSearchParams();
-    // Fall back to the stored ChainBackend when the async
+    // Fall back to the stored Backend when the async
     // setProtocolSubMode() has not run yet.
     const mode: ProtocolSubMode =
-      protocolSubMode ?? chainBackendToSubMode(getChainBackend());
+      protocolSubMode ?? backendToSubMode(getBackend());
     params.set("mode", mode);
     if (protocolSkipWorkerCache) {
       params.set("skipWorkerCache", "1");

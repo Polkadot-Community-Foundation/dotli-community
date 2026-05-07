@@ -19,13 +19,10 @@ import {
 import {
   getCacheSettings,
   setCacheSettings,
-  getChainBackend,
-  setChainBackend,
-  getContentBackend,
-  setContentBackend,
+  getBackend,
+  setBackend,
   isVerifiedSession,
-  type ChainBackend,
-  type ContentBackend,
+  type Backend,
   type CacheSettings,
 } from "@dotli/config/mode";
 import {
@@ -41,8 +38,6 @@ import {
   setPermissionStatus,
   type PermissionStatus,
 } from "./permissions";
-
-// ── DOM refs ───────────────────────────────────────────────
 
 function getElement(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -84,8 +79,6 @@ const USER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" st
 // Track the current QR payload to prevent stale canvas appends
 let currentQrPayload: string | null = null;
 
-// ── Lazy Auth Loading ─────────────────────────────────────
-
 interface AuthModule {
   initAuth: () => void;
   getAuthState: () => AuthState;
@@ -112,8 +105,6 @@ async function ensureAuth(): Promise<AuthModule> {
   renderAuthState(authMod.getAuthState());
   return authMod;
 }
-
-// ── Theme Toggle ──────────────────────────────────────────
 
 function getStoredTheme(): "light" | "dark" {
   const stored = localStorage.getItem("dotli-theme");
@@ -149,8 +140,6 @@ function initThemeToggle(): void {
     applyTheme(next);
   });
 }
-
-// ── Init ───────────────────────────────────────────────────
 
 export function initTopBar(): void {
   authButton = getElement("auth-button");
@@ -263,8 +252,6 @@ export function initTopBar(): void {
     })();
   });
 }
-
-// ── Render ─────────────────────────────────────────────────
 
 function renderAuthState(state: AuthState): void {
   switch (state.status) {
@@ -382,8 +369,6 @@ function renderError(message: string): void {
   modalQr.appendChild(container);
 }
 
-// ── Handlers ───────────────────────────────────────────────
-
 function handleAuthButtonClick(): void {
   if (authMod) {
     const state = authMod.getAuthState();
@@ -414,8 +399,6 @@ function handleDisconnect(): void {
     void authMod.disconnect();
   }
 }
-
-// ── Permissions ───────────────────────────────────────────
 
 const PERM_ICONS: Record<string, string> = {
   Camera:
@@ -673,8 +656,6 @@ function createPermissionDropdown(
   return wrap;
 }
 
-// ── Resolution Mode Toggle ───────────────────────────────────
-
 function initModeToggle(): void {
   modeButton = getElement("mode-button");
   modePopover = getElement("mode-popover");
@@ -687,10 +668,7 @@ function initModeToggle(): void {
   // the session is not fully verified — i.e. chain=rpc or content=gateway
   // on either axis. The rule is owned by `isVerifiedSession` so this
   // button and the host shield can never disagree on trust posture.
-  modeButton.classList.toggle(
-    "gateway-mode",
-    !isVerifiedSession(getChainBackend(), getContentBackend()),
-  );
+  modeButton.classList.toggle("gateway-mode", !isVerifiedSession(getBackend()));
 
   modeButton.addEventListener("click", () => {
     if (modePopover.classList.contains("open")) {
@@ -765,22 +743,20 @@ export function openModePopover(): void {
  * persisted state from scratch, so partial changes never leak.
  */
 interface ModeDraft {
-  chain: ChainBackend;
-  content: ContentBackend;
+  chain: Backend;
   cache: CacheSettings;
 }
 
 function renderModePopover(): void {
-  // Two-column grid. Left: chain / content / cache. Right: endpoints /
-  // diagnostics. Save & Apply and the footer span both columns at the
-  // bottom. Collapses to a single column on narrow viewports (CSS media
-  // query on `.mode-popover-columns`).
+  // Two-column grid. Left: backend / cache. Right: endpoints / diagnostics.
+  // Save & Apply and the footer span both columns at the bottom. Collapses
+  // to a single column on narrow viewports (CSS media query on
+  // `.mode-popover-columns`).
   const parent = modePopoverContent;
   parent.innerHTML = "";
 
   const persisted: ModeDraft = {
-    chain: getChainBackend(),
-    content: getContentBackend(),
+    chain: getBackend(),
     cache: getCacheSettings(),
   };
   const draft: ModeDraft = { ...persisted, cache: { ...persisted.cache } };
@@ -803,16 +779,19 @@ function renderModePopover(): void {
   rightCol.className = "mode-popover-col";
   columns.appendChild(rightCol);
 
-  // ── Left column: Chain / Content / Cache ──
-  appendSectionHeader(leftCol, "Chain");
-  const chainChoices: [ChainBackend, string, string][] = [
+  appendSectionHeader(leftCol, "Backend");
+  const chainChoices: [Backend, string, string][] = [
     [
       "smoldot-shared-worker",
       "Light Client (smoldot worker)",
       "Light client shared across tabs (recommended)",
     ],
     ["smoldot-direct", "Light Client (smoldot direct)", "Light client per tab"],
-    ["rpc", "RPC Node (trusted provider)", "Direct JSON-RPC to a known node"],
+    [
+      "rpc-gateway",
+      "RPC Node and Gateway (trusted providers)",
+      "RPC, and IPFS gateway",
+    ],
   ];
   const chainGroup = document.createElement("div");
   leftCol.appendChild(chainGroup);
@@ -827,41 +806,6 @@ function renderModePopover(): void {
     }
   };
   rerenderChain();
-
-  appendDivider(leftCol);
-  appendSectionHeader(leftCol, "Content");
-  const contentChoices: [ContentBackend, string, string][] = [
-    [
-      "p2p-helia",
-      "P2P (bulletin bitswap)",
-      "Fetch blocks from configured peers",
-    ],
-    [
-      "ipfs-gateway",
-      "Gateway (trusted provider)",
-      "HTTP fetch from trusted gateway",
-    ],
-  ];
-  const contentGroup = document.createElement("div");
-  leftCol.appendChild(contentGroup);
-  const rerenderContent = (): void => {
-    contentGroup.innerHTML = "";
-    for (const [value, label, desc] of contentChoices) {
-      renderContentRadio(
-        contentGroup,
-        value,
-        label,
-        desc,
-        draft.content,
-        (next) => {
-          draft.content = next;
-          rerenderContent();
-          syncApply();
-        },
-      );
-    }
-  };
-  rerenderContent();
 
   appendDivider(leftCol);
   appendSectionHeader(leftCol, "Cache");
@@ -922,11 +866,9 @@ function renderModePopover(): void {
   clearRow.appendChild(clearBtn);
   leftCol.appendChild(clearRow);
 
-  // ── Right column: Diagnostics only ──
   appendSectionHeader(rightCol, "Diagnostics");
   renderDiagnostics(rightCol);
 
-  // ── Save & Apply (full width) ──
   appendDivider();
   const applyRow = document.createElement("div");
   applyRow.className = "mode-cache-row mode-apply-row";
@@ -947,7 +889,6 @@ function renderModePopover(): void {
   syncApply = (): void => {
     const dirty =
       draft.chain !== persisted.chain ||
-      draft.content !== persisted.content ||
       draft.cache.skipCidCache !== persisted.cache.skipCidCache ||
       draft.cache.skipArchiveCache !== persisted.cache.skipArchiveCache ||
       draft.cache.skipWorkerCache !== persisted.cache.skipWorkerCache;
@@ -993,10 +934,7 @@ async function applyAndReset(
     const theme = localStorage.getItem("dotli-theme");
 
     if (draft.chain !== persisted.chain) {
-      setChainBackend(draft.chain);
-    }
-    if (draft.content !== persisted.content) {
-      setContentBackend(draft.content);
+      setBackend(draft.chain);
     }
     if (
       draft.cache.skipCidCache !== persisted.cache.skipCidCache ||
@@ -1009,8 +947,7 @@ async function applyAndReset(
     await wipeOriginState();
 
     // Re-apply the user's choice + theme after wipe.
-    setChainBackend(draft.chain);
-    setContentBackend(draft.content);
+    setBackend(draft.chain);
     setCacheSettings(draft.cache);
     if (theme === "light" || theme === "dark") {
       localStorage.setItem("dotli-theme", theme);
@@ -1165,7 +1102,7 @@ function renderDiagnostics(parent: HTMLElement): void {
   // `@dotli/resolver/rpc-resolve` is already warm because host main
   // imported it to resolve the name. Both the DOM row and the base
   // snapshot are updated so the Share-diagnostic export stays honest.
-  if (getChainBackend() === "rpc") {
+  if (getBackend() === "rpc-gateway") {
     void import("@dotli/resolver/rpc-resolve").then(
       ({ getConnectedAssetHubRpcEndpoint }) => {
         const live = getConnectedAssetHubRpcEndpoint();
@@ -1181,7 +1118,6 @@ function renderDiagnostics(parent: HTMLElement): void {
     );
   }
 
-  // ── @smoldot ──
   // Version is static + cheap; block numbers are async so the rows start
   // with an ellipsis placeholder and get swapped in when `chainConnect`
   // rounds-trip back with a finalized-block header. When the user is on
@@ -1192,7 +1128,7 @@ function renderDiagnostics(parent: HTMLElement): void {
     version: buildSmoldotVersionLabel(),
     blocks: { relay: "…", assetHub: "…" },
   };
-  const smoldotActive = getChainBackend() !== "rpc";
+  const smoldotActive = getBackend() !== "rpc-gateway";
   appendSectionHeader(parent, "@smoldot");
   renderInfoRow(parent, "smoldot", smoldotInfo.version);
   if (smoldotActive) {
@@ -1350,8 +1286,7 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
     typeof __DOTLI_VERSION__ === "string" ? __DOTLI_VERSION__ : "0.0.0";
   const sha = (import.meta.env.VITE_COMMIT_SHA as string | undefined) ?? "dev";
 
-  const chain = getChainBackend();
-  const content = getContentBackend();
+  const backend = getBackend();
 
   const rows: [string, string][] = [
     // `location.host` includes the port when non-default — useful on
@@ -1359,58 +1294,48 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
     // (`hackme3.dot.li`).
     ["Site", window.location.host],
     ["Build", `${version} (${shortSha(sha)})`],
-    ["Chain", chainBackendLabel(chain)],
+    ["Backend", backendLabel(backend)],
   ];
 
-  // Sub-row attached to the Chain row:
-  //   - smoldot-shared-worker: "Worker" + build SHA. The SharedWorker is a
-  //     cached script — if it's running an older bundle than the current
-  //     page, this SHA diverges from Build, which is the tell-tale for a
-  //     stale worker. (Today the Worker ships embedded in the same bundle,
-  //     so the two match; the row still lets us spot a divergence in the
+  // Sub-row attached to the Backend row:
+  //   - smoldot-shared-worker: "Worker" + build SHA. The SharedWorker is a cached
+  //     script. If it's running an older bundle than the current page,
+  //     this SHA diverges from Build, which is the tell-tale for a stale
+  //     worker. (Today the Worker ships embedded in the same bundle, so
+  //     the two match. The row still lets us spot a divergence in the
   //     field.)
-  //   - smoldot-direct: no sub-row; smoldot is torn down every page load.
-  //   - rpc: both WSS endpoints (Relay + Asset Hub). The curated lists
-  //     are candidate endpoints — polkadot-api's ws-provider rotates
+  //   - smoldot-direct: no sub-row. smoldot is torn down every page load.
+  //   - rpc-gateway: both WSS endpoints (Relay + Asset Hub). The curated
+  //     lists are candidate endpoints. polkadot-api's ws-provider rotates
   //     on failure, so `renderDiagnostics` later replaces the Asset Hub
-  //     entry with the one the provider is actually connected to.
-  //     Relay isn't dialed at all in RPC mode today (dotNS is Asset Hub
-  //     only), so it just shows the first candidate for reference.
-  if (chain === "smoldot-shared-worker") {
+  //     entry with the one the provider is actually connected to. Relay
+  //     isn't dialed at all in rpc mode today (dotNS is Asset Hub only),
+  //     so it just shows the first candidate for reference.
+  if (backend === "smoldot-shared-worker") {
     if (typeof SharedWorker === "undefined") {
       rows.push(["Worker", "unavailable"]);
     } else {
       rows.push(["Worker", shortSha(sha)]);
     }
-  } else if (chain === "rpc") {
+  } else if (backend === "rpc-gateway") {
     const relay = getActivePaseoRelayRpcEndpoints()[0] ?? "n/a";
     const assetHub = getActiveAssetHubRpcEndpoints()[0] ?? "n/a";
     rows.push(["Relay node", relay]);
     rows.push(["AssetHub node", assetHub]);
   }
 
-  rows.push(["Content", contentBackendLabel(content)]);
   rows.push(["Browser", summarizeUserAgent(navigator.userAgent)]);
   return rows;
 }
 
-function chainBackendLabel(b: ChainBackend): string {
+function backendLabel(b: Backend): string {
   switch (b) {
     case "smoldot-shared-worker":
       return "Smoldot Worker";
     case "smoldot-direct":
       return "Smoldot Direct";
-    case "rpc":
-      return "RPC Node";
-  }
-}
-
-function contentBackendLabel(b: ContentBackend): string {
-  switch (b) {
-    case "p2p-helia":
-      return "P2P";
-    case "ipfs-gateway":
-      return "Gateway";
+    case "rpc-gateway":
+      return "RPC Node + Gateway";
   }
 }
 
@@ -1565,33 +1490,13 @@ function renderInfoRow(
 
 function renderChainRadio(
   parent: HTMLElement,
-  value: ChainBackend,
+  value: Backend,
   label: string,
   description: string,
-  current: ChainBackend,
-  onSelect: (next: ChainBackend) => void,
+  current: Backend,
+  onSelect: (next: Backend) => void,
 ): void {
-  const row = buildRadioRow(`dotli-chain-${value}`, "dotli-chain-backend", {
-    value,
-    label,
-    description,
-    selected: value === current,
-  });
-  row.querySelector("input")?.addEventListener("change", () => {
-    onSelect(value);
-  });
-  parent.appendChild(row);
-}
-
-function renderContentRadio(
-  parent: HTMLElement,
-  value: ContentBackend,
-  label: string,
-  description: string,
-  current: ContentBackend,
-  onSelect: (next: ContentBackend) => void,
-): void {
-  const row = buildRadioRow(`dotli-content-${value}`, "dotli-content-backend", {
+  const row = buildRadioRow(`dotli-backend-${value}`, "dotli-backend", {
     value,
     label,
     description,
@@ -1686,8 +1591,6 @@ function renderCacheToggle(
   row.appendChild(toggle);
   parent.appendChild(row);
 }
-
-// ── Modal ─────────────────────────────────────────────────
 
 function openModal(reason?: string, label?: string): void {
   modalQr.innerHTML = `<div class="spinner"></div>`;

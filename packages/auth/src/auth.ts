@@ -23,12 +23,10 @@ import { toHex } from "@novasamatech/host-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { getPeopleChainProvider } from "@dotli/resolver/smoldot";
 import { SITE_ID, SS_USE_SMOLDOT, isLocalhost } from "@dotli/config/config";
-import { getMode, isP2pMode } from "@dotli/config/mode";
+import { getBackend } from "@dotli/config/mode";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
-
-// ── Metadata file selection ────────────────────────────────
 
 // The metadata URL is SCALE-encoded into the QR handshake payload and
 // fetched by the Polkadot App over the public internet. On localhost the
@@ -46,8 +44,6 @@ function getMetadataUrl(): string {
   }
   return `${window.location.origin}/metadata.json`;
 }
-
-// ── Auth State ─────────────────────────────────────────────
 
 export type AuthState =
   | { status: "idle" }
@@ -81,8 +77,6 @@ export function onAuthStateChange(fn: AuthListener): () => void {
   return () => listeners.delete(fn);
 }
 
-// ── Statement store access ────────────────────────────────
-
 export function getStatementStore(): StatementStoreAdapter | null {
   return statementStoreInstance;
 }
@@ -108,8 +102,6 @@ export async function readSessionSecret(
   }
   return result.value.ssSecret;
 }
-
-// ── Initialization ─────────────────────────────────────────
 
 let initialized = false;
 
@@ -203,7 +195,7 @@ export function initAuth(): void {
   const storage = createSharedAuthStorageAdapter(siteId);
   // Use smoldot for the statement store only when enabled AND in P2P mode.
   // In gateway mode, always use the WS provider — no smoldot should run.
-  const useSmoldotForAuth = SS_USE_SMOLDOT && isP2pMode(getMode());
+  const useSmoldotForAuth = SS_USE_SMOLDOT && getBackend() !== "rpc-gateway";
   // The auth chain RPC endpoint is intentionally NOT user-overridable
   // today — the custom-endpoints axis (`@dotli/config/endpoints`) only
   // covers Asset Hub and IPFS. Until a parallel
@@ -304,8 +296,6 @@ function pickUpSession(): void {
     void resolveIdentityAndSetAuth(sessions[0]);
   }
 }
-
-// ── Pairing Flow ───────────────────────────────────────────
 
 let unsubPairing: (() => void) | null = null;
 let unsubAttestation: (() => void) | null = null;
@@ -465,8 +455,6 @@ export function requestLogin(
     });
   });
 }
-
-// ── Helpers ────────────────────────────────────────────────
 
 export function shortenName(identity: Identity): string {
   if (identity.fullUsername !== null && identity.fullUsername.length > 0) {

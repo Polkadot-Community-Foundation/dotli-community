@@ -10,10 +10,9 @@
 // Schema v1 (current):
 //
 //   Required:
-//     ?contentBackend=<"p2p-helia" | "ipfs-gateway">
+//     ?chainBackend=<"smoldot-direct" | "smoldot-shared-worker" | "rpc-gateway">
 //
 //   Optional:
-//     ?chainBackend=<"smoldot-shared-worker" | "smoldot-direct" | "rpc">
 //     ?skipArchiveCache=<"0" | "1">
 //     ?fullReset=<"0" | "1">
 //     ?v=<schema version integer — reserved for future breakage>
@@ -24,26 +23,17 @@
 
 export const SANDBOX_SCHEMA_VERSION = 1;
 
-/** Known content backends — the only values the sandbox accepts. */
-const VALID_CONTENT_BACKENDS: ReadonlySet<string> = new Set([
-  "p2p-helia",
-  "ipfs-gateway",
-]);
-
-/** Known chain backends. The sandbox records this for telemetry; it
- *  doesn't gate behavior on it (content fetch is what the sandbox
- *  does), but the value must still be a known token. */
+/** Known chain backends. The only values the sandbox accepts. */
 const VALID_CHAIN_BACKENDS: ReadonlySet<string> = new Set([
-  "smoldot-shared-worker",
   "smoldot-direct",
-  "rpc",
+  "smoldot-shared-worker",
+  "rpc-gateway",
 ]);
 
 const VALID_BOOLEAN_FLAGS: ReadonlySet<string> = new Set(["0", "1"]);
 
 /** Every param name the sandbox recognises. Anything else is rejected. */
 const KNOWN_PARAMS: ReadonlySet<string> = new Set([
-  "contentBackend",
   "chainBackend",
   "skipArchiveCache",
   "fullReset",
@@ -51,8 +41,7 @@ const KNOWN_PARAMS: ReadonlySet<string> = new Set([
 ]);
 
 export interface SandboxParams {
-  contentBackend: "p2p-helia" | "ipfs-gateway";
-  chainBackend?: "smoldot-shared-worker" | "smoldot-direct" | "rpc";
+  chainBackend: "smoldot-direct" | "smoldot-shared-worker" | "rpc-gateway";
   skipArchiveCache: boolean;
   fullReset: boolean;
 }
@@ -76,14 +65,15 @@ export function validateSandboxParams(
     if (!KNOWN_PARAMS.has(key)) {
       return {
         ok: false,
-        reason: `Unknown URL param "${key}" (sandbox contract v${String(SANDBOX_SCHEMA_VERSION)}).`,
+        reason: `Unknown URL param "${key}" (sandbox contract v${String(SANDBOX_SCHEMA_VERSION)}). Reload from the host to pick up the matching build.`,
       };
     }
   }
 
   // Version gate: if the host sends an explicit version token, it must
-  // match. Absent `?v=` means "pre-versioned host, assume v1" for
-  // backward compat; once we ship a v2 this default changes.
+  // match. Absent `?v=` means "pre-versioned host", a path now rejected
+  // post-collapse because the `?backend=` requirement is also new and a
+  // pre-collapse host would not emit it.
   const version = search.get("v");
   if (version !== null && version !== String(SANDBOX_SCHEMA_VERSION)) {
     return {
@@ -92,26 +82,18 @@ export function validateSandboxParams(
     };
   }
 
-  const contentBackend = search.get("contentBackend");
-  if (contentBackend === null) {
+  const chainBackend = search.get("chainBackend");
+  if (chainBackend === null) {
     return {
       ok: false,
       reason:
-        "Missing required URL param `contentBackend`. The host did not specify a backend — reload from dot.li.",
+        "Missing required URL param `chainBackend`. The host did not specify a backend — reload from dot.li.",
     };
   }
-  if (!VALID_CONTENT_BACKENDS.has(contentBackend)) {
+  if (!VALID_CHAIN_BACKENDS.has(chainBackend)) {
     return {
       ok: false,
-      reason: `Unknown content backend "${contentBackend}". Expected "p2p-helia" or "ipfs-gateway".`,
-    };
-  }
-
-  const chainBackend = search.get("chainBackend") ?? undefined;
-  if (chainBackend !== undefined && !VALID_CHAIN_BACKENDS.has(chainBackend)) {
-    return {
-      ok: false,
-      reason: `Unknown chain backend "${chainBackend}".`,
+      reason: `Unknown chainBackend "${chainBackend}". Expected "smoldot-direct", "smoldot-shared-worker", or "rpc-gateway".`,
     };
   }
 
@@ -134,12 +116,10 @@ export function validateSandboxParams(
   return {
     ok: true,
     params: {
-      contentBackend: contentBackend as "p2p-helia" | "ipfs-gateway",
       chainBackend: chainBackend as
-        | "smoldot-shared-worker"
         | "smoldot-direct"
-        | "rpc"
-        | undefined,
+        | "smoldot-shared-worker"
+        | "rpc-gateway",
       skipArchiveCache: skipRaw === "1",
       fullReset: resetRaw === "1",
     },

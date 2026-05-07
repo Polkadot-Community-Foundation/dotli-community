@@ -8,17 +8,16 @@ const HOST_URL = `http://${DOMAIN}.localhost:${PORT}/`;
 
 const RETRY_LABEL_FROM_SMOLDOT = "Try with RPC Node (trusted provider)";
 
-type Backend = "smoldot-direct" | "smoldot-shared-worker" | "rpc";
+type Backend = "smoldot-direct" | "smoldot-shared-worker" | "rpc-gateway";
 
-async function setBackend(page: Page, chain: Backend): Promise<void> {
+async function setBackend(page: Page, backend: Backend): Promise<void> {
   // Only set on first load so a post-retry reload doesn't overwrite the
   // backend that the retry button just flipped.
   await page.addInitScript((backend) => {
     if (localStorage.getItem("dotli:chain-backend") === null) {
       localStorage.setItem("dotli:chain-backend", backend);
-      localStorage.setItem("dotli:content-backend", "ipfs-gateway");
     }
-  }, chain);
+  }, backend);
 }
 
 /**
@@ -437,5 +436,5 @@ test("As a user, after a resolution failure, clicking retry switches backend and
   const backendAfter = await page.evaluate(() =>
     localStorage.getItem("dotli:chain-backend"),
   );
-  expect(backendAfter).toBe("rpc");
+  expect(backendAfter).toBe("rpc-gateway");
 });

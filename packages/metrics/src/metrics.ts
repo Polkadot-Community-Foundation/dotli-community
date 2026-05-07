@@ -24,7 +24,16 @@
 // slice on — keep new attributes to the schema.
 
 /** Known metric attribute keys. Keep dashboards in sync with this list. */
-export type MetricOutcome = "ok" | "error" | "timeout" | "miss" | "hit";
+export type MetricOutcome =
+  | "ok"
+  | "error"
+  | "timeout"
+  | "miss"
+  | "hit"
+  // Bitswap-specific (CONTENT_BITSWAP_RPC)
+  | "not-found"
+  | "invalid-cid"
+  | "aborted";
 
 export type MetricAttrs = {
   mode?: string;
@@ -61,7 +70,6 @@ interface SentryLike {
   }) => void;
 }
 
-// ── Sentry lazy binding ────────────────────────────────────────
 // We resolve Sentry once at first use so the metrics package never
 // forces a Sentry import. The host app must initialize Sentry before
 // any metric calls fire.
@@ -125,11 +133,8 @@ function bind(s: SentryLike): void {
   _unboundWarned = false;
 }
 
-// ── Enabled check ──────────────────────────────────────────────
-
 const ENABLED = (import.meta.env.VITE_METRICS as string | undefined) === "true";
 
-// ── Session-wide default attributes ────────────────────────────
 //
 // Apps register session-level context (e.g. `dotli_mode`) via `setDefaults()`.
 // Every metric emitted afterwards carries these attributes, so dashboards can
@@ -146,8 +151,6 @@ function mergeAttrs(
   }
   return { ...defaultAttrs, ...attrs };
 }
-
-// ── Core API ───────────────────────────────────────────────────
 
 /**
  * Wrap a sync or async function in a Sentry performance span.
@@ -372,8 +375,6 @@ function timer(name: string): () => number {
     return ms;
   };
 }
-
-// ── Public singleton ───────────────────────────────────────────
 
 export const m = {
   /** Whether metrics collection is active */

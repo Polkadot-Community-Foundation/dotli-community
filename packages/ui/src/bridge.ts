@@ -6,11 +6,7 @@
 // out of the sandbox bundle.
 
 import { BASE_DOMAIN } from "@dotli/config/config";
-import {
-  getChainBackend,
-  getContentBackend,
-  getCacheSettings,
-} from "@dotli/config/mode";
+import { getBackend, getCacheSettings } from "@dotli/config/mode";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { buildAllowAttribute } from "./permissions";
@@ -166,8 +162,7 @@ export async function renderAppSubdomain(
   // `@dotli/config/endpoints` (same package, built into its bundle), so
   // the host no longer threads RPC/gateway URLs across the origin —
   // there are no user-overridable endpoints to preserve.
-  const chainBackend = getChainBackend();
-  const contentBackend = getContentBackend();
+  const chainBackend = getBackend();
   const cache = getCacheSettings();
   const appOrigin = getAppOrigin(cid);
   const deepPath = getDeepPath();
@@ -189,7 +184,6 @@ export async function renderAppSubdomain(
   try {
     const parsed = new URL(url);
     parsed.searchParams.set("chainBackend", chainBackend);
-    parsed.searchParams.set("contentBackend", contentBackend);
     if (cache.skipArchiveCache) {
       parsed.searchParams.set("skipArchiveCache", "1");
     }
@@ -199,7 +193,7 @@ export async function renderAppSubdomain(
     url = parsed.toString();
   } catch {
     const sep = url.includes("?") ? "&" : "?";
-    url += `${sep}chainBackend=${chainBackend}&contentBackend=${contentBackend}`;
+    url += `${sep}chainBackend=${chainBackend}`;
     if (cache.skipArchiveCache) {
       url += "&skipArchiveCache=1";
     }

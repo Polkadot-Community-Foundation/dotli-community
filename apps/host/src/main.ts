@@ -27,6 +27,7 @@ import {
   listenForSandboxStatus,
 } from "@dotli/ui/ui";
 import { initTopBar, openModePopover } from "@dotli/ui/topbar";
+import { listenForSandboxBitswap } from "@dotli/ui/bulletin-bitswap";
 import { getCachedCid, setCachedCid } from "@dotli/storage/cid-cache";
 import { dur, elapsed } from "@dotli/shared/perf";
 import { BASE_DOMAIN, SITE_ID } from "@dotli/config/config";
@@ -35,14 +36,10 @@ import { serializeError } from "@dotli/shared/errors";
 import { escapeHtml } from "@dotli/shared/html";
 import { showNotification } from "@dotli/ui/notification";
 import {
-  getMode,
-  isP2pMode,
+  getBackend,
+  setBackend,
   isVerifiedSession,
   getCacheSettings,
-  getChainBackend,
-  setChainBackend,
-  getContentBackend,
-  type ChainBackend,
 } from "@dotli/config/mode";
 import { describeError } from "./errors";
 import { parsePreviewTargetUrl } from "./preview-route";
@@ -67,7 +64,6 @@ window.addEventListener("vite:preloadError", (event) => {
   });
 });
 
-// ── Desktop download banner ──────────────────────────────
 // Respect the user's dismissal unconditionally — once dismissed, never
 // resurface unless the dismissal flag is cleared from localStorage.
 if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
@@ -338,8 +334,6 @@ function populateOwner(
 import type * as RenderModule from "@dotli/ui/bridge";
 type RenderChunk = typeof RenderModule;
 
-// ── Main ─────────────────────────────────────────────────────
-
 async function main(): Promise<void> {
   const previewTargetUrl = parsePreviewTargetUrl(window.location);
 
@@ -352,30 +346,21 @@ async function main(): Promise<void> {
   performance.mark("dotli:main:start");
   log.warn(`[dot.li perf] main() started (${elapsed(T0)})`);
 
-  const mode = getMode();
-  const chainBackend = getChainBackend();
-  const contentBackend = getContentBackend();
+  const chainBackend = getBackend();
   const cacheSettings = getCacheSettings();
-  log.warn(
-    `[dot.li perf] mode=${mode} chain=${chainBackend} content=${contentBackend}`,
-  );
-  // Registers the session's mode + backends + cache flags as default
-  // attributes so every subsequent metric carries them.
+  log.warn(`[dot.li perf] chain=${chainBackend}`);
   m.setDefaults({
-    dotli_mode: mode,
     chain_backend: chainBackend,
-    content_backend: contentBackend,
     skip_cid_cache: String(cacheSettings.skipCidCache),
     skip_archive_cache: String(cacheSettings.skipArchiveCache),
   });
 
   // Pre-warm the protocol iframe for every chain backend so sandboxed apps
   // that call `chainConnect` have a handler waiting on the other side. The
-  // submode mapping is 1:1 with the chain backend; the content backend is
-  // orthogonal and doesn't affect protocol submode.
+  // submode mapping is 1:1 with the chain backend.
   //   smoldot-shared-worker → "shared-worker"
   //   smoldot-direct        → "direct"
-  //   rpc                   → "rpc"
+  //   rpc-gateway           → "rpc"
   {
     const subMode: "shared-worker" | "direct" | "rpc" =
       chainBackend === "smoldot-shared-worker"
@@ -438,7 +423,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ── Localhost proxy: render local dev server directly in iframe ──
   const localhostUrl = parseLocalhostUrl();
   if (label === null && localhostUrl !== null) {
     const host = new URL(localhostUrl).host;
@@ -530,20 +514,20 @@ async function main(): Promise<void> {
   // UI continues seamlessly from resolution into content fetching.
   listenForSandboxStatus();
 
-  // Shield is driven by the split backends, not the legacy preset. A mixed
-  // session (chain=smoldot + content=gateway, or chain=rpc + content=p2p)
-  // resolves to "validating" because part of the data path is delegated to
-  // a trusted provider — `isVerifiedSession` is the one rule that decides.
-  const shieldState: "verified" | "validating" = isVerifiedSession(
-    chainBackend,
-    contentBackend,
-  )
+  // Relay sandbox `bitswap_v1_get` requests to the protocol iframe's smoldot.
+  // The sandbox is on a different origin and can't postMessage the protocol
+  // iframe directly. The host bridges the two so a single warm Bulletin
+  // chain serves every sandbox load instead of cold-starting a second
+  // smoldot per page.
+  listenForSandboxBitswap();
+
+  const shieldState: "verified" | "validating" = isVerifiedSession(chainBackend)
     ? "verified"
     : "validating";
 
-  if (mode === "p2p-shared-worker") {
+  if (chainBackend === "smoldot-shared-worker") {
     initPhases(["Starting Worker", "Syncing", "Resolving"]);
-  } else if (mode === "p2p-direct") {
+  } else if (chainBackend === "smoldot-direct") {
     initPhases(["Starting", "Connecting", "Syncing", "Resolving"]);
   } else {
     initPhases(["Connecting", "Resolving"]);
@@ -552,14 +536,13 @@ async function main(): Promise<void> {
   showStatus(`Resolving ${label}.dot`);
 
   try {
-    // ── Fast path: CID cache hit → render immediately ──
     const cachedCid = cacheSettings.skipCidCache
       ? null
       : await getCachedCid(label);
     if (cachedCid !== null) {
       m.count(S.CACHE_HIT);
       log.warn(
-        `[dot.li resolve] path=cache (${mode}) (${elapsed(T0)}) -> ${cachedCid}`,
+        `[dot.li resolve] path=cache (${chainBackend}) (${elapsed(T0)}) -> ${cachedCid}`,
       );
       setShieldState(shieldState);
       const { renderAppSubdomain } = await renderChunkPromise;
@@ -576,13 +559,12 @@ async function main(): Promise<void> {
     m.count(S.CACHE_MISS);
     log.warn(`[dot.li perf] CID cache MISS (${elapsed(T0)})`);
 
-    // ── Full resolution path (single mode, no racing) ──
     performance.mark("dotli:resolve:start");
     const resolveStart = performance.now();
     const stopResolve = m.timer(S.RESOLVE_TOTAL);
     let cid: string | null;
 
-    if (isP2pMode(mode)) {
+    if (chainBackend !== "rpc-gateway") {
       log.warn(
         `[dot.li resolve] path=smoldot (trustless light-client) (${elapsed(T0)})`,
       );
@@ -658,9 +640,9 @@ async function main(): Promise<void> {
     stopResolve();
     performance.mark("dotli:resolve:end");
     log.warn(
-      `[dot.li resolve] RESOLVED ${label}.dot via ${mode} in ${dur(resolveStart)} (total ${elapsed(T0)}) -> ${cid ?? "null"}`,
+      `[dot.li resolve] RESOLVED ${label}.dot via ${chainBackend} in ${dur(resolveStart)} (total ${elapsed(T0)}) -> ${cid ?? "null"}`,
     );
-    m.tag("resolve_source", mode);
+    m.tag("resolve_source", chainBackend);
 
     if (cid === null) {
       showError(
@@ -697,17 +679,18 @@ async function main(): Promise<void> {
     // already has. Carry the active dependency as a tag so Sentry + the
     // user-visible error both attribute the failure to the specific
     // dependency the chosen mode dialed.
-    const dependency = isP2pMode(mode) ? "smoldot" : "asset-hub-rpc";
+    const dependency =
+      chainBackend === "rpc-gateway" ? "asset-hub-rpc" : "smoldot";
     captureException(err, {
       surface: "host_main_resolve",
       dependency,
-      dotli_mode: mode,
+      chain_backend: chainBackend,
     });
     // Full cause chain to console for devs.
     log.error(
       `[dot.li] Resolution failed via ${dependency}: ${serializeError(err)}`,
     );
-    const error = describeError(err, isP2pMode(mode));
+    const error = describeError(err, chainBackend !== "rpc-gateway");
     if (error.recovery === "none") {
       showError("Domain can't be reached", error.message);
       return;
@@ -721,18 +704,17 @@ async function main(): Promise<void> {
       });
       return;
     }
-    // Tiered failover: any smoldot → rpc; rpc → smoldot-shared-worker.
-    const currentChainBackend = getChainBackend();
-    const nextChainBackend: ChainBackend =
-      currentChainBackend === "rpc" ? "smoldot-shared-worker" : "rpc";
+    // Tiered failover: any smoldot becomes rpc-gateway, rpc-gateway becomes smoldot-shared-worker.
+    const nextBackend =
+      chainBackend === "rpc-gateway" ? "smoldot-shared-worker" : "rpc-gateway";
     const btnLabel =
-      nextChainBackend === "rpc"
+      nextBackend === "rpc-gateway"
         ? "Try with RPC Node (trusted provider)"
         : "Try Light Client (smoldot worker)";
     showError("Domain can't be reached", error.message, {
       label: btnLabel,
       onClick: () => {
-        setChainBackend(nextChainBackend);
+        setBackend(nextBackend);
         window.location.reload();
       },
     });

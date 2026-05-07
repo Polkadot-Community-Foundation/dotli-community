@@ -65,13 +65,8 @@ import {
 import { MAX_NESTED_BRIDGES } from "@dotli/config/config";
 import { dotNsUrl } from "@dotli/shared/dotns-url";
 import { log } from "@dotli/shared/log";
-import { getMode, isP2pMode, getContentBackend } from "@dotli/config/mode";
-import { concatBytes } from "@noble/hashes/utils.js";
+import { getBackend } from "@dotli/config/mode";
 import { computePreimageKey, hashToCid } from "@dotli/content/preimage";
-// `@dotli/content/fetch` pulls in the entire Helia + libp2p stack. Only
-// import it dynamically when the user's content backend is actually P2P —
-// gateway users should not pay the ~1 MB bundle cost.
-// `@dotli/content/ipfs` is tiny (plain HTTP fetch) and stays static.
 import { fetchFromIpfs } from "@dotli/content/ipfs";
 import {
   ensureBulletinClient,
@@ -89,8 +84,6 @@ import {
   mapSdkSignedStatement,
 } from "./statement-store-mapping";
 
-// ── Session helpers (shared by all bridges) ────────────────
-
 function getSession(): UserSession | null {
   const state = getAuthState();
   return state.status === "authenticated" ? state.session : null;
@@ -104,8 +97,6 @@ function subscribeSession(
     callback(state.status === "authenticated" ? state.session : null);
   });
 }
-
-// ── Wire all container handlers ────────────────────────────
 
 function wireContainerHandlers(
   container: Container,
@@ -161,8 +152,6 @@ function wireContainerHandlers(
     });
   }
 
-  // ── Feature support ────────────────────────────────────
-
   container.handleFeatureSupported((params, { ok }) => {
     switch (params.tag as string) {
       case "Chain":
@@ -172,14 +161,10 @@ function wireContainerHandlers(
     }
   });
 
-  // ── Chain connection ───────────────────────────────────
-
   container.handleChainConnection((genesisHash) => {
     warnOnRawChainConnection(genesisHash);
     return createRemoteChainProvider(genesisHash);
   });
-
-  // ── Accounts ───────────────────────────────────────────
 
   container.handleAccountGet(
     ([dotNsIdentifier, derivationIndex], { ok, err }) => {
@@ -293,8 +278,6 @@ function wireContainerHandlers(
       );
     }),
   );
-
-  // ── Signing ────────────────────────────────────────────
 
   container.handleSignPayload((payload, { ok, err }) => {
     log.warn(`[${label}] handleSignPayload invoked:`, {
@@ -423,8 +406,6 @@ function wireContainerHandlers(
       .orElse((e) => err(e));
   });
 
-  // ── Local Storage (scoped per dApp) ────────────────────
-
   container.handleLocalStorageRead((key, { ok, err }) => {
     try {
       const raw = localStorage.getItem(storagePrefix + key);
@@ -461,7 +442,6 @@ function wireContainerHandlers(
     }
   });
 
-  // ── Entropy derivation (RFC-0007) ──────────────────────
   //
   // Deterministic 32-byte entropy scoped to the calling product and
   // a caller-chosen key. We feed `deriveProductEntropy` the user's
@@ -495,8 +475,6 @@ function wireContainerHandlers(
         }
       });
   });
-
-  // ── Navigation ─────────────────────────────────────────
 
   container.handleNavigateTo((url, { ok }) => {
     const dotUrl = dotNsUrl.parseDotNsDomain(url);
@@ -633,8 +611,6 @@ function wireContainerHandlers(
     }),
   );
 
-  // ── Push notifications ─────────────────────────────────
-
   container.handlePushNotification(({ text, deeplink }, { ok }) => {
     log.warn(`[${label}] Push notification:`, { text, deeplink });
     // eslint-disable-next-line @typescript-eslint/no-deprecated
@@ -642,7 +618,6 @@ function wireContainerHandlers(
     return ok(undefined);
   });
 
-  // ── Statement Store ───────────────────────────────────
   //
   // Handlers resolve getStatementStore() lazily (at call time, not setup time)
   // because initAuth() is lazy-loaded and may not have run yet.
@@ -740,7 +715,6 @@ function wireContainerHandlers(
       .map((signed) => mapSdkProof(signed.proof));
   });
 
-  // ── Preimage ──────────────────────────────────────────────
   //
   // Submit stores data on Bulletin Paseo via TransactionStorage.store()
   // using smoldot, returns the Blake2b-256 hash key.
@@ -749,9 +723,9 @@ function wireContainerHandlers(
   const preimageCache = new Map<string, Uint8Array>();
 
   // Eagerly start Bulletin chain sync so it's ready by the time
-  // a product calls remote_preimage_submit. Only in P2P mode —
-  // gateway mode should not create any smoldot instances.
-  if (isP2pMode(getMode())) {
+  // a product calls remote_preimage_submit. Only in smoldot mode.
+  // rpc-gateway must not create any smoldot instances.
+  if (getBackend() !== "rpc-gateway") {
     void ensureBulletinClient();
   }
 
@@ -827,50 +801,34 @@ function wireContainerHandlers(
       const cid = hashToCid(key);
       const cidString = cid.toString();
 
-      // Honor the user's content backend choice. No silent helia→gateway
-      // crossover. A Helia lookup failure is a Helia failure; a gateway
-      // failure is a gateway failure. We log and keep polling — the caller
-      // unsubscribes when it's done waiting.
-      const contentBackend = getContentBackend();
+      // Honor the user's backend choice. No silent smoldot→gateway
+      // crossover. A bitswap lookup failure is a bitswap failure. A
+      // gateway failure is a gateway failure. We log and keep polling.
+      // The caller unsubscribes when it's done waiting.
+      const backend = getBackend();
       try {
-        if (contentBackend === "p2p-helia") {
-          // Dynamic import — only P2P users load Helia (~1 MB bundle).
-          const { ensureHelia } = await import("@dotli/content/fetch");
-          const helia = await ensureHelia();
-          const chunks: Uint8Array[] = [];
-          const blockData = helia.blockstore.get(cid);
-          if (blockData instanceof Uint8Array) {
-            chunks.push(blockData);
-          } else if (
-            typeof blockData === "object" &&
-            Symbol.asyncIterator in Object(blockData)
-          ) {
-            for await (const chunk of blockData as AsyncIterable<Uint8Array>) {
-              chunks.push(chunk);
-            }
-          }
-          if (chunks.length > 0) {
-            const data = concatBytes(...chunks);
-            if (data.length > 0) {
-              preimageCache.set(key, data);
-              send(data);
-              return;
-            }
-          }
-        } else {
-          // "ipfs-gateway"
+        if (backend === "rpc-gateway") {
           const result = await fetchFromIpfs(cidString);
           if (result.data.length > 0) {
             preimageCache.set(key, result.data);
             send(result.data);
             return;
           }
+        } else {
+          // smoldot-direct or smoldot-shared-worker: fetch via the protocol
+          // iframe's smoldot using `bitswap_v1_get`. The host helper sends
+          // it through the existing chainConnect/chainSend bridge and
+          // handles the -32811/-32812 retry envelope.
+          const { bitswapGet } = await import("./bulletin-bitswap");
+          const data = await bitswapGet(cidString);
+          if (data.length > 0) {
+            preimageCache.set(key, data);
+            send(data);
+            return;
+          }
         }
       } catch (err) {
-        log.warn(
-          `[${label}] preimage lookup via ${contentBackend} failed:`,
-          err,
-        );
+        log.warn(`[${label}] preimage lookup via ${backend} failed:`, err);
       }
     };
 
@@ -884,8 +842,6 @@ function wireContainerHandlers(
       clearTimeout(initialTimeoutId);
     };
   });
-
-  // ── Theme ─────────────────────────────────────────────
 
   container.handleThemeSubscribe((_params, send) => {
     const readTheme = (): "light" | "dark" =>
@@ -905,7 +861,6 @@ function wireContainerHandlers(
     };
   });
 
-  // ── Payments (RFC-0006) — not implemented ──────────────
   //
   // dot.li does not own a payment rail yet. Register explicit
   // "not implemented" responses so products see a specific reason
@@ -946,7 +901,6 @@ function wireContainerHandlers(
 const PAYMENTS_NOT_IMPLEMENTED = "Payments are not supported in dot.li";
 const NOOP: VoidFunction = () => undefined;
 
-// ── Cached remote-permission prompts ─────────────────────
 //
 // Each submit-style wire tag caches a per-product decision in
 // localStorage under the `storageKey` below, prompting once via
@@ -1042,7 +996,6 @@ function isUint8ArrayLike(data: unknown): data is Uint8Array {
   );
 }
 
-// ── Window-based provider for nested dApps ─────────────────
 //
 // Implements the same Provider interface as createIframeProvider
 // but targets a captured Window reference (from event.source)
@@ -1096,7 +1049,6 @@ function createWindowProvider(sourceWindow: Window): Provider {
   };
 }
 
-// ── Nested bridge detector ─────────────────────────────────
 //
 // Listens for Uint8Array postMessage events from windows other
 // than the primary iframe. When a new source is detected, creates
@@ -1188,8 +1140,6 @@ export function setupNestedBridgeDetector(
     disposers.length = 0;
   };
 }
-
-// ── Main setup (primary bridge) ────────────────────────────
 
 /**
  * Set up the host container for an iframe displaying a .dot SPA.

@@ -33,8 +33,6 @@ function deriveBaseDomain(): string {
 
 export const BASE_DOMAIN = deriveBaseDomain();
 
-// --- Site identity -------------------------------------------------------
-
 // SiteId is the registrable root domain the shell is running on (e.g. "dot.li",
 // "paseo.li", "paseoli.dev"). It is a plain string — there is no closed union,
 // because the codebase is deployed on several root domains including ephemeral
@@ -47,8 +45,6 @@ export type SiteId = string;
 export const isLocalhost = isLocalEnv;
 
 export const SITE_ID: SiteId = isLocalhost ? "local.li" : BASE_DOMAIN;
-
-// --- Statement store provider --------------------------------------------
 
 /** Use smoldot light client for the statement store chain (default: false).
  *  Set VITE_SS_USE_SMOLDOT=true to enable.
@@ -75,7 +71,6 @@ export const SS_PEOPLE_CHAIN = "next-people-paseo";
 export const SS_RELAY_CHAIN: string | undefined =
   (import.meta.env.VITE_SS_RELAY_CHAIN as string | undefined) ?? undefined;
 
-// --- Debug logging -------------------------------------------------------
 //
 // Allow-list polarity: DEBUG is ON only when VITE_APP_DEBUG === "true".
 // The previous `!== "false"` check had the wrong sign — a typo like
@@ -84,8 +79,6 @@ export const SS_RELAY_CHAIN: string | undefined =
 
 export const DEBUG =
   (import.meta.env.VITE_APP_DEBUG as string | undefined) === "true";
-
-// --- Well-known genesis hashes (Paseo testnet) ---
 
 export const PASEO_RELAY_GENESIS =
   "0x77afd6190f1554ad45fd0d31aee62aacc33c6db0ea801129acb813f913e0764f" as const;
@@ -100,8 +93,6 @@ export const SUPPORTED_GENESIS_HASHES = new Set<string>([
   BULLETIN_PASEO_GENESIS,
 ]);
 
-// --- dotNS Contracts on Asset Hub Paseo (Revive EVM pallet) ---
-
 export const CONTRACTS = {
   DOTNS_REGISTRY: "0x4Da0d37aBe96C06ab19963F31ca2DC0412057a6f" as const,
   DOTNS_CONTENT_RESOLVER: "0x7756DF72CBc7f062e7403cD59e45fBc78bed1cD7" as const,
@@ -111,7 +102,6 @@ export const CONTRACTS = {
 export const DOT_NODE =
   "0x3fce7d1364a893e213bc4212792b517ffc88f5b13b86c8ef9c8d390c3a1370ce" as const;
 
-// --- Solidity storage slot numbers for direct storage reads ---
 // Derived from the dotNS contracts using OpenZeppelin v5 (ERC-7201 namespaced
 // storage). OZ v5 stores Initializable/OwnableUpgradeable/ERC165 state at
 // hash-derived locations, so the contract's own variables start at slot 0.
@@ -135,41 +125,9 @@ export const STORAGE_SLOTS = {
   CONTENTHASH: 1,
 } as const;
 
-// --- Bulletin Chain — Peer multiaddrs for Helia P2P ---
-//
-// The active peer set MUST match the resolver chain genesis. Mixing Paseo
-// and Westend peers would let Helia dial both networks via
-// `Promise.allSettled`, racing across networks and succeeding against
-// whichever happened to have the CID first — a violation of "user picks
-// one path, we use that path".
-//
-// `BULLETIN_PEERS` (the active default) is Paseo-only, matching
-// `ASSET_HUB_PASEO_GENESIS` below. The per-network constants stay for
-// documentation and for the future endpoint-picker UI; they are *not* the
-// active default.
-
-export const BULLETIN_PEERS_PASEO = [
-  "/dns4/paseo-bulletin-collator-node-0.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWRuKisocQ2Z5hBZagV5YGxJMYuW13xT42sUiUCWf5bRtu",
-  "/dns4/paseo-bulletin-collator-node-1.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWSgdX2egCUiXtDUNV6hGh6JrtTb9vQ6iRfFMdnTemQDDp",
-  "/dns4/paseo-bulletin-rpc-node-0.polkadot.io/tcp/443/wss/p2p/12D3KooWG7dt8yAMBaNrWh5juvHMGvJtPKTCaS87kkadWZKpV7ox",
-  "/dns4/paseo-bulletin-rpc-node-1.polkadot.io/tcp/443/wss/p2p/12D3KooWSS9QNRiLGBoZrDrtXvPyBV7QrV7F3A1V8f6xAXECSnj5",
-];
-
-export const BULLETIN_PEERS_WESTEND = [
-  "/dns4/westend-bulletin-rpc-node-0.polkadot.io/tcp/443/wss/p2p/12D3KooWGb3sdXpdQPvL1wwHYHpQpMAEWxpgNNb6sndHmCByMXZw",
-  "/dns4/westend-bulletin-rpc-node-1.polkadot.io/tcp/443/wss/p2p/12D3KooWN8hBVUWXNiur1w6EiEPkTJibbzpagZmm4cphMxWLv9yc",
-  "/dns4/westend-bulletin-collator-node-0.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWSxYQRoTT9rZNZRrjCfG2fPpBwPumkQsxLroTKjX6Mvkw",
-  "/dns4/westend-bulletin-collator-node-1.parity-testnet.parity.io/tcp/443/wss/p2p/12D3KooWSD5tovFkmja9aFYA6QM8eU3mFhZKdAuCsa5MgSsNDmxc",
-];
-
-export const BULLETIN_PEERS = BULLETIN_PEERS_PASEO;
-
-// --- IPFS Gateway ---
-
 /** IPFS gateway for content fetching in gateway mode */
 export const IPFS_GATEWAY = "https://paseo-ipfs.polkadot.io";
 
-// --- Asset Hub Paseo JSON-RPC endpoints (gateway mode) ---
 export const PASEO_RELAY_RPC = [
   "wss://paseo-rpc.n.dwellir.com",
   "wss://paseo.dotters.network",
@@ -184,7 +142,6 @@ export const ASSET_HUB_PASEO_RPC = [
   "wss://sys.turboflakes.io/asset-hub-paseo",
 ];
 
-// --- SW archive cache ---
 /** Max number of domain archives kept in the SW in-memory LRU cache. */
 export const SW_ARCHIVE_CACHE_MAX = 8;
 
@@ -194,7 +151,6 @@ export const MAX_CONNECTIONS_PER_ORIGIN = 3;
 /** Max nested container bridges per host shell. */
 export const MAX_NESTED_BRIDGES = 5;
 
-// --- Timeouts (ms) ---
 // Re-exported from the pure-constants `timeouts` sub-module so existing
 // `@dotli/config/config` callers keep working unchanged.
 export { TIMEOUTS } from "./timeouts";

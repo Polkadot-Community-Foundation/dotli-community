@@ -42,8 +42,8 @@ dot.li uses a **two-build, CID-subdomain architecture** that separates concerns 
 name.dot.li              Host build (topbar, dotns resolution, smoldot, bridge)
                           Resolves name -> CID, then iframes cid.app.dot.li
 
-cid.app.dot.li           App build (CID from subdomain, P2P fetch, render)
-                          Parses CID from URL, fetches via P2P/gateway, renders
+cid.app.dot.li           App build (CID from subdomain, content fetch, render)
+                          Parses CID from URL, fetches via bitswap/gateway, renders
 ```
 
 | URL                            | Role         | What happens                                                     |
@@ -58,14 +58,14 @@ Each `cid.app.dot.li` is a distinct origin, preventing SW/storage/security confl
 ### What it does
 
 1. **Resolves** `.dot` names via an in-browser [smoldot](https://github.com/smol-dot/smoldot) light client connected to Asset Hub Paseo, querying dotNS contracts through the Revive EVM pallet.
-2. **Fetches** content from the [Bulletin Chain](https://github.com/paritytech/polkadot-bulletin-chain) via [Helia](https://github.com/ipfs/helia) P2P (bitswap), with IPFS gateway fallback.
+2. **Fetches** content from the [Bulletin Chain](https://github.com/paritytech/polkadot-bulletin-chain) via smoldot `bitswap_v1_get` JSON-RPC or an IPFS gateway according to what the user picks.
 3. **Renders** the content in a sandboxed iframe with a full host-container bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage — all through postMessage.
 
 ```
 testingout.dot.li
     -> Host: smoldot resolves dotNS -> IPFS CID
     -> Host: iframes cid.app.dot.li
-    -> App:  Helia fetches content (P2P or gateway)
+    -> App:  fetches content via smoldot bitswap_v1_get or IPFS gateway
     -> App:  renders dApp in sandboxed iframe with container bridge
 ```
 

@@ -412,9 +412,6 @@ async function decryptIfNeeded(
   }
 }
 
-// Module-level reference for cleanup
-let destroyHeliaFn: (() => Promise<void>) | null = null;
-
 /**
  * Wipe every piece of sandbox-origin state before init. Triggered by the
  * `fullReset=1` URL param the host sets on the first load after "Save &
@@ -572,12 +569,8 @@ async function main(): Promise<void> {
     stopApp();
     return;
   }
-  const {
-    contentBackend: urlContentBackend,
-    chainBackend: urlChainBackend,
-    skipArchiveCache,
-  } = parsed.params;
-  const isCentralized = urlContentBackend === "ipfs-gateway";
+  const { chainBackend, skipArchiveCache } = parsed.params;
+  const isGateway = chainBackend === "rpc-gateway";
 
   // Full-reset signal from the host settings popover: wipe sandbox-origin
   // state (IDB, CacheStorage, SW registrations) before the normal init
@@ -589,20 +582,14 @@ async function main(): Promise<void> {
     await purgeSandboxOriginState();
   }
 
-  // Propagate the explicit axes into every metric emitted from the sandbox
-  // so dashboards can slice either way (M-8, B-5, C-4).
-  const sessionDefaults: Record<string, string> = {
+  // Propagate the chainBackend choice into every metric emitted from the
+  // sandbox so dashboards can slice on it.
+  m.setDefaults({
     skip_archive_cache: String(skipArchiveCache),
-    content_backend: urlContentBackend,
-  };
-  if (urlChainBackend !== undefined) {
-    sessionDefaults.chain_backend = urlChainBackend;
-  }
-  m.setDefaults(sessionDefaults);
+    chain_backend: chainBackend,
+  });
 
   // Register SW + pre-load chunks in parallel.
-  // The fetch chunk is only pre-loaded in P2P mode — in gateway mode
-  // it is imported lazily so Vite can split out Helia/libp2p.
   // After a fullReset the existing `navigator.serviceWorker.controller`
   // is the SW we just unregistered; force the registration path to wait
   // for a fresh controller rather than adopting that stale one.
@@ -613,25 +600,22 @@ async function main(): Promise<void> {
     stopSw();
     return v;
   });
-  // The sandbox renders by writing HTML into its own window via
-  // `document.write` — it never instantiates `@dotli/ui/render`, so we
-  // don't pre-load that chunk here. The content-fetch chunk is only
-  // needed on a cache miss, and only in P2P mode (gateway mode does a
-  // plain HTTPS fetch) so the import is deferred.
-  const fetchChunkPromise = isCentralized
-    ? null
-    : import("@dotli/content/fetch");
+  // Pre-load the fetch chunk for the cache-miss path. Gateway mode only
+  // needs `fetchViaGateway` (small). The smoldot backends additionally
+  // need the bitswap-bridge module to call into the protocol iframe.
+  const fetchChunkPromise = import("@dotli/content/fetch");
+  const bitswapBridgePromise = isGateway ? null : import("./bitswap-bridge");
 
   // Wait for SW before cache check
   await swReady;
   log.warn(`[dot.li app] SW ready (${elapsed(T0)})`);
 
   // Check SW cache first (skip if user disabled content cache). The cache
-  // lookup is keyed by (cid, contentBackend) so a stale gateway-fetched
-  // archive cannot satisfy a P2P-mode request.
+  // lookup is keyed by (cid, chainBackend) so a stale gateway-fetched archive
+  // cannot satisfy a smoldot-mode request and vice versa.
   const cachedFiles = skipArchiveCache
     ? null
-    : await getCachedArchive(cid, cid, urlContentBackend);
+    : await getCachedArchive(cid, cid, chainBackend);
   if (cachedFiles) {
     log.warn(`[dot.li app] SW archive cache HIT (${elapsed(T0)})`);
 
@@ -647,7 +631,7 @@ async function main(): Promise<void> {
     // For multi-file archives, store files in the SW so it can serve
     // sub-resources (CSS, JS, fonts) when the browser loads them.
     if (Object.keys(cachedFiles).length > 1) {
-      await storeArchiveInSW(cachedFiles, cid, cid, urlContentBackend);
+      await storeArchiveInSW(cachedFiles, cid, cid, chainBackend);
       log.warn(`[dot.li app] archive stored in SW (${elapsed(T0)})`);
     }
     let html = new TextDecoder().decode(indexHtml);
@@ -658,16 +642,6 @@ async function main(): Promise<void> {
     notifyLoadingDone();
     performance.mark("dotli:app:end");
     stopApp();
-    if (destroyHeliaFn !== null) {
-      const destroy = destroyHeliaFn;
-      destroyHeliaFn = null;
-      void destroy().catch((err: unknown) => {
-        log.warn(
-          "[dot.li app] destroyHelia() failed before document.write:",
-          err,
-        );
-      });
-    }
     document.open();
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
     document.write(html);
@@ -677,35 +651,33 @@ async function main(): Promise<void> {
 
   let result: FetchResult;
 
-  if (isCentralized) {
-    // Centralized mode: IPFS gateway fetch only — no Helia/libp2p loaded.
+  if (isGateway) {
+    // rpc-gateway mode: HTTPS fetch from a trusted IPFS gateway.
     log.warn(
-      `[dot.li app] SW archive cache MISS — gateway mode, using IPFS gateway (${elapsed(T0)})`,
+      `[dot.li app] SW archive cache MISS — rpc-gateway mode, using IPFS gateway (${elapsed(T0)})`,
     );
     showStatus("Fetching via IPFS gateway...");
-    const { fetchArchive } = await import("@dotli/content/fetch");
+    const { fetchArchive } = await fetchChunkPromise;
     result = await fetchArchive(cid, showStatus, { useGateway: true });
   } else {
-    // P2P mode: Helia/bitswap fetch — full P2P stack loaded.
+    // smoldot-direct / smoldot-shared-worker: fetch via smoldot's `bitswap_v1_get`
+    // through the host-relayed protocol bridge. No libp2p in the sandbox.
     log.warn(
-      `[dot.li app] SW archive cache MISS — P2P mode, fetching via Helia (${elapsed(T0)})`,
+      `[dot.li app] SW archive cache MISS — ${chainBackend} (bitswap) (${elapsed(T0)})`,
     );
-    showStatus("Connecting to peers...");
-    // The P2P branch is gated on `!isCentralized`, which is the same
-    // condition that populates `fetchChunkPromise`. If we reached here
-    // without a pre-populated promise that's a logic bug — a silent
-    // dynamic import would mask a violation of "user picked X, we use X".
-    if (fetchChunkPromise === null) {
+    showStatus("Fetching via bitswap...");
+    if (bitswapBridgePromise === null) {
       throw new Error(
-        "Invariant violation: P2P branch reached but fetchChunkPromise was not pre-loaded",
+        "Invariant violation: smoldot branch reached but bitswapBridgePromise was not pre-loaded",
       );
     }
-    const fetchChunk = await fetchChunkPromise;
-    const { fetchArchive, ensureHelia, destroyHelia } = fetchChunk;
-    destroyHeliaFn = destroyHelia;
-    await ensureHelia();
-    log.warn(`[dot.li app] Helia P2P ready (${elapsed(T0)})`);
-    result = await fetchArchive(cid, showStatus);
+    const [{ fetchArchive }, { requestBitswapBlock }] = await Promise.all([
+      fetchChunkPromise,
+      bitswapBridgePromise,
+    ]);
+    result = await fetchArchive(cid, showStatus, {
+      bitswapBlockSource: requestBitswapBlock,
+    });
   }
   log.warn(`[dot.li app] Content fetched → ${result.type} (${elapsed(T0)})`);
 
@@ -727,7 +699,7 @@ async function main(): Promise<void> {
   } else {
     // For multi-file archives, store files in the SW so it can serve
     // sub-resources (CSS, JS, fonts) when the browser loads them.
-    await storeArchiveInSW(result.files, cid, cid, urlContentBackend);
+    await storeArchiveInSW(result.files, cid, cid, chainBackend);
     log.warn(`[dot.li app] archive stored in SW (${elapsed(T0)})`);
     const indexHtml = result.files["index.html"] as Uint8Array | undefined;
     if (indexHtml === undefined) {
@@ -743,20 +715,6 @@ async function main(): Promise<void> {
   notifyLoadingDone();
   performance.mark("dotli:app:end");
   stopApp();
-  // `document.open()/write()` wipes the current document, including
-  // the `beforeunload` handler we registered below for Helia cleanup.
-  // Tear down the Helia client synchronously first so libp2p sockets
-  // don't leak past the page replacement.
-  if (destroyHeliaFn !== null) {
-    const destroy = destroyHeliaFn;
-    destroyHeliaFn = null;
-    void destroy().catch((err: unknown) => {
-      log.warn(
-        "[dot.li app] destroyHelia() failed before document.write:",
-        err,
-      );
-    });
-  }
   document.open();
   // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
   document.write(html);
@@ -764,18 +722,11 @@ async function main(): Promise<void> {
   log.warn(`[dot.li app] Done (${elapsed(T0)})`);
 }
 
-// Cleanup on page unload
-window.addEventListener("beforeunload", () => {
-  if (destroyHeliaFn) {
-    void destroyHeliaFn();
-  }
-});
-
 // The retry button exists so a user can re-trigger a failed init after
 // fixing something out-of-band (e.g. toggling a flag). It is NOT an
 // automatic retry — only a click path. We still guard against runaway
 // recursion if the user mashes the button and against overlapping
-// `main()` calls (two invocations would race on Helia/SW state).
+// `main()` calls (two invocations would race on each other).
 let runInFlight = false;
 let runAttempts = 0;
 const MAX_RUN_ATTEMPTS = 5;
@@ -795,42 +746,25 @@ function run(): void {
   runAttempts += 1;
   runInFlight = true;
 
-  // Before a retry, clear Helia/SW state that a prior `main()` attempt
-  // may have partially set up. Without this, re-running `main()` can
-  // re-use a half-initialized Helia client or stale SW archive state
-  // that doesn't match the user's current configuration.
-  const resetForRetry = async (): Promise<void> => {
-    if (destroyHeliaFn !== null) {
-      const destroy = destroyHeliaFn;
-      destroyHeliaFn = null;
-      try {
-        await destroy();
-      } catch (err) {
-        log.warn("[dot.li app] destroyHelia() failed during retry reset:", err);
-      }
-    }
-  };
-
-  void resetForRetry()
-    .then(() => main())
+  void main()
     .catch((err: unknown) => {
       // Surface before rendering so Sentry sees every failure. Attribute
-      // strictly from the explicit `contentBackend` URL param; tag `unknown`
-      // when missing rather than guessing P2P (the missing-param path is
-      // already a hard error from `main()`, but a thrown error before that
-      // validation also lands here).
+      // strictly from the explicit `chainBackend` URL param. Tag `unknown`
+      // when missing rather than guessing (the missing-param path is
+      // already a hard error from `main()`, but a thrown error before
+      // that validation also lands here).
       const params = new URL(window.location.href).searchParams;
-      const cb = params.get("contentBackend");
+      const b = params.get("chainBackend");
       const dependency =
-        cb === "ipfs-gateway"
+        b === "rpc-gateway"
           ? "ipfs-gateway"
-          : cb === "p2p-helia"
-            ? "helia-bulletin"
+          : b === "smoldot-direct" || b === "smoldot-shared-worker"
+            ? "smoldot-bitswap"
             : "unknown";
       captureException(err, {
         surface: "sandbox_main",
         dependency,
-        content_backend: cb ?? "unknown",
+        chain_backend: b ?? "unknown",
         attempt: String(runAttempts),
       });
       const message = err instanceof Error ? err.message : String(err);

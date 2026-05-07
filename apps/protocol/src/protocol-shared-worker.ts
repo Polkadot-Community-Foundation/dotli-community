@@ -42,8 +42,6 @@ import type {
   ProtocolEnvelope,
 } from "@dotli/protocol/messages";
 
-// ── Types for iframe ↔ SharedWorker communication ────────────
-
 export interface SWRelayRequest {
   type: "relay-request";
   envelope: ProtocolRequestEnvelope;
@@ -67,8 +65,6 @@ export interface SWError {
 export type SWInbound = SWRelayRequest;
 export type SWOutbound = SWRelayResponse | SWReady | SWError;
 
-// ── Logging (console.warn since `log` may rely on window) ────
-
 const TAG = "[dot.li SW]";
 
 function swLog(...args: unknown[]): void {
@@ -78,8 +74,6 @@ function swLog(...args: unknown[]): void {
 function swError(...args: unknown[]): void {
   console.error(TAG, ...args);
 }
-
-// ── Engine state ─────────────────────────────────────────────
 
 const MAX_CHAIN_CONNECTIONS = 10;
 const chainConnections = new Map<string, StringJsonRpcConnection>();
@@ -119,7 +113,6 @@ onSmoldotFatal((message) => {
   }
 });
 
-// ── Pre-sync: boot smoldot and wait for chain sync before accepting requests ──
 //
 // NO retries. NO cleanup-and-retry. NO backoff. The user picked
 // smoldot-shared-worker; if presync fails the actual cause is surfaced to
@@ -203,8 +196,6 @@ async function presync(): Promise<void> {
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────
-
 function assertString(value: unknown, name: string): asserts value is string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`Invalid ${name}: expected non-empty string`);
@@ -261,8 +252,6 @@ function removePort(port: MessagePort): void {
     `Port removed (cleaned ${String(cleaned)} connections, ${String(ports.size)} ports remaining)`,
   );
 }
-
-// ── Request handling ─────────────────────────────────────────
 
 async function handleRequest(
   port: MessagePort,
@@ -453,8 +442,6 @@ async function handleRequest(
     }
   }
 }
-
-// ── SharedWorker lifecycle ───────────────────────────────────
 
 // Proactively clean up stale ports by sending a ping.
 // Posting to a closed port throws — we catch that to detect dead ports.

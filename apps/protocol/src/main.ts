@@ -81,8 +81,6 @@ installGlobalErrorHandlers("host");
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 
-// ── Origin validation (shared across all modes) ──────────────
-
 function getAllowedOrigins(): Set<string> {
   const origins = new Set<string>();
   const hostname = self.location.hostname;
@@ -128,7 +126,6 @@ function postToSource(
   (source as Window).postMessage(message, origin);
 }
 
-// ── Shared-auth cross-tab broadcast ──────────────────────────
 //
 // The shared-auth path is intentionally handled on the host window (not in the
 // SharedWorker) because it only needs `localStorage` — no smoldot, no chain.
@@ -306,8 +303,6 @@ function signalReady(): void {
     );
   }
 }
-
-// ── Mode initialization (explicit, no auto-detection) ───────
 
 type RequestedMode = "shared-worker" | "direct" | "rpc" | null;
 
@@ -491,8 +486,6 @@ function signalError(message: string): void {
   }
 }
 
-// ── Mode 1: SharedWorker relay ───────────────────────────────
-
 async function initSharedWorkerMode(): Promise<void> {
   const swStartTime = performance.now();
 
@@ -597,8 +590,6 @@ async function initSharedWorkerMode(): Promise<void> {
   });
 }
 
-// ── Direct mode ─────────────────────────────────────────────
-
 async function initDirectMode(): Promise<void> {
   log.warn("[dot.li protocol] === DIRECT MODE ===");
   log.warn(
@@ -657,7 +648,6 @@ async function initDirectMode(): Promise<void> {
   });
 }
 
-// ── RPC mode (gateway) ──────────────────────────────────────
 //
 // No smoldot. Sandboxed app chain requests are bridged to a trusted WSS
 // JSON-RPC endpoint via the shared broker. Name resolution in gateway mode
@@ -719,8 +709,6 @@ function bindEngineToMessages(engine: ProtocolEngine): void {
       });
   });
 }
-
-// ── Protocol engine (used by direct mode) ────────────────────
 
 type ResponseCallback = (envelope: ProtocolEnvelope) => void;
 
@@ -1046,8 +1034,6 @@ function createEngine(options: EngineOptions): ProtocolEngine {
 
   return { handleRequest, cleanup };
 }
-
-// ── Boot ─────────────────────────────────────────────────────
 
 bindSharedAuthListener();
 bindSharedAuthBroadcastRelay();

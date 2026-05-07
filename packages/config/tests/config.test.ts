@@ -3,7 +3,6 @@ import {
   CONTRACTS,
   DOT_NODE,
   STORAGE_SLOTS,
-  BULLETIN_PEERS,
   IPFS_GATEWAY,
   TIMEOUTS,
   SW_ARCHIVE_CACHE_MAX,
@@ -35,20 +34,6 @@ describe("config constants", () => {
     it("CONTENTHASH is a non-negative integer", () => {
       expect(Number.isInteger(STORAGE_SLOTS.CONTENTHASH)).toBe(true);
       expect(STORAGE_SLOTS.CONTENTHASH).toBeGreaterThanOrEqual(0);
-    });
-  });
-
-  describe("BULLETIN_PEERS", () => {
-    it("is a non-empty array", () => {
-      expect(BULLETIN_PEERS.length).toBeGreaterThan(0);
-    });
-
-    it("each peer is a valid multiaddr with /wss/ transport", () => {
-      for (const peer of BULLETIN_PEERS) {
-        expect(peer).toMatch(/^\/dns4\//);
-        expect(peer).toContain("/wss/");
-        expect(peer).toContain("/p2p/");
-      }
     });
   });
 
