@@ -56,8 +56,13 @@ export function installMetricsHarness(): MetricsHarness {
   const stub = {
     startSpan: <T>(
       _opts: { op: string; name: string },
-      fn: (span: unknown) => T,
-    ): T => fn(undefined),
+      fn: (span: { setAttribute: (key: string, value: string) => void }) => T,
+    ): T =>
+      fn({
+        setAttribute: (key: string, value: string): void => {
+          tags.set(key, value);
+        },
+      }),
     setMeasurement: (): void => {
       /* no-op */
     },

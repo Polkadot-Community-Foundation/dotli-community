@@ -12,6 +12,7 @@ if (typeof globalThis.requestIdleCallback !== "function") {
 }
 
 import "@dotli/ui/styles.css";
+import * as Sentry from "@sentry/browser";
 import {
   initSentry,
   installGlobalErrorHandlers,
@@ -544,14 +545,14 @@ async function main(): Promise<void> {
       log.warn(
         `[dot.li resolve] path=cache (${chainBackend}) (${elapsed(T0)}) -> ${cachedCid}`,
       );
-      setShieldState(shieldState);
-      const { renderAppSubdomain } = await renderChunkPromise;
-      await renderAppSubdomain(cachedCid, label);
+      // Wrap the warm-path render in a span so its duration is queryable
+      // as `dotli.e2e.fast_path` alongside `dotli.e2e.slow_path`.
+      await m.span(S.E2E_FAST, async () => {
+        setShieldState(shieldState);
+        const { renderAppSubdomain } = await renderChunkPromise;
+        await renderAppSubdomain(cachedCid, label);
+      });
       history.replaceState(null, "", "/");
-
-      const totalMs = performance.now() - T0;
-      m.measure(S.E2E_FAST, totalMs);
-      m.distribution(S.E2E_FAST, totalMs);
       performance.mark("dotli:main:end");
       log.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
       return;
@@ -559,25 +560,28 @@ async function main(): Promise<void> {
     m.count(S.CACHE_MISS);
     log.warn(`[dot.li perf] CID cache MISS (${elapsed(T0)})`);
 
+    // One event per cold resolve attempt, BEFORE anything that can fail.
+    Sentry.captureMessage("dotli.resolve_attempt", {
+      level: "info",
+      tags: {
+        surface: "host_main_resolve",
+        outcome: "pending",
+        chain_backend: chainBackend,
+      },
+    });
+
+    // Wall-clock cold-path duration, emitted as a trace_metric distribution
+    // after success. The previous m.span wrapper recorded garbage on the
+    // smoldot path (closure detachment across postMessage awaits).
+    const coldStartMs = performance.now();
     performance.mark("dotli:resolve:start");
     const resolveStart = performance.now();
-    const stopResolve = m.timer(S.RESOLVE_TOTAL);
-    let cid: string | null;
 
+    let cid: string | null;
     if (chainBackend !== "rpc-gateway") {
       log.warn(
         `[dot.li resolve] path=smoldot (trustless light-client) (${elapsed(T0)})`,
       );
-
-      // After ~10s of slow sync, offer an explicit hand-off to the settings
-      // popover rather than silently switching modes. Mode changes must be
-      // active user choices — a button that rewrites localStorage and
-      // reloads would be silent substitution. Instead, open the popover
-      // with the current mode highlighted so the user picks.
-      // 10 s matches the slowest of the major P2P-path slow-hint thresholds
-      // that users actually hit (Resolving = 10 s, Adding Paseo relay chain
-      // = 10 s) so the "Change settings" button arrives together with the
-      // explanatory hint text instead of showing up 5 s before it.
       const gatewayBtnTimer = setTimeout(() => {
         const hint = document.getElementById("loading-hint");
         if (hint !== null) {
@@ -586,44 +590,36 @@ async function main(): Promise<void> {
           btn.textContent = "Change settings";
           btn.title = "Open settings to change resolution mode";
           btn.addEventListener("click", (ev) => {
-            // Stop propagation — the document-level click handler in the
-            // topbar closes open popovers when the click target is outside
-            // them, which would slam our popover shut immediately after we
-            // opened it.
             ev.stopPropagation();
             openModePopover();
           });
-          // Append *alongside* any existing hint text span (produced by
-          // `showStatus` at the same threshold) instead of wiping it — the
-          // button and the hint now co-exist in the same row.
           hint.appendChild(btn);
           hint.classList.add("visible");
         }
       }, 10000);
 
-      const { resolveDotNameRemote, resolveOwnerRemote } =
-        await import("@dotli/protocol/client");
-      const { statusToPhase } = await import("@dotli/resolver/resolve");
-      populateOwner(resolveOwnerRemote, label);
-      cid = await resolveDotNameRemote(label, (msg: string) => {
-        // Progress events arrive as opaque strings across the iframe
-        // boundary. The resolver package owns the authoritative
-        // mapping from status text → `ResolvePhase`; we defer to it
-        // instead of maintaining a parallel regex here.
-        const phase = statusToPhase(msg);
-        if (phase === "asset-hub-connecting") {
-          advancePhase(1);
-        } else if (
-          phase === "asset-hub-syncing" ||
-          phase === "asset-hub-ready"
-        ) {
-          advancePhase(2);
-        } else if (phase === "resolving-content") {
-          advancePhase(3);
-        }
-        showStatus(msg);
-      });
-      clearTimeout(gatewayBtnTimer);
+      try {
+        const { resolveDotNameRemote, resolveOwnerRemote } =
+          await import("@dotli/protocol/client");
+        const { statusToPhase } = await import("@dotli/resolver/resolve");
+        populateOwner(resolveOwnerRemote, label);
+        cid = await resolveDotNameRemote(label, (msg: string) => {
+          const phase = statusToPhase(msg);
+          if (phase === "asset-hub-connecting") {
+            advancePhase(1);
+          } else if (
+            phase === "asset-hub-syncing" ||
+            phase === "asset-hub-ready"
+          ) {
+            advancePhase(2);
+          } else if (phase === "resolving-content") {
+            advancePhase(3);
+          }
+          showStatus(msg);
+        });
+      } finally {
+        clearTimeout(gatewayBtnTimer);
+      }
     } else {
       log.warn(
         `[dot.li resolve] path=json-rpc (gateway mode) (${elapsed(T0)})`,
@@ -637,22 +633,20 @@ async function main(): Promise<void> {
     }
 
     stopStatusTick();
-    stopResolve();
     performance.mark("dotli:resolve:end");
     log.warn(
       `[dot.li resolve] RESOLVED ${label}.dot via ${chainBackend} in ${dur(resolveStart)} (total ${elapsed(T0)}) -> ${cid ?? "null"}`,
     );
-    m.tag("resolve_source", chainBackend);
 
     if (cid === null) {
       showError(
         `${label}.dot`,
         "This domain has no content set. The owner needs to publish content to the Bulletin Chain and set the content hash.",
       );
+      performance.mark("dotli:main:end");
       return;
     }
 
-    // When the user disabled the CID cache, do NOT write to it.
     if (!cacheSettings.skipCidCache) {
       requestIdleCallback(() => {
         void setCachedCid(label, cid);
@@ -661,13 +655,14 @@ async function main(): Promise<void> {
 
     setShieldState(shieldState);
 
-    // Render: iframe to cid.app.dot.li
     const { renderAppSubdomain } = await renderChunkPromise;
     await renderAppSubdomain(cid, label);
 
-    const totalMs = performance.now() - T0;
-    m.measure(S.E2E_SLOW, totalMs);
-    m.distribution(S.E2E_SLOW, totalMs);
+    m.distribution(S.E2E_SLOW, performance.now() - coldStartMs, "millisecond", {
+      outcome: "ok",
+      chain_backend: chainBackend,
+    });
+
     history.replaceState(null, "", "/");
     performance.mark("dotli:main:end");
     log.warn(`[dot.li perf] === TOTAL: ${dur(T0)} ===`);
@@ -683,6 +678,7 @@ async function main(): Promise<void> {
       chainBackend === "rpc-gateway" ? "asset-hub-rpc" : "smoldot";
     captureException(err, {
       surface: "host_main_resolve",
+      outcome: "error",
       dependency,
       chain_backend: chainBackend,
     });

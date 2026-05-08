@@ -99,6 +99,10 @@ export function initSentry(source: SentrySource): void {
   const dsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
   const env =
     (import.meta.env.VITE_APP_ENV as string | undefined) ?? "development";
+  const integrations =
+    source === "worker"
+      ? []
+      : [Sentry.browserTracingIntegration({ idleTimeout: 120000 })];
   Sentry.init({
     dsn,
     tunnel: "/t",
@@ -106,7 +110,28 @@ export function initSentry(source: SentrySource): void {
     release: import.meta.env.VITE_COMMIT_SHA as string | undefined,
     sendDefaultPii: false,
     beforeSend: tagSmoldotEvents,
+    integrations,
+    tracesSampleRate: 1.0,
   });
+
+  // Anonymous per-browser UUID for Sentry user-level metrics. No PII.
+  try {
+    const ls = (globalThis as { localStorage?: Storage }).localStorage;
+    if (ls) {
+      let uuid = ls.getItem("dotli:sentry-uuid");
+      if (uuid === null) {
+        uuid = crypto.randomUUID();
+        ls.setItem("dotli:sentry-uuid", uuid);
+      }
+      Sentry.setUser({ id: uuid });
+    }
+  } catch (err) {
+    log.warn(
+      "[dot.li sentry] anonymous user id setup skipped (localStorage unavailable)",
+      err,
+    );
+  }
+
   m.bind(Sentry as unknown as Parameters<typeof m.bind>[0]);
   // Use the canonical schema keys documented in `metrics.ts` (`source`,
   // `env`). The metrics layer owns any Sentry-side prefixing, so we pass

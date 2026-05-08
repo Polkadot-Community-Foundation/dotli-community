@@ -100,11 +100,16 @@ async function doCreateClient(
   const initStart = performance.now();
   const stopPresync = m.timer(S.SMOLDOT_PRESYNC);
 
-  // Forward smoldot connection issues to the status callback so the
-  // loading UI can surface bootnode drops to the user.
+  // Forward bootnode drops to the loading UI. Counter is throttled to
+  // 1/sec because cold sync can fail hundreds of handshakes per second.
+  let lastBootnodeMetricAt = 0;
   const unsubConnectionIssue = onConnectionIssue((msg) => {
-    onStatus?.(`Bootnode connection issue — ${msg}`);
-    m.count(S.BOOTNODE_ERROR, { source: "log-callback" });
+    onStatus?.(`Bootnode connection issue, ${msg}`);
+    const now = performance.now();
+    if (now - lastBootnodeMetricAt >= 1000) {
+      lastBootnodeMetricAt = now;
+      m.count(S.BOOTNODE_ERROR, { source: "log-callback" });
+    }
   });
 
   try {

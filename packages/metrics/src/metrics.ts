@@ -1,4 +1,4 @@
-// dot.li — Performance metrics for smoldot/protocol lifecycle
+// Performance metrics for smoldot/protocol lifecycle
 //
 // Controlled via VITE_METRICS env var:
 //   VITE_METRICS=true  → spans, measurements, and counters sent to Sentry
@@ -10,7 +10,7 @@
 //   m.measure("smoldot.sync_duration", 2356);
 //   m.count("protocol.mode", { mode: "shared-worker", outcome: "ok" });
 //
-// Approved attribute schema (`MetricAttrs`):
+// Approved attribute schema (`MetricAttributes`):
 //   - `mode`      — legacy DotliMode preset label ("p2p-shared-worker" etc.)
 //   - `provider`  — concrete provider name ("smoldot", "rpc", "helia", ...)
 //   - `chain`     — relay / parachain name ("relay", "asset-hub", ...)
@@ -30,12 +30,13 @@ export type MetricOutcome =
   | "timeout"
   | "miss"
   | "hit"
-  // Bitswap-specific (CONTENT_BITSWAP_RPC)
+  | "pending"
+  // Bitswap
   | "not-found"
   | "invalid-cid"
   | "aborted";
 
-export type MetricAttrs = {
+export type MetricAttributes = {
   mode?: string;
   provider?: string;
   chain?: string;
@@ -53,7 +54,9 @@ interface MetricOptions {
 interface SentryLike {
   startSpan: <T>(
     opts: { op: string; name: string },
-    fn: (span: unknown) => T,
+    fn: (
+      span: { setAttribute: (key: string, value: string) => void } | undefined,
+    ) => T,
   ) => T;
   setMeasurement: (name: string, value: number, unit: string) => void;
   metrics: {
@@ -135,7 +138,6 @@ function bind(s: SentryLike): void {
 
 const ENABLED = (import.meta.env.VITE_METRICS as string | undefined) === "true";
 
-//
 // Apps register session-level context (e.g. `dotli_mode`) via `setDefaults()`.
 // Every metric emitted afterwards carries these attributes, so dashboards can
 // slice per-mode without touching each call site. Per-call attributes still
@@ -155,49 +157,38 @@ function mergeAttrs(
 /**
  * Wrap a sync or async function in a Sentry performance span.
  * When metrics are disabled, the function runs without instrumentation.
- *
- * The span is auto-tagged with `outcome` by running `fn` inside a
- * try/catch: success → `outcome: "ok"`, exception → `outcome: "error"`
- * + `reason: <Error.name>`, and the same counter is emitted via
- * `count(name, ...)` so dashboards can chart one series per logical
- * event instead of juggling parallel `_SUCCESS` / `_FAILURE` constants.
- * The original exception re-throws unchanged.
+ * The wrapped function receives the active span so callers can attach
+ * attributes synchronously inside the body (e.g. `dotli.chain_backend`
+ * on a resolve span).
  */
-function span<T>(name: string, fn: () => T): T;
-function span<T>(name: string, fn: () => Promise<T>): Promise<T>;
-function span<T>(name: string, fn: () => T | Promise<T>): T | Promise<T> {
+function span<T>(
+  name: string,
+  fn: (
+    span: { setAttribute: (key: string, value: string) => void } | undefined,
+  ) => T,
+): T;
+function span<T>(
+  name: string,
+  fn: (
+    span: { setAttribute: (key: string, value: string) => void } | undefined,
+  ) => Promise<T>,
+): Promise<T>;
+function span<T>(
+  name: string,
+  fn: (
+    span: { setAttribute: (key: string, value: string) => void } | undefined,
+  ) => T | Promise<T>,
+): T | Promise<T> {
   if (!ENABLED) {
-    return fn();
+    return fn(undefined);
   }
   const s = sentry();
   if (s === null) {
-    return fn();
+    return fn(undefined);
   }
-  const emit = (outcome: MetricOutcome, reason?: string): void => {
-    count(name, reason === undefined ? { outcome } : { outcome, reason });
-  };
-  return s.startSpan({ op: "dotli", name: `dotli.${name}` }, () => {
-    try {
-      const result = fn();
-      if (result instanceof Promise) {
-        return result.then(
-          (value) => {
-            emit("ok");
-            return value;
-          },
-          (err: unknown) => {
-            emit("error", err instanceof Error ? err.name : "unknown");
-            throw err;
-          },
-        );
-      }
-      emit("ok");
-      return result;
-    } catch (err) {
-      emit("error", err instanceof Error ? err.name : "unknown");
-      throw err;
-    }
-  });
+  return s.startSpan({ op: "dotli", name: `dotli.${name}` }, (currentSpan) =>
+    fn(currentSpan),
+  );
 }
 
 /**
@@ -218,11 +209,11 @@ function measure(
 /**
  * Increment a counter metric. Counters track event frequency.
  *
- * `attributes` follows the approved `MetricAttrs` schema — prefer the
+ * `attributes` follows the approved `MetricAttributes` schema — prefer the
  * named keys (`mode`, `provider`, `chain`, `source`, `outcome`,
  * `reason`) so dashboards can slice consistently.
  */
-function count(name: string, attributes?: MetricAttrs): void {
+function count(name: string, attributes?: MetricAttributes): void {
   if (!ENABLED) {
     return;
   }
@@ -238,7 +229,7 @@ function distribution(
   name: string,
   value: number,
   unit = "millisecond",
-  attributes?: MetricAttrs,
+  attributes?: MetricAttributes,
 ): void {
   if (!ENABLED) {
     return;
@@ -256,7 +247,7 @@ function gauge(
   name: string,
   value: number,
   unit = "none",
-  attributes?: MetricAttrs,
+  attributes?: MetricAttributes,
 ): void {
   if (!ENABLED) {
     return;
@@ -280,7 +271,7 @@ function tag(key: string, value: string): void {
 /**
  * Register session-wide default attributes. Every `count` / `distribution` /
  * `gauge` emitted afterwards picks these up automatically — so `source`,
- * `mode`, or any similar slice from the canonical `MetricAttrs` schema
+ * `mode`, or any similar slice from the canonical `MetricAttributes` schema
  * doesn't need to be threaded through every call site.
  *
  * Keys passed here MUST be bare schema keys (`source`, `mode`, `chain`,
@@ -375,6 +366,8 @@ function timer(name: string): () => number {
     return ms;
   };
 }
+
+// ── Public singleton ───────────────────────────────────────────
 
 export const m = {
   /** Whether metrics collection is active */
