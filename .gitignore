@@ -44,8 +44,9 @@ playwright-report/
 # Turbo
 .turbo
 
-# AI files
-.claude
+# AI
+.claude/settings.local.json
+.claude/worktrees
 .cursor
 .codeium
 .gemini
@@ -56,9 +57,5 @@ playwright-report/
 .swarm
 .ai
 .llm
-.mcp.json
 opencode.json
-docs
-CLAUDE.md
-AGENTS.md
 GEMINI.md
