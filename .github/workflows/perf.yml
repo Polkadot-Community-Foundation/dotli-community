@@ -39,7 +39,7 @@ jobs:
       - name: Download baseline from main
         if: github.event_name == 'pull_request'
         id: baseline
-        uses: dawidd6/action-download-artifact@v20
+        uses: dawidd6/action-download-artifact@v21
         with:
           name: perf-baseline
           workflow: perf.yml
