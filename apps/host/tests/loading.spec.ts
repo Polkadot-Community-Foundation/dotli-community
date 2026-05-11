@@ -105,6 +105,21 @@ const nullResolveResponse = `
   });
 `;
 
+const successfulResolveResponse = (cid: string): string => `
+  ${READY}
+  window.addEventListener("message", function(e) {
+    if (e.data && e.data.namespace === "dotli:protocol" && e.data.method === "resolveDotName") {
+      window.parent.postMessage({
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: e.data.id,
+        ok: true,
+        result: ${JSON.stringify(cid)},
+      }, "*");
+    }
+  });
+`;
+
 /** Rescale any setTimeout call whose delay matches `fromMs` down to `toMs`. */
 async function shrinkTimeout(
   page: Page,
@@ -437,4 +452,33 @@ test("As a user, after a resolution failure, clicking retry switches backend and
     localStorage.getItem("dotli:chain-backend"),
   );
   expect(backendAfter).toBe("rpc-gateway");
+});
+
+test("As a user using smoldot, the host must only spawn one instance of the light client", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await mockProtocolIframe(
+    page,
+    successfulResolveResponse("bafyfakebafyfakebafyfakebafyfakebafyfakebafyfa"),
+  );
+  const workerUrls: string[] = [];
+  page.on("worker", (worker) => {
+    workerUrls.push(worker.url());
+  });
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(5_000);
+
+  // Then
+  const hostShellOrigin = `http://${DOMAIN}.localhost:${PORT}`;
+  const hostShellSmoldotWorkers = workerUrls.filter(
+    (url) => url.startsWith(hostShellOrigin) && url.includes("smoldot_worker"),
+  );
+  expect(
+    hostShellSmoldotWorkers,
+    `host shell must not spawn a smoldot worker. apps/protocol owns smoldot. Found at host-shell origin:\n${hostShellSmoldotWorkers.join("\n")}`,
+  ).toEqual([]);
 });

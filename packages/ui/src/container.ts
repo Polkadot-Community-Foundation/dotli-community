@@ -68,11 +68,7 @@ import { log } from "@dotli/shared/log";
 import { getBackend } from "@dotli/config/mode";
 import { computePreimageKey, hashToCid } from "@dotli/content/preimage";
 import { fetchFromIpfs } from "@dotli/content/ipfs";
-import {
-  ensureBulletinClient,
-  submitPreimageTransaction,
-  getTestSigner,
-} from "@dotli/resolver/bulletin";
+import { submitPreimageRemote } from "@dotli/protocol/client";
 import { showPushNotification } from "./notification";
 import { showNotification } from "./notification";
 import { showAliasPermissionModal } from "./alias-permission-modal";
@@ -696,13 +692,6 @@ function wireContainerHandlers(
 
   const preimageCache = new Map<string, Uint8Array>();
 
-  // Eagerly start Bulletin chain sync so it's ready by the time
-  // a product calls remote_preimage_submit. Only in smoldot mode.
-  // rpc-gateway must not create any smoldot instances.
-  if (getBackend() !== "rpc-gateway") {
-    void ensureBulletinClient();
-  }
-
   container.handlePreimageSubmit((value) =>
     preimageLimiter.schedule(() => {
       log.warn(
@@ -714,9 +703,8 @@ function wireContainerHandlers(
       )
         .andThen(() => {
           const key = computePreimageKey(value);
-          return fromPromise(
-            submitPreimageTransaction(value, getTestSigner()),
-            (e) => (e instanceof Error ? e.message : String(e)),
+          return fromPromise(submitPreimageRemote(value), (e) =>
+            e instanceof Error ? e.message : String(e),
           ).map(() => {
             preimageCache.set(key, value);
             log.warn(`[${label}] Preimage stored, key: ${key}`);

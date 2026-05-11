@@ -454,6 +454,7 @@ const METHOD_TIMEOUTS: Partial<Record<ProtocolRequestMethod, number>> = {
   chainConnect: 30_000,
   resolveDotName: 90_000,
   resolveOwner: 90_000,
+  bulletinSubmitPreimage: 150_000,
 };
 
 async function postRequest<M extends ProtocolRequestMethod>(
@@ -535,6 +536,10 @@ export async function resolveOwnerRemote(
   label: string,
 ): Promise<string | null> {
   return (await postRequest("resolveOwner", { label })) as string | null;
+}
+
+export async function submitPreimageRemote(value: Uint8Array): Promise<void> {
+  await postRequest("bulletinSubmitPreimage", { value });
 }
 
 export async function hasSharedAuthSession(siteId: SiteId): Promise<boolean> {
