@@ -96,11 +96,11 @@
         "@dotli/protocol": "workspace:*",
         "@dotli/resolver": "workspace:*",
         "@dotli/shared": "workspace:*",
-        "@novasamatech/host-api": "^0.7.7",
-        "@novasamatech/host-papp": "^0.7.7",
+        "@novasamatech/host-api": "^0.7.8",
+        "@novasamatech/host-papp": "^0.7.8",
         "@novasamatech/sdk-statement": "^0.6.0",
-        "@novasamatech/statement-store": "^0.7.0",
-        "@novasamatech/storage-adapter": "^0.7.0",
+        "@novasamatech/statement-store": "^0.7.8",
+        "@novasamatech/storage-adapter": "^0.7.8",
         "@scure/sr25519": "^1.0.0",
         "neverthrow": "^8.2.0",
         "polkadot-api": "^2.1.0",
@@ -296,11 +296,11 @@
         "@dotli/sandbox-checker": "workspace:*",
         "@dotli/shared": "workspace:*",
         "@noble/hashes": "^2.2.0",
-        "@novasamatech/host-api": "^0.7.7",
-        "@novasamatech/host-container": "^0.7.7",
-        "@novasamatech/host-papp": "^0.7.7",
+        "@novasamatech/host-api": "^0.7.8",
+        "@novasamatech/host-container": "^0.7.8",
+        "@novasamatech/host-papp": "^0.7.8",
         "@novasamatech/sdk-statement": "^0.6.0",
-        "@novasamatech/statement-store": "^0.7.0",
+        "@novasamatech/statement-store": "^0.7.8",
         "@polkadot-api/json-rpc-provider": "^0.2.0",
         "neverthrow": "^8.2.0",
         "polkadot-api": "^2.1.0",
@@ -503,19 +503,19 @@
 
     "@noble/hashes": ["@noble/hashes@2.2.0", "", {}, "sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg=="],
 
-    "@novasamatech/host-api": ["@novasamatech/host-api@0.7.7", "", { "dependencies": { "@novasamatech/scale": "0.7.7", "nanoevents": "9.1.0", "nanoid": "5.1.9", "neverthrow": "^8.2.0", "scale-ts": "1.6.1" } }, "sha512-2aU6ZIZrfYkdRj39PP9+Rsg+hl5KlzjyC7dUsbcV4mepWtyHFYCCkt621Zg3TmCrT4oDJoY107DOxankB4UV3Q=="],
+    "@novasamatech/host-api": ["@novasamatech/host-api@0.7.8", "", { "dependencies": { "@novasamatech/scale": "0.7.8", "nanoevents": "9.1.0", "nanoid": "5.1.9", "neverthrow": "^8.2.0", "scale-ts": "1.6.1" } }, "sha512-CR5Im0cn8t04R74FAvbNjyJzVOsbAPl9GRT4RsEaqu5n3DVbwrc70vWVZ0hwVVpyxzVrGgFCwEwSWBRdQGQzBQ=="],
 
-    "@novasamatech/host-container": ["@novasamatech/host-container@0.7.7", "", { "dependencies": { "@noble/hashes": "2.2.0", "@novasamatech/host-api": "0.7.7", "@polkadot-api/substrate-client": "^0.7.0", "nanoid": "5.1.9", "neverthrow": "^8.2.0", "polkadot-api": ">=2" } }, "sha512-X6kbEHa3GHDuAD6BKu6fv94Kh/wPX8WZDRnyMqzru83pccPeDyTGaOqqPLPmxyfJp1iZudlaNwBmDfVWNt211g=="],
+    "@novasamatech/host-container": ["@novasamatech/host-container@0.7.8", "", { "dependencies": { "@noble/hashes": "2.2.0", "@novasamatech/host-api": "0.7.8", "@polkadot-api/substrate-client": "^0.7.0", "nanoid": "5.1.9", "neverthrow": "^8.2.0", "polkadot-api": ">=2" } }, "sha512-dayqLgFteNozQEutnvkfNMy0EvecEIIG26Xw84lmL3luHiVAyShYcxmrMYX+6j9Iu6ZvVxjQcRVrkoRPLIEqjA=="],
 
-    "@novasamatech/host-papp": ["@novasamatech/host-papp@0.7.7", "", { "dependencies": { "@noble/ciphers": "2.2.0", "@noble/curves": "2.2.0", "@noble/hashes": "2.2.0", "@novasamatech/host-api": "0.7.7", "@novasamatech/scale": "0.7.7", "@novasamatech/statement-store": "0.7.7", "@novasamatech/storage-adapter": "0.7.7", "@polkadot-labs/hdkd-helpers": "^0.0.30", "nanoevents": "9.1.0", "nanoid": "5.1.9", "neverthrow": "^8.2.0", "polkadot-api": ">=2", "scale-ts": "1.6.1", "verifiablejs": "1.2.0" } }, "sha512-MhjJlnriKal5bDMEIk4SZsp4GKFZuK4IsPAvLnziQ2lwRJBnXIuPIut/OQDPB6IiBQVvFWQO8mKmZF9PX4EJ+A=="],
+    "@novasamatech/host-papp": ["@novasamatech/host-papp@0.7.8", "", { "dependencies": { "@noble/ciphers": "2.2.0", "@noble/curves": "2.2.0", "@noble/hashes": "2.2.0", "@novasamatech/host-api": "0.7.8", "@novasamatech/scale": "0.7.8", "@novasamatech/statement-store": "0.7.8", "@novasamatech/storage-adapter": "0.7.8", "@polkadot-labs/hdkd-helpers": "^0.0.30", "nanoevents": "9.1.0", "nanoid": "5.1.9", "neverthrow": "^8.2.0", "polkadot-api": ">=2", "scale-ts": "1.6.1", "verifiablejs": "1.2.0" } }, "sha512-Ilx2rtP3fAoX9B48rUDpD+8wAJPlk7VXexLZbibMhAKAu6dSBGIb6Jt8NfiS98UUCrxa2FZG9DzYHM+ARtlk2w=="],
 
-    "@novasamatech/scale": ["@novasamatech/scale@0.7.7", "", { "dependencies": { "@polkadot-api/utils": "^0.4.0", "scale-ts": "1.6.1" } }, "sha512-t4qdnp9gsG8B0LoxKUWpOHB3JAy7/jS7n2vUn3ynPJDDBsKgbqg5GKfWD6QCRdDhtilzR6k9H0LpDS5yCLFvog=="],
+    "@novasamatech/scale": ["@novasamatech/scale@0.7.8", "", { "dependencies": { "@polkadot-api/utils": "^0.4.0", "scale-ts": "1.6.1" } }, "sha512-FidGBX/j3KZ1pLlosjkwnXc+Rw1FeXAIfwqt95qYz9WwEnR4T4ZZJQfjXBm7dXTxFrzywee/YzflTwQghh+oxA=="],
 
     "@novasamatech/sdk-statement": ["@novasamatech/sdk-statement@0.6.0", "", { "dependencies": { "@polkadot-api/substrate-bindings": "0.20.1", "@polkadot-api/utils": "^0.4.0", "polkadot-api": "^2.0.2" } }, "sha512-NTqM+yS45iHgy87lVSWIpFozrTfCUWb7r4ZpsDtN1eFnfixXpDKpPXDWQsvPs+nh18r/jmoMgtlTjUltrS6mYQ=="],
 
-    "@novasamatech/statement-store": ["@novasamatech/statement-store@0.7.7", "", { "dependencies": { "@noble/ciphers": "2.2.0", "@noble/hashes": "2.2.0", "@novasamatech/scale": "0.7.7", "@novasamatech/sdk-statement": "^0.6.0", "@polkadot-api/substrate-bindings": "^0.20.1", "@polkadot-api/substrate-client": "^0.7.0", "@polkadot-labs/hdkd-helpers": "^0.0.30", "@scure/sr25519": "2.2.0", "nanoid": "5.1.9", "neverthrow": "^8.2.0", "polkadot-api": ">=2", "scale-ts": "1.6.1" } }, "sha512-3ElX630WEyj2jKOktiBXtvSIVeU6rnpzQkntVX3tf7ZVz0ANuBRGW9H9XOJpUsO+v7D10xRJezMRcMPuX1nJSQ=="],
+    "@novasamatech/statement-store": ["@novasamatech/statement-store@0.7.8", "", { "dependencies": { "@noble/ciphers": "2.2.0", "@noble/hashes": "2.2.0", "@novasamatech/scale": "0.7.8", "@novasamatech/sdk-statement": "^0.6.0", "@polkadot-api/substrate-bindings": "^0.20.1", "@polkadot-api/substrate-client": "^0.7.0", "@polkadot-labs/hdkd-helpers": "^0.0.30", "@scure/sr25519": "2.2.0", "nanoid": "5.1.9", "neverthrow": "^8.2.0", "polkadot-api": ">=2", "scale-ts": "1.6.1" } }, "sha512-oBaSljQeIMP6L+p1iJKbFcM6B1CnZF1+sKIKM8nAJn+v26f7IlVFg817kOeHFEBE3dx2RkunMSuGt+WhnoQrzA=="],
 
-    "@novasamatech/storage-adapter": ["@novasamatech/storage-adapter@0.7.7", "", { "dependencies": { "nanoevents": "^9.1.0", "neverthrow": "^8.2.0" } }, "sha512-EHpzh8jJUXpj8W10VJj52EE5HVY0ot1rqyBtDPX8cvVTxWwAC689gjWlohgkujhcZfSKoMeOpEwvCpg20MhmuA=="],
+    "@novasamatech/storage-adapter": ["@novasamatech/storage-adapter@0.7.8", "", { "dependencies": { "nanoevents": "^9.1.0", "neverthrow": "^8.2.0" } }, "sha512-ns9C7MkSdI8L/0zw60LEvgAC+RCQaL1RISUv1Qm7PnDSdkfuwS6LCqCrLxN01wdNozvJE0m+zGZqt93bSu+b0w=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.128.0", "", {}, "sha512-huv1Y/LzBJkBVHt3OlC7u0zHBW9qXf1FdD7sGmc1rXc2P1mTwHssYv7jyGx5KAACSCH+9B3Bhn6Z9luHRvf7pQ=="],
 
@@ -1246,6 +1246,8 @@
     "@novasamatech/host-papp/@noble/curves": ["@noble/curves@2.2.0", "", { "dependencies": { "@noble/hashes": "2.2.0" } }, "sha512-T/BoHgFXirb0ENSPBquzX0rcjXeM6Lo892a2jlYJkqk83LqZx0l1Of7DzlKJ6jkpvMrkHSnAcgb5JegL8SeIkQ=="],
 
     "@novasamatech/host-papp/@polkadot-labs/hdkd-helpers": ["@polkadot-labs/hdkd-helpers@0.0.30", "", { "dependencies": { "@noble/curves": "^2.2.0", "@noble/hashes": "^2.2.0", "@scure/base": "^2.2.0", "@scure/sr25519": "^1.0.0", "scale-ts": "^1.6.1" } }, "sha512-qWmmD6ayj14RenDuDFfjF3sHS7ObqPzwIIMPcSVoDeKFSeQV7RY0HwyhC5CG4i6FoguMzak2dbtjYpNN5XQiwQ=="],
+
+    "@novasamatech/statement-store/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.2", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-js5UTREoI+FlrPRXMhtKimVWmOqwfNFBnhyshsdloSZHNx/Hulg2RQZNvrVTscyZTf8LyxlGJaH5dsitOUoFKw=="],
 
     "@novasamatech/statement-store/@polkadot-labs/hdkd-helpers": ["@polkadot-labs/hdkd-helpers@0.0.30", "", { "dependencies": { "@noble/curves": "^2.2.0", "@noble/hashes": "^2.2.0", "@scure/base": "^2.2.0", "@scure/sr25519": "^1.0.0", "scale-ts": "^1.6.1" } }, "sha512-qWmmD6ayj14RenDuDFfjF3sHS7ObqPzwIIMPcSVoDeKFSeQV7RY0HwyhC5CG4i6FoguMzak2dbtjYpNN5XQiwQ=="],
 

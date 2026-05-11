@@ -19,6 +19,7 @@ import {
   PaymentTopUpErr,
   PreimageSubmitErr,
   RequestCredentialsErr,
+  ResourceAllocationErr,
   SigningErr,
   StatementProofErr,
   StorageErr,
@@ -45,6 +46,8 @@ import {
   type PermissionName,
 } from "./permissions";
 import { showPermissionRequestModal } from "./permission-modal";
+import { showAllocationRequestModal } from "./allocation-modal";
+import { queueWalletFlow } from "./wallet-queue";
 
 import type { UserSession } from "@novasamatech/host-papp";
 import {
@@ -57,7 +60,10 @@ import {
   type AuthState,
 } from "@dotli/auth/auth";
 import { showSignPayloadModal, showSignRawModal } from "@dotli/auth/signing";
-import { deriveProductPublicKey } from "@dotli/auth/account";
+import {
+  deriveProductPublicKey,
+  productPublicKeyToAddress,
+} from "@dotli/auth/account";
 import {
   createRemoteChainProvider,
   isRemoteChainSupported,
@@ -99,6 +105,16 @@ function isProductAccountValid(label: string, accountId: string): boolean {
     return dotNsUrl.isProductIdentifier(accountId);
   }
   return accountId === `${label}.dot`;
+}
+
+/**
+ * Derivation product-id from an iframe label.
+ *
+ * Localhost-proxy keeps the bare `localhost:<port>` label, dotNs products
+ * get the `.dot` suffix appended. Same rule encoded in `isProductAccountValid`.
+ */
+function labelToProductIdentifier(label: string): string {
+  return label.startsWith("localhost:") ? label : `${label}.dot`;
 }
 
 function wireContainerHandlers(
@@ -181,7 +197,7 @@ function wireContainerHandlers(
       }
 
       const publicKey = deriveProductPublicKey(
-        session.remoteAccount.accountId,
+        session.rootAccountId,
         dotNsIdentifier,
         derivationIndex,
       );
@@ -190,17 +206,21 @@ function wireContainerHandlers(
     },
   );
 
+  // Returns the derived `(session, identifier, 0)` slot, not the session root
+  // key — the *WithLegacyAccount wires below reject any signer that doesn't
+  // round-trip back to this same derivation.
   container.handleGetLegacyAccounts((_, { ok }) => {
     const state = getAuthState();
-    if (state.status === "authenticated") {
-      return ok([
-        {
-          publicKey: state.session.remoteAccount.accountId,
-          name: state.identity?.liteUsername,
-        },
-      ]);
+    if (state.status !== "authenticated") {
+      return ok([]);
     }
-    return ok([]);
+    const identifier = labelToProductIdentifier(label);
+    const publicKey = deriveProductPublicKey(
+      state.session.rootAccountId,
+      identifier,
+      0,
+    );
+    return ok([{ publicKey, name: state.identity?.liteUsername }]);
   });
 
   // RFC-0014 — return the user's primary username (replaces the
@@ -282,99 +302,274 @@ function wireContainerHandlers(
     }),
   );
 
-  container.handleSignPayload((payload, { ok, err }) => {
-    log.warn(`[${label}] handleSignPayload invoked:`, {
-      account: payload.account,
-      genesisHash: payload.payload.genesisHash,
-      method: payload.payload.method.slice(0, 40) + "...",
-    });
-
-    if (!isProductAccountValid(label, payload.account[0])) {
-      log.warn(
-        `[${label}] handleSignPayload — invalid account[0]=${payload.account[0]}`,
-      );
-      return errAsync(new SigningErr.PermissionDenied(undefined));
-    }
-
-    return promptCachedSubmitPermission(label, "ChainSubmit").andThen(
-      (granted) => {
-        if (!granted) {
-          log.warn(`[${label}] handleSignPayload — ChainSubmit not granted`);
-          return err(new SigningErr.PermissionDenied(undefined));
-        }
-        const session = getSession();
-        if (!session) {
-          log.error(`[${label}] handleSignPayload — no session, rejecting`);
-          return err(new SigningErr.PermissionDenied(undefined));
-        }
-
-        return fromPromise(
-          showSignPayloadModal(
-            session,
-            payload.payload,
-            label,
-            payload.account,
-          ),
-          (e) => e as never,
-        )
-          .andThen((result) => {
-            log.warn(`[${label}] handleSignPayload — resolved OK`);
-            return ok({
-              signature: result.signature,
-              signedTransaction: result.signedTransaction,
-            });
-          })
-          .orElse((e) => {
-            log.warn(`[${label}] handleSignPayload — rejected:`, e);
-            return err(e);
-          });
-      },
-    );
-  });
-
-  container.handleSignRaw((payload, { ok, err }) => {
-    log.warn(`[${label}] handleSignRaw invoked:`, {
-      account: payload.account,
-      dataTag: payload.payload.tag,
-    });
-
-    if (!isProductAccountValid(label, payload.account[0])) {
-      log.warn(
-        `[${label}] handleSignRaw — invalid account[0]=${payload.account[0]}`,
-      );
-      return err(new SigningErr.PermissionDenied(undefined));
-    }
-
-    const session = getSession();
-    if (!session) {
-      log.error(`[${label}] handleSignRaw — no session, rejecting`);
-      return err(new SigningErr.PermissionDenied(undefined));
-    }
-
-    return fromPromise(
-      showSignRawModal(session, payload.payload, label, payload.account),
-      (e) => e as never,
-    )
-      .andThen((result) => {
-        log.warn(`[${label}] handleSignRaw — resolved OK`);
-        return ok({
-          signature: result.signature,
-          signedTransaction: result.signedTransaction,
-        });
-      })
-      .orElse((e) => {
-        log.warn(`[${label}] handleSignRaw — rejected:`, e);
-        return err(e);
+  container.handleSignPayload((payload, { ok, err }) =>
+    queueWalletFlow(() => {
+      log.warn(`[${label}] handleSignPayload invoked:`, {
+        account: payload.account,
+        genesisHash: payload.payload.genesisHash,
+        method: payload.payload.method.slice(0, 40) + "...",
       });
-  });
 
-  // Legacy-account signing handlers (`handleSignPayloadWithLegacyAccount` /
-  // `handleSignRawWithLegacyAccount`) are intentionally NOT wired. host-papp
-  // 0.7.6 dropped the `address: string` shape from `session.signPayload` /
-  // `signRaw` — only `productAccountId: [dotNsIdentifier, derivationIndex]`
-  // is accepted. There is no transport path for an arbitrary legacy `signer`
-  // string, so the host-container default ("Not Implemented") is the correct
-  // response. Browser is on track to do the same when it bumps to 0.7.6.
+      if (!isProductAccountValid(label, payload.account[0])) {
+        log.warn(
+          `[${label}] handleSignPayload — invalid account[0]=${payload.account[0]}`,
+        );
+        return errAsync(new SigningErr.PermissionDenied(undefined));
+      }
+
+      return promptCachedSubmitPermission(label, "ChainSubmit").andThen(
+        (granted) => {
+          if (!granted) {
+            log.warn(`[${label}] handleSignPayload — ChainSubmit not granted`);
+            return err(new SigningErr.PermissionDenied(undefined));
+          }
+          const session = getSession();
+          if (!session) {
+            log.error(`[${label}] handleSignPayload — no session, rejecting`);
+            return err(new SigningErr.Rejected(undefined));
+          }
+
+          return fromPromise(
+            showSignPayloadModal(
+              session,
+              payload.payload,
+              label,
+              payload.account,
+            ),
+            (e) => e as never,
+          )
+            .andThen((result) => {
+              log.warn(`[${label}] handleSignPayload — resolved OK`);
+              return ok({
+                signature: result.signature,
+                signedTransaction: result.signedTransaction,
+              });
+            })
+            .orElse((e) => {
+              log.warn(`[${label}] handleSignPayload — rejected:`, e);
+              return err(e);
+            });
+        },
+      );
+    }),
+  );
+
+  container.handleSignRaw((payload, { ok, err }) =>
+    queueWalletFlow(() => {
+      log.warn(`[${label}] handleSignRaw invoked:`, {
+        account: payload.account,
+        dataTag: payload.payload.tag,
+      });
+
+      if (!isProductAccountValid(label, payload.account[0])) {
+        log.warn(
+          `[${label}] handleSignRaw — invalid account[0]=${payload.account[0]}`,
+        );
+        return errAsync(new SigningErr.PermissionDenied(undefined));
+      }
+
+      const session = getSession();
+      if (!session) {
+        log.error(`[${label}] handleSignRaw — no session, rejecting`);
+        return errAsync(new SigningErr.Rejected(undefined));
+      }
+
+      return fromPromise(
+        showSignRawModal(session, payload.payload, label, payload.account),
+        (e) => e as never,
+      )
+        .andThen((result) => {
+          log.warn(`[${label}] handleSignRaw — resolved OK`);
+          return ok({
+            signature: result.signature,
+            signedTransaction: result.signedTransaction,
+          });
+        })
+        .orElse((e) => {
+          log.warn(`[${label}] handleSignRaw — rejected:`, e);
+          return err(e);
+        });
+    }),
+  );
+
+  // Legacy-account signing wires. Re-derive the same `(session, identifier, 0)`
+  // public key, SS58-encode it, and require it equals the product-supplied
+  // `signer: string` before opening the regular signing modal with a synthetic
+  // `[identifier, 0]` tuple. Mirrors the desktop host's wire-up at
+  // browser/src/widgets/ProductContainerBinding/integrations/signing.tsx.
+  container.handleSignPayloadWithLegacyAccount((payload, { ok, err }) =>
+    queueWalletFlow(() => {
+      log.warn(`[${label}] handleSignPayloadWithLegacyAccount invoked:`, {
+        signer: payload.signer,
+        genesisHash: payload.payload.genesisHash,
+        method: payload.payload.method.slice(0, 40) + "...",
+      });
+
+      const session = getSession();
+      if (!session) {
+        log.error(
+          `[${label}] handleSignPayloadWithLegacyAccount — no session, rejecting`,
+        );
+        return errAsync(new SigningErr.Rejected(undefined));
+      }
+
+      const identifier = labelToProductIdentifier(label);
+      const derivedPk = deriveProductPublicKey(
+        session.rootAccountId,
+        identifier,
+        0,
+      );
+      const derivedAddress = productPublicKeyToAddress(derivedPk);
+      if (derivedAddress !== payload.signer) {
+        log.warn(
+          `[${label}] handleSignPayloadWithLegacyAccount — signer mismatch (expected ${derivedAddress}, got ${payload.signer})`,
+        );
+        return errAsync(
+          new SigningErr.Unknown({
+            reason: "Account can't be derived from product account id",
+          }),
+        );
+      }
+
+      return promptCachedSubmitPermission(label, "ChainSubmit").andThen(
+        (granted) => {
+          if (!granted) {
+            log.warn(
+              `[${label}] handleSignPayloadWithLegacyAccount — ChainSubmit not granted`,
+            );
+            return err(new SigningErr.PermissionDenied(undefined));
+          }
+          return fromPromise(
+            showSignPayloadModal(session, payload.payload, label, [
+              identifier,
+              0,
+            ]),
+            (e) => e as never,
+          )
+            .andThen((result) => {
+              log.warn(
+                `[${label}] handleSignPayloadWithLegacyAccount — resolved OK`,
+              );
+              return ok({
+                signature: result.signature,
+                signedTransaction: result.signedTransaction,
+              });
+            })
+            .orElse((e) => {
+              log.warn(
+                `[${label}] handleSignPayloadWithLegacyAccount — rejected:`,
+                e,
+              );
+              return err(e);
+            });
+        },
+      );
+    }),
+  );
+
+  container.handleSignRawWithLegacyAccount((payload, { ok, err }) =>
+    queueWalletFlow(() => {
+      log.warn(`[${label}] handleSignRawWithLegacyAccount invoked:`, {
+        signer: payload.signer,
+        dataTag: payload.payload.tag,
+      });
+
+      const session = getSession();
+      if (!session) {
+        log.error(
+          `[${label}] handleSignRawWithLegacyAccount — no session, rejecting`,
+        );
+        return errAsync(new SigningErr.Rejected(undefined));
+      }
+
+      const identifier = labelToProductIdentifier(label);
+      const derivedPk = deriveProductPublicKey(
+        session.rootAccountId,
+        identifier,
+        0,
+      );
+      const derivedAddress = productPublicKeyToAddress(derivedPk);
+      if (derivedAddress !== payload.signer) {
+        log.warn(
+          `[${label}] handleSignRawWithLegacyAccount — signer mismatch (expected ${derivedAddress}, got ${payload.signer})`,
+        );
+        return errAsync(
+          new SigningErr.Unknown({
+            reason: "Account can't be derived from product account id",
+          }),
+        );
+      }
+
+      return fromPromise(
+        showSignRawModal(session, payload.payload, label, [identifier, 0]),
+        (e) => e as never,
+      )
+        .andThen((result) => {
+          log.warn(`[${label}] handleSignRawWithLegacyAccount — resolved OK`);
+          return ok({
+            signature: result.signature,
+            signedTransaction: result.signedTransaction,
+          });
+        })
+        .orElse((e) => {
+          log.warn(`[${label}] handleSignRawWithLegacyAccount — rejected:`, e);
+          return err(e);
+        });
+    }),
+  );
+
+  container.handleRequestResourceAllocation((resources, { ok, err }) =>
+    queueWalletFlow(() => {
+      log.warn(`[${label}] handleRequestResourceAllocation invoked:`, {
+        resources: resources.map((r) => r.tag),
+      });
+
+      const session = getSession();
+      if (!session) {
+        log.error(
+          `[${label}] handleRequestResourceAllocation — no session, rejecting`,
+        );
+        return errAsync(
+          new ResourceAllocationErr.Unknown({ reason: "No active session" }),
+        );
+      }
+
+      return fromPromise(
+        showAllocationRequestModal(label, resources, async () => {
+          const outcomes = await session
+            .requestResourceAllocation({
+              callingProductId: labelToProductIdentifier(label),
+              resources,
+              onExisting: "Increase",
+            })
+            .match(
+              (o) => o,
+              (e) => {
+                throw e;
+              },
+            );
+          // Strip secret payload from Allocated outcomes before returning to product.
+          return outcomes.map((o) =>
+            o.tag === "Allocated"
+              ? ({ tag: "Allocated", value: undefined } as const)
+              : o,
+          );
+        }),
+        (e) =>
+          new ResourceAllocationErr.Unknown({
+            reason: e instanceof Error ? e.message : String(e),
+          }),
+      )
+        .andThen((outcomes) => {
+          log.warn(`[${label}] handleRequestResourceAllocation — resolved OK`);
+          return ok(outcomes);
+        })
+        .orElse((e) => {
+          log.warn(`[${label}] handleRequestResourceAllocation — rejected:`, e);
+          return err(e);
+        });
+    }),
+  );
 
   container.handleLocalStorageRead((key, { ok, err }) => {
     try {

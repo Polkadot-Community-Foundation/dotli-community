@@ -5,6 +5,7 @@
 // Mirrors context__desktop/src/domains/product/account/service.ts
 
 import { HDKD } from "@scure/sr25519";
+import { AccountId } from "polkadot-api";
 import { str, u32 } from "scale-ts";
 
 const createChainCode = (code: string): Uint8Array => {
@@ -24,6 +25,18 @@ export const deriveProductPublicKey = (
     return HDKD.publicSoft(publicKey, createChainCode(junction));
   }, rootPublicKey);
 };
+
+const ss58Codec = AccountId();
+
+/**
+ * SS58-encode a 32-byte public key with the substrate-generic prefix (42).
+ *
+ * Matches the format the wallet uses when it hands a `signer` string back
+ * to legacy-aware products, so byte-for-byte string comparison works for
+ * `signPayloadWithLegacyAccount` and `signRawWithLegacyAccount` round-trips.
+ */
+export const productPublicKeyToAddress = (publicKey: Uint8Array): string =>
+  ss58Codec.dec(publicKey);
 
 // NOTE: Uncomment when derived product accounts get their own on-chain
 // allowance (quota) on People Chain. Currently only the root session account
