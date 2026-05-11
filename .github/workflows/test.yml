@@ -2,13 +2,18 @@ name: Tests
 on:
   pull_request:
     paths-ignore:
-      - '**.md'
+      - "**.md"
   push:
     branches:
       - main
 
 permissions:
   contents: read
+  pull-requests: write
+
+concurrency:
+  group: tests-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   unit:
@@ -30,8 +35,8 @@ jobs:
       - name: Run tests
         run: bun run test
 
-  e2e:
-    name: E2E Tests
+  e2e-resolution:
+    name: E2E Resolution
     runs-on: parity-default
     needs: unit
     if: ${{ github.event.sender.type != 'Bot' }}
@@ -41,6 +46,8 @@ jobs:
 
       - name: Setup Playwright
         uses: ./.github/actions/setup-playwright
+        with:
+          bun-version: "1.3.6"
 
       - name: Build
         run: bun run build
@@ -69,3 +76,93 @@ jobs:
             echo "::error::resolution.spec.ts: $RESOLUTION_FAILED failures (max 2 tolerated)"
             exit 1
           fi
+
+  # E2E run of host-playground product tests against the local preview server,
+  # with pairing handled by mission-control's signer bot (no Android emulator,
+  # no Maestro).
+  e2e-product:
+    name: E2E Product
+    runs-on: parity-default
+    needs: unit
+    timeout-minutes: 20
+    if: ${{ github.event.sender.type != 'Bot' }}
+    env:
+      SIGNER_BOT_BASE_URL: https://signing-bot-dev.novasama-tech.org/
+      SIGNER_BOT_SVC_TOKEN: ${{ secrets.SIGNER_BOT_SVC_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Playwright
+        uses: ./.github/actions/setup-playwright
+        with:
+          bun-version: "1.3.6"
+
+      - name: Build
+        run: bun run build
+
+      - name: Run E2E
+        run: bun run test:e2e:bot
+        working-directory: apps/host
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-product-results
+          path: apps/host/e2e/test-results/
+
+      # Build a punch list of failed tests + a one-line count summary from
+      # the json reporter output. We do this on failure() so the sticky
+      # comment below can include the actual test names instead of just
+      # "suite failed". jq escapes for safe interpolation into env vars
+      # consumed by the next step.
+      - name: Extract failed tests
+        if: failure() && github.event_name == 'pull_request'
+        id: failed
+        working-directory: apps/host
+        run: |
+          R=e2e/test-results/results.json
+          if [ ! -f "$R" ]; then
+            echo "list=- (no results.json — suite likely crashed before any tests ran)" >> "$GITHUB_OUTPUT"
+            echo "summary=suite did not produce results" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # `.ok == true` is true for both passed AND skipped specs in
+          # Playwright's JSON; subtract the skipped count to get actual passes.
+          OK=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]? | select(.ok == true)] | length' "$R")
+          FAILED=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]? | select(.ok == false)] | length' "$R")
+          SKIPPED=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]? | select(.tests[]?.results[]?.status == "skipped")] | length' "$R")
+          PASSED=$((OK - SKIPPED))
+          NAMES=$(jq -r '[.suites[] | recurse(.suites[]?) | .specs[]? | select(.ok == false) | .title] | map("- " + .) | .[]' "$R")
+          {
+            echo "list<<EOF"
+            echo "$NAMES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "summary=$PASSED passed, $FAILED failed, $SKIPPED skipped" >> "$GITHUB_OUTPUT"
+
+      # Comment on the PR only when the suite fails. A green run leaves no
+      # noise; a red one drops a sticky note listing which tests failed so
+      # the reviewer doesn't have to scroll the job log. If a prior red run
+      # left a sticky note and this run is green, delete the stale note.
+      - name: Post failure note on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: e2e-product
+          message: |
+            ❌ **E2E Product suite failed** on `${{ github.event.pull_request.head.sha }}` — ${{ steps.failed.outputs.summary }}.
+
+            Failed tests:
+            ${{ steps.failed.outputs.list }}
+
+            Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Artifacts: `e2e-product-results` (uploaded above) — open the failed test's `trace.zip` with `npx playwright show-trace`.
+
+      - name: Clear stale failure note on PR (suite is green)
+        if: success() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: e2e-product
+          delete: true
