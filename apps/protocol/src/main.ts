@@ -40,7 +40,6 @@ window.addEventListener("vite:preloadError", (event) => {
 import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 import type { StringJsonRpcConnection } from "@dotli/protocol/broker";
 import {
-  BASE_DOMAIN,
   MAX_CONNECTIONS_PER_ORIGIN,
   SITE_ID,
   TIMEOUTS,
@@ -81,38 +80,13 @@ installGlobalErrorHandlers("host");
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 
-function getAllowedOrigins(): Set<string> {
-  const origins = new Set<string>();
-  const hostname = self.location.hostname;
-  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
-    const port = self.location.port || "5173";
-    origins.add(`http://localhost:${port}`);
-    origins.add(`http://${hostname}:${port}`);
-    return origins;
-  }
-  origins.add(`https://${BASE_DOMAIN}`);
-  origins.add(`https://host.${BASE_DOMAIN}`);
-  return origins;
-}
-
+// Same trust set as shared auth: host shell + non-sandbox *.<BASE>, but NOT
+// app.<BASE> or *.app.<BASE>. A user-uploaded CID app must never drive the
+// chain bridge directly — it goes through the host shell, which relays on
+// its behalf. Centralizing on `isSharedAuthOriginAllowed` keeps the two
+// allowlists in lockstep.
 function isAllowedOrigin(origin: string): boolean {
-  const allowed = getAllowedOrigins();
-  if (allowed.has(origin)) {
-    return true;
-  }
-  try {
-    const url = new URL(origin);
-    if (url.hostname.endsWith(`.${BASE_DOMAIN}`)) {
-      return true;
-    }
-    if (url.hostname === "localhost" || url.hostname.endsWith(".localhost")) {
-      return true;
-    }
-    // eslint-disable-next-line no-restricted-syntax -- `new URL()` throws on a malformed origin; the deny path (`return false`) is the correct response.
-  } catch {
-    /* invalid origin — deny */
-  }
-  return false;
+  return isSharedAuthOriginAllowed(origin);
 }
 
 function postToSource(
