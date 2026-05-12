@@ -675,9 +675,6 @@ function initRpcMode(): void {
     // No onInit / onCleanup: the WS provider lifecycle is owned by the
     // broker's `ensureUpstream` / `disconnectAll`.
     // No resolver: gateway-mode resolution doesn't go through this iframe.
-    // Bulletin preimage submission requires smoldot (no public RPC for
-    // TransactionStorage today). Lazy-imported so rpc mode stays
-    // smoldot-free until a preimage is actually submitted.
     submitBulletinPreimage: async (value) => {
       const bulletin = await import("@dotli/resolver/bulletin");
       await bulletin.submitPreimageTransaction(value, bulletin.getTestSigner());

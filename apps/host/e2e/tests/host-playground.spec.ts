@@ -15,8 +15,6 @@ test.describe("dot.li > host-playground.dot", () => {
     await waitForPlaygroundReady(productFrame);
   });
 
-  // ── Accounts ─────────────────────────────────────────────────
-
   test.describe("Accounts", () => {
     test("Legacy Accounts", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "accounts-provider-legacy");
@@ -62,8 +60,6 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Auth ─────────────────────────────────────────────────────
-
   test.describe("Auth", () => {
     test("Request Login", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "request-login");
@@ -74,8 +70,6 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Theme ────────────────────────────────────────────────────
-
   test.describe("Theme", () => {
     test("Subscribe Theme", async ({ productFrame }) => {
       test.setTimeout(15_000);
@@ -83,15 +77,11 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Entropy (RFC-0007) ───────────────────────────────────────
-
   test.describe("Entropy", () => {
     test("Derive Entropy", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "derive-entropy");
     });
   });
-
-  // ── Connection & Providers ───────────────────────────────────
 
   test.describe("Connection & Providers", () => {
     test("PAPI Provider", async ({ productFrame }) => {
@@ -119,15 +109,16 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Allowances (RFC-0010) ────────────────────────────────────
-  //
   // Each allocation triggers an "Allow" modal on the host that the user
   // approves. The bot is auto-paired so the modal click is what the suite
   // drives via runWebSignedTest with a single-button list.
 
   test.describe("Allowances", () => {
     test("StatementStore Allowance", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(60_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -135,11 +126,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow"],
         { timeoutMs: 30_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Bulletin Allowance", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(60_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -147,11 +143,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow"],
         { timeoutMs: 30_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Smart-Contract Allowance", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(60_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -159,11 +160,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow"],
         { timeoutMs: 30_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Auto-Signing Allowance", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(60_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -171,11 +177,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow"],
         { timeoutMs: 30_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("All Allowances", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(60_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -183,11 +194,11 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow"],
         { timeoutMs: 30_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
   });
-
-  // ── Storage ──────────────────────────────────────────────────
 
   test.describe("Storage", () => {
     test("String Write & Read", async ({ productFrame }) => {
@@ -215,8 +226,6 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Permissions ──────────────────────────────────────────────
-  //
   // Remote-permission tests trigger an "Allow" modal on the host the
   // first time a given capability is requested in a session.
 
@@ -226,7 +235,10 @@ test.describe("dot.li > host-playground.dot", () => {
     });
 
     test("Remote: HTTP/WS", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(60_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -234,11 +246,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow"],
         { timeoutMs: 30_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Remote: WebRTC", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(60_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -246,11 +263,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow"],
         { timeoutMs: 30_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Remote: Chain Submit", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(60_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -258,11 +280,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow"],
         { timeoutMs: 30_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Remote: Preimage Submit", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(60_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -270,11 +297,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow"],
         { timeoutMs: 30_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Remote: Statement Submit", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(60_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -282,12 +314,12 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow"],
         { timeoutMs: 30_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
   });
 
-  // ── Chat ─────────────────────────────────────────────────────
-  //
   // Chat tests are marked "Worker only — handled by the host" in
   // host-playground; the buttons stay disabled regardless of host. We
   // assert disabled rather than success.
@@ -314,15 +346,16 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Statements ───────────────────────────────────────────────
-
   test.describe("Statements", () => {
     test("Create Proof", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "statement-store-create-proof");
     });
 
     test("Submit", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(120_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -330,6 +363,8 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow", "Sign"],
         { timeoutMs: 60_000, preClickDelayMs: 1_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
@@ -354,8 +389,6 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Chain Head ───────────────────────────────────────────────
-  //
   // Subscription RPCs from RFC-0007 chain-head spec. All read-only.
 
   test.describe("Chain Head", () => {
@@ -393,8 +426,6 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Navigation ───────────────────────────────────────────────
-
   test.describe("Navigation", () => {
     test("HTTP URL", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "navigate-http");
@@ -408,8 +439,6 @@ test.describe("dot.li > host-playground.dot", () => {
       await runTestExpectSuccess(productFrame, "navigate-internal");
     });
   });
-
-  // ── Chain ────────────────────────────────────────────────────
 
   test.describe("Chain", () => {
     test("Chain Spec: Genesis Hash", async ({ productFrame }) => {
@@ -429,8 +458,6 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Contract (read-only) ─────────────────────────────────────
-
   test.describe("Contract (read-only)", () => {
     test("Query Stored Value", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "contract-query-stored-value");
@@ -449,15 +476,16 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Preimage ─────────────────────────────────────────────────
-
   test.describe("Preimage", () => {
     test("Lookup", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "preimage-lookup");
     });
 
     test("Factory", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(180_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -465,11 +493,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow", "Sign"],
         { timeoutMs: 60_000, preClickDelayMs: 1_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Submit", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(180_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -477,11 +510,11 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow", "Sign"],
         { timeoutMs: 60_000, preClickDelayMs: 1_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
   });
-
-  // ── Notifications ────────────────────────────────────────────
 
   test.describe("Notifications", () => {
     test("Push Notification", async ({ productFrame }) => {
@@ -489,14 +522,15 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Signing ──────────────────────────────────────────────────
-  //
   // Placed after read-only tests so a signing failure doesn't cascade-
   // affect Storage, Chain, Contract, etc. via fixture restarts.
 
   test.describe("Signing", () => {
     test("Sign Raw Message", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(180_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -504,11 +538,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow", "Sign"],
         { timeoutMs: 120_000, preClickDelayMs: 1_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Sign Payload (Legacy)", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(180_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -516,11 +555,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow", "Sign"],
         { timeoutMs: 60_000, preClickDelayMs: 1_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Sign Raw (Legacy Account)", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(180_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -528,6 +572,8 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow", "Sign"],
         { timeoutMs: 120_000, preClickDelayMs: 1_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
@@ -535,7 +581,10 @@ test.describe("dot.li > host-playground.dot", () => {
       pairedPage,
       productFrame,
     }) => {
+      // Given
       test.setTimeout(180_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -543,11 +592,16 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow", "Sign"],
         { timeoutMs: 60_000, preClickDelayMs: 1_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
 
     test("Sign Payload (wsProvider)", async ({ pairedPage, productFrame }) => {
+      // Given
       test.setTimeout(180_000);
+
+      // When
       const status = await runWebSignedTest(
         pairedPage,
         productFrame,
@@ -555,14 +609,15 @@ test.describe("dot.li > host-playground.dot", () => {
         ["Allow", "Sign"],
         { timeoutMs: 60_000, preClickDelayMs: 1_000 },
       );
+
+      // Then
       expect(status).toBe("success");
     });
   });
 
-  // ── Funded operations (skipped — need a faucet-funded account) ──
-  //
-  // Funded paths exercise transaction submission. Out of scope until we
-  // wire a faucet step into the fixture.
+  // Funded operations (skipped, needs a faucet-funded account). Funded paths
+  // exercise transaction submission. Out of scope until we wire a faucet step
+  // into the fixture.
   test.describe("Funded operations", () => {
     test.skip("Sign Payload (Product Account)", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "sign-payload-product");
@@ -602,11 +657,10 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // ── Device Permissions (skipped — mobile/system-level prompts) ──
-  //
-  // These hit native system permission prompts on iOS/Android; in
-  // headless Chromium they have no host-side equivalent. Listed for
-  // coverage parity with host-playground.
+  // Device Permissions (skipped, mobile/system-level prompts). These hit
+  // native system permission prompts on iOS/Android. In headless Chromium
+  // they have no host-side equivalent. Listed for coverage parity with
+  // host-playground.
 
   test.describe("Device permissions", () => {
     test.skip("Camera", async ({ productFrame }) => {

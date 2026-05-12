@@ -122,8 +122,6 @@ function wireContainerHandlers(
   label: string,
   storagePrefix: string,
 ): () => void {
-  // ── Rate limiters ──────────────────────────────────────
-  //
   // One queue-strategy limiter per call-site domain. Browser parity
   // (browser/src/shared/rateLimiter/index.ts): 20 req/s, 100 queued.
   // Each limiter owns a refill timer that must be released on teardown.
@@ -670,8 +668,6 @@ function wireContainerHandlers(
     return ok(undefined);
   });
 
-  // ── Permissions ────────────────────────────────────────
-
   container.handleDevicePermission((permission, { ok }) =>
     permissionLimiter.schedule(() => {
       // Notifications: tri-state, no iframe reload, silent on denied.
@@ -1114,8 +1110,6 @@ function promptCachedSubmitPermission(
       return okAsync(false);
     });
 }
-
-// ── Helpers ────────────────────────────────────────────────
 
 /** Strip the `.dot` suffix to get the bare label (e.g. "mytestapp.dot" → "mytestapp"). */
 function identifierToLabel(identifier: string): string {

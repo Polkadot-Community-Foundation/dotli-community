@@ -1,5 +1,37 @@
 # Contributing to dot.li
 
+### How to Test
+
+- **Unit and functional tests** live next to the file they test, named after it (e.g. `permissions.test.ts` alongside `permissions.ts`).
+- **E2E tests** live under `apps/host/tests/` (resolution, loading, performance specs in-process against the preview server) and `apps/host/e2e/tests/` (WebHost product flows driving a real `host-playground.dot` build).
+- **Tests are user stories.** Name each test as a user story: `As a <role>, I <action> and <outcome>` for behaviour, or `As a <role>, <observable property>` for invariants.
+- **Structure with Given / When / Then.** Every multi-step test body uses `// Given`, `// When`, `// Then` comments to separate setup, action, and assertions.
+
+```ts
+test("As a user using per-product smoldot, the host must only spawn one instance of the light client", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await mockProtocolIframe(page, successfulResolveResponse("bafyfake..."));
+  const workerUrls: string[] = [];
+  page.on("worker", (w) => {
+    workerUrls.push(w.url());
+  });
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(5_000);
+
+  // Then
+  const hostShellOrigin = `http://${DOMAIN}.localhost:${PORT}`;
+  const hostShellSmoldotWorkers = workerUrls.filter(
+    (url) => url.startsWith(hostShellOrigin) && url.includes("smoldot_worker"),
+  );
+  expect(hostShellSmoldotWorkers).toEqual([]);
+});
+```
+
 ### How to Document
 
 Good documentation starts with a single, clear sentence. Everything else comes after a newline.

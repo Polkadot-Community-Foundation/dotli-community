@@ -454,31 +454,39 @@ test("As a user, after a resolution failure, clicking retry switches backend and
   expect(backendAfter).toBe("rpc-gateway");
 });
 
-test("As a user using smoldot, the host must only spawn one instance of the light client", async ({
-  page,
-}) => {
-  // Given
-  await setBackend(page, "smoldot-direct");
-  await mockProtocolIframe(
+for (const [label, backend] of [
+  ["per-product smoldot", "smoldot-direct"],
+  ["shared smoldot", "smoldot-shared-worker"],
+] as const) {
+  test(`As a user using ${label}, the host must only spawn one instance of the light client`, async ({
     page,
-    successfulResolveResponse("bafyfakebafyfakebafyfakebafyfakebafyfakebafyfa"),
-  );
-  const workerUrls: string[] = [];
-  page.on("worker", (worker) => {
-    workerUrls.push(worker.url());
+  }) => {
+    // Given
+    await setBackend(page, backend);
+    await mockProtocolIframe(
+      page,
+      successfulResolveResponse(
+        "bafyfakebafyfakebafyfakebafyfakebafyfakebafyfa",
+      ),
+    );
+    const workerUrls: string[] = [];
+    page.on("worker", (worker) => {
+      workerUrls.push(worker.url());
+    });
+
+    // When
+    await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(5_000);
+
+    // Then
+    const hostShellOrigin = `http://${DOMAIN}.localhost:${PORT}`;
+    const hostShellSmoldotWorkers = workerUrls.filter(
+      (url) =>
+        url.startsWith(hostShellOrigin) && url.includes("smoldot_worker"),
+    );
+    expect(
+      hostShellSmoldotWorkers,
+      `host shell must not spawn a smoldot worker. apps/protocol owns smoldot. Found at host-shell origin:\n${hostShellSmoldotWorkers.join("\n")}`,
+    ).toEqual([]);
   });
-
-  // When
-  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(5_000);
-
-  // Then
-  const hostShellOrigin = `http://${DOMAIN}.localhost:${PORT}`;
-  const hostShellSmoldotWorkers = workerUrls.filter(
-    (url) => url.startsWith(hostShellOrigin) && url.includes("smoldot_worker"),
-  );
-  expect(
-    hostShellSmoldotWorkers,
-    `host shell must not spawn a smoldot worker. apps/protocol owns smoldot. Found at host-shell origin:\n${hostShellSmoldotWorkers.join("\n")}`,
-  ).toEqual([]);
-});
+}
