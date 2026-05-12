@@ -46,14 +46,6 @@ export const isLocalhost = isLocalEnv;
 
 export const SITE_ID: SiteId = isLocalhost ? "local.li" : BASE_DOMAIN;
 
-/** Use smoldot light client for the statement store chain (default: false).
- *  Set VITE_SS_USE_SMOLDOT=true to enable.
- *  Default is false for now until all dependencies to make statement
- *  store support in smoldot production-ready are in place, but can be
- *  enabled in development for testing and feedback. */
-export const SS_USE_SMOLDOT =
-  (import.meta.env.VITE_SS_USE_SMOLDOT as string | undefined) === "true";
-
 /** Which people chain spec to use for the statement store via smoldot.
  *  Value is the chain-spec file name without `.json`, e.g.
  *  "people-westend-local" or "next-people-paseo".
@@ -86,11 +78,14 @@ export const ASSET_HUB_PASEO_GENESIS =
   "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2" as const;
 export const BULLETIN_PASEO_GENESIS =
   "0x744960c32e3a3df5440e1ecd4d34096f1ce2230d7016a5ada8a765d5a622b4ea" as const;
+export const PEOPLE_PASEO_NEXT_GENESIS =
+  "0xa22a2424d2cbf561eaecf7da8b1b548fa9d1939f60265e942b1049616a012f71" as const;
 
 export const SUPPORTED_GENESIS_HASHES = new Set<string>([
   PASEO_RELAY_GENESIS,
   ASSET_HUB_PASEO_GENESIS,
   BULLETIN_PASEO_GENESIS,
+  PEOPLE_PASEO_NEXT_GENESIS,
 ]);
 
 export const CONTRACTS = {

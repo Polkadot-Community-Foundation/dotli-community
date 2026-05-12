@@ -104,6 +104,7 @@ interface BrokerConnection {
 
 const TOKEN_METHODS = new Map<string, string>([
   ["transaction_v1_broadcast", "transaction_v1_stop"],
+  ["statement_subscribeStatement", "statement_unsubscribeStatement"],
 ]);
 
 function isJsonRpcObject(

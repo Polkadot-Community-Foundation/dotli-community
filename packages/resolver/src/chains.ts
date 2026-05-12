@@ -13,12 +13,14 @@ import {
   PASEO_RELAY_GENESIS as PASEO_RELAY,
   ASSET_HUB_PASEO_GENESIS as ASSET_HUB_PASEO,
   BULLETIN_PASEO_GENESIS as BULLETIN_PASEO,
+  PEOPLE_PASEO_NEXT_GENESIS as PEOPLE_PASEO,
 } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 
 import {
   getDappAssetHubProvider,
   getBulletinChain,
+  getPeopleChain,
   makeNonRemovingChain,
   getRelayChain,
 } from "./smoldot";
@@ -27,10 +29,31 @@ const SUPPORTED_GENESIS = new Set([
   PASEO_RELAY.toLowerCase(),
   ASSET_HUB_PASEO.toLowerCase(),
   BULLETIN_PASEO.toLowerCase(),
+  PEOPLE_PASEO.toLowerCase(),
 ]);
+
+/**
+ * Genesis hashes whose connection should release the resolver's Asset Hub
+ * chain on first dApp use. This is the resolver's view of "is this an
+ * Asset Hub the resolver might be holding for dotNS resolution" — when a
+ * second network is added (e.g. Westend Asset Hub), append it here, not
+ * at every consumer call site.
+ */
+const RESOLVER_ASSET_HUB_GENESIS = new Set([ASSET_HUB_PASEO.toLowerCase()]);
 
 export function isChainSupported(genesisHash: string): boolean {
   return SUPPORTED_GENESIS.has(genesisHash.toLowerCase());
+}
+
+/**
+ * Returns `true` when `genesisHash` identifies a chain that the resolver
+ * currently uses (or could use) as its Asset Hub for dotNS resolution.
+ * Consumers gate "release the resolver's Asset Hub" logic on this so a
+ * People-chain or relay chainConnect doesn't accidentally tear down the
+ * resolver's Asset Hub.
+ */
+export function isResolverAssetHubGenesis(genesisHash: string): boolean {
+  return RESOLVER_ASSET_HUB_GENESIS.has(genesisHash.toLowerCase());
 }
 
 /**
@@ -62,6 +85,13 @@ export function createChainProvider(
     log.warn("[dot.li chains] Returning Bulletin Paseo provider (smoldot)");
     return getSmProvider(() =>
       getBulletinChain().then((chain) => makeNonRemovingChain(chain)),
+    );
+  }
+
+  if (key === PEOPLE_PASEO.toLowerCase()) {
+    log.warn("[dot.li chains] Returning People Paseo provider (smoldot)");
+    return getSmProvider(() =>
+      getPeopleChain().then((chain) => makeNonRemovingChain(chain)),
     );
   }
 

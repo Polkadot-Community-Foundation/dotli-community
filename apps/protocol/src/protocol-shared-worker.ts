@@ -12,7 +12,11 @@ declare const self: SharedWorkerGlobalScope;
 
 import type { StringJsonRpcConnection } from "@dotli/protocol/broker";
 import { MAX_CONNECTIONS_PER_ORIGIN } from "@dotli/config/config";
-import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
+import {
+  createChainProvider,
+  isChainSupported,
+  isResolverAssetHubGenesis,
+} from "@dotli/resolver/chains";
 import {
   getTestSigner,
   submitPreimageTransaction,
@@ -345,14 +349,22 @@ async function handleRequest(
       if (!isChainSupported(payload.genesisHash)) {
         throw new Error(`Unsupported chain: ${payload.genesisHash}`);
       }
-      // Release the resolver's Asset Hub chain on the first dApp connection.
-      // By this point the host has already resolved the CID. Releasing frees
-      // the chain so the dApp gets a FRESH chain with no "announced blocks"
-      // history (avoids smoldot's per-connection block deduplication).
-      if (!resolverChainReleased) {
+      // Release the resolver's Asset Hub chain on the first dApp Asset-Hub
+      // connection. By this point the host has already resolved the CID.
+      // Releasing frees the chain so the dApp gets a FRESH chain with no
+      // "announced blocks" history (avoids smoldot's per-connection block
+      // deduplication). Gate this on the Asset-Hub genesis set the resolver
+      // knows about — other bridged chains (e.g. People for the
+      // statement-store) must not trigger an Asset-Hub teardown, and the
+      // set lives next to the Asset-Hub provider factory so adding another
+      // network (e.g. Westend Asset Hub) is a single edit there.
+      if (
+        !resolverChainReleased &&
+        isResolverAssetHubGenesis(payload.genesisHash)
+      ) {
         resolverChainReleased = true;
         swLog(
-          "First dApp chain connection — releasing resolver Asset Hub chain",
+          "First Asset Hub dApp connection — releasing resolver Asset Hub chain",
         );
         releaseResolverAssetHubChain();
       }

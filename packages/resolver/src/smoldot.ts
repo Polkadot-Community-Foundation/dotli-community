@@ -332,14 +332,6 @@ export function getPeopleChain(): Promise<SmoldotChain> {
   return peopleChainPromise;
 }
 
-/**
- * Get a JsonRpcProvider backed by the People Chain smoldot singleton.
- * Used by the auth module as a drop-in replacement for the WS provider.
- */
-export function getPeopleChainProvider(): JsonRpcProvider {
-  return getSmProvider(() => getPeopleChain().then(makeNonRemovingChain));
-}
-
 // ── Dedicated provider factories ─────────────────────────────
 
 let resolverAssetHubPromise: Promise<SmoldotChain> | null = null;

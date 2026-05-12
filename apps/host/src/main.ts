@@ -335,6 +335,67 @@ function populateOwner(
 import type * as RenderModule from "@dotli/ui/bridge";
 type RenderChunk = typeof RenderModule;
 
+interface DotliE2EApi {
+  backend: string;
+  subscribeAll: (
+    topicsHex: string[],
+    timeoutMs: number,
+  ) => Promise<{ count: number; isComplete: boolean }>;
+  subscribeAny: (
+    topicsHex: string[],
+    timeoutMs: number,
+  ) => Promise<{ count: number; isComplete: boolean }>;
+}
+
+function hexToBytes(s: string): Uint8Array {
+  const h = s.startsWith("0x") ? s.slice(2) : s;
+  const bytes = new Uint8Array(h.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+async function runE2EAuthHook(chainBackend: string): Promise<void> {
+  log.warn("[dot.li e2e] init auth + statement store");
+  const authMod = await import("@dotli/auth/auth");
+  authMod.initAuth();
+  const store = await authMod.onStatementStoreReady();
+
+  type Filter = { matchAll: Uint8Array[] } | { matchAny: Uint8Array[] };
+
+  function subscribeFor(
+    filter: Filter,
+    timeoutMs: number,
+  ): Promise<{ count: number; isComplete: boolean }> {
+    return new Promise((resolve) => {
+      let count = 0;
+      let lastIsComplete = false;
+      const unsub = store.subscribeStatements(filter, (page) => {
+        count += page.statements.length;
+        lastIsComplete = page.isComplete;
+        return undefined;
+      });
+      setTimeout(() => {
+        unsub();
+        resolve({ count, isComplete: lastIsComplete });
+      }, timeoutMs);
+    });
+  }
+
+  const api: DotliE2EApi = {
+    backend: chainBackend,
+    subscribeAll: (topicsHex, timeoutMs) =>
+      subscribeFor({ matchAll: topicsHex.map(hexToBytes) }, timeoutMs),
+    subscribeAny: (topicsHex, timeoutMs) =>
+      subscribeFor({ matchAny: topicsHex.map(hexToBytes) }, timeoutMs),
+  };
+
+  (window as unknown as { __dotliE2E: DotliE2EApi }).__dotliE2E = api;
+  log.warn(`[dot.li e2e] window.__dotliE2E ready (backend=${chainBackend})`);
+  document.title = "dotli-e2e-ready";
+}
+
 async function main(): Promise<void> {
   const previewTargetUrl = parsePreviewTargetUrl(window.location);
 
@@ -394,6 +455,19 @@ async function main(): Promise<void> {
         void warmupProtocol();
       },
     );
+  }
+
+  // E2E test hook: when `?e2e_init_auth=1` is in the URL, initialize the
+  // auth module + statement-store and expose `window.__dotliE2E` for the
+  // Playwright spec, then bail out before the normal landing/.dot flow
+  // runs. The protocol iframe pre-warm above is what makes
+  // `createRemoteChainProvider(...)` work for the smoldot statement-store
+  // path; that's why this branch sits *after* the pre-warm.
+  if (
+    new URLSearchParams(window.location.search).get("e2e_init_auth") === "1"
+  ) {
+    await runE2EAuthHook(chainBackend);
+    return;
   }
 
   // Initialize top bar UI (auth is lazy-loaded inside topbar when needed)
