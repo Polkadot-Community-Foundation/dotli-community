@@ -258,6 +258,7 @@ class ChainBroker {
       this.disconnectSession(sessionId);
     }
     this.disconnectUpstream();
+    this.onEmpty();
   }
 
   private ensureUpstream(): void {
@@ -696,11 +697,6 @@ class ChainBroker {
       if (followToken.sessionId === sessionId) {
         this.releaseLocalFollowToken(localToken);
       }
-    }
-
-    if (this.sessions.size === 0) {
-      this.disconnectUpstream();
-      this.onEmpty();
     }
   }
 
