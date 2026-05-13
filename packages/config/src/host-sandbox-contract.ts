@@ -1,10 +1,10 @@
-// dot.li — Host → sandbox URL contract
+// dot.li — Host to sandbox URL contract
 //
 // The sandbox runs on `cid.app.<root>` and cannot read the host's
 // localStorage (different origin). The host MUST thread every user
 // decision through URL params on the iframe load, and the sandbox MUST
-// reject any envelope that doesn't match this schema. A silent default
-// on the sandbox side would re-introduce the "user picked X, got Y"
+// reject any contract value it doesn't recognise. A silent default on
+// the sandbox side would re-introduce the "user picked X, got Y"
 // regression class that the determinism audit eliminated.
 //
 // Schema v1 (current):
@@ -32,13 +32,20 @@ const VALID_CHAIN_BACKENDS: ReadonlySet<string> = new Set([
 
 const VALID_BOOLEAN_FLAGS: ReadonlySet<string> = new Set(["0", "1"]);
 
-/** Every param name the sandbox recognises. Anything else is rejected. */
-const KNOWN_PARAMS: ReadonlySet<string> = new Set([
-  "chainBackend",
-  "skipArchiveCache",
-  "fullReset",
-  "v",
-]);
+/**
+ * Single source of truth for the host-to-sandbox URL contract param names.
+ * Imported by the host writer (`bridge.ts`), the validator below, and the
+ * post-validation strip in the sandbox so the wire format never drifts.
+ */
+export const SANDBOX_CONTRACT_PARAMS = {
+  chainBackend: "chainBackend",
+  skipArchiveCache: "skipArchiveCache",
+  fullReset: "fullReset",
+  v: "v",
+} as const;
+
+export type SandboxContractParam =
+  (typeof SANDBOX_CONTRACT_PARAMS)[keyof typeof SANDBOX_CONTRACT_PARAMS];
 
 export interface SandboxParams {
   chainBackend: "smoldot-direct" | "smoldot-shared-worker" | "rpc-gateway";
@@ -51,7 +58,7 @@ export type SandboxParamsResult =
   | { ok: false; reason: string };
 
 /**
- * Validate a sandbox URL against the host → sandbox contract.
+ * Validate a sandbox URL against the host-to-sandbox contract.
  *
  * Returns a discriminated result. The caller is expected to render the
  * failure reason in the UI and stop; never substitute defaults silently.
@@ -59,22 +66,11 @@ export type SandboxParamsResult =
 export function validateSandboxParams(
   search: URLSearchParams,
 ): SandboxParamsResult {
-  // Reject unknown params before anything else so a host typo surfaces
-  // immediately instead of silently being ignored.
-  for (const key of search.keys()) {
-    if (!KNOWN_PARAMS.has(key)) {
-      return {
-        ok: false,
-        reason: `Unknown URL param "${key}" (sandbox contract v${String(SANDBOX_SCHEMA_VERSION)}). Reload from the host to pick up the matching build.`,
-      };
-    }
-  }
-
   // Version gate: if the host sends an explicit version token, it must
   // match. Absent `?v=` means "pre-versioned host", a path now rejected
   // post-collapse because the `?backend=` requirement is also new and a
   // pre-collapse host would not emit it.
-  const version = search.get("v");
+  const version = search.get(SANDBOX_CONTRACT_PARAMS.v);
   if (version !== null && version !== String(SANDBOX_SCHEMA_VERSION)) {
     return {
       ok: false,
@@ -82,7 +78,7 @@ export function validateSandboxParams(
     };
   }
 
-  const chainBackend = search.get("chainBackend");
+  const chainBackend = search.get(SANDBOX_CONTRACT_PARAMS.chainBackend);
   if (chainBackend === null) {
     return {
       ok: false,
@@ -97,7 +93,7 @@ export function validateSandboxParams(
     };
   }
 
-  const skipRaw = search.get("skipArchiveCache");
+  const skipRaw = search.get(SANDBOX_CONTRACT_PARAMS.skipArchiveCache);
   if (skipRaw !== null && !VALID_BOOLEAN_FLAGS.has(skipRaw)) {
     return {
       ok: false,
@@ -105,7 +101,7 @@ export function validateSandboxParams(
     };
   }
 
-  const resetRaw = search.get("fullReset");
+  const resetRaw = search.get(SANDBOX_CONTRACT_PARAMS.fullReset);
   if (resetRaw !== null && !VALID_BOOLEAN_FLAGS.has(resetRaw)) {
     return {
       ok: false,

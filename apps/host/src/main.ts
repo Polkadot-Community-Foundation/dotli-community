@@ -626,7 +626,6 @@ async function main(): Promise<void> {
         const { renderAppSubdomain } = await renderChunkPromise;
         await renderAppSubdomain(cachedCid, label);
       });
-      history.replaceState(null, "", "/");
       performance.mark("dotli:main:end");
       log.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
       return;
@@ -736,8 +735,6 @@ async function main(): Promise<void> {
       outcome: "ok",
       chain_backend: chainBackend,
     });
-
-    history.replaceState(null, "", "/");
     performance.mark("dotli:main:end");
     log.warn(`[dot.li perf] === TOTAL: ${dur(T0)} ===`);
   } catch (err) {

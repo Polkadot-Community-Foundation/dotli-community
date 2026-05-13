@@ -87,7 +87,7 @@ Telegraph style. Root rules only. Read scoped `AGENTS.md` before subtree work.
 ## Tests
 
 - Vitest. Colocated `*.test.ts`; `happy-dom` (DOM), `fake-indexeddb` (IndexedDB).
-- E2E: Playwright in `apps/host/tests/{loading,resolution}.spec.ts` (preview-server-backed) and `apps/host/e2e/tests/host-playground.spec.ts` (WebHost product flows).
+- E2E: Playwright in `apps/host/tests/{loading,resolution,navigation}.spec.ts` (preview-server-backed) and `apps/host/e2e/tests/host-playground.spec.ts` (WebHost product flows).
 - Before writing or modifying E2E tests, read `CONTRIBUTING.md` `### How to Test` for user-story naming and the Given/When/Then convention.
 - Perf: `apps/host/tests/cold-start.spec.ts`; compare via `tests/compare.ts`.
 - Targeted: `bun --filter @dotli/<pkg> run test`. From `apps/host/`: `bunx playwright test tests/<file>.spec.ts --grep "<pattern>"`.

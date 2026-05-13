@@ -37,7 +37,10 @@ import { isEncrypted, decryptContent } from "@dotli/content/decrypt";
 import { showError } from "@dotli/ui/ui";
 import { showPasswordPrompt } from "@dotli/ui/password-prompt";
 import { TIMEOUTS, BASE_DOMAIN } from "@dotli/config/config";
-import { validateSandboxParams } from "@dotli/config/host-sandbox-contract";
+import {
+  SANDBOX_CONTRACT_PARAMS,
+  validateSandboxParams,
+} from "@dotli/config/host-sandbox-contract";
 import { elapsed } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
 import { parseIpfsResponse } from "@dotli/content/archive";
@@ -67,6 +70,18 @@ function showStatus(message: string): void {
 
 function notifyLoadingDone(): void {
   window.parent.postMessage({ type: "dotli:loading-status", done: true }, "*");
+}
+
+/**
+ * Remove host→sandbox contract keys from `window.location` so the dApp
+ * has only the user's own query params.
+ */
+function stripContractParamsFromUrl(): void {
+  const cleaned = new URL(window.location.href);
+  for (const key of Object.values(SANDBOX_CONTRACT_PARAMS)) {
+    cleaned.searchParams.delete(key);
+  }
+  history.replaceState(null, "", cleaned.toString());
 }
 
 /**
@@ -560,8 +575,9 @@ async function main(): Promise<void> {
   // localStorage, so every user-chosen axis MUST arrive via URL param.
   // The validator lives in `@dotli/config/host-sandbox-contract` so the
   // schema + accepted values are a single source of truth for host +
-  // sandbox. Missing/unknown params are a hard error; there is no
-  // silent default.
+  // sandbox. Missing/invalid contract values are a hard error; there
+  // is no silent default. Extra keys are user query params and pass
+  // through.
   const urlParams = new URL(window.location.href).searchParams;
   const parsed = validateSandboxParams(urlParams);
   if (!parsed.ok) {
@@ -642,6 +658,7 @@ async function main(): Promise<void> {
     notifyLoadingDone();
     performance.mark("dotli:app:end");
     stopApp();
+    stripContractParamsFromUrl();
     document.open();
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
     document.write(html);
@@ -715,6 +732,7 @@ async function main(): Promise<void> {
   notifyLoadingDone();
   performance.mark("dotli:app:end");
   stopApp();
+  stripContractParamsFromUrl();
   document.open();
   // eslint-disable-next-line @typescript-eslint/no-deprecated -- intentional: document.write replaces the page with dApp content to eliminate triple iframe nesting
   document.write(html);
@@ -754,7 +772,7 @@ function run(): void {
       // already a hard error from `main()`, but a thrown error before
       // that validation also lands here).
       const params = new URL(window.location.href).searchParams;
-      const b = params.get("chainBackend");
+      const b = params.get(SANDBOX_CONTRACT_PARAMS.chainBackend);
       const dependency =
         b === "rpc-gateway"
           ? "ipfs-gateway"

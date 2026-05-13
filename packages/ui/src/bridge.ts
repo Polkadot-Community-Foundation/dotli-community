@@ -6,6 +6,7 @@
 // out of the sandbox bundle.
 
 import { BASE_DOMAIN } from "@dotli/config/config";
+import { SANDBOX_CONTRACT_PARAMS } from "@dotli/config/host-sandbox-contract";
 import { getBackend, getCacheSettings } from "@dotli/config/mode";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
@@ -183,22 +184,22 @@ export async function renderAppSubdomain(
   let url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
   try {
     const parsed = new URL(url);
-    parsed.searchParams.set("chainBackend", chainBackend);
+    parsed.searchParams.set(SANDBOX_CONTRACT_PARAMS.chainBackend, chainBackend);
     if (cache.skipArchiveCache) {
-      parsed.searchParams.set("skipArchiveCache", "1");
+      parsed.searchParams.set(SANDBOX_CONTRACT_PARAMS.skipArchiveCache, "1");
     }
     if (fullReset) {
-      parsed.searchParams.set("fullReset", "1");
+      parsed.searchParams.set(SANDBOX_CONTRACT_PARAMS.fullReset, "1");
     }
     url = parsed.toString();
   } catch {
     const sep = url.includes("?") ? "&" : "?";
-    url += `${sep}chainBackend=${chainBackend}`;
+    url += `${sep}${SANDBOX_CONTRACT_PARAMS.chainBackend}=${chainBackend}`;
     if (cache.skipArchiveCache) {
-      url += "&skipArchiveCache=1";
+      url += `&${SANDBOX_CONTRACT_PARAMS.skipArchiveCache}=1`;
     }
     if (fullReset) {
-      url += "&fullReset=1";
+      url += `&${SANDBOX_CONTRACT_PARAMS.fullReset}=1`;
     }
   }
 
