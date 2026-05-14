@@ -37,6 +37,16 @@ describe("deriveProductPublicKey", () => {
     expect(Buffer.from(key1).equals(Buffer.from(key2))).toBe(true);
   });
 
+  it("supports long preview product IDs", () => {
+    const derived = deriveProductPublicKey(
+      rootPublicKey,
+      "w-credentialless-staticblitz-com.local-credentialless.webcontainer-api.io",
+      0,
+    );
+    expect(derived).toBeInstanceOf(Uint8Array);
+    expect(derived.length).toBe(32);
+  });
+
   it("derives different key from root (soft derivation changes output)", () => {
     const derived = deriveProductPublicKey(rootPublicKey, "myapp.dot", 0);
     expect(Buffer.from(derived).equals(Buffer.from(rootPublicKey))).toBe(false);

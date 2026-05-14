@@ -5,12 +5,23 @@
 // Mirrors context__desktop/src/domains/product/account/service.ts
 
 import { HDKD } from "@scure/sr25519";
+import { blake2b } from "@noble/hashes/blake2.js";
 import { AccountId } from "polkadot-api";
-import { str, u32 } from "scale-ts";
+import { str, u64 } from "scale-ts";
+
+const JUNCTION_ID_LEN = 32;
+const NUMERIC_JUNCTION_RE = /^\d+$/;
 
 const createChainCode = (code: string): Uint8Array => {
-  const chainCode = new Uint8Array(32);
-  chainCode.set(Number.isNaN(+code) ? str.enc(code) : u32.enc(+code));
+  const encoded = NUMERIC_JUNCTION_RE.test(code)
+    ? u64.enc(BigInt(code))
+    : str.enc(code);
+  if (encoded.length > JUNCTION_ID_LEN) {
+    return blake2b(encoded, { dkLen: JUNCTION_ID_LEN });
+  }
+
+  const chainCode = new Uint8Array(JUNCTION_ID_LEN);
+  chainCode.set(encoded);
   return chainCode;
 };
 

@@ -100,6 +100,7 @@
         "@dotli/protocol": "workspace:*",
         "@dotli/resolver": "workspace:*",
         "@dotli/shared": "workspace:*",
+        "@noble/hashes": "^2.2.0",
         "@novasamatech/host-api": "^0.7.8",
         "@novasamatech/host-papp": "^0.7.8",
         "@novasamatech/sdk-statement": "^0.6.0",
