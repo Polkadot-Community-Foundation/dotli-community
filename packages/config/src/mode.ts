@@ -1,6 +1,4 @@
-// dot.li: Backend selection and cache settings.
-//
-// One axis: `Backend ∈ { smoldot-direct, smoldot-shared-worker, rpc-gateway }`.
+// Backend selection and cache settings.
 //
 //   smoldot-direct: smoldot runs in the protocol iframe. Chain access
 //                   uses smoldot, content fetch uses smoldot's
@@ -9,12 +7,6 @@
 //                   so multiple tabs share one light client.
 //   rpc-gateway: chain access via WSS JSON-RPC to a trusted node, content
 //                fetch via HTTPS IPFS gateway. No smoldot.
-//
-// `Backend` replaced the older two-axis (`ChainBackend × ContentBackend`)
-// model. With `bitswap_v1_get` available on smoldot, the chain transport
-// and the content transport ride together. There's no useful product
-// position that mixes them. The collapse drops Helia/libp2p from the
-// dependency graph entirely.
 
 export type Backend =
   | "smoldot-direct"

@@ -29,7 +29,6 @@ export type SmoldotClient = ReturnType<typeof startFromWorker>;
 
 export type SmoldotChain = Awaited<ReturnType<SmoldotClient["addChain"]>>;
 
-// ── Connection issue detection ───────────────────────────────
 //
 // Smoldot's logCallback fires for all internal events. We watch for
 // connection-related errors/warnings and notify subscribers so the UI
@@ -49,7 +48,6 @@ export function onConnectionIssue(cb: ConnectionIssueCallback): () => void {
   };
 }
 
-// ── Fatal panic detection ────────────────────────────────────
 //
 // Smoldot's WASM can panic (e.g. the "Option::unwrap() on a None value"
 // crash during relay-chain sync). A panic leaves every chain dead — any
@@ -143,8 +141,6 @@ function smoldotLogCallback(
   }
 }
 
-// ── Shared smoldot instance ──────────────────────────────────
-
 let smoldotInstance: SmoldotClient | null = null;
 let relayChainPromise: Promise<SmoldotChain> | null = null;
 
@@ -230,9 +226,6 @@ export function getRelayChain(): Promise<SmoldotChain> {
   return relayChainPromise;
 }
 
-// ── Provider factories ──────────────────────────────────────
-
-// ── Bulletin Paseo chain (for preimage operations) ───────────
 // Long-lived singleton — no mutex conflict with Asset Hub.
 
 let bulletinChainPromise: Promise<SmoldotChain> | null = null;
@@ -263,7 +256,6 @@ export function getBulletinChain(): Promise<SmoldotChain> {
   return bulletinChainPromise;
 }
 
-// ── Shared Asset Hub Paseo chain (for dApp connections) ──────
 // Created lazily after the resolver releases the mutex.
 /**
  * Wrap a chain so `.remove()` is a no-op.
@@ -281,11 +273,10 @@ export function makeNonRemovingChain(chain: SmoldotChain): SmoldotChain {
   };
 }
 
-// ── People Chain (for statement store / auth) ────────────────
 // Long-lived singleton used by the auth module for statement store
-// operations via smoldot. The active chain spec (westend-local,
-// next-people-paseo, …) is hard-coded in `@dotli/config/config`
-// as `SS_PEOPLE_CHAIN` — change it there and deploy as a single commit.
+// operations via smoldot. The active chain spec follows the user's
+// network selection (`@dotli/config/mode#getNetwork`) and is resolved
+// inside `@dotli/resolver/chain-specs`.
 
 import { SS_RELAY_CHAIN } from "@dotli/config/config";
 
@@ -332,8 +323,6 @@ export function getPeopleChain(): Promise<SmoldotChain> {
   return peopleChainPromise;
 }
 
-// ── Dedicated provider factories ─────────────────────────────
-
 let resolverAssetHubPromise: Promise<SmoldotChain> | null = null;
 let assetHubProvider: JsonRpcProvider | null = null;
 
@@ -376,7 +365,6 @@ export function getResolverAssetHubProvider(): JsonRpcProvider {
   return assetHubProvider;
 }
 
-// ── dApp Asset Hub chain (fresh, no shared history) ─────────────
 //
 // After the resolver finishes dotNS resolution, its chain can be released.
 // dApp connections then use a FRESH chain that has no "announced blocks"

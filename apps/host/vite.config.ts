@@ -200,8 +200,8 @@ function preconnectBootnodes(): Plugin {
         "../../packages/resolver/src/chain-specs",
       );
       const hosts = [
-        ...extractBootnodeHosts(resolve(specDir, "paseo.json")),
-        ...extractBootnodeHosts(resolve(specDir, "asset-hub-paseo.json")),
+        ...extractBootnodeHosts(resolve(specDir, "paseo.smol.json")),
+        ...extractBootnodeHosts(resolve(specDir, "paseo-asset-hub.smol.json")),
       ];
       const unique = [...new Set(hosts)];
       const links = unique

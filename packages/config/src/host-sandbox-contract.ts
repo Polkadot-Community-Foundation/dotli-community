@@ -7,10 +7,11 @@
 // the sandbox side would re-introduce the "user picked X, got Y"
 // regression class that the determinism audit eliminated.
 //
-// Schema v1 (current):
+// Schema v2 (current):
 //
 //   Required:
 //     ?chainBackend=<"smoldot-direct" | "smoldot-shared-worker" | "rpc-gateway">
+//     ?network=<"paseo-next-v1" | "paseo-next-v2">
 //
 //   Optional:
 //     ?skipArchiveCache=<"0" | "1">
@@ -21,7 +22,9 @@
 // have the validator reject unmatched versions so stale host builds
 // don't feed malformed params to fresh sandbox deploys.
 
-export const SANDBOX_SCHEMA_VERSION = 1;
+import { isValidNetwork, type Network } from "./network";
+
+export const SANDBOX_SCHEMA_VERSION = 2;
 
 /** Known chain backends. The only values the sandbox accepts. */
 const VALID_CHAIN_BACKENDS: ReadonlySet<string> = new Set([
@@ -39,6 +42,7 @@ const VALID_BOOLEAN_FLAGS: ReadonlySet<string> = new Set(["0", "1"]);
  */
 export const SANDBOX_CONTRACT_PARAMS = {
   chainBackend: "chainBackend",
+  network: "network",
   skipArchiveCache: "skipArchiveCache",
   fullReset: "fullReset",
   v: "v",
@@ -49,6 +53,7 @@ export type SandboxContractParam =
 
 export interface SandboxParams {
   chainBackend: "smoldot-direct" | "smoldot-shared-worker" | "rpc-gateway";
+  network: Network;
   skipArchiveCache: boolean;
   fullReset: boolean;
 }
@@ -93,6 +98,21 @@ export function validateSandboxParams(
     };
   }
 
+  const network = search.get(SANDBOX_CONTRACT_PARAMS.network);
+  if (network === null) {
+    return {
+      ok: false,
+      reason:
+        "Missing required URL param `network`. The host did not propagate the active network — reload from dot.li.",
+    };
+  }
+  if (!isValidNetwork(network)) {
+    return {
+      ok: false,
+      reason: `Unknown network "${network}". Expected "paseo-next-v1" or "paseo-next-v2".`,
+    };
+  }
+
   const skipRaw = search.get(SANDBOX_CONTRACT_PARAMS.skipArchiveCache);
   if (skipRaw !== null && !VALID_BOOLEAN_FLAGS.has(skipRaw)) {
     return {
@@ -116,6 +136,7 @@ export function validateSandboxParams(
         | "smoldot-direct"
         | "smoldot-shared-worker"
         | "rpc-gateway",
+      network,
       skipArchiveCache: skipRaw === "1",
       fullReset: resetRaw === "1",
     },

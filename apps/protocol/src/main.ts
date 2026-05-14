@@ -45,6 +45,11 @@ import {
   TIMEOUTS,
   type SiteId,
 } from "@dotli/config/config";
+import {
+  isValidNetwork,
+  setNetworkOverride,
+  type Network,
+} from "@dotli/config/network";
 // Smoldot / relay-chain / dot-name resolver imports live behind
 // `initDirectMode()` (dynamic) so `rpc` mode doesn't drag smoldot into the
 // protocol iframe's initial chunk. The SharedWorker path doesn't import
@@ -311,6 +316,31 @@ function getSkipWorkerCache(): boolean {
   }
 }
 
+type RequestedNetwork =
+  | { kind: "ok"; network: Network }
+  | { kind: "missing" }
+  | { kind: "invalid"; raw: string };
+
+/**
+ * The protocol iframe runs on a different origin than the host shell and
+ * cannot read the host's `dotli:network` from `localStorage`.
+ */
+function getRequestedNetwork(): RequestedNetwork {
+  let raw: string | null;
+  try {
+    raw = new URLSearchParams(window.location.search).get("network");
+  } catch {
+    return { kind: "invalid", raw: "<unparseable>" };
+  }
+  if (raw === null) {
+    return { kind: "missing" };
+  }
+  if (isValidNetwork(raw)) {
+    return { kind: "ok", network: raw };
+  }
+  return { kind: "invalid", raw };
+}
+
 /**
  * Purge every IndexedDB on this origin that isn't one of ours. Covers
  * smoldot's internal chain DB + polkadot-api's caches — anything persisted
@@ -395,6 +425,25 @@ async function init(): Promise<void> {
     signalReady();
     return;
   }
+  const requestedNetwork = getRequestedNetwork();
+  if (requestedNetwork.kind === "invalid") {
+    const message = `Unknown protocol network: "${requestedNetwork.raw}"`;
+    log.error(`[dot.li protocol] ${message}`);
+    signalError(message);
+    return;
+  }
+  if (requestedNetwork.kind === "missing") {
+    const message =
+      "Missing required `network` URL param — host shell did not propagate the active network.";
+    log.error(`[dot.li protocol] ${message}`);
+    signalError(message);
+    return;
+  }
+  setNetworkOverride(requestedNetwork.network);
+  m.setDefaults({ network: requestedNetwork.network });
+  log.warn(
+    `[dot.li protocol] Active network pinned to ${requestedNetwork.network}`,
+  );
 
   // Worker-cache purge runs *before* any broker/smoldot init so the clean
   // state is what the chain client opens against. A purge failure when the
@@ -427,7 +476,7 @@ async function init(): Promise<void> {
     // Values are kebab-case to match `DotliMode` + the `?mode=` URL convention
     // (see M-5: one naming convention across host + protocol).
     m.setDefaults({ protocol_mode: "shared-worker" });
-    await initSharedWorkerMode();
+    await initSharedWorkerMode(requestedNetwork.network);
     m.count(S.PROTOCOL_MODE, { mode: "shared-worker" });
   } else if (mode === "rpc") {
     m.setDefaults({ protocol_mode: "rpc" });
@@ -460,12 +509,19 @@ function signalError(message: string): void {
   }
 }
 
-async function initSharedWorkerMode(): Promise<void> {
+async function initSharedWorkerMode(network: Network): Promise<void> {
   const swStartTime = performance.now();
 
+  // Vite statically rewrites `new SharedWorker(new URL("./worker.ts",
+  // import.meta.url), ...)` to point at the bundled chunk. The `new URL`
+  // MUST be a literal argument to the SharedWorker constructor — assigning
+  // it to a variable (even briefly to set a query param) breaks the
+  // rewrite and the browser ends up fetching the unresolved `.ts` path,
+  // which 404s in production. Network is therefore propagated via the
+  // worker name and read inside the worker via `self.name`.
   const worker = new SharedWorker(
     new URL("./protocol-shared-worker.ts", import.meta.url),
-    { type: "module", name: "dotli-protocol" },
+    { type: "module", name: `dotli-protocol-${network}` },
   );
   const port = worker.port;
 

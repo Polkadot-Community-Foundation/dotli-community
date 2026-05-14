@@ -5,11 +5,11 @@ import type {
   JsonRpcRequest,
 } from "@polkadot-api/json-rpc-provider";
 import { ProtocolFatalError, ProtocolInitFailedError } from "./errors";
+import { BASE_DOMAIN, type SiteId } from "@dotli/config/config";
 import {
-  BASE_DOMAIN,
-  SUPPORTED_GENESIS_HASHES,
-  type SiteId,
-} from "@dotli/config/config";
+  getActiveSupportedGenesisHashes,
+  getNetwork,
+} from "@dotli/config/network";
 import { getBackend, type Backend } from "@dotli/config/mode";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
@@ -297,6 +297,7 @@ function createHostIframe(): Promise<void> {
     const mode: ProtocolSubMode =
       protocolSubMode ?? backendToSubMode(getBackend());
     params.set("mode", mode);
+    params.set("network", getNetwork());
     if (protocolSkipWorkerCache) {
       params.set("skipWorkerCache", "1");
     }
@@ -601,7 +602,7 @@ export function subscribeSharedAuthStorage(
 }
 
 export function isRemoteChainSupported(genesisHash: string): boolean {
-  return SUPPORTED_GENESIS_HASHES.has(genesisHash.toLowerCase());
+  return getActiveSupportedGenesisHashes().has(genesisHash.toLowerCase());
 }
 
 /**

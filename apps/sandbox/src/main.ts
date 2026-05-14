@@ -41,6 +41,7 @@ import {
   SANDBOX_CONTRACT_PARAMS,
   validateSandboxParams,
 } from "@dotli/config/host-sandbox-contract";
+import { setNetworkOverride } from "@dotli/config/network";
 import { elapsed } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
 import { parseIpfsResponse } from "@dotli/content/archive";
@@ -82,6 +83,18 @@ function stripContractParamsFromUrl(): void {
     cleaned.searchParams.delete(key);
   }
   history.replaceState(null, "", cleaned.toString());
+}
+
+/**
+ * Render the sandbox-local error page AND tell the host shell its loading
+ * overlay is finished. Without the parent notify, the host's `.loading`
+ * stays visible (the host keeps it around as a sibling of the sandbox
+ * iframe so progress updates can land) and the two screens stack visibly
+ * — error title plus the still-ticking progress bar from above.
+ */
+function failLoading(...args: Parameters<typeof showError>): void {
+  notifyLoadingDone();
+  showError(...args);
 }
 
 /**
@@ -550,7 +563,7 @@ async function main(): Promise<void> {
   // unified loading UI. Fail loudly instead of degrading into a broken
   // half-page. Users arriving via a bookmark are pointed back at dot.li.
   if (window.self === window.top) {
-    showError(
+    failLoading(
       "Sandbox URL not supported",
       `Open this dApp through https://${BASE_DOMAIN} — the sandbox origin (${window.location.host}) is not a standalone entry point.`,
     );
@@ -560,7 +573,7 @@ async function main(): Promise<void> {
 
   const cid = parseCidFromHostname();
   if (cid === null) {
-    showError(
+    failLoading(
       "No CID",
       `This page requires a CID in the subdomain (e.g. bafyrei....app.${BASE_DOMAIN})`,
     );
@@ -581,12 +594,14 @@ async function main(): Promise<void> {
   const urlParams = new URL(window.location.href).searchParams;
   const parsed = validateSandboxParams(urlParams);
   if (!parsed.ok) {
-    showError("Invalid sandbox URL", parsed.reason);
+    failLoading("Invalid sandbox URL", parsed.reason);
     stopApp();
     return;
   }
-  const { chainBackend, skipArchiveCache } = parsed.params;
+  const { chainBackend, network, skipArchiveCache } = parsed.params;
   const isGateway = chainBackend === "rpc-gateway";
+
+  setNetworkOverride(network);
 
   // Full-reset signal from the host settings popover: wipe sandbox-origin
   // state (IDB, CacheStorage, SW registrations) before the normal init
@@ -598,11 +613,12 @@ async function main(): Promise<void> {
     await purgeSandboxOriginState();
   }
 
-  // Propagate the chainBackend choice into every metric emitted from the
-  // sandbox so dashboards can slice on it.
+  // Propagate the chainBackend and network choices into every metric emitted
+  // from the sandbox so dashboards can slice on them.
   m.setDefaults({
     skip_archive_cache: String(skipArchiveCache),
     chain_backend: chainBackend,
+    network,
   });
 
   // Register SW + pre-load chunks in parallel.
@@ -755,7 +771,7 @@ function run(): void {
     return;
   }
   if (runAttempts >= MAX_RUN_ATTEMPTS) {
-    showError(
+    failLoading(
       "Too many retry attempts",
       `Reached ${String(MAX_RUN_ATTEMPTS)} failed attempts. Reload the page to start over.`,
     );
@@ -786,7 +802,7 @@ function run(): void {
         attempt: String(runAttempts),
       });
       const message = err instanceof Error ? err.message : String(err);
-      showError(
+      failLoading(
         "Failed to load content",
         `${message} (via ${dependency})`,
         () => {

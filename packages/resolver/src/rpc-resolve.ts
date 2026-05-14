@@ -9,8 +9,7 @@
 
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
-import { CONTRACTS, STORAGE_SLOTS } from "@dotli/config/config";
-import { getActiveAssetHubRpcEndpoints } from "@dotli/config/endpoints";
+import { getActiveServicesConfig } from "@dotli/config/network";
 import { log } from "@dotli/shared/log";
 import { dur } from "@dotli/shared/perf";
 import { namehash, toHex, decodeIpfsContenthashResult } from "./abi";
@@ -18,8 +17,6 @@ import { readMappingBytes, readMappingAddress } from "./storage";
 import type { StatusCallback, UnsafeApi } from "./storage";
 
 export type { StatusCallback } from "./storage";
-
-// ── Client lifecycle ─────────────────────────────────────────
 
 /**
  * `WsJsonRpcProvider` from `polkadot-api/ws-provider` — its type is not
@@ -55,7 +52,7 @@ async function doCreateClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
   // responsible for any failure, defeating the whole point of gateway mode's
   // "trusted, deterministic" contract.
   onStatus?.(`Connecting to Asset Hub RPC...`);
-  const provider = getWsProvider(getActiveAssetHubRpcEndpoints(), {
+  const provider = getWsProvider([...getActiveServicesConfig().assethub.rpcs], {
     // Public RPC endpoints can be tunnel-gated; the default 40s heartbeat
     // is occasionally too tight.
     heartbeatTimeout: 120_000,
@@ -87,8 +84,6 @@ async function doCreateClient(onStatus?: StatusCallback): Promise<UnsafeApi> {
   return apiInstance;
 }
 
-// ── Public API ───────────────────────────────────────────────
-
 /**
  * Resolve a `.dot` label to an IPFS CID by reading dotNS contract storage
  * directly over JSON-RPC (bypassing smoldot).
@@ -111,11 +106,12 @@ export async function resolveDotNameViaRpc(
   onStatus?.(`Resolving "${domain}" via RPC...`);
   const t0 = performance.now();
 
+  const dotns = getActiveServicesConfig().dotns;
   const contenthashBytes = await readMappingBytes(
     api,
-    CONTRACTS.DOTNS_CONTENT_RESOLVER,
+    dotns.DOTNS_CONTENT_RESOLVER,
     node,
-    STORAGE_SLOTS.CONTENTHASH,
+    dotns.storageSlots.CONTENTHASH,
   );
 
   log.warn(
@@ -166,11 +162,12 @@ export async function resolveOwnerViaRpc(
   const domain = `${label}.dot`;
   const node = namehash(domain);
 
+  const dotns = getActiveServicesConfig().dotns;
   return readMappingAddress(
     api,
-    CONTRACTS.DOTNS_REGISTRY,
+    dotns.DOTNS_REGISTRY,
     node,
-    STORAGE_SLOTS.REGISTRY_RECORDS,
+    dotns.storageSlots.REGISTRY_RECORDS,
   );
 }
 

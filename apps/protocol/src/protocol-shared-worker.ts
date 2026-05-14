@@ -12,6 +12,7 @@ declare const self: SharedWorkerGlobalScope;
 
 import type { StringJsonRpcConnection } from "@dotli/protocol/broker";
 import { MAX_CONNECTIONS_PER_ORIGIN } from "@dotli/config/config";
+import { isValidNetwork, setNetworkOverride } from "@dotli/config/network";
 import {
   createChainProvider,
   isChainSupported,
@@ -92,7 +93,22 @@ const pendingPorts: MessagePort[] = [];
 let engineReady = false;
 let resolverChainReleased = false;
 
-// Placeholder — set after pre-sync
+const NETWORK_NAME_PREFIX = "dotli-protocol-";
+let networkInitFailure: string | null = null;
+const requestedNetwork = self.name.startsWith(NETWORK_NAME_PREFIX)
+  ? self.name.slice(NETWORK_NAME_PREFIX.length)
+  : null;
+if (requestedNetwork === null) {
+  networkInitFailure = `Unexpected SharedWorker name "${self.name}" — iframe did not encode the active network.`;
+} else if (!isValidNetwork(requestedNetwork)) {
+  networkInitFailure = `Unknown protocol network: "${requestedNetwork}"`;
+} else {
+  setNetworkOverride(requestedNetwork);
+  m.setDefaults({ network: requestedNetwork });
+  swLog(`Active network pinned to ${requestedNetwork}`);
+}
+
+// Placeholder broker manager until pre-sync creates the real one.
 let chainBrokerManager: ReturnType<typeof createChainBrokerManager>;
 
 // Smoldot panic broadcast. When smoldot's log callback detects a WASM
@@ -553,5 +569,10 @@ self.addEventListener("connect", (event) => {
   }
 });
 
-swLog("SharedWorker initialized, starting pre-sync...");
-void presync();
+if (networkInitFailure !== null) {
+  swError(networkInitFailure);
+  presyncFailureMessage = networkInitFailure;
+} else {
+  swLog("SharedWorker initialized, starting pre-sync...");
+  void presync();
+}

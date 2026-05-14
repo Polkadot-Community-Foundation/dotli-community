@@ -8,7 +8,8 @@ import {
   createRemoteChainProvider,
   isRemoteChainSupported,
 } from "@dotli/protocol/client";
-import { BASE_DOMAIN, BULLETIN_PASEO_GENESIS } from "@dotli/config/config";
+import { BASE_DOMAIN } from "@dotli/config/config";
+import { getActiveServicesConfig } from "@dotli/config/network";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
 
@@ -37,10 +38,11 @@ function ensureConnection(): JsonRpcConnection {
   if (connection !== null) {
     return connection;
   }
-  const provider = createRemoteChainProvider(BULLETIN_PASEO_GENESIS);
+  const bulletinGenesis = getActiveServicesConfig().bulletin.genesis;
+  const provider = createRemoteChainProvider(bulletinGenesis);
   if (provider === null) {
     throw new Error(
-      `Bulletin Paseo (${BULLETIN_PASEO_GENESIS}) is not in the supported chain set`,
+      `Bulletin Paseo (${bulletinGenesis}) is not in the supported chain set`,
     );
   }
   connection = provider((message: JsonRpcMessage) => {
@@ -212,7 +214,7 @@ function isBitswapGetMessage(value: unknown): value is BitswapGetMessage {
 
 /** Idempotent. Call once at host startup. */
 export function listenForSandboxBitswap(): void {
-  if (!isRemoteChainSupported(BULLETIN_PASEO_GENESIS)) {
+  if (!isRemoteChainSupported(getActiveServicesConfig().bulletin.genesis)) {
     log.warn(
       "[dot.li bitswap-relay] Bulletin not in supported chain set; sandbox bitswap requests will fail.",
     );

@@ -3,7 +3,8 @@
 // Uses polkadot-api with the shared Asset Hub provider from smoldot.ts.
 
 import { createClient, type PolkadotClient } from "polkadot-api";
-import { CONTRACTS, STORAGE_SLOTS, TIMEOUTS } from "@dotli/config/config";
+import { TIMEOUTS } from "@dotli/config/config";
+import { getActiveServicesConfig } from "@dotli/config/network";
 import { namehash, toHex, decodeIpfsContenthashResult } from "./abi";
 import { dur } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
@@ -23,8 +24,6 @@ export type { StatusCallback, PhaseCallback, ResolvePhase } from "./storage";
 export { statusToPhase } from "./storage";
 export { getSmoldot, getSmoldotDirect, getRelayChain } from "./smoldot";
 export { onConnectionIssue } from "./smoldot";
-
-// ── Client lifecycle ─────────────────────────────────────────
 
 let clientInstance: PolkadotClient | null = null;
 let apiInstance: UnsafeApi | null = null;
@@ -190,8 +189,6 @@ async function doCreateClient(
   }
 }
 
-// ── Public API ───────────────────────────────────────────────
-
 /**
  * Presync primitive used by the SharedWorker / direct-mode bootstrap.
  *
@@ -225,12 +222,13 @@ export async function resolveDotName(
   onStatus?.(`Resolving content for "${domain}"...`);
   const contentStart = performance.now();
 
+  const dotns = getActiveServicesConfig().dotns;
   const contenthashBytes = await m.span(S.RESOLVE_STORAGE_READ, () =>
     readMappingBytes(
       api,
-      CONTRACTS.DOTNS_CONTENT_RESOLVER,
+      dotns.DOTNS_CONTENT_RESOLVER,
       node,
-      STORAGE_SLOTS.CONTENTHASH,
+      dotns.storageSlots.CONTENTHASH,
     ),
   );
   m.measure(S.RESOLVE_STORAGE_READ, performance.now() - contentStart);
@@ -272,10 +270,11 @@ export async function resolveOwner(label: string): Promise<string | null> {
   const domain = `${label}.dot`;
   const node = namehash(domain);
 
+  const dotns = getActiveServicesConfig().dotns;
   return readMappingAddress(
     api,
-    CONTRACTS.DOTNS_REGISTRY,
+    dotns.DOTNS_REGISTRY,
     node,
-    STORAGE_SLOTS.REGISTRY_RECORDS,
+    dotns.storageSlots.REGISTRY_RECORDS,
   );
 }

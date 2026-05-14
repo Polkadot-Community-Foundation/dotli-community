@@ -8,6 +8,7 @@
 import { BASE_DOMAIN } from "@dotli/config/config";
 import { SANDBOX_CONTRACT_PARAMS } from "@dotli/config/host-sandbox-contract";
 import { getBackend, getCacheSettings } from "@dotli/config/mode";
+import { getNetwork } from "@dotli/config/network";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { buildAllowAttribute } from "./permissions";
@@ -160,10 +161,11 @@ export async function renderAppSubdomain(
   // boot failure on the next deploy.
   //
   // The sandbox reads its own curated endpoint defaults from
-  // `@dotli/config/endpoints` (same package, built into its bundle), so
+  // `@dotli/config/network` (same package, built into its bundle), so
   // the host no longer threads RPC/gateway URLs across the origin —
   // there are no user-overridable endpoints to preserve.
   const chainBackend = getBackend();
+  const network = getNetwork();
   const cache = getCacheSettings();
   const appOrigin = getAppOrigin(cid);
   const deepPath = getDeepPath();
@@ -185,6 +187,7 @@ export async function renderAppSubdomain(
   try {
     const parsed = new URL(url);
     parsed.searchParams.set(SANDBOX_CONTRACT_PARAMS.chainBackend, chainBackend);
+    parsed.searchParams.set(SANDBOX_CONTRACT_PARAMS.network, network);
     if (cache.skipArchiveCache) {
       parsed.searchParams.set(SANDBOX_CONTRACT_PARAMS.skipArchiveCache, "1");
     }
@@ -194,7 +197,7 @@ export async function renderAppSubdomain(
     url = parsed.toString();
   } catch {
     const sep = url.includes("?") ? "&" : "?";
-    url += `${sep}${SANDBOX_CONTRACT_PARAMS.chainBackend}=${chainBackend}`;
+    url += `${sep}${SANDBOX_CONTRACT_PARAMS.chainBackend}=${chainBackend}&${SANDBOX_CONTRACT_PARAMS.network}=${network}`;
     if (cache.skipArchiveCache) {
       url += `&${SANDBOX_CONTRACT_PARAMS.skipArchiveCache}=1`;
     }

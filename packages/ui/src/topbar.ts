@@ -11,11 +11,7 @@ import type { AuthState } from "@dotli/auth/auth";
 import type { Identity } from "@novasamatech/host-papp";
 import { log } from "@dotli/shared/log";
 import { escapeHtml } from "@dotli/shared/html";
-import {
-  SITE_ID,
-  PASEO_RELAY_GENESIS,
-  ASSET_HUB_PASEO_GENESIS,
-} from "@dotli/config/config";
+import { SITE_ID } from "@dotli/config/config";
 import {
   getCacheSettings,
   setCacheSettings,
@@ -25,10 +21,8 @@ import {
   type Backend,
   type CacheSettings,
 } from "@dotli/config/mode";
-import {
-  getActiveAssetHubRpcEndpoints,
-  getActivePaseoRelayRpcEndpoints,
-} from "@dotli/config/endpoints";
+import { getNetwork, setNetwork, type Network } from "@dotli/config/network";
+import { getActiveServicesConfig } from "@dotli/config/network";
 import {
   ALL_PERMISSIONS,
   getPermissionStatus,
@@ -744,6 +738,7 @@ export function openModePopover(): void {
  */
 interface ModeDraft {
   chain: Backend;
+  network: Network;
   cache: CacheSettings;
 }
 
@@ -757,6 +752,7 @@ function renderModePopover(): void {
 
   const persisted: ModeDraft = {
     chain: getBackend(),
+    network: getNetwork(),
     cache: getCacheSettings(),
   };
   const draft: ModeDraft = { ...persisted, cache: { ...persisted.cache } };
@@ -779,6 +775,33 @@ function renderModePopover(): void {
   rightCol.className = "mode-popover-col";
   columns.appendChild(rightCol);
 
+  appendSectionHeader(leftCol, "Network");
+  const networkChoices: [Network, string, string][] = [
+    ["paseo-next-v1", "Paseo Next V1", "Current Paseo Next testnet"],
+    ["paseo-next-v2", "Paseo Next V2", "Upgraded Paseo Next system chains"],
+  ];
+  const networkGroup = document.createElement("div");
+  leftCol.appendChild(networkGroup);
+  const rerenderNetwork = (): void => {
+    networkGroup.innerHTML = "";
+    for (const [value, label, desc] of networkChoices) {
+      renderNetworkRadio(
+        networkGroup,
+        value,
+        label,
+        desc,
+        draft.network,
+        (next) => {
+          draft.network = next;
+          rerenderNetwork();
+          syncApply();
+        },
+      );
+    }
+  };
+  rerenderNetwork();
+
+  appendDivider(leftCol);
   appendSectionHeader(leftCol, "Backend");
   const chainChoices: [Backend, string, string][] = [
     [
@@ -789,8 +812,8 @@ function renderModePopover(): void {
     ["smoldot-direct", "Light Client (smoldot direct)", "Light client per tab"],
     [
       "rpc-gateway",
-      "RPC Node and Gateway (trusted providers)",
-      "RPC, and IPFS gateway",
+      "RPC and Gateway (trusted providers)",
+      "RPC nodes and IPFS gateway",
     ],
   ];
   const chainGroup = document.createElement("div");
@@ -889,6 +912,7 @@ function renderModePopover(): void {
   syncApply = (): void => {
     const dirty =
       draft.chain !== persisted.chain ||
+      draft.network !== persisted.network ||
       draft.cache.skipCidCache !== persisted.cache.skipCidCache ||
       draft.cache.skipArchiveCache !== persisted.cache.skipArchiveCache ||
       draft.cache.skipWorkerCache !== persisted.cache.skipWorkerCache;
@@ -936,6 +960,9 @@ async function applyAndReset(
     if (draft.chain !== persisted.chain) {
       setBackend(draft.chain);
     }
+    if (draft.network !== persisted.network) {
+      setNetwork(draft.network);
+    }
     if (
       draft.cache.skipCidCache !== persisted.cache.skipCidCache ||
       draft.cache.skipArchiveCache !== persisted.cache.skipArchiveCache ||
@@ -946,8 +973,9 @@ async function applyAndReset(
 
     await wipeOriginState();
 
-    // Re-apply the user's choice + theme after wipe.
+    // Re-apply the user's choices + theme after wipe.
     setBackend(draft.chain);
+    setNetwork(draft.network);
     setCacheSettings(draft.cache);
     if (theme === "light" || theme === "dark") {
       localStorage.setItem("dotli-theme", theme);
@@ -1137,12 +1165,13 @@ function renderDiagnostics(parent: HTMLElement): void {
 
     // Fire both queries; they update their own rows + the shared snapshot
     // (so the "Share diagnostic" button captures whatever resolved in time).
-    void queryFinalizedBlock(PASEO_RELAY_GENESIS).then((n) => {
+    const cfg = getActiveServicesConfig();
+    void queryFinalizedBlock(cfg.relay.genesis).then((n) => {
       const v = formatBlock(n);
       relayRow.update(v);
       smoldotInfo.blocks.relay = v;
     });
-    void queryFinalizedBlock(ASSET_HUB_PASEO_GENESIS).then((n) => {
+    void queryFinalizedBlock(cfg.assethub.genesis).then((n) => {
       const v = formatBlock(n);
       assetHubRow.update(v);
       smoldotInfo.blocks.assetHub = v;
@@ -1287,6 +1316,7 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
   const sha = (import.meta.env.VITE_COMMIT_SHA as string | undefined) ?? "dev";
 
   const backend = getBackend();
+  const network = getNetwork();
 
   const rows: [string, string][] = [
     // `location.host` includes the port when non-default — useful on
@@ -1294,6 +1324,7 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
     // (`hackme3.dot.li`).
     ["Site", window.location.host],
     ["Build", `${version} (${shortSha(sha)})`],
+    ["Network", networkLabel(network)],
     ["Backend", backendLabel(backend)],
   ];
 
@@ -1318,10 +1349,9 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
       rows.push(["Worker", shortSha(sha)]);
     }
   } else if (backend === "rpc-gateway") {
-    const relay = getActivePaseoRelayRpcEndpoints()[0] ?? "n/a";
-    const assetHub = getActiveAssetHubRpcEndpoints()[0] ?? "n/a";
-    rows.push(["Relay node", relay]);
-    rows.push(["AssetHub node", assetHub]);
+    const cfg = getActiveServicesConfig();
+    rows.push(["Relay node", cfg.relay.rpcs[0] ?? "n/a"]);
+    rows.push(["AssetHub node", cfg.assethub.rpcs[0] ?? "n/a"]);
   }
 
   rows.push(["Browser", summarizeUserAgent(navigator.userAgent)]);
@@ -1336,6 +1366,15 @@ function backendLabel(b: Backend): string {
       return "Smoldot Direct";
     case "rpc-gateway":
       return "RPC Node + Gateway";
+  }
+}
+
+function networkLabel(n: Network): string {
+  switch (n) {
+    case "paseo-next-v1":
+      return "Paseo Next V1";
+    case "paseo-next-v2":
+      return "Paseo Next V2";
   }
 }
 
@@ -1497,6 +1536,26 @@ function renderChainRadio(
   onSelect: (next: Backend) => void,
 ): void {
   const row = buildRadioRow(`dotli-backend-${value}`, "dotli-backend", {
+    value,
+    label,
+    description,
+    selected: value === current,
+  });
+  row.querySelector("input")?.addEventListener("change", () => {
+    onSelect(value);
+  });
+  parent.appendChild(row);
+}
+
+function renderNetworkRadio(
+  parent: HTMLElement,
+  value: Network,
+  label: string,
+  description: string,
+  current: Network,
+  onSelect: (next: Network) => void,
+): void {
+  const row = buildRadioRow(`dotli-network-${value}`, "dotli-network", {
     value,
     label,
     description,

@@ -10,11 +10,9 @@
 import { getSmProvider } from "polkadot-api/sm-provider";
 import type { JsonRpcProvider } from "polkadot-api";
 import {
-  PASEO_RELAY_GENESIS as PASEO_RELAY,
-  ASSET_HUB_PASEO_GENESIS as ASSET_HUB_PASEO,
-  BULLETIN_PASEO_GENESIS as BULLETIN_PASEO,
-  PEOPLE_PASEO_NEXT_GENESIS as PEOPLE_PASEO,
-} from "@dotli/config/config";
+  getActiveServicesConfig,
+  getActiveSupportedGenesisHashes,
+} from "@dotli/config/network";
 import { log } from "@dotli/shared/log";
 
 import {
@@ -25,24 +23,8 @@ import {
   getRelayChain,
 } from "./smoldot";
 
-const SUPPORTED_GENESIS = new Set([
-  PASEO_RELAY.toLowerCase(),
-  ASSET_HUB_PASEO.toLowerCase(),
-  BULLETIN_PASEO.toLowerCase(),
-  PEOPLE_PASEO.toLowerCase(),
-]);
-
-/**
- * Genesis hashes whose connection should release the resolver's Asset Hub
- * chain on first dApp use. This is the resolver's view of "is this an
- * Asset Hub the resolver might be holding for dotNS resolution" — when a
- * second network is added (e.g. Westend Asset Hub), append it here, not
- * at every consumer call site.
- */
-const RESOLVER_ASSET_HUB_GENESIS = new Set([ASSET_HUB_PASEO.toLowerCase()]);
-
 export function isChainSupported(genesisHash: string): boolean {
-  return SUPPORTED_GENESIS.has(genesisHash.toLowerCase());
+  return getActiveSupportedGenesisHashes().has(genesisHash.toLowerCase());
 }
 
 /**
@@ -53,7 +35,10 @@ export function isChainSupported(genesisHash: string): boolean {
  * resolver's Asset Hub.
  */
 export function isResolverAssetHubGenesis(genesisHash: string): boolean {
-  return RESOLVER_ASSET_HUB_GENESIS.has(genesisHash.toLowerCase());
+  return (
+    genesisHash.toLowerCase() ===
+    getActiveServicesConfig().assethub.genesis.toLowerCase()
+  );
 }
 
 /**
@@ -68,27 +53,30 @@ export function createChainProvider(
   genesisHash: string,
 ): JsonRpcProvider | null {
   const key = genesisHash.toLowerCase();
+  const cfg = getActiveServicesConfig();
 
-  if (key === ASSET_HUB_PASEO.toLowerCase()) {
+  if (key === cfg.assethub.genesis.toLowerCase()) {
     log.warn(
       "[dot.li chains] Returning dApp Asset Hub provider (fresh chain, no shared history)",
     );
     return getDappAssetHubProvider();
   }
 
-  if (key === PASEO_RELAY.toLowerCase()) {
+  if (key === cfg.relay.genesis.toLowerCase()) {
     log.warn("[dot.li chains] Returning shared relay chain provider");
-    return getSmProvider(() => getRelayChain());
+    return getSmProvider(() =>
+      getRelayChain().then((chain) => makeNonRemovingChain(chain)),
+    );
   }
 
-  if (key === BULLETIN_PASEO.toLowerCase()) {
+  if (key === cfg.bulletin.genesis.toLowerCase()) {
     log.warn("[dot.li chains] Returning Bulletin Paseo provider (smoldot)");
     return getSmProvider(() =>
       getBulletinChain().then((chain) => makeNonRemovingChain(chain)),
     );
   }
 
-  if (key === PEOPLE_PASEO.toLowerCase()) {
+  if (key === cfg.people.genesis.toLowerCase()) {
     log.warn("[dot.li chains] Returning People Paseo provider (smoldot)");
     return getSmProvider(() =>
       getPeopleChain().then((chain) => makeNonRemovingChain(chain)),

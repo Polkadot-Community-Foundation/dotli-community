@@ -4,7 +4,6 @@
 // Provides a simple pub-sub interface for the top bar UI.
 
 import {
-  SS_PASEO_STABLE_STAGE_ENDPOINTS,
   createPappAdapter,
   type PappAdapter,
   type PairingStatus,
@@ -22,11 +21,8 @@ import type { Statement } from "@novasamatech/sdk-statement";
 import { toHex } from "@novasamatech/host-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { createRemoteChainProvider } from "@dotli/protocol/client";
-import {
-  SITE_ID,
-  PEOPLE_PASEO_NEXT_GENESIS,
-  isLocalhost,
-} from "@dotli/config/config";
+import { SITE_ID, isLocalhost } from "@dotli/config/config";
+import { getActiveServicesConfig } from "@dotli/config/network";
 import { getBackend } from "@dotli/config/mode";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
@@ -201,18 +197,14 @@ export function initAuth(): void {
   // route through the protocol bridge; `rpc-gateway` uses the WS provider
   // directly.
   const useSmoldotForAuth = getBackend() !== "rpc-gateway";
-  // The auth chain RPC endpoint is intentionally NOT user-overridable
-  // today — the custom-endpoints axis (`@dotli/config/endpoints`) only
-  // covers Asset Hub and IPFS. Until a parallel
-  // `getActivePeopleChainRpcEndpoint()` exists, we pick the first blessed
-  // default deterministically and emit a metric tag so dashboards can
-  // attribute auth failures back to the endpoint chosen here. If you
-  // change `SS_PASEO_STABLE_STAGE_ENDPOINTS[0]`, all users move with it
-  // — there is no per-user override.
-  const peopleRpcEndpoint = SS_PASEO_STABLE_STAGE_ENDPOINTS[0];
+  // Auth people chain endpoint resolved against the active network's services
+  // config. The smoldot path routes through the protocol bridge by genesis;
+  // the WS path dials the first RPC endpoint configured for the active people chain.
+  const people = getActiveServicesConfig().people;
   let peopleProvider;
+  let peopleRpcEndpoint: string | null = null;
   if (useSmoldotForAuth) {
-    const remote = createRemoteChainProvider(PEOPLE_PASEO_NEXT_GENESIS);
+    const remote = createRemoteChainProvider(people.genesis);
     if (remote === null) {
       throw new Error(
         "[dot.li auth] Protocol bridge does not support People Paseo chain",
@@ -220,12 +212,18 @@ export function initAuth(): void {
     }
     peopleProvider = remote;
   } else {
+    if (people.rpcs.length === 0) {
+      throw new Error(
+        "[dot.li auth] Active network has no public People RPC endpoint",
+      );
+    }
+    peopleRpcEndpoint = people.rpcs[0];
     peopleProvider = getWsProvider([peopleRpcEndpoint], {
       heartbeatTimeout: 120_000, // 2 minutes — default 40s is too aggressive through tunnels
     });
   }
   const lazyClient = createLazyClient(peopleProvider);
-  if (!useSmoldotForAuth) {
+  if (peopleRpcEndpoint !== null) {
     m.setDefaults({ people_rpc_endpoint: peopleRpcEndpoint });
   }
 
