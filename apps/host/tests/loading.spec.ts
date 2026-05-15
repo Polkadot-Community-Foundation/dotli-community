@@ -1,6 +1,7 @@
-import { test, expect } from "@playwright/test";
+import { expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { HOST_ERRORS } from "../src/errors";
+import { test } from "./helpers/shared-mode-reset";
 
 const DOMAIN = process.env.COMBO_DOMAIN ?? "host-playground";
 const PORT = process.env.COMBO_PORT ?? "5173";

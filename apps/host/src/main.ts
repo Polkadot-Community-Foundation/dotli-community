@@ -38,13 +38,15 @@ import { serializeError } from "@dotli/shared/errors";
 import { escapeHtml } from "@dotli/shared/html";
 import { showNotification } from "@dotli/ui/notification";
 import {
+  BACKEND_KEY,
+  CACHE_KEY,
   getBackend,
   setBackend,
   isVerifiedSession,
   getCacheSettings,
   setCacheSettings,
 } from "@dotli/config/mode";
-import { getNetwork, setNetwork } from "@dotli/config/network";
+import { NETWORK_KEY, getNetwork, setNetwork } from "@dotli/config/network";
 import {
   parseSettingsFromSearch,
   writeSettingsToSearch,
@@ -432,22 +434,38 @@ function readRawLocalStorage(key: string): string | null {
 }
 
 /**
- * Reconcile URL > localStorage > default per axis, persist back to both, and
- * wipe + reload (matching the modal Save flow) when a URL value displaces a
- * prior persisted choice.
+ * Reconcile URL > shared > localStorage > default per axis, persist back
+ * to URL + localStorage + (for shared axes) the cross-subdomain store,
+ * and wipe + reload (matching the modal Save flow) when a URL value
+ * displaces a prior persisted choice.
  */
 async function applyUrlSettings(): Promise<void> {
   const search = new URLSearchParams(window.location.search);
   const parsed = parseSettingsFromSearch(search);
 
-  // Detect whether the user already had any persisted settings BEFORE the
-  // getters below auto-seed defaults on first read. Without this, every
-  // first visit to a fresh subdomain would look like a "change" once the
-  // getters wrote defaults, and we'd trigger an unnecessary wipe.
+  // Snapshot raw localStorage before bootstrap (and before `getNetwork`/
+  // `getBackend`/`getCacheSettings` below) — those calls auto-seed defaults
+  // on first read, which would make every fresh-subdomain visit look like a
+  // "change" and trigger an unnecessary wipe.
   const hadPriorPersisted =
-    readRawLocalStorage("dotli:network") !== null ||
-    readRawLocalStorage("dotli:chain-backend") !== null ||
-    readRawLocalStorage("dotli:cache-settings") !== null;
+    readRawLocalStorage(NETWORK_KEY) !== null ||
+    readRawLocalStorage(BACKEND_KEY) !== null ||
+    readRawLocalStorage(CACHE_KEY) !== null;
+
+  // Bootstrap shared mode BEFORE reading prior values, so `prior.chain` /
+  // `prior.cache` reflect the cross-subdomain shared store (production) or
+  // per-origin localStorage (localhost). The swapped adapter also mirrors
+  // any subsequent `setBackend` / `setCacheSettings` calls below to the
+  // shared store, so URL-driven changes propagate across subdomains.
+  try {
+    const { bootstrapSharedMode } = await import("@dotli/ui/shared-mode");
+    await bootstrapSharedMode();
+  } catch (err: unknown) {
+    log.warn(
+      "[dot.li perf] Shared mode bootstrap failed; continuing with per-origin localStorage:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 
   const prior = {
     network: getNetwork(),
@@ -486,6 +504,15 @@ async function applyUrlSettings(): Promise<void> {
     next.cache.skipArchiveCache !== prior.cache.skipArchiveCache ||
     next.cache.skipCidCache !== prior.cache.skipCidCache ||
     next.cache.skipWorkerCache !== prior.cache.skipWorkerCache;
+
+  // On production, bootstrap loaded the protocol iframe with `prior.chain`
+  // before applyUrlSettings switched it to `next.chain` — tear it down so
+  // the next `ensureProtocolFrame()` rebuilds it in the new sub-mode.
+  // (No-op on localhost, where the HTTP channel never loaded an iframe.)
+  if (prior.chain !== next.chain) {
+    const { resetProtocolFrame } = await import("@dotli/protocol/client");
+    resetProtocolFrame();
+  }
 
   // Fresh origins have nothing to be stale about, and no-op URLs (match
   // localStorage) leave existing state intact.
@@ -533,8 +560,11 @@ async function main(): Promise<void> {
 
   // Seed settings from URL params before any consumer reads them, so the
   // protocol pre-warm and downstream getters see the resolved values.
-  // The await blocks if a URL-driven change forces a wipe + reload. The
-  // reload then replaces the page, so anything below it never runs.
+  // `applyUrlSettings` also runs the shared-mode bootstrap (so prior values
+  // pick up cross-subdomain state and URL writes mirror to the shared
+  // store). The await blocks if a URL-driven change forces a wipe +
+  // reload; the reload then replaces the page, so anything below it never
+  // runs.
   await applyUrlSettings();
 
   const chainBackend = getBackend();

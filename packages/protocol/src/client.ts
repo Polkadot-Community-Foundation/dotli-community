@@ -20,7 +20,10 @@ import {
   type ProtocolRequestMap,
   type ProtocolRequestMethod,
 } from "./messages";
-import { isSharedAuthRequestMethod } from "./auth-storage";
+import {
+  isSharedAuthRequestMethod,
+  isSharedModeRequestMethod,
+} from "./auth-storage";
 import { serializeError } from "@dotli/shared/errors";
 
 interface PendingRequest {
@@ -116,6 +119,29 @@ function resolveProtocolReady(): void {
   for (const waiter of resolvers) {
     waiter.resolve();
   }
+}
+
+/**
+ * Tear down the cached iframe + ready state so the next request creates
+ * a fresh one. Exposed for callers (e.g. the shared-mode bootstrap) that
+ * may discover after the initial iframe load that the chosen sub-mode
+ * was wrong and need a clean restart before chain operations run.
+ *
+ * Side effects callers should be aware of:
+ *   - Any in-flight `postRequest()` whose response hasn't arrived will be
+ *     orphaned: it will time out via the per-method timer instead of
+ *     completing. Callers that have outstanding work should expect those
+ *     rejections.
+ *   - Any `waitForProtocolReady()` waiter is rejected immediately rather
+ *     than waiting for `IFRAME_READY_TIMEOUT_MS`.
+ *   - In `shared-worker` mode, removing the iframe drops its
+ *     `SharedWorker` port too. The SharedWorker itself stays alive (it's
+ *     shared across tabs), but this tab's connection cycles — its
+ *     pre-sync progress is preserved on the worker side, but the local
+ *     `port` is gone and the next iframe load reopens a fresh one.
+ */
+export function resetProtocolFrame(): void {
+  resetProtocolFrameState();
 }
 
 function resetProtocolFrameState(reason?: Error): void {
@@ -462,7 +488,8 @@ async function postRequest<M extends ProtocolRequestMethod>(
   method: M,
   payload: ProtocolRequestMap[M],
   onProgress?: (message: string) => void,
-  needsProtocolReady = !isSharedAuthRequestMethod(method),
+  needsProtocolReady = !isSharedAuthRequestMethod(method) &&
+    !isSharedModeRequestMethod(method),
 ): Promise<unknown> {
   await (needsProtocolReady ? ensureProtocolFrame() : ensureHostFrame());
   const frameWindow = protocolIframe?.contentWindow;
@@ -569,6 +596,36 @@ export async function clearSharedAuthStorage(
   key: string,
 ): Promise<void> {
   await postRequest("authStorageClear", { siteId, key });
+}
+
+/**
+ * Shared mode storage lives on `host.<BASE_DOMAIN>` so the user's backend
+ * and cache preferences travel with them across every subdomain of the
+ * registrable root. Reads return `null` when the key has never been
+ * written (caller decides the default).
+ */
+export async function readSharedModeStorage(
+  siteId: SiteId,
+  key: string,
+): Promise<string | null> {
+  return (await postRequest("modeStorageRead", { siteId, key })) as
+    | string
+    | null;
+}
+
+export async function writeSharedModeStorage(
+  siteId: SiteId,
+  key: string,
+  value: string,
+): Promise<void> {
+  await postRequest("modeStorageWrite", { siteId, key, value });
+}
+
+export async function clearSharedModeStorage(
+  siteId: SiteId,
+  key: string,
+): Promise<void> {
+  await postRequest("modeStorageClear", { siteId, key });
 }
 
 /**

@@ -131,3 +131,12 @@ export const AUTH_SESSION_RESTORE = "auth.session_restore";
 
 /** WASM module load time (captured via PerformanceObserver) */
 export const WASM_LOAD = "wasm.load";
+
+/**
+ * Shared-storage request rejected before it could touch `localStorage`:
+ * bad siteId, malformed key, disallowed origin, or unrecognised value
+ * shape. Tagged with `store` (`auth` / `mode`) and `reason` so silent
+ * drops (the listener answers with a serialized error envelope, easy to
+ * miss in logs) are observable.
+ */
+export const SHARED_STORAGE_REJECTED = "shared_storage.rejected";

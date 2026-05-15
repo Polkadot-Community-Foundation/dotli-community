@@ -6,7 +6,7 @@ import {
   isSharedAuthOriginAllowed,
   isSharedAuthRequestMethod,
   isSharedAuthSiteId,
-  isSharedAuthStorageKey,
+  isValidSharedAuthKey,
 } from "@dotli/protocol/auth-storage";
 
 describe("shared auth storage helpers", () => {
@@ -57,12 +57,12 @@ describe("shared auth storage helpers", () => {
   });
 
   it("validates storage keys", () => {
-    expect(isSharedAuthStorageKey("SsoSessions")).toBe(true);
-    expect(isSharedAuthStorageKey("UserSecrets_abc-123")).toBe(true);
-    expect(isSharedAuthStorageKey("identity_0x1234")).toBe(true);
-    expect(isSharedAuthStorageKey("../secrets")).toBe(false);
-    expect(isSharedAuthStorageKey("key with spaces")).toBe(false);
-    expect(isSharedAuthStorageKey("")).toBe(false);
+    expect(isValidSharedAuthKey("SsoSessions")).toBe(true);
+    expect(isValidSharedAuthKey("UserSecrets_abc-123")).toBe(true);
+    expect(isValidSharedAuthKey("identity_0x1234")).toBe(true);
+    expect(isValidSharedAuthKey("../secrets")).toBe(false);
+    expect(isValidSharedAuthKey("key with spaces")).toBe(false);
+    expect(isValidSharedAuthKey("")).toBe(false);
   });
 
   it("builds stable storage keys and detects empty session payloads", () => {

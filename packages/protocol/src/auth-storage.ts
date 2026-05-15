@@ -7,6 +7,11 @@ export type SharedAuthRequestMethod =
   | "authStorageWrite"
   | "authStorageClear";
 
+export type SharedModeRequestMethod =
+  | "modeStorageRead"
+  | "modeStorageWrite"
+  | "modeStorageClear";
+
 export const SHARED_AUTH_SESSION_KEY = "SsoSessions";
 
 // SCALE-encoded empty `Vec<Session>` from `@novasamatech/host-papp` — a single
@@ -15,18 +20,33 @@ export const SHARED_AUTH_SESSION_KEY = "SsoSessions";
 // return true for empty payloads and trigger `ensureAuth()` on every load.
 const EMPTY_SHARED_AUTH_SESSION_LIST = "0x00";
 
-const SHARED_AUTH_KEY_PATTERN = /^[A-Za-z0-9._:-]+$/;
+// Both the shared-auth and shared-mode stores accept the same key shape —
+// an alphanumeric token with dots, underscores, colons and dashes. Keep
+// the regex shared so the validation contract is one thing; if a future
+// store needs a different shape, give it its own constant.
+const SHARED_STORAGE_KEY_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const SHARED_AUTH_METHODS = new Set<ProtocolRequestMethod>([
   "authHasSession",
   "authStorageRead",
   "authStorageWrite",
   "authStorageClear",
 ]);
+const SHARED_MODE_METHODS = new Set<ProtocolRequestMethod>([
+  "modeStorageRead",
+  "modeStorageWrite",
+  "modeStorageClear",
+]);
 
 export function isSharedAuthRequestMethod(
   method: ProtocolRequestMethod,
 ): method is SharedAuthRequestMethod {
   return SHARED_AUTH_METHODS.has(method);
+}
+
+export function isSharedModeRequestMethod(
+  method: ProtocolRequestMethod,
+): method is SharedModeRequestMethod {
+  return SHARED_MODE_METHODS.has(method);
 }
 
 /**
@@ -46,12 +66,34 @@ export function isSharedAuthSiteId(value: string): value is SiteId {
   return value === SITE_ID;
 }
 
-export function isSharedAuthStorageKey(key: string): boolean {
-  return SHARED_AUTH_KEY_PATTERN.test(key);
+/**
+ * Validate a caller-supplied shared-auth key (e.g. `SsoSessions`). This is
+ * the *raw* key — the namespaced form produced by `buildSharedAuthStorageKey`
+ * is for use against `localStorage`, not for this check.
+ */
+export function isValidSharedAuthKey(key: string): boolean {
+  return SHARED_STORAGE_KEY_PATTERN.test(key);
 }
 
 export function buildSharedAuthStorageKey(siteId: SiteId, key: string): string {
   return `PAPP_${siteId}_${key}`;
+}
+
+/**
+ * Shared mode-storage keys use a separate prefix from auth so the two stores
+ * cannot collide. The validation pattern is identical — caller-supplied keys
+ * are caller-controlled but always namespaced under the prefix here.
+ */
+export function buildSharedModeStorageKey(siteId: SiteId, key: string): string {
+  return `DOTLI_MODE_${siteId}_${key}`;
+}
+
+/**
+ * Validate a caller-supplied shared-mode key (e.g. `dotli:chain-backend`).
+ * As with `isValidSharedAuthKey`, this is the *raw* key.
+ */
+export function isValidSharedModeKey(key: string): boolean {
+  return SHARED_STORAGE_KEY_PATTERN.test(key);
 }
 
 export function hasStoredSharedAuthSession(value: string | null): boolean {

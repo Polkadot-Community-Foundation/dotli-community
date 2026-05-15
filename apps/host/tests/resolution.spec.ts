@@ -4,12 +4,13 @@
  * Env overrides: COMBO_DOMAIN, COMBO_PORT, COMBO_TIMEOUT_MS
  */
 
-import { test, expect, type Page, type Frame } from "@playwright/test";
+import { expect, type Page, type Frame } from "@playwright/test";
 import {
   IFRAME_FORWARDER,
   SHARED_WORKER_FORWARDER,
   WORKER_FORWARDER,
 } from "./helpers/iframe-logs-forwarder";
+import { test } from "./helpers/shared-mode-reset";
 
 const DOMAIN = process.env.COMBO_DOMAIN ?? "host-playground";
 const PORT = process.env.COMBO_PORT ?? "5173";

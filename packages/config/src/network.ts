@@ -114,7 +114,7 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
   },
 };
 
-const NETWORK_KEY = "dotli:network";
+export const NETWORK_KEY = "dotli:network";
 
 const VALID_NETWORKS: ReadonlySet<string> = new Set<Network>([
   NetworkName.PASEO_NEXT_V1,

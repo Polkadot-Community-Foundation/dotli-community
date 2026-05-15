@@ -78,11 +78,78 @@ function serveFile(filePath: string, coep: boolean): Response | null {
   return new Response(Bun.file(filePath), { headers });
 }
 
+// Dev-only mode-sync store. Production puts mode preferences on the
+// `host.<BASE_DOMAIN>` iframe's localStorage (same-site iframes share
+// storage across *.dot.li subdomains). On localhost every subdomain is
+// its own site (the PSL lists `localhost`), so Chrome partitions the
+// iframe's localStorage per embedder and cross-subdomain sharing
+// breaks. This in-memory map gives the host shell a uniform store the
+// preview can hit from any subdomain — no PSL, no partitioning.
+const modeStore = new Map<string, string>();
+const MODE_SYNC_PREFIX = "/__dotli-mode/";
+const MODE_SYNC_CORS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Max-Age": "600",
+  "Cache-Control": "no-store",
+};
+
+// Both directions speak raw text; "no value" is HTTP 204 (not a JSON
+// `null` body, which would force GET to disagree with PUT on encoding).
+// Bare URL (`/__dotli-mode/`) DELETE wipes everything — the per-test
+// reset used by Playwright fixtures.
+async function handleModeSync(req: Request, key: string): Promise<Response> {
+  const ok = (body: BodyInit | null, contentType?: string): Response => {
+    const headers: Record<string, string> = { ...MODE_SYNC_CORS };
+    if (contentType !== undefined) headers["Content-Type"] = contentType;
+    return new Response(body, { status: body === null ? 204 : 200, headers });
+  };
+  const empty = (status: number): Response =>
+    new Response(null, { status, headers: MODE_SYNC_CORS });
+
+  if (req.method === "OPTIONS") return empty(204);
+
+  if (req.method === "DELETE") {
+    if (key === "") modeStore.clear();
+    else modeStore.delete(key);
+    return empty(204);
+  }
+
+  if (key === "") {
+    return new Response("Missing key", {
+      status: 400,
+      headers: MODE_SYNC_CORS,
+    });
+  }
+
+  if (req.method === "GET") {
+    const value = modeStore.get(key);
+    return value === undefined ? empty(204) : ok(value, MIME[".txt"]);
+  }
+  if (req.method === "PUT") {
+    modeStore.set(key, await req.text());
+    return empty(204);
+  }
+  return new Response("Method not allowed", {
+    status: 405,
+    headers: MODE_SYNC_CORS,
+  });
+}
+
 Bun.serve({
   port: PORT,
   hostname: "0.0.0.0",
   fetch(req) {
     const url = new URL(req.url);
+
+    if (url.pathname.startsWith(MODE_SYNC_PREFIX)) {
+      const key = decodeURIComponent(
+        url.pathname.slice(MODE_SYNC_PREFIX.length),
+      );
+      return handleModeSync(req, key);
+    }
+
     const isProtocol = url.hostname === "host.localhost";
     const isApp = url.hostname.includes(".app.");
     const baseDir = isProtocol ? PROTOCOL_DIR : isApp ? APP_DIR : HOST_DIR;

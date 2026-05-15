@@ -11,13 +11,14 @@
  * Env overrides: COMBO_PORT, COMBO_TIMEOUT_MS.
  */
 
-import { test, expect, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import {
   assertNoContractKeys,
   getProductFrame,
   getProductLocation,
   waitForSandboxErrorPage,
 } from "./helpers/product-frame";
+import { test } from "./helpers/shared-mode-reset";
 
 const LABEL = "host-playground";
 const PORT = process.env.COMBO_PORT ?? "5173";
@@ -141,6 +142,9 @@ test.describe("URL parameters are forwarded into the product", () => {
 });
 
 test.describe("Host URL bar preserves the entered URL after render", () => {
+  // `applyUrlSettings` canonicalises the URL on every load so non-default
+  // settings axes (rpc-gateway here) get re-inserted — assert the user's
+  // own params survive, not that canonicalisation is a no-op.
   test("after the product renders from http://<label>.dot.li/foo?a=b#h, the URL bar still shows /foo?a=b#h", async ({
     page,
   }) => {
@@ -154,7 +158,7 @@ test.describe("Host URL bar preserves the entered URL after render", () => {
     // Then
     const url = new URL(page.url());
     expect(url.pathname).toBe("/foo");
-    expect(url.search).toBe("?a=b");
+    expect(url.searchParams.get("a")).toBe("b");
     expect(url.hash).toBe("#h");
   });
 
@@ -171,7 +175,7 @@ test.describe("Host URL bar preserves the entered URL after render", () => {
     // Then
     const url = new URL(page.url());
     expect(url.pathname).toBe(`/${LABEL}.dot/foo`);
-    expect(url.search).toBe("?a=b");
+    expect(url.searchParams.get("a")).toBe("b");
     expect(url.hash).toBe("#h");
   });
 });

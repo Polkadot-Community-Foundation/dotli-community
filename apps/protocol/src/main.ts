@@ -64,11 +64,14 @@ import { serializeError } from "@dotli/shared/errors";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
 import {
   buildSharedAuthStorageKey,
+  buildSharedModeStorageKey,
   hasStoredSharedAuthSession,
   isSharedAuthOriginAllowed,
   isSharedAuthRequestMethod,
   isSharedAuthSiteId,
-  isSharedAuthStorageKey,
+  isSharedModeRequestMethod,
+  isValidSharedAuthKey,
+  isValidSharedModeKey,
   SHARED_AUTH_SESSION_KEY,
 } from "@dotli/protocol/auth-storage";
 import {
@@ -232,6 +235,16 @@ function bindSharedAuthBroadcastRelay(): void {
   });
 }
 
+type SharedStore = "auth" | "mode";
+type SharedRejectReason = "origin" | "validation";
+
+function countSharedReject(
+  store: SharedStore,
+  reason: SharedRejectReason,
+): void {
+  m.count(S.SHARED_STORAGE_REJECTED, { store, reason });
+}
+
 function bindSharedAuthListener(): void {
   window.addEventListener("message", (event: MessageEvent) => {
     const data: unknown = event.data;
@@ -250,6 +263,7 @@ function bindSharedAuthListener(): void {
       log.warn(
         `[dot.li protocol] Rejected shared-auth request from disallowed origin: ${event.origin}`,
       );
+      countSharedReject("auth", "origin");
       return;
     }
     // Remember the parent origin so cross-tab broadcast forwards target a
@@ -263,6 +277,7 @@ function bindSharedAuthListener(): void {
         postToSource(event.source, event.origin, response);
       });
     } catch (error: unknown) {
+      countSharedReject("auth", "validation");
       postToSource(event.source, event.origin, {
         namespace: "dotli:protocol",
         kind: "response",
@@ -578,7 +593,10 @@ async function initSharedWorkerMode(network: Network): Promise<void> {
     if (!isProtocolEnvelope(data) || data.kind !== "request") {
       return;
     }
-    if (isSharedAuthRequestMethod(data.method)) {
+    if (
+      isSharedAuthRequestMethod(data.method) ||
+      isSharedModeRequestMethod(data.method)
+    ) {
       return;
     }
     if (!isAllowedOrigin(event.origin)) {
@@ -725,7 +743,10 @@ function bindEngineToMessages(engine: ProtocolEngine): void {
     if (!isProtocolEnvelope(data) || data.kind !== "request") {
       return;
     }
-    if (isSharedAuthRequestMethod(data.method)) {
+    if (
+      isSharedAuthRequestMethod(data.method) ||
+      isSharedModeRequestMethod(data.method)
+    ) {
       return;
     }
     if (!isAllowedOrigin(event.origin)) {
@@ -761,7 +782,7 @@ function assertSharedAuthSiteId(value: unknown): asserts value is SiteId {
 }
 
 function assertSharedAuthKey(value: unknown): asserts value is string {
-  if (typeof value !== "string" || !isSharedAuthStorageKey(value)) {
+  if (typeof value !== "string" || !isValidSharedAuthKey(value)) {
     throw new Error(`Invalid shared auth key: ${String(value)}`);
   }
 }
@@ -770,6 +791,121 @@ function assertSharedAuthOrigin(origin: string): void {
   if (!isSharedAuthOriginAllowed(origin)) {
     throw new Error(`Shared auth request denied from origin: ${origin}`);
   }
+}
+
+function assertSharedModeKey(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !isValidSharedModeKey(value)) {
+    throw new Error(`Invalid shared mode key: ${String(value)}`);
+  }
+}
+
+/**
+ * The shared mode-storage trust boundary is identical to shared auth: any
+ * subdomain of the registrable root may read/write, sandboxed app
+ * subdomains may not, and the siteId must match `SITE_ID`. Re-using the
+ * auth checks keeps the gate consistent and avoids drift.
+ */
+function handleSharedModeRequest(
+  request: ProtocolRequestEnvelope,
+  origin: string,
+  respond: ResponseCallback,
+): void {
+  if (!isSharedModeRequestMethod(request.method)) {
+    throw new Error(`Not a shared mode request: ${request.method as string}`);
+  }
+
+  assertSharedAuthOrigin(origin);
+
+  switch (request.method) {
+    case "modeStorageRead": {
+      const payload = request.payload as ProtocolRequestMap["modeStorageRead"];
+      assertSharedAuthSiteId(payload.siteId);
+      assertSharedModeKey(payload.key);
+      respond({
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: request.id,
+        ok: true,
+        result: localStorage.getItem(
+          buildSharedModeStorageKey(payload.siteId, payload.key),
+        ),
+      });
+      return;
+    }
+
+    case "modeStorageWrite": {
+      const payload = request.payload as ProtocolRequestMap["modeStorageWrite"];
+      assertSharedAuthSiteId(payload.siteId);
+      assertSharedModeKey(payload.key);
+      if (typeof payload.value !== "string") {
+        throw new Error("Invalid shared mode value");
+      }
+      localStorage.setItem(
+        buildSharedModeStorageKey(payload.siteId, payload.key),
+        payload.value,
+      );
+      respond({
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: request.id,
+        ok: true,
+        result: true,
+      });
+      return;
+    }
+
+    case "modeStorageClear": {
+      const payload = request.payload as ProtocolRequestMap["modeStorageClear"];
+      assertSharedAuthSiteId(payload.siteId);
+      assertSharedModeKey(payload.key);
+      localStorage.removeItem(
+        buildSharedModeStorageKey(payload.siteId, payload.key),
+      );
+      respond({
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: request.id,
+        ok: true,
+        result: true,
+      });
+      return;
+    }
+  }
+}
+
+function bindSharedModeListener(): void {
+  window.addEventListener("message", (event: MessageEvent) => {
+    const data: unknown = event.data;
+    if (
+      !isProtocolEnvelope(data) ||
+      data.kind !== "request" ||
+      !isSharedModeRequestMethod(data.method)
+    ) {
+      return;
+    }
+    if (!isAllowedOrigin(event.origin)) {
+      log.warn(
+        `[dot.li protocol] Rejected shared-mode request from disallowed origin: ${event.origin}`,
+      );
+      countSharedReject("mode", "origin");
+      return;
+    }
+
+    try {
+      handleSharedModeRequest(data, event.origin, (response) => {
+        postToSource(event.source, event.origin, response);
+      });
+    } catch (error: unknown) {
+      countSharedReject("mode", "validation");
+      postToSource(event.source, event.origin, {
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: data.id,
+        ok: false,
+        error: serializeError(error),
+      });
+    }
+  });
 }
 
 function handleSharedAuthRequest(
@@ -907,9 +1043,15 @@ function createEngine(options: EngineOptions): ProtocolEngine {
     origin: string,
     respond: ResponseCallback,
   ): Promise<void> {
-    if (isSharedAuthRequestMethod(request.method)) {
-      handleSharedAuthRequest(request, origin, respond);
-      return;
+    // Both engine-facing listeners filter shared-auth/shared-mode out;
+    // reaching the engine means one of those filters is broken.
+    if (
+      isSharedAuthRequestMethod(request.method) ||
+      isSharedModeRequestMethod(request.method)
+    ) {
+      throw new Error(
+        `Shared storage request reached the chain engine: ${request.method}`,
+      );
     }
 
     switch (request.method) {
@@ -1103,6 +1245,7 @@ function createEngine(options: EngineOptions): ProtocolEngine {
 
 bindSharedAuthListener();
 bindSharedAuthBroadcastRelay();
+bindSharedModeListener();
 
 void init().catch((err: unknown) => {
   log.error("[dot.li protocol] Init failed:", err);

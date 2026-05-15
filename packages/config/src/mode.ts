@@ -27,7 +27,8 @@ export interface CacheSettings {
   skipWorkerCache: boolean;
 }
 
-const BACKEND_KEY = "dotli:chain-backend";
+export const BACKEND_KEY = "dotli:chain-backend";
+export const CACHE_KEY = "dotli:cache-settings";
 
 // Pre-collapse keys. `rpc` chain backend maps to `rpc-gateway`. Legacy
 // `dotli:mode` and `dotli:content-backend` carried the content axis that
@@ -41,34 +42,89 @@ const VALID_BACKENDS: ReadonlySet<string> = new Set<Backend>([
   "rpc-gateway",
 ]);
 
-export function getBackend(): Backend {
-  try {
-    const stored = localStorage.getItem(BACKEND_KEY);
-    if (stored !== null && VALID_BACKENDS.has(stored)) {
-      return stored as Backend;
+/**
+ * Synchronous storage adapter for mode preferences. Readers across the
+ * codebase (sandbox URL builder, diagnostics, etc.) are not async-
+ * friendly, so any cross-origin store must hydrate an in-memory cache
+ * during boot and serve sync reads from there.
+ */
+export interface ModeStorage {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+}
+
+export const localStorageAdapter: ModeStorage = {
+  getItem: (key) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
     }
-    const migrated = migrateLegacy();
-    if (migrated !== null) {
-      localStorage.setItem(BACKEND_KEY, migrated);
-      return migrated;
+  },
+  setItem: (key, value) => {
+    try {
+      localStorage.setItem(key, value);
+      // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable (private mode, quota, disabled cookies); writers drop silently and readers fall back to defaults.
+    } catch {
+      /* localStorage unavailable */
     }
-    const computed = defaultBackend();
-    localStorage.setItem(BACKEND_KEY, computed);
-    return computed;
-    // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable (private mode, quota, disabled cookies). Non-fatal by design: readers fall back to defaults, writers drop silently. No metric — noisy on every page load.
-  } catch {
-    /* localStorage unavailable — intentionally non-fatal. */
+  },
+  removeItem: (key) => {
+    try {
+      localStorage.removeItem(key);
+      // eslint-disable-next-line no-restricted-syntax -- mirror cleanup; readers tolerate the stale value on the next boot.
+    } catch {
+      /* localStorage unavailable */
+    }
+  },
+};
+
+let storage: ModeStorage = localStorageAdapter;
+
+/**
+ * Replace the storage backend used by every accessor below. Call once
+ * during host shell boot, before any reader runs. Swapping at runtime is
+ * allowed but stale values already returned to callers are NOT
+ * invalidated — readers see the new adapter only on their next call.
+ */
+export function configureModeStorage(adapter: ModeStorage): void {
+  storage = adapter;
+}
+
+/**
+ * Run the one-shot legacy-key migration against a given `ModeStorage`,
+ * writing the migrated backend back to `target[BACKEND_KEY]` so a
+ * subsequent reader picks it up at the canonical key. The shared-mode
+ * bootstrap calls this against per-origin `localStorage` *before* swapping
+ * the adapter, so legacy `dotli:mode` / `dotli:content-backend` values
+ * survive the swap to the cache-only adapter (which only sees the two
+ * SHARED_KEYS).
+ */
+export function migrateLegacyOn(target: ModeStorage): Backend | null {
+  const migrated = readAndClearLegacy(target);
+  if (migrated !== null) {
+    target.setItem(BACKEND_KEY, migrated);
   }
-  return defaultBackend();
+  return migrated;
+}
+
+export function getBackend(): Backend {
+  const stored = storage.getItem(BACKEND_KEY);
+  if (stored !== null && VALID_BACKENDS.has(stored)) {
+    return stored as Backend;
+  }
+  const migrated = migrateLegacyOn(storage);
+  if (migrated !== null) {
+    return migrated;
+  }
+  const computed = defaultBackend();
+  storage.setItem(BACKEND_KEY, computed);
+  return computed;
 }
 
 export function setBackend(chainBackend: Backend): void {
-  try {
-    localStorage.setItem(BACKEND_KEY, chainBackend);
-    // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable (private mode, quota, disabled cookies). Non-fatal by design: readers fall back to defaults, writers drop silently. No metric — noisy on every page load.
-  } catch {
-    /* localStorage unavailable — intentionally non-fatal. */
-  }
+  storage.setItem(BACKEND_KEY, chainBackend);
 }
 
 /**
@@ -83,33 +139,29 @@ function defaultBackend(): Backend {
 }
 
 /**
- * One-shot migration from pre-collapse stored values. The chain-backend
- * key is unchanged, but `rpc` becomes `rpc-gateway`. Old `dotli:mode`
- * and `dotli:content-backend` carried the content axis that no longer
- * exists, so they're cleared.
+ * Map any legacy stored value to a canonical `Backend`, clearing the
+ * legacy keys on success. Pre-collapse `dotli:mode` and
+ * `dotli:content-backend` carried the content axis that no longer
+ * exists; `chain-backend = "rpc"` becomes `"rpc-gateway"`. The caller
+ * decides whether to write the result back at `BACKEND_KEY`.
  */
-function migrateLegacy(): Backend | null {
+function readAndClearLegacy(target: ModeStorage): Backend | null {
+  const chain = target.getItem(BACKEND_KEY);
+  const content = target.getItem(LEGACY_CONTENT_BACKEND_KEY);
+  const legacyMode = target.getItem(LEGACY_MODE_KEY);
   let chosen: Backend | null = null;
-  try {
-    const chain = localStorage.getItem(BACKEND_KEY);
-    const content = localStorage.getItem(LEGACY_CONTENT_BACKEND_KEY);
-    const legacyMode = localStorage.getItem(LEGACY_MODE_KEY);
-    if (chain === "rpc" || content === "ipfs-gateway") {
-      chosen = "rpc-gateway";
-    } else if (legacyMode === "p2p-shared-worker" || legacyMode === "p2p") {
-      chosen = "smoldot-shared-worker";
-    } else if (legacyMode === "p2p-direct") {
-      chosen = "smoldot-direct";
-    } else if (legacyMode === "gateway" || legacyMode === "centralized") {
-      chosen = "rpc-gateway";
-    }
-    if (chosen !== null) {
-      localStorage.removeItem(LEGACY_MODE_KEY);
-      localStorage.removeItem(LEGACY_CONTENT_BACKEND_KEY);
-    }
-    // eslint-disable-next-line no-restricted-syntax -- localStorage probe. Non-fatal.
-  } catch {
-    /* fall through to null */
+  if (chain === "rpc" || content === "ipfs-gateway") {
+    chosen = "rpc-gateway";
+  } else if (legacyMode === "p2p-shared-worker" || legacyMode === "p2p") {
+    chosen = "smoldot-shared-worker";
+  } else if (legacyMode === "p2p-direct") {
+    chosen = "smoldot-direct";
+  } else if (legacyMode === "gateway" || legacyMode === "centralized") {
+    chosen = "rpc-gateway";
+  }
+  if (chosen !== null) {
+    target.removeItem(LEGACY_MODE_KEY);
+    target.removeItem(LEGACY_CONTENT_BACKEND_KEY);
   }
   return chosen;
 }
@@ -124,8 +176,6 @@ function migrateLegacy(): Backend | null {
 export function isVerifiedSession(chainBackend: Backend): boolean {
   return chainBackend !== "rpc-gateway";
 }
-
-const CACHE_KEY = "dotli:cache-settings";
 
 // Fresh-install default: every cache off. The cached layers (dotNS CID
 // resolution, SW archive, protocol worker IDB) can mask real behavior
@@ -152,9 +202,9 @@ const DEFAULT_CACHE: CacheSettings = {
  * all-off default applies instead of the structural zero-value `false`.
  */
 export function getCacheSettings(): CacheSettings {
-  try {
-    const stored = localStorage.getItem(CACHE_KEY);
-    if (stored !== null) {
+  const stored = storage.getItem(CACHE_KEY);
+  if (stored !== null) {
+    try {
       const parsed = JSON.parse(stored) as Partial<CacheSettings>;
       return {
         skipCidCache:
@@ -170,19 +220,14 @@ export function getCacheSettings(): CacheSettings {
             ? parsed.skipWorkerCache
             : DEFAULT_CACHE.skipWorkerCache,
       };
+      // eslint-disable-next-line no-restricted-syntax -- malformed JSON from an older build; defaults are the safe fallback.
+    } catch {
+      /* malformed JSON — fall back to defaults */
     }
-    // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable or contain invalid JSON from an older build; defaults are the safe fallback. No metric — not worth one per page load.
-  } catch {
-    /* localStorage unavailable or malformed JSON — fall back to defaults. */
   }
   return { ...DEFAULT_CACHE };
 }
 
 export function setCacheSettings(settings: CacheSettings): void {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(settings));
-    // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable (private mode, quota, disabled cookies). Non-fatal by design: readers fall back to defaults, writers drop silently. No metric — noisy on every page load.
-  } catch {
-    /* localStorage unavailable — intentionally non-fatal. */
-  }
+  storage.setItem(CACHE_KEY, JSON.stringify(settings));
 }

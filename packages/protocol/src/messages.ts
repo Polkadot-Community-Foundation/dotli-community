@@ -6,6 +6,9 @@ export interface ProtocolRequestMap {
   authStorageRead: { siteId: string; key: string };
   authStorageWrite: { siteId: string; key: string; value: string };
   authStorageClear: { siteId: string; key: string };
+  modeStorageRead: { siteId: string; key: string };
+  modeStorageWrite: { siteId: string; key: string; value: string };
+  modeStorageClear: { siteId: string; key: string };
   chainConnect: { genesisHash: string; connectionId: string };
   chainSend: { connectionId: string; message: string };
   chainDisconnect: { connectionId: string };

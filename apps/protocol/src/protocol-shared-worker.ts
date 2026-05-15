@@ -44,7 +44,10 @@ installGlobalErrorHandlers("worker");
 // Only ever runs in shared-worker mode; tag every metric emitted from this
 // context so broker/smoldot counters aggregate cleanly with the iframe's.
 m.setDefaults({ protocol_mode: "shared-worker" });
-import { isSharedAuthRequestMethod } from "@dotli/protocol/auth-storage";
+import {
+  isSharedAuthRequestMethod,
+  isSharedModeRequestMethod,
+} from "@dotli/protocol/auth-storage";
 import type {
   ProtocolRequestEnvelope,
   ProtocolRequestMap,
@@ -286,6 +289,11 @@ async function handleRequest(
   if (isSharedAuthRequestMethod(request.method)) {
     throw new Error(
       `Shared auth requests must be handled on host.dot.li, not the SharedWorker: ${request.method}`,
+    );
+  }
+  if (isSharedModeRequestMethod(request.method)) {
+    throw new Error(
+      `Shared mode-storage requests must be handled on host.dot.li, not the SharedWorker: ${request.method}`,
     );
   }
 

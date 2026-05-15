@@ -1,5 +1,6 @@
-import { test, expect } from "@playwright/test";
+import { expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { test } from "./helpers/shared-mode-reset";
 
 // E2E coverage for the auth statement-store path. Each test seeds
 // `dotli:chain-backend`, navigates to the host with `?e2e_init_auth=1`
