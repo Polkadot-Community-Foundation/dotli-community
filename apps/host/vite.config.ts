@@ -4,6 +4,7 @@ import { readFileSync, readdirSync, copyFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
+import { VitePWA } from "vite-plugin-pwa";
 
 // Local builds don't get `VITE_COMMIT_SHA` injected by CI. Fall back to the
 // git HEAD so Diagnostics shows a real commit identifier in dev too — "dev"
@@ -351,6 +352,46 @@ export default defineConfig({
     githubPages404(),
     previewCoepHeaders(),
     sentry(),
+    // Host shell PWA. Scope-locked to the host origin (myapp.dot.li) — the
+    // protocol iframe on host.dot.li and the app iframe on *.app.dot.li are
+    // cross-origin and outside this SW's reach by design. Smoldot.wasm lives
+    // in the protocol build; browser HTTP cache (immutable, hashed filename)
+    // already prevents redownload on revisit, so the precache list excludes
+    // wasm entirely. `registerType: "prompt"` defers update activation to
+    // the user via workbox-window in src/pwa.ts.
+    VitePWA({
+      injectRegister: false,
+      registerType: "prompt",
+      filename: "host-sw.js",
+      manifest: {
+        name: "Polkadot Web",
+        short_name: "Polkadot Web",
+        description: "Decentralized web browser for Polkadot",
+        theme_color: "#000000",
+        background_color: "#000000",
+        display: "standalone",
+        start_url: "/",
+        icons: [
+          { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+          { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+          {
+            src: "/icon-512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "any maskable",
+          },
+        ],
+      },
+      workbox: {
+        globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
+        cleanupOutdatedCaches: true,
+        // skipWaiting/clientsClaim stay false: prompt-style updates require
+        // the waiting SW to sit idle until the user opts in.
+        skipWaiting: false,
+        clientsClaim: false,
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      },
+    }),
   ],
   resolve: {
     alias: {

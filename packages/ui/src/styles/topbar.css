@@ -46,6 +46,61 @@
   line-height: 1;
   align-self: center;
 }
+/* Narrow viewports: drop the brand wordmark so the URL pill and right-side
+   action buttons stay on-screen. Logo + Beta badge are small enough to keep.
+   Also collapse Permissions/Theme/Settings into a single "more" button that
+   opens a flyout proxying clicks to the original buttons (which stay in the
+   DOM, just hidden, so their popovers keep working unchanged). */
+.topbar-more-btn {
+  display: none;
+}
+.more-popover {
+  display: none;
+  position: fixed;
+  top: 36px;
+  right: 12px;
+  min-width: 180px;
+  background: #171717;
+  border: 1px solid #404040;
+  border-radius: 10px;
+  padding: 6px;
+  z-index: 1500;
+}
+.more-popover.open {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.more-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  color: #ddd;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.more-row:hover {
+  background: #222;
+}
+@media (max-width: 560px) {
+  .topbar-brand {
+    display: none;
+  }
+  #permissions-button,
+  #theme-toggle,
+  #mode-button {
+    display: none;
+  }
+  .topbar-more-btn {
+    display: inline-flex;
+  }
+}
 .topbar-url {
   flex: 1;
   display: flex;

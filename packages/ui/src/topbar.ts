@@ -184,8 +184,47 @@ export function initTopBar(): void {
     });
   });
 
+  // Mobile-only "more" menu: collapses Permissions / Theme / Settings into a
+  // single flyout. Each row delegates to .click() on the real button so the
+  // existing handlers (and their viewport-anchored popovers) work unchanged.
+  const moreButton = document.getElementById("more-button");
+  const morePopover = document.getElementById("more-popover");
+  if (moreButton !== null && morePopover !== null) {
+    moreButton.addEventListener("click", (e) => {
+      e.stopPropagation();
+      morePopover.classList.toggle("open");
+    });
+    morePopover.addEventListener("click", (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLButtonElement>(
+        ".more-row",
+      );
+      if (row === null) {
+        return;
+      }
+      // Prevent the original .more-row click from bubbling to the
+      // document-level close-outside handler below: that handler would see
+      // the row click as "outside" the just-opened target popover and
+      // immediately close it back.
+      e.stopPropagation();
+      morePopover.classList.remove("open");
+      const targetId = row.dataset.target;
+      if (targetId !== undefined) {
+        document.getElementById(targetId)?.click();
+      }
+    });
+  }
+
   // Close popovers when clicking outside
   document.addEventListener("click", (e) => {
+    if (
+      morePopover !== null &&
+      moreButton !== null &&
+      morePopover.classList.contains("open") &&
+      !morePopover.contains(e.target as Node) &&
+      !moreButton.contains(e.target as Node)
+    ) {
+      morePopover.classList.remove("open");
+    }
     if (
       userPopover.classList.contains("open") &&
       !userPopover.contains(e.target as Node) &&

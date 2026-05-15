@@ -11,6 +11,7 @@ if (typeof globalThis.requestIdleCallback !== "function") {
     }, 1) as unknown as number;
 }
 
+import "./pwa";
 import "@dotli/ui/styles.css";
 import * as Sentry from "@sentry/browser";
 import {
