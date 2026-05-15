@@ -28,7 +28,7 @@ import {
   stopStatusTick,
   listenForSandboxStatus,
 } from "@dotli/ui/ui";
-import { initTopBar, openModePopover } from "@dotli/ui/topbar";
+import { initTopBar, openModePopover, wipeOriginState } from "@dotli/ui/topbar";
 import { listenForSandboxBitswap } from "@dotli/ui/bulletin-bitswap";
 import { getCachedCid, setCachedCid } from "@dotli/storage/cid-cache";
 import { dur, elapsed } from "@dotli/shared/perf";
@@ -42,7 +42,13 @@ import {
   setBackend,
   isVerifiedSession,
   getCacheSettings,
+  setCacheSettings,
 } from "@dotli/config/mode";
+import { getNetwork, setNetwork } from "@dotli/config/network";
+import {
+  parseSettingsFromSearch,
+  writeSettingsToSearch,
+} from "@dotli/config/url-settings";
 import { describeError } from "./errors";
 import { parsePreviewTargetUrl } from "./preview-route";
 
@@ -130,8 +136,27 @@ function parseLocalhostUrl(): string | null {
   }
   const host = match[1];
   const rest = match[2] || "";
-  return `http://${host}${rest}${window.location.search}${window.location.hash}`;
+  // Strip every reserved host-URL param so they do not leak into the
+  // proxied product. Covers the five settings axes, the sandbox contract's
+  // host-only signals (`fullReset`, `v`), and the Playwright auth hook.
+  const productSearch = new URLSearchParams(window.location.search);
+  for (const k of RESERVED_HOST_PARAMS) {
+    productSearch.delete(k);
+  }
+  const query = productSearch.toString();
+  return `http://${host}${rest}${query ? `?${query}` : ""}${window.location.hash}`;
 }
+
+const RESERVED_HOST_PARAMS = [
+  "network",
+  "chainBackend",
+  "skipArchiveCache",
+  "skipCidCache",
+  "skipWorkerCache",
+  "fullReset",
+  "v",
+  "e2e_init_auth",
+] as const;
 
 /**
  * Extract the .dot label from the current hostname.
@@ -397,6 +422,103 @@ async function runE2EAuthHook(chainBackend: string): Promise<void> {
   document.title = "dotli-e2e-ready";
 }
 
+/** Best-effort `localStorage.getItem`; null on Safari-private-mode failure. */
+function readRawLocalStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reconcile URL > localStorage > default per axis, persist back to both, and
+ * wipe + reload (matching the modal Save flow) when a URL value displaces a
+ * prior persisted choice.
+ */
+async function applyUrlSettings(): Promise<void> {
+  const search = new URLSearchParams(window.location.search);
+  const parsed = parseSettingsFromSearch(search);
+
+  // Detect whether the user already had any persisted settings BEFORE the
+  // getters below auto-seed defaults on first read. Without this, every
+  // first visit to a fresh subdomain would look like a "change" once the
+  // getters wrote defaults, and we'd trigger an unnecessary wipe.
+  const hadPriorPersisted =
+    readRawLocalStorage("dotli:network") !== null ||
+    readRawLocalStorage("dotli:chain-backend") !== null ||
+    readRawLocalStorage("dotli:cache-settings") !== null;
+
+  const prior = {
+    network: getNetwork(),
+    chain: getBackend(),
+    cache: getCacheSettings(),
+  };
+
+  const next = {
+    network: parsed.network ?? prior.network,
+    chain: parsed.chainBackend ?? prior.chain,
+    cache: {
+      skipArchiveCache: parsed.skipArchiveCache ?? prior.cache.skipArchiveCache,
+      skipCidCache: parsed.skipCidCache ?? prior.cache.skipCidCache,
+      skipWorkerCache: parsed.skipWorkerCache ?? prior.cache.skipWorkerCache,
+    },
+  };
+
+  setNetwork(next.network);
+  setBackend(next.chain);
+  setCacheSettings(next.cache);
+
+  if (
+    writeSettingsToSearch(
+      { network: next.network, chainBackend: next.chain, cache: next.cache },
+      search,
+    )
+  ) {
+    const query = search.toString();
+    const newUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+    window.history.replaceState(null, "", newUrl);
+  }
+
+  const changed =
+    next.network !== prior.network ||
+    next.chain !== prior.chain ||
+    next.cache.skipArchiveCache !== prior.cache.skipArchiveCache ||
+    next.cache.skipCidCache !== prior.cache.skipCidCache ||
+    next.cache.skipWorkerCache !== prior.cache.skipWorkerCache;
+
+  // Fresh origins have nothing to be stale about, and no-op URLs (match
+  // localStorage) leave existing state intact.
+  if (!changed || !hadPriorPersisted) {
+    return;
+  }
+
+  // Wipe host origin and signal the other two origins to purge themselves
+  // on their next boot. wipeOriginState clears localStorage, so capture
+  // the theme + the just-written settings and re-persist them.
+  const theme = readRawLocalStorage("dotli-theme");
+  await wipeOriginState();
+  setNetwork(next.network);
+  setBackend(next.chain);
+  setCacheSettings(next.cache);
+  if (theme === "light" || theme === "dark") {
+    try {
+      localStorage.setItem("dotli-theme", theme);
+      // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable post-wipe in Safari private mode; theme restore is best-effort.
+    } catch {
+      /* localStorage unavailable */
+    }
+  }
+  try {
+    sessionStorage.setItem("dotli:pending-reset:protocol", "1");
+    sessionStorage.setItem("dotli:pending-reset:sandbox", "1");
+    // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); cross-origin purges are best-effort, reload below is unconditional.
+  } catch {
+    /* sessionStorage unavailable */
+  }
+  window.location.reload();
+}
+
 async function main(): Promise<void> {
   const previewTargetUrl = parsePreviewTargetUrl(window.location);
 
@@ -408,6 +530,12 @@ async function main(): Promise<void> {
 
   performance.mark("dotli:main:start");
   log.warn(`[dot.li perf] main() started (${elapsed(T0)})`);
+
+  // Seed settings from URL params before any consumer reads them, so the
+  // protocol pre-warm and downstream getters see the resolved values.
+  // The await blocks if a URL-driven change forces a wipe + reload. The
+  // reload then replaces the page, so anything below it never runs.
+  await applyUrlSettings();
 
   const chainBackend = getBackend();
   const cacheSettings = getCacheSettings();

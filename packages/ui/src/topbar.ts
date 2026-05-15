@@ -23,6 +23,7 @@ import {
 } from "@dotli/config/mode";
 import { getNetwork, setNetwork, type Network } from "@dotli/config/network";
 import { getActiveServicesConfig } from "@dotli/config/network";
+import { writeSettingsToSearch } from "@dotli/config/url-settings";
 import {
   ALL_PERMISSIONS,
   getPermissionStatus,
@@ -989,23 +990,23 @@ function renderModePopover(): void {
  */
 async function applyAndReset(
   draft: ModeDraft,
-  persisted: ModeDraft,
+  prior: ModeDraft,
 ): Promise<void> {
   try {
     // Snapshot the theme so we don't yank the user into a different colour
     // scheme just because they changed the resolution mode.
     const theme = localStorage.getItem("dotli-theme");
 
-    if (draft.chain !== persisted.chain) {
+    if (draft.chain !== prior.chain) {
       setBackend(draft.chain);
     }
-    if (draft.network !== persisted.network) {
+    if (draft.network !== prior.network) {
       setNetwork(draft.network);
     }
     if (
-      draft.cache.skipCidCache !== persisted.cache.skipCidCache ||
-      draft.cache.skipArchiveCache !== persisted.cache.skipArchiveCache ||
-      draft.cache.skipWorkerCache !== persisted.cache.skipWorkerCache
+      draft.cache.skipCidCache !== prior.cache.skipCidCache ||
+      draft.cache.skipArchiveCache !== prior.cache.skipArchiveCache ||
+      draft.cache.skipWorkerCache !== prior.cache.skipWorkerCache
     ) {
       setCacheSettings(draft.cache);
     }
@@ -1018,6 +1019,25 @@ async function applyAndReset(
     setCacheSettings(draft.cache);
     if (theme === "light" || theme === "dark") {
       localStorage.setItem("dotli-theme", theme);
+    }
+
+    // Mirror the new settings to the URL so the reload below boots with
+    // the same effective state the user just picked. Defaults drop off
+    // so a clean dot.li URL keeps meaning "every axis at default".
+    const search = new URLSearchParams(window.location.search);
+    if (
+      writeSettingsToSearch(
+        {
+          network: draft.network,
+          chainBackend: draft.chain,
+          cache: draft.cache,
+        },
+        search,
+      )
+    ) {
+      const query = search.toString();
+      const newUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+      window.history.replaceState(null, "", newUrl);
     }
 
     // Cross-origin purge signals — consumed by host main (protocol iframe)
@@ -1035,15 +1055,12 @@ async function applyAndReset(
 }
 
 /**
- * Wipe every persisted store on this origin: IndexedDB, CacheStorage, all
- * service worker registrations, localStorage, sessionStorage.
- *
- * Best-effort — some browsers don't expose `indexedDB.databases()`
- * (historically Firefox, Safari pre-17). On those we can't proactively list
- * + delete; the user will get a partially clean baseline but the mode
- * change still takes effect via the reloaded settings.
+ * Wipe this origin's IDB, CacheStorage, SW registrations, localStorage,
+ * sessionStorage. Best-effort: Firefox and Safari pre-17 lack
+ * `indexedDB.databases()`. Callers must snapshot keys they need preserved
+ * (theme, settings) and re-write them after, since localStorage is cleared.
  */
-async function wipeOriginState(): Promise<void> {
+export async function wipeOriginState(): Promise<void> {
   await Promise.allSettled([deleteAllIndexedDBs(), deleteAllCacheStorage()]);
   await unregisterAllServiceWorkers();
   try {
@@ -1078,15 +1095,15 @@ async function deleteAllIndexedDBs(): Promise<void> {
               return;
             }
             const req = indexedDB.deleteDatabase(db.name);
-            req.onsuccess = (): void => {
+            // Cap each delete at 3s in case Chromium never fires success/error/blocked.
+            const timer = setTimeout(resolve, 3000);
+            const settle = (): void => {
+              clearTimeout(timer);
               resolve();
             };
-            req.onerror = (): void => {
-              resolve();
-            };
-            req.onblocked = (): void => {
-              resolve();
-            };
+            req.onsuccess = settle;
+            req.onerror = settle;
+            req.onblocked = settle;
           }),
       ),
     );
