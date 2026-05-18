@@ -159,6 +159,13 @@ export function getSmoldotDirect(): SmoldotClient {
   smoldotInstance = startSmoldotDirect({
     maxLogLevel: 5,
     logCallback: smoldotLogCallback,
+    // Smoldot's own auto-detection (no-auto-bytecode-browser.js) is buggy
+    // and never sets this in browsers, so peer-gossipped `ws://[ip]` addrs
+    // get attempted and tripped by the browser's mixed-content rules —
+    // either blocked (public) or surfaced as deprecation warnings
+    // (link-local), and either way the page is demoted from secure context
+    // (which breaks SW registration).
+    forbidNonLocalWs: true,
   });
   log.warn("[dot.li smoldot] Smoldot client ready (direct mode)");
   return smoldotInstance;
@@ -172,6 +179,7 @@ export function getSmoldot(): SmoldotClient {
   smoldotInstance = startFromWorker(new SmWorker(), {
     maxLogLevel: 5,
     logCallback: smoldotLogCallback,
+    forbidNonLocalWs: true,
   });
   return smoldotInstance;
 }
