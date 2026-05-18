@@ -390,6 +390,9 @@ export default defineConfig({
         skipWaiting: false,
         clientsClaim: false,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        // Bypass the SW for /__preview so nginx's COEP/COOP/CORP headers
+        // reach the browser.
+        navigateFallbackDenylist: [/^\/__preview(\?|$|\/)/],
       },
     }),
   ],
