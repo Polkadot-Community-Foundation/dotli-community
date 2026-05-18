@@ -51,7 +51,7 @@
    Also collapse Permissions/Theme/Settings into a single "more" button that
    opens a flyout proxying clicks to the original buttons (which stay in the
    DOM, just hidden, so their popovers keep working unchanged). */
-.topbar-more-btn {
+.topbar-btn.topbar-more-btn {
   display: none;
 }
 .more-popover {
@@ -97,7 +97,7 @@
   #mode-button {
     display: none;
   }
-  .topbar-more-btn {
+  .topbar-btn.topbar-more-btn {
     display: inline-flex;
   }
 }
