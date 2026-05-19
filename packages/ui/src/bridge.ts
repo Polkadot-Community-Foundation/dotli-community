@@ -11,7 +11,15 @@ import { getBackend, getCacheSettings } from "@dotli/config/mode";
 import { getNetwork } from "@dotli/config/network";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
+import { emitDotliDebugEvent } from "@dotli/truapi-debug/dotli-debug-bus";
 import { buildAllowAttribute } from "./permissions";
+
+function newFlowId(prefix: string): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${prefix}-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`;
+}
 
 // Re-export sandbox-safe rendering functions
 export { renderContent, renderArchive, prepareIframe } from "./render";
@@ -82,6 +90,15 @@ function getDeepPath(): string {
  * chain connections, and scoped storage.
  */
 export async function renderIframe(url: string, label: string): Promise<void> {
+  const renderFlowId = newFlowId("render");
+  const bridgeFlowId = newFlowId("bridge");
+  emitDotliDebugEvent({
+    layer: "render",
+    event: "iframe_begin",
+    flowId: renderFlowId,
+    timestamp: Date.now(),
+    payload: { label, url, mode: "iframe" },
+  });
   const stopSetup = m.timer(S.BRIDGE_SETUP);
   cleanup();
 
@@ -109,15 +126,42 @@ export async function renderIframe(url: string, label: string): Promise<void> {
   document.body.style.margin = "0";
   document.body.style.overflow = "hidden";
   app.appendChild(iframe);
+  iframe.addEventListener(
+    "load",
+    () => {
+      emitDotliDebugEvent({
+        layer: "bridge",
+        event: "iframe_load",
+        flowId: bridgeFlowId,
+        timestamp: Date.now(),
+        payload: { label, productId: label, mode: "iframe" },
+      });
+    },
+    { once: true },
+  );
 
   const { setupContainer, setupNestedBridgeDetector } =
     await containerChunkPromise;
-  const disposePrimary = setupContainer(iframe, url, label);
+  emitDotliDebugEvent({
+    layer: "bridge",
+    event: "setup_begin",
+    flowId: bridgeFlowId,
+    timestamp: Date.now(),
+    payload: { label, productId: label },
+  });
+  const disposePrimary = setupContainer(iframe, url, label, bridgeFlowId);
   const disposeNested = setupNestedBridgeDetector(iframe, label);
   currentDispose = () => {
     disposePrimary();
     disposeNested();
   };
+  emitDotliDebugEvent({
+    layer: "bridge",
+    event: "setup_ready",
+    flowId: bridgeFlowId,
+    timestamp: Date.now(),
+    payload: { label, productId: label },
+  });
 
   if (
     (import.meta.env.VITE_SANDBOX_CHECKER as string | undefined) !== undefined
@@ -133,6 +177,13 @@ export async function renderIframe(url: string, label: string): Promise<void> {
   window.dispatchEvent(
     new CustomEvent("dotli:product-loaded", { detail: { label } }),
   );
+  emitDotliDebugEvent({
+    layer: "render",
+    event: "iframe_ready",
+    flowId: renderFlowId,
+    timestamp: Date.now(),
+    payload: { label, mode: "iframe" },
+  });
 }
 
 /**
@@ -146,6 +197,8 @@ export async function renderAppSubdomain(
   cid: string,
   label: string,
 ): Promise<void> {
+  const renderFlowId = newFlowId("render");
+  const bridgeFlowId = newFlowId("bridge");
   const stopSetup = m.timer(S.BRIDGE_SETUP);
   cleanup();
 
@@ -229,15 +282,50 @@ export async function renderAppSubdomain(
     app.appendChild(loading);
   }
   app.appendChild(iframe);
+  iframe.addEventListener(
+    "load",
+    () => {
+      emitDotliDebugEvent({
+        layer: "bridge",
+        event: "iframe_load",
+        flowId: bridgeFlowId,
+        timestamp: Date.now(),
+        payload: { label, productId: label, mode: "subdomain" },
+      });
+    },
+    { once: true },
+  );
+
+  emitDotliDebugEvent({
+    layer: "render",
+    event: "iframe_begin",
+    flowId: renderFlowId,
+    timestamp: Date.now(),
+    payload: { label, url, mode: "subdomain" },
+  });
 
   const { setupContainer, setupNestedBridgeDetector } =
     await containerChunkPromise;
-  const disposePrimary = setupContainer(iframe, url, label);
+  emitDotliDebugEvent({
+    layer: "bridge",
+    event: "setup_begin",
+    flowId: bridgeFlowId,
+    timestamp: Date.now(),
+    payload: { label, productId: label },
+  });
+  const disposePrimary = setupContainer(iframe, url, label, bridgeFlowId);
   const disposeNested = setupNestedBridgeDetector(iframe, label);
   currentDispose = () => {
     disposePrimary();
     disposeNested();
   };
+  emitDotliDebugEvent({
+    layer: "bridge",
+    event: "setup_ready",
+    flowId: bridgeFlowId,
+    timestamp: Date.now(),
+    payload: { label, productId: label },
+  });
 
   if (
     (import.meta.env.VITE_SANDBOX_CHECKER as string | undefined) !== undefined
@@ -253,6 +341,13 @@ export async function renderAppSubdomain(
   window.dispatchEvent(
     new CustomEvent("dotli:product-loaded", { detail: { label } }),
   );
+  emitDotliDebugEvent({
+    layer: "render",
+    event: "iframe_ready",
+    flowId: renderFlowId,
+    timestamp: Date.now(),
+    payload: { label, mode: "subdomain" },
+  });
 }
 
 function getAppOrigin(cid: string): string {

@@ -146,6 +146,20 @@ Local development uses wildcard subdomains:
 - `testingout.localhost:5173` — resolves `testingout.dot` via the host
 - `bafyrei....app.localhost:5173` — fetches and renders CID content directly
 
+## Debug panel
+
+dot.li ships a TrUAPI debug panel that aggregates host-side activity (boot/resolve/render/bridge events, TrUAPI host↔product messages, host-papp SSO/session events) into one time-aligned inspector. It's gated behind `VITE_APP_DEBUG=true` at build time and is tree-shaken out of production builds entirely.
+
+To preview locally with the panel enabled:
+
+```bash
+bun run preview:debug    # = VITE_APP_DEBUG=true bun preview
+```
+
+In CI, the panel is on for `dev-paseo` (paseoli.dev) and `dev-polkadot` (dotli.dev) deploys via the `APP_DEBUG` GitHub Environment secret; staging and production leave it unset.
+
+See [packages/truapi-debug/DEBUG_PANEL.md](packages/truapi-debug/DEBUG_PANEL.md) for the full reference — event sources, views, filters, correlation keys, and how to add a new instrumentation hook.
+
 ## Sandbox API Checker
 
 dApps rendered in dot.li's sandboxed iframe should communicate exclusively through the container bridge (postMessage), not use web APIs directly. The sandbox checker detects restricted API usage and reports violations in a UI panel.

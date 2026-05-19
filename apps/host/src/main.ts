@@ -52,6 +52,7 @@ import {
   parseSettingsFromSearch,
   writeSettingsToSearch,
 } from "@dotli/config/url-settings";
+import type { DotliDebugEvent } from "@dotli/truapi-debug/dotli-debug-types";
 import { describeError } from "./errors";
 import { parsePreviewTargetUrl } from "./preview-route";
 
@@ -121,6 +122,15 @@ if (m.enabled && typeof PerformanceObserver !== "undefined") {
 }
 
 const T0 = performance.now();
+
+// Build-time gate for the TrUAPI debug panel. Vite constant-folds
+// `import.meta.env.VITE_APP_DEBUG` *only at the access site*, so this
+// const must live in this module — re-exporting it via
+// `packages/config/src/config.ts`'s `DEBUG` would turn it into a
+// cross-module runtime read and defeat the dynamic-import DCE that
+// strips `panel-*.js` from production builds.
+const DEBUG_BUILD =
+  (import.meta.env.VITE_APP_DEBUG as string | undefined) === "true";
 
 /**
  * Parse a localhost proxy URL from the path.
@@ -364,6 +374,195 @@ function populateOwner(
 import type * as RenderModule from "@dotli/ui/bridge";
 type RenderChunk = typeof RenderModule;
 
+/**
+ * Runtime gate for the TrUAPI debug panel. Only consulted in debug
+ * builds (see `DEBUG_BUILD` above) — production strips the call
+ * site entirely. In debug builds the panel is on by default so
+ * reviewers see it immediately without appending `?debug=truapi`.
+ *
+ * The existing opt-out signals still work:
+ *   - `?debug=off` in the URL disables it (and persists the choice
+ *     to sessionStorage so reloads respect it).
+ *   - An already-persisted `sessionStorage["dotli:truapi-debug"]` of
+ *     `"0"` disables it for the rest of the tab's lifetime.
+ *
+ * The legacy `?debug=truapi` opt-in is also still handled for
+ * symmetry, and both URL forms are stripped from `history` so the
+ * param doesn't leak into the sandbox iframe (whose strict URL
+ * validator would reject it as "Invalid sandbox URL").
+ */
+function shouldEnableTruapiDebug(): boolean {
+  try {
+    const url = new URL(window.location.href);
+    const param = url.searchParams.get("debug");
+    if (param === "truapi" || param === "off") {
+      sessionStorage.setItem("dotli:truapi-debug", param === "off" ? "0" : "1");
+      url.searchParams.delete("debug");
+      const rewritten =
+        url.pathname +
+        (url.searchParams.toString() === ""
+          ? ""
+          : `?${url.searchParams.toString()}`) +
+        url.hash;
+      history.replaceState(null, "", rewritten);
+    }
+    const persisted = sessionStorage.getItem("dotli:truapi-debug");
+    if (persisted === "1") {
+      return true;
+    }
+    if (persisted === "0") {
+      return false;
+    }
+    // Default for this branch: on.
+    return true;
+    // eslint-disable-next-line no-restricted-syntax -- URL/sessionStorage may be unavailable in exotic environments (Safari private mode); the debug panel is purely a dev-facing overlay, so we fall through to the on-by-default behaviour below.
+  } catch {
+    /* ignore — fall through to the branch default */
+  }
+  return true;
+}
+
+// ── Main-thread liveness monitor ─────────────────────────────
+//
+// Tracks two things the system swimlane would otherwise miss:
+//
+//   1. Stalls. setInterval fires every TICK_MS; if the actual delta
+//      to the previous tick is more than TICK_MS + STALL_THRESHOLD_MS
+//      the event loop was blocked for the excess. Emits
+//      `main:stall_detected` with the stall duration — one event
+//      per stall, regardless of how long the thread was frozen.
+//
+//   2. Heartbeats. Every HEARTBEAT_INTERVAL_MS we emit a low-cost
+//      `main:heartbeat` marker so the swimlane shows a steady
+//      rhythm ("host is alive"). Gaps in the rhythm are visible
+//      even without the stall_detected event.
+//
+// Scope: only runs while debug is enabled, and only for the first
+// MAX_MONITOR_MS (120 s by default) or until the primary bridge
+// has exchanged traffic in both directions — whichever comes first.
+// After that the monitor emits `main:monitor_stopped` and clears
+// itself so it doesn't burn cycles for the rest of the session.
+type EmitFn = (e: DotliDebugEvent) => void;
+
+function startMainThreadMonitor(flowId: string, emit: EmitFn): void {
+  const TICK_MS = 50;
+  const STALL_THRESHOLD_MS = 150; // alert when loop was blocked > 150ms extra
+  const HEARTBEAT_INTERVAL_MS = 2_000;
+  const MAX_MONITOR_MS = 120_000;
+
+  const startedAt = performance.now();
+  let lastTick = performance.now();
+  let lastHeartbeat = startedAt;
+
+  const handle = setInterval(() => {
+    const now = performance.now();
+    const delta = now - lastTick;
+    const lag = delta - TICK_MS;
+
+    if (lag > STALL_THRESHOLD_MS) {
+      emit({
+        layer: "main",
+        event: "stall_detected",
+        flowId,
+        timestamp: Date.now(),
+        payload: { durationMs: Math.round(lag) },
+      });
+    }
+
+    if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+      lastHeartbeat = now;
+      emit({
+        layer: "main",
+        event: "heartbeat",
+        flowId,
+        timestamp: Date.now(),
+        payload: {
+          uptimeSec: Math.round((now - startedAt) / 1000),
+        },
+      });
+    }
+
+    lastTick = now;
+
+    if (now - startedAt > MAX_MONITOR_MS) {
+      clearInterval(handle);
+      window.removeEventListener("dotli:debug:bridge-ready", onBridgeReady);
+      emit({
+        layer: "main",
+        event: "monitor_stopped",
+        flowId,
+        timestamp: Date.now(),
+        payload: { reason: "max_duration" },
+      });
+    }
+  }, TICK_MS);
+
+  // Stop once the primary bridge has fully handshaken. The bridge
+  // dispatches a window event from its first-outbound emit site.
+  const onBridgeReady = (): void => {
+    clearInterval(handle);
+    window.removeEventListener("dotli:debug:bridge-ready", onBridgeReady);
+    emit({
+      layer: "main",
+      event: "monitor_stopped",
+      flowId,
+      timestamp: Date.now(),
+      payload: { reason: "bridge_ready" },
+    });
+  };
+  window.addEventListener("dotli:debug:bridge-ready", onBridgeReady, {
+    once: true,
+  });
+}
+
+/**
+ * Accept `{ type: "dotli:debug-event", event: DotliDebugEvent }` from
+ * any child iframe (specifically the sandbox at `cid.app.dot.li`) and
+ * push the payload into the local debug bus.
+ *
+ * The sandbox lives on a different origin and can't touch the host's
+ * `emitDotliDebugEvent` directly, so it posts messages instead. We
+ * validate the envelope (must be an object with a `sandbox` layer) and
+ * ignore anything else — this listener sees the full `window.message`
+ * stream, so non-debug TrUAPI and loading-status messages must pass
+ * through cleanly.
+ */
+function listenForSandboxDebugEvents(emit: EmitFn): void {
+  window.addEventListener("message", (event: MessageEvent) => {
+    const data = event.data as
+      | { type?: unknown; event?: unknown }
+      | null
+      | undefined;
+    if (
+      data === null ||
+      data === undefined ||
+      typeof data !== "object" ||
+      data.type !== "dotli:debug-event"
+    ) {
+      return;
+    }
+    const payload = data.event as
+      | (DotliDebugEvent & { layer?: unknown })
+      | null
+      | undefined;
+    if (
+      payload === null ||
+      payload === undefined ||
+      typeof payload !== "object" ||
+      payload.layer !== "sandbox"
+    ) {
+      return;
+    }
+    try {
+      emit(payload);
+      // eslint-disable-next-line no-restricted-syntax -- best-effort forwarder; a malformed event from the sandbox must never break the host.
+    } catch {
+      /* ignore — a malformed event shouldn't kill the host */
+    }
+  });
+}
+
+// ── Main ─────────────────────────────────────────────────────
 interface DotliE2EApi {
   backend: string;
   subscribeAll: (
@@ -559,6 +758,54 @@ async function main(): Promise<void> {
   performance.mark("dotli:main:start");
   log.warn(`[dot.li perf] main() started (${elapsed(T0)})`);
 
+  // ── Experimental: TrUAPI debug panel ─────────────────────
+  //
+  // Build-time gate: `VITE_APP_DEBUG="true"` ships the panel; anything
+  // else (production / dot.li) collapses `DEBUG_BUILD` to `false` so
+  // Vite DCEs the panel import, the runtime URL-param gate, and the
+  // main-thread monitor below. The bus module stays imported but its
+  // exports become no-ops (see dotli-debug-bus.ts) so bare emit calls
+  // throughout main() are inert without needing call-site changes.
+  //
+  // Within debug builds the runtime gate (`?debug=off`, sessionStorage)
+  // still lets developers silence the panel on a per-tab basis.
+  const { emitDotliDebugEvent, enableDotliDebugBuffering } =
+    await import("@dotli/truapi-debug/dotli-debug-bus");
+  const debugEnabled = DEBUG_BUILD && shouldEnableTruapiDebug();
+  if (debugEnabled) {
+    enableDotliDebugBuffering();
+    void import("@dotli/truapi-debug/panel").then(
+      ({ setupTruapiDebugPanel }) => {
+        setupTruapiDebugPanel();
+        log.warn(`[dot.li] TrUAPI debug panel enabled`);
+      },
+    );
+  }
+
+  // Per-tab boot flow id — every boot/resolve/render/bridge event from
+  // this page load carries the same id so the debug panel can group
+  // them into one box.
+  const bootFlowId =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `boot-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`;
+
+  // Main-thread monitor. Polls at 50ms; any delta > 200ms means the
+  // event loop was blocked for `durationMs - 50ms`. Heartbeats land
+  // every 2 seconds so the system swimlane shows "host still alive"
+  // even when nothing else is happening. The monitor stops once the
+  // bridge has exchanged traffic in both directions (first outbound
+  // response posted) or after MAX_MAIN_MONITOR_MS, whichever comes
+  // first.
+  if (debugEnabled) {
+    startMainThreadMonitor(bootFlowId, emitDotliDebugEvent);
+    // Forward sandbox-origin debug events up to the host's debug bus so
+    // the "what is the product iframe doing?" window (SW register,
+    // cache lookup, archive fetch, decrypt, document.write) is visible
+    // in the same System swimlane as the host's own events.
+    listenForSandboxDebugEvents(emitDotliDebugEvent);
+  }
+
   // Seed settings from URL params before any consumer reads them, so the
   // protocol pre-warm and downstream getters see the resolved values.
   // `applyUrlSettings` also runs the shared-mode bootstrap (so prior values
@@ -570,6 +817,17 @@ async function main(): Promise<void> {
 
   const chainBackend = getBackend();
   const cacheSettings = getCacheSettings();
+  emitDotliDebugEvent({
+    layer: "boot",
+    event: "started",
+    flowId: bootFlowId,
+    timestamp: Date.now(),
+    payload: {
+      chainBackend,
+      skipCidCache: cacheSettings.skipCidCache,
+      skipArchiveCache: cacheSettings.skipArchiveCache,
+    },
+  });
   log.warn(`[dot.li perf] chain=${chainBackend}`);
   m.setDefaults({
     chain_backend: chainBackend,
@@ -615,6 +873,13 @@ async function main(): Promise<void> {
         void warmupProtocol();
       },
     );
+    emitDotliDebugEvent({
+      layer: "boot",
+      event: "protocol_warmup_started",
+      flowId: bootFlowId,
+      timestamp: Date.now(),
+      payload: { subMode },
+    });
   }
 
   // E2E test hook: when `?e2e_init_auth=1` is in the URL, initialize the
@@ -634,6 +899,13 @@ async function main(): Promise<void> {
   const t0 = performance.now();
   initTopBar();
   log.warn(`[dot.li perf] initTopBar() done (${dur(t0)})`);
+  emitDotliDebugEvent({
+    layer: "boot",
+    event: "topbar_ready",
+    flowId: bootFlowId,
+    timestamp: Date.now(),
+    payload: {},
+  });
 
   const label = parseDotLabel();
 
@@ -659,6 +931,17 @@ async function main(): Promise<void> {
   }
 
   const localhostUrl = parseLocalhostUrl();
+  emitDotliDebugEvent({
+    layer: "boot",
+    event: "url_parsed",
+    flowId: bootFlowId,
+    timestamp: Date.now(),
+    payload: {
+      label,
+      localhostHost: localhostUrl === null ? null : new URL(localhostUrl).host,
+      deepPath: window.location.pathname + window.location.search,
+    },
+  });
   if (label === null && localhostUrl !== null) {
     const host = new URL(localhostUrl).host;
     log.warn(`[dot.li perf] Localhost proxy: ${host} (${elapsed(T0)})`);
@@ -674,6 +957,17 @@ async function main(): Promise<void> {
     history.replaceState(null, "", "/" + host);
     document.title = `${host} — ${SITE_ID}`;
     performance.mark("dotli:main:end");
+    emitDotliDebugEvent({
+      layer: "boot",
+      event: "ready",
+      flowId: bootFlowId,
+      timestamp: Date.now(),
+      payload: {
+        label: null,
+        totalMs: performance.now() - T0,
+        path: "localhost",
+      },
+    });
     return;
   }
 
@@ -681,6 +975,13 @@ async function main(): Promise<void> {
     log.warn(`[dot.li perf] Landing page — no subdomain (${elapsed(T0)})`);
     showLanding();
     performance.mark("dotli:main:end");
+    emitDotliDebugEvent({
+      layer: "boot",
+      event: "landing_page_shown",
+      flowId: bootFlowId,
+      timestamp: Date.now(),
+      payload: {},
+    });
     return;
   }
 
@@ -774,6 +1075,13 @@ async function main(): Promise<void> {
     const cachedCid = cacheSettings.skipCidCache
       ? null
       : await getCachedCid(label);
+    emitDotliDebugEvent({
+      layer: "boot",
+      event: "cid_cache_checked",
+      flowId: bootFlowId,
+      timestamp: Date.now(),
+      payload: { label, hit: cachedCid !== null, cid: cachedCid ?? undefined },
+    });
     if (cachedCid !== null) {
       m.count(S.CACHE_HIT);
       log.warn(
@@ -788,6 +1096,17 @@ async function main(): Promise<void> {
       });
       performance.mark("dotli:main:end");
       log.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
+      emitDotliDebugEvent({
+        layer: "boot",
+        event: "ready",
+        flowId: bootFlowId,
+        timestamp: Date.now(),
+        payload: {
+          label,
+          totalMs: performance.now() - T0,
+          path: "fast",
+        },
+      });
       return;
     }
     m.count(S.CACHE_MISS);
@@ -810,6 +1129,29 @@ async function main(): Promise<void> {
     performance.mark("dotli:resolve:start");
     const resolveStart = performance.now();
 
+    const resolveFlowId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `resolve-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`;
+    const resolveSource: "smoldot" | "rpc-gateway" =
+      chainBackend !== "rpc-gateway" ? "smoldot" : "rpc-gateway";
+    emitDotliDebugEvent({
+      layer: "resolve",
+      event: "started",
+      flowId: resolveFlowId,
+      timestamp: Date.now(),
+      payload: { label, source: resolveSource },
+    });
+    const emitPhase = (msg: string, phaseName: string): void => {
+      emitDotliDebugEvent({
+        layer: "resolve",
+        event: "phase",
+        flowId: resolveFlowId,
+        timestamp: Date.now(),
+        payload: { label, phase: phaseName, message: msg },
+      });
+    };
+
     let cid: string | null;
     if (chainBackend !== "rpc-gateway") {
       log.warn(
@@ -830,6 +1172,10 @@ async function main(): Promise<void> {
         const { statusToPhase } = await import("@dotli/resolver/resolve");
         populateOwner(resolveOwnerRemote, label);
         cid = await resolveDotNameRemote(label, (msg: string) => {
+          // Progress events arrive as opaque strings across the iframe
+          // boundary. The resolver package owns the authoritative
+          // mapping from status text → `ResolvePhase`; we defer to it
+          // instead of maintaining a parallel regex here.
           const phase = statusToPhase(msg);
           if (phase === "asset-hub-connecting") {
             advancePhase(1);
@@ -841,6 +1187,7 @@ async function main(): Promise<void> {
           } else if (phase === "resolving-content") {
             advancePhase(3);
           }
+          emitPhase(msg, phase ?? "progress");
           showStatus(msg);
         });
       } finally {
@@ -854,9 +1201,23 @@ async function main(): Promise<void> {
         await import("@dotli/resolver/rpc-resolve");
       populateOwner(resolveOwnerViaRpc, label);
       cid = await resolveDotNameViaRpc(label, (msg: string) => {
+        emitPhase(msg, "progress");
         showStatus(msg);
       });
     }
+
+    emitDotliDebugEvent({
+      layer: "resolve",
+      event: "completed",
+      flowId: resolveFlowId,
+      timestamp: Date.now(),
+      payload: {
+        label,
+        source: resolveSource,
+        cid,
+        durationMs: performance.now() - resolveStart,
+      },
+    });
 
     stopStatusTick();
     performance.mark("dotli:resolve:end");
@@ -890,6 +1251,17 @@ async function main(): Promise<void> {
     });
     performance.mark("dotli:main:end");
     log.warn(`[dot.li perf] === TOTAL: ${dur(T0)} ===`);
+    emitDotliDebugEvent({
+      layer: "boot",
+      event: "ready",
+      flowId: bootFlowId,
+      timestamp: Date.now(),
+      payload: {
+        label,
+        totalMs: performance.now() - T0,
+        path: "slow",
+      },
+    });
   } catch (err) {
     performance.mark("dotli:main:end");
     // Report before rendering so monitoring always sees the root cause, even
@@ -910,6 +1282,17 @@ async function main(): Promise<void> {
     log.error(
       `[dot.li] Resolution failed via ${dependency}: ${serializeError(err)}`,
     );
+    emitDotliDebugEvent({
+      layer: "boot",
+      event: "failed",
+      flowId: bootFlowId,
+      timestamp: Date.now(),
+      payload: {
+        label,
+        reason: err instanceof Error ? err.message : String(err),
+        dependency,
+      },
+    });
     const error = describeError(err, chainBackend !== "rpc-gateway");
     if (error.recovery === "none") {
       showError("Domain can't be reached", error.message);
@@ -934,6 +1317,20 @@ async function main(): Promise<void> {
     showError("Domain can't be reached", error.message, {
       label: btnLabel,
       onClick: () => {
+        emitDotliDebugEvent({
+          layer: "failover",
+          event: "chain_backend",
+          flowId:
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `fail-${String(Date.now())}`,
+          timestamp: Date.now(),
+          payload: {
+            from: chainBackend,
+            to: nextBackend,
+            reason: err instanceof Error ? err.message : "resolution failed",
+          },
+        });
         setBackend(nextBackend);
         window.location.reload();
       },

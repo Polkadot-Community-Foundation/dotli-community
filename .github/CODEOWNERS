@@ -10,3 +10,6 @@
 
 # Sandbox enforcement
 /packages/sandbox-checker @TorstenStueber @KarimJedda
+
+# TrUAPI debug panel
+/packages/truapi-debug @valentinfernandez1 @TorstenStueber

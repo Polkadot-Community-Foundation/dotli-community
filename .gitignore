@@ -13,6 +13,13 @@ dist
 coverage
 *.local
 
+# Ad-hoc screenshots dropped at the repo root during debugging.
+# Documentation images should live under docs/ (or be explicitly
+# force-added) rather than at the root.
+/*.png
+/*.jpg
+/*.jpeg
+
 # Lock files (keep bun.lock committed for reproducible CI builds)
 package-lock.json
 yarn.lock
@@ -59,3 +66,11 @@ playwright-report/
 .llm
 opencode.json
 GEMINI.md
+
+# Vendored SDK packages (debug branch only).
+# Override the generic `dist` / `.papi/descriptors` rules so the
+# prebuilt packages under vendor/truapi-debug/ ship to CI.
+!vendor/truapi-debug/**/dist
+!vendor/truapi-debug/**/dist/**
+!vendor/truapi-debug/**/.papi
+!vendor/truapi-debug/**/.papi/**

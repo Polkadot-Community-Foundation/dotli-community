@@ -38,6 +38,7 @@ import {
   type StatementStoreAdapter,
 } from "@novasamatech/statement-store";
 import { errAsync, fromPromise, okAsync, type ResultAsync } from "neverthrow";
+import { emitDotliDebugEvent } from "@dotli/truapi-debug/dotli-debug-bus";
 import { isLocalhost, BASE_DOMAIN } from "@dotli/config/config";
 import {
   getPermissionStatus,
@@ -776,7 +777,9 @@ function wireContainerHandlers(
     log.warn(`[${label}] Push notification:`, { text, deeplink });
     // eslint-disable-next-line @typescript-eslint/no-deprecated
     showPushNotification({ text, deeplink, label });
-    return ok(undefined);
+    // Return an opaque notification id; dotli doesn't currently
+    // support cancellation, so the value just needs to be unique.
+    return ok(Date.now());
   });
 
   //
@@ -1270,7 +1273,18 @@ export function setupNestedBridgeDetector(
     log.warn(`[dot.li] Nested dApp #${nestedId} detected, creating bridge`);
 
     const provider = createWindowProvider(event.source as Window);
-    const container = createContainer(provider);
+    const productId = `${label}:nested-${nestedId}`;
+    emitDotliDebugEvent({
+      layer: "bridge",
+      event: "nested_detected",
+      flowId:
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `bridge-${String(Date.now())}-${nestedId}`,
+      timestamp: Date.now(),
+      payload: { label, productId, nestedIndex: knownWindows.size },
+    });
+    const container = createContainer(provider, { productId });
     const nestedPrefix = `dotli:${label}:nested-${nestedId}:`;
     const teardown = wireContainerHandlers(container, label, nestedPrefix);
 
@@ -1304,14 +1318,76 @@ export function setupContainer(
   iframe: HTMLIFrameElement,
   blobUrl: string,
   label: string,
+  bridgeFlowId?: string,
 ): () => void {
-  const provider = createIframeProvider({ iframe, url: blobUrl });
-  const container = createContainer(provider);
+  const baseProvider = createIframeProvider({ iframe, url: blobUrl });
+  const provider =
+    bridgeFlowId !== undefined
+      ? instrumentProvider(baseProvider, label, bridgeFlowId)
+      : baseProvider;
+  const container = createContainer(provider, { productId: label });
   const storagePrefix = `dotli:${label}:`;
   const teardown = wireContainerHandlers(container, label, storagePrefix);
 
   return () => {
     teardown();
     container.dispose();
+  };
+}
+
+/**
+ * Wrap a bridge Provider so the first inbound and first outbound
+ * messages emit debug events. These anchor the often-long window
+ * between `bridge:setup_ready` (handler registered) and the moment
+ * the product iframe actually starts exchanging messages with the
+ * host — during which the TrUAPI swimlane typically shows dozens to
+ * hundreds of `host_handshake_request` retries with no corresponding
+ * system-layer activity.
+ */
+function instrumentProvider(
+  base: Provider,
+  label: string,
+  bridgeFlowId: string,
+): Provider {
+  let inboundEmitted = false;
+  let outboundEmitted = false;
+  return {
+    ...base,
+    postMessage(message) {
+      if (!outboundEmitted) {
+        outboundEmitted = true;
+        emitDotliDebugEvent({
+          layer: "bridge",
+          event: "first_outbound",
+          flowId: bridgeFlowId,
+          timestamp: Date.now(),
+          payload: { label, productId: label },
+        });
+        // Signal the main-thread monitor that it can stop — the
+        // bridge is fully established.
+        try {
+          window.dispatchEvent(new CustomEvent("dotli:debug:bridge-ready"));
+          // eslint-disable-next-line no-restricted-syntax -- dispatchEvent may throw in exotic environments; the debug monitor is best-effort.
+        } catch {
+          /* ignore — monitor just falls back to its duration cap */
+        }
+      }
+      base.postMessage(message);
+    },
+    subscribe(callback) {
+      return base.subscribe((message) => {
+        if (!inboundEmitted) {
+          inboundEmitted = true;
+          emitDotliDebugEvent({
+            layer: "bridge",
+            event: "first_inbound",
+            flowId: bridgeFlowId,
+            timestamp: Date.now(),
+            payload: { label, productId: label },
+          });
+        }
+        callback(message);
+      });
+    },
   };
 }

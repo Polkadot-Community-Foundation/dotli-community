@@ -12,6 +12,7 @@
     "build": "turbo run build",
     "build:prod": "turbo run build:prod",
     "preview": "turbo run build && bun scripts/preview-server.ts",
+    "preview:debug": "VITE_APP_DEBUG=true bun preview",
     "test": "turbo run test",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",

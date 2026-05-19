@@ -7,7 +7,6 @@ import {
   createPappAdapter,
   type PappAdapter,
   type PairingStatus,
-  type AttestationStatus,
   type Identity,
   type UserSession,
 } from "@novasamatech/host-papp";
@@ -309,7 +308,6 @@ function pickUpSession(): void {
 }
 
 let unsubPairing: (() => void) | null = null;
-let unsubAttestation: (() => void) | null = null;
 
 export function startPairing(): void {
   if (!adapter) {
@@ -319,11 +317,9 @@ export function startPairing(): void {
   // Show spinner immediately (don't wait for subscription callback)
   setState({ status: "pairing", payload: "" });
 
-  // Clean up previous subscriptions (without aborting the adapter)
+  // Clean up previous subscription (without aborting the adapter)
   unsubPairing?.();
-  unsubAttestation?.();
   unsubPairing = null;
-  unsubAttestation = null;
 
   unsubPairing = adapter.sso.pairingStatus.subscribe(
     (status: PairingStatus) => {
@@ -335,38 +331,19 @@ export function startPairing(): void {
         case "pairing":
           setState({ status: "pairing", payload: status.payload });
           break;
-        case "pairingError":
-          setState({ status: "error", message: status.message });
-          break;
-        case "finished":
-          // Pairing handshake done — attestation runs in parallel.
-          // Transition to "attesting" so it shows a spinner and
-          // the modal can't be dismissed (which would abort attestation).
+        case "pending":
+          // Setup work in progress (attestation etc.) — show spinner.
           if (currentState.status !== "authenticated") {
             setState({ status: "attesting" });
           }
           break;
-        case "none":
-        case "attestation":
-          break;
-      }
-    },
-  );
-
-  unsubAttestation = adapter.sso.attestationStatus.subscribe(
-    (status: AttestationStatus) => {
-      log.warn("[dot.li auth] attestationStatus:", status.step, status);
-      switch (status.step) {
-        case "attestation":
-          setState({ status: "attesting", username: status.username });
-          break;
-        case "attestationError":
+        case "pairingError":
           setState({ status: "error", message: status.message });
           break;
         case "finished":
-          // Attestation done — session should now be saved.
-          // The sessions.subscribe() callback is the primary pickup path,
-          // but call pickUpSession() as a fallback.
+          // Pairing + attestation both done; session is persisted.
+          // sessions.subscribe() is the primary pickup path, but call
+          // pickUpSession() here as a fallback.
           pickUpSession();
           break;
         case "none":
@@ -402,9 +379,7 @@ export function startPairing(): void {
 export function abortPairing(): void {
   // Unsubscribe first to prevent status callbacks from firing during abort
   unsubPairing?.();
-  unsubAttestation?.();
   unsubPairing = null;
-  unsubAttestation = null;
 
   if (adapter) {
     adapter.sso.abortAuthentication();
@@ -466,6 +441,8 @@ export function requestLogin(
     });
   });
 }
+
+// ── Helpers ────────────────────────────────────────────────
 
 export function shortenName(identity: Identity): string {
   if (identity.fullUsername !== null && identity.fullUsername.length > 0) {

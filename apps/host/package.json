@@ -38,6 +38,7 @@
     "@dotli/shared": "workspace:*",
     "@dotli/storage": "workspace:*",
     "@dotli/resolver": "workspace:*",
+    "@dotli/truapi-debug": "workspace:*",
     "@dotli/ui": "workspace:*",
     "@sentry/browser": "^10.50.0",
     "@sentry/vite-plugin": "^5.2.0"

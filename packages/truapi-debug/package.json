@@ -1,0 +1,27 @@
+{
+  "name": "@dotli/truapi-debug",
+  "private": true,
+  "version": "0.2.2",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "bunx eslint src/"
+  },
+  "devDependencies": {
+    "@dotli/eslint-config": "workspace:*",
+    "@dotli/typescript-config": "workspace:*",
+    "eslint": "^10.2.0",
+    "typescript": "~6.0.3",
+    "vite": "^8.0.8"
+  },
+  "dependencies": {
+    "@dotli/shared": "workspace:*",
+    "@novasamatech/host-api": "0.7.9-6",
+    "@novasamatech/host-container": "0.7.9-6",
+    "@novasamatech/host-papp": "0.7.9-6",
+    "nanoevents": "^9.1.0"
+  }
+}
