@@ -27,8 +27,9 @@ import {
   advancePhase,
   stopStatusTick,
   listenForSandboxStatus,
+  showGatewayEscape,
 } from "@dotli/ui/ui";
-import { initTopBar, openModePopover, wipeOriginState } from "@dotli/ui/topbar";
+import { initTopBar, wipeOriginState } from "@dotli/ui/topbar";
 import { listenForSandboxBitswap } from "@dotli/ui/bulletin-bitswap";
 import { getCachedCid, setCachedCid } from "@dotli/storage/cid-cache";
 import { dur, elapsed } from "@dotli/shared/perf";
@@ -814,21 +815,14 @@ async function main(): Promise<void> {
       log.warn(
         `[dot.li resolve] path=smoldot (trustless light-client) (${elapsed(T0)})`,
       );
-      const gatewayBtnTimer = setTimeout(() => {
-        const hint = document.getElementById("loading-hint");
-        if (hint !== null) {
-          const btn = document.createElement("button");
-          btn.className = "loading-gateway-btn";
-          btn.textContent = "Change settings";
-          btn.title = "Open settings to change resolution mode";
-          btn.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            openModePopover();
-          });
-          hint.appendChild(btn);
-          hint.classList.add("visible");
-        }
-      }, 10000);
+      // After 10s of slow loading on the verified path, surface a one-click
+      // escape to the gateway backend. The user trades the light-client
+      // verification badge for a faster, trust-based load.
+      const cancelGatewayEscape = showGatewayEscape(() => {
+        m.count(S.GATEWAY_ESCAPE, { from_backend: chainBackend });
+        setBackend("rpc-gateway");
+        window.location.reload();
+      });
 
       try {
         const { resolveDotNameRemote, resolveOwnerRemote } =
@@ -850,7 +844,7 @@ async function main(): Promise<void> {
           showStatus(msg);
         });
       } finally {
-        clearTimeout(gatewayBtnTimer);
+        cancelGatewayEscape();
       }
     } else {
       log.warn(

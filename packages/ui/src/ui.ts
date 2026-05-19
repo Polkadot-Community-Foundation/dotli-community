@@ -126,6 +126,47 @@ export function advancePhase(index: number): void {
   }
 }
 
+export const GATEWAY_ESCAPE_DELAY_MS = 10_000;
+
+/**
+ * One-click "Use gateway instead" escape hatch on the loading screen.
+ * Renders at most once per page lifetime after `delayMs` of slow loading.
+ * Returns a cancel function that clears the pending timer.
+ */
+export function showGatewayEscape(
+  onClick: () => void,
+  delayMs: number = GATEWAY_ESCAPE_DELAY_MS,
+): () => void {
+  const timer = setTimeout(() => {
+    const hint = document.getElementById("loading-hint");
+    if (hint === null) {
+      return;
+    }
+    if (hint.querySelector(".loading-gateway-btn") !== null) {
+      return;
+    }
+    const btn = document.createElement("button");
+    btn.className = "loading-gateway-btn";
+    btn.type = "button";
+    const label = document.createElement("span");
+    label.className = "loading-gateway-btn-label";
+    label.textContent = "Use gateway instead";
+    const sub = document.createElement("span");
+    sub.className = "loading-gateway-btn-sub";
+    sub.textContent = "Faster but no verification";
+    btn.append(label, sub);
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      onClick();
+    });
+    hint.appendChild(btn);
+    hint.classList.add("visible");
+  }, delayMs);
+  return () => {
+    clearTimeout(timer);
+  };
+}
+
 // ── Single-line status ───────────────────────────────────
 // Updates #status in place. Shows a slow-step hint when a step
 // exceeds its time threshold.

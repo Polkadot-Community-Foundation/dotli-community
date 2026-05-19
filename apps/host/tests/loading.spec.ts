@@ -243,7 +243,7 @@ test("As a user using smoldot in shared worker, when the worker dies silently, I
   );
 });
 
-test("As a user using smoldot directly, when loading is slow (>10s) I see an option to change settings, and if it times out (>45s) I see the appropriate error and can switch backend", async ({
+test("As a user using smoldot directly, when loading is slow (>10s) I see a one-click gateway escape, and if it times out (>45s) I see the appropriate error and can switch backend", async ({
   page,
 }) => {
   // Given
@@ -262,7 +262,7 @@ test("As a user using smoldot directly, when loading is slow (>10s) I see an opt
 
   // Then
   await expect(page.locator(".loading-gateway-btn")).toContainText(
-    "Change settings",
+    "Use gateway instead",
     { timeout: 5_000 },
   );
   await expect(page.locator(".error-page-title")).toHaveText(
@@ -277,7 +277,7 @@ test("As a user using smoldot directly, when loading is slow (>10s) I see an opt
   );
 });
 
-test("As a user using smoldot in shared worker, when loading is slow (>10s) I see an option to change settings, and if it times out (>45s) I see the appropriate error and can switch backend", async ({
+test("As a user using smoldot in shared worker, when loading is slow (>10s) I see a one-click gateway escape, and if it times out (>45s) I see the appropriate error and can switch backend", async ({
   page,
 }) => {
   // Given
@@ -296,7 +296,7 @@ test("As a user using smoldot in shared worker, when loading is slow (>10s) I se
 
   // Then
   await expect(page.locator(".loading-gateway-btn")).toContainText(
-    "Change settings",
+    "Use gateway instead",
     { timeout: 5_000 },
   );
   await expect(page.locator(".error-page-title")).toHaveText(
@@ -309,6 +309,37 @@ test("As a user using smoldot in shared worker, when loading is slow (>10s) I se
   await expect(page.locator("#error-retry-btn")).toContainText(
     RETRY_LABEL_FROM_SMOLDOT,
   );
+});
+
+test("As a user using smoldot directly, when I click the gateway escape, the backend flips to rpc-gateway and the page reloads", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await shrinkTimeout(page, 10_000, 500);
+  // Keep the resolve pending long enough for the button to appear and be
+  // clicked before any response arrives.
+  await mockProtocolIframe(
+    page,
+    errorResolveResponse("never resolves in test window", 30_000),
+  );
+
+  // When
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+  const gatewayBtn = page.locator(".loading-gateway-btn");
+  await expect(gatewayBtn).toContainText("Use gateway instead", {
+    timeout: 5_000,
+  });
+  await Promise.all([
+    page.waitForLoadState("domcontentloaded"),
+    gatewayBtn.click(),
+  ]);
+
+  // Then
+  const backend = await page.evaluate(() =>
+    localStorage.getItem("dotli:chain-backend"),
+  );
+  expect(backend).toBe("rpc-gateway");
 });
 
 test("As a user, when the app chunks fail to load mid-session, I see the appropriate error with a reload button", async ({

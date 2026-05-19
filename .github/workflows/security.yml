@@ -7,8 +7,8 @@ jobs:
   audit:
     uses: paritytech/shannon-audits/.github/workflows/shannon-audit.yml@main
     with:
-      init_commands: 'bun install && bun run build'
-      dev_command: 'bun run preview'
+      init_commands: 'bun install && bunx --bun turbo run build'
+      dev_command: 'bunx --bun turbo run build && bun scripts/preview-server.ts'
       dev_port: '5173'
     secrets:
       SHANNON_CLAUDE_TOKEN: ${{ secrets.SHANNON_CLAUDE_TOKEN }}

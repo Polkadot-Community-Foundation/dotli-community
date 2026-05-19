@@ -20,5 +20,5 @@ runs:
       shell: bash
 
     - name: Install Playwright browsers
-      run: bunx playwright install --with-deps chromium
+      run: bunx --bun playwright install --with-deps chromium
       shell: bash
