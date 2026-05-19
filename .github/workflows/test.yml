@@ -107,7 +107,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-product-results
           path: apps/host/e2e/test-results/
@@ -148,7 +148,7 @@ jobs:
       # left a sticky note and this run is green, delete the stale note.
       - name: Post failure note on PR
         if: failure() && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: e2e-product
           message: |
@@ -162,7 +162,7 @@ jobs:
 
       - name: Clear stale failure note on PR (suite is green)
         if: success() && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: e2e-product
           delete: true
