@@ -148,15 +148,9 @@ Local development uses wildcard subdomains:
 
 ## Debug panel
 
-dot.li ships a TrUAPI debug panel that aggregates host-side activity (boot/resolve/render/bridge events, TrUAPI host↔product messages, host-papp SSO/session events) into one time-aligned inspector. It's gated behind `VITE_APP_DEBUG=true` at build time and is tree-shaken out of production builds entirely.
+dot.li ships a TrUAPI debug panel that aggregates host-side activity (boot/resolve/render/bridge events, TrUAPI host↔product messages, host-papp SSO/session events) into one time-aligned inspector. The panel chunk is dynamically imported, so users who never see it pay no download cost.
 
-To preview locally with the panel enabled:
-
-```bash
-bun run preview:debug    # = VITE_APP_DEBUG=true bun preview
-```
-
-In CI, the panel is on for `dev-paseo` (paseoli.dev) and `dev-polkadot` (dotli.dev) deploys via the `APP_DEBUG` GitHub Environment secret; staging and production leave it unset.
+In dev environments (`VITE_APP_DEBUG=true`: local `bun run preview:debug`, `paseoli.dev`, `dotli.dev`) the panel auto-mounts collapsed. In staging/production it's off until you click **Open in debug mode** in the host Settings menu (or append `?debug=true` to any URL). The choice is sessionStorage-scoped — closing the tab clears it. Use `?debug=off` to silence it explicitly within the same session.
 
 See [packages/truapi-debug/DEBUG_PANEL.md](packages/truapi-debug/DEBUG_PANEL.md) for the full reference — event sources, views, filters, correlation keys, and how to add a new instrumentation hook.
 

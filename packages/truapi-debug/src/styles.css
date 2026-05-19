@@ -88,19 +88,6 @@
 }
 
 
-/* Topbar toggle — piggybacks on the existing .topbar-btn skin. The only
-   override is the active-state tint so users can tell at a glance whether
-   the panel is currently on-screen. */
-.truapi-debug-topbar-btn.active {
-  background: #e6007a;
-  border-color: #e6007a;
-  color: #fff;
-}
-.truapi-debug-topbar-btn.active:hover {
-  background: #cc006d;
-  border-color: #cc006d;
-}
-
 .td-tooltip {
   position: absolute;
   z-index: 1000;

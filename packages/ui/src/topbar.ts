@@ -1309,6 +1309,33 @@ function renderDiagnostics(parent: HTMLElement): void {
   });
   shareRow.appendChild(shareBtn);
   parent.appendChild(shareRow);
+
+  const debugRow = document.createElement("div");
+  debugRow.className = "mode-cache-row";
+  const debugBtn = document.createElement("button");
+  debugBtn.className = "mode-clear-btn";
+  const debugOn = isTruapiDebugEnabled();
+  debugBtn.textContent = debugOn ? "Exit debug mode" : "Open in debug mode";
+  debugBtn.title = debugOn
+    ? "Reload this tab with the TrUAPI debug panel disabled"
+    : "Reload this tab with the TrUAPI debug panel enabled (off again on tab close)";
+  debugBtn.addEventListener("click", () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("debug", debugOn ? "off" : "true");
+    window.location.assign(url.toString());
+  });
+  debugRow.appendChild(debugBtn);
+  parent.appendChild(debugRow);
+}
+
+function isTruapiDebugEnabled(): boolean {
+  try {
+    return sessionStorage.getItem("dotli:truapi-debug") === "1";
+  } catch {
+    // sessionStorage may be unavailable in exotic environments (Safari
+    // private mode); default to "not in debug mode".
+    return false;
+  }
 }
 
 /** Flatten the diagnostics tree into a plain-text block that reads cleanly

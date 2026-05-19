@@ -5,8 +5,11 @@ from three independent event sources into one time-aligned inspector.
 It's gated as `EXPERIMENTAL` because the SDK hooks it consumes aren't
 a stable public surface yet.
 
-On the `debug-panel-system-events` branch the panel is **on by default**.
-On every other branch (including `main`) it is off by default.
+The panel ships in every build. In dev environments
+(`VITE_APP_DEBUG=true`) it auto-mounts collapsed; in staging/prod it
+stays off until enabled via the Settings panel's "Open in debug mode"
+button or `?debug=true`. Its heavy chunk is dynamically imported, so
+users who never see the panel pay zero download cost.
 
 ---
 
@@ -34,12 +37,12 @@ On every other branch (including `main`) it is off by default.
 
 ## What you see
 
-A resizable, dockable panel at the bottom of the viewport. The topbar
-grows a small bug icon that toggles its visibility; the panel's own
-`×` button hides it. The left pane is your choice of **List** or
-**Timeline**; the right pane is the detail inspector for the selected
-event. A draggable splitter between them lets you rebalance the
-panes.
+A resizable, dockable panel at the bottom of the viewport. It mounts
+visible whenever debug mode is on; the panel's `×` button exits debug
+mode entirely (see [Enabling and disabling](#enabling-and-disabling)).
+The left pane is your choice of **List** or **Timeline**; the right
+pane is the detail inspector for the selected event. A draggable
+splitter between them lets you rebalance the panes.
 
 Hover any element in the Timeline for a zero-delay tooltip with the
 decoded method + summary. Click any row or box to pin it in the
@@ -47,42 +50,46 @@ detail pane.
 
 ## Enabling and disabling
 
-**The panel only ships in debug builds.** Production builds (dot.li)
-have `VITE_APP_DEBUG` unset; the panel module, the `dotli-debug-bus`
-state, and the `nanoevents` import are tree-shaken out and the bare
-`emitDotliDebugEvent(...)` call sites scattered through `main.ts`,
-`bridge.ts`, and `container.ts` collapse to no-ops. None of the
-runtime opt-ins below work in prod — they require a debug build.
+The panel ships in every build. Default behavior depends on the build
+flag `VITE_APP_DEBUG`:
 
-To produce a debug build locally, run:
+- **Dev environments** (`VITE_APP_DEBUG=true`: `bun run preview:debug`
+  locally, `paseoli.dev` and `dotli.dev` in CI via the `APP_DEBUG`
+  GitHub Environment secret): the panel auto-mounts **collapsed**
+  (header-only) so it's a one-click expand away without covering
+  content unsolicited.
+- **Staging / production** (`VITE_APP_DEBUG` unset): the panel is off
+  until the user explicitly opts in.
 
-```bash
-bun run preview:debug    # = VITE_APP_DEBUG=true bun preview
-```
+When the panel isn't mounted, the bus stays in a null-stub state and
+every `emitDotliDebugEvent(...)` call site scattered through `main.ts`,
+`bridge.ts`, and `container.ts` is a cheap early-return. The panel's
+UI chunk (`panel-*.js`) is a dynamic import — it isn't fetched until
+the panel mounts.
 
-In CI, the flag is set per-environment via the `APP_DEBUG` GitHub
-Environment secret — `true` on `dev-paseo` (paseoli.dev) and
-`dev-polkadot` (dotli.dev), unset on `staging` and `production`
-(dot.li). See [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)
-for the wiring.
+Two ways to explicitly turn the panel on (mounts **expanded**):
 
-Within a debug build, two ways to turn the panel on, in precedence
-order:
-
-1. **URL param:** visit any page with `?debug=truapi`. The flag is
+1. **Settings button:** click **Open in debug mode** at the bottom of
+   the host Settings menu (below "Share diagnostic"). The button
+   reloads the current tab with `?debug=true` appended.
+2. **URL param:** visit any page with `?debug=true`. The flag is
    persisted to `sessionStorage` and stripped from the URL (so it
    doesn't leak into the sandbox iframe's strict param validator).
-2. **Branch default:** the `debug-panel-system-events` branch turns
-   the panel on by default. Every other branch defaults to off.
+
+Explicit opt-ins win over the build-time default — once you've toggled
+within a tab, the persisted choice survives reloads until the tab
+closes or you toggle the other way.
 
 To turn it off:
 
+- Click **Exit debug mode** in the host Settings menu — same row as
+  "Open in debug mode" (the button toggles based on current state).
+- Click the `×` button on the panel header. Both paths set
+  `sessionStorage["dotli:truapi-debug"]` to `"0"` and reload, which
+  fully exits debug mode and discards the in-memory event store.
 - Visit any page with `?debug=off`. Also persisted + URL-stripped.
-- Click the `×` button on the panel header (hides until reopened via
-  the topbar toggle in the same tab).
-
-Persisted choices win over the branch default, so once you opt out
-the tab stays quiet until `sessionStorage` is cleared.
+- Close the tab — the choice is sessionStorage-scoped, so a fresh
+  tab starts clean regardless.
 
 ## The three event sources
 

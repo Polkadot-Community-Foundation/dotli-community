@@ -46,9 +46,8 @@ import {
 const DEFAULT_CAPACITY = 2000;
 const STYLE_ID = "truapi-debug-styles";
 const PANEL_ID = "truapi-debug-panel";
-const TOPBAR_BUTTON_ID = "truapi-debug-toggle";
 const DOCK_STORAGE_KEY = "truapi-debug:dock";
-const VISIBLE_STORAGE_KEY = "truapi-debug:visible";
+const DEBUG_SESSION_KEY = "dotli:truapi-debug";
 
 type DockPosition = "bottom" | "right";
 
@@ -74,28 +73,16 @@ function writeStoredDock(dock: DockPosition): void {
   }
 }
 
-function readStoredVisible(): boolean {
-  try {
-    return localStorage.getItem(VISIBLE_STORAGE_KEY) === "1";
-    // eslint-disable-next-line no-restricted-syntax -- localStorage may throw in Safari private mode; default to hidden.
-  } catch {
-    /* swallow */
-  }
-  return false;
-}
-
-function writeStoredVisible(visible: boolean): void {
-  try {
-    localStorage.setItem(VISIBLE_STORAGE_KEY, visible ? "1" : "0");
-    // eslint-disable-next-line no-restricted-syntax -- localStorage may throw on quota/private mode; persistence is best-effort.
-  } catch {
-    /* swallow */
-  }
-}
-
 export interface SetupOptions {
   /** Hard cap on retained events before oldest are evicted. */
   capacity?: number;
+  /**
+   * Mount the panel collapsed (header-only). Used when debug mode is
+   * auto-enabled in dev environments so the panel doesn't cover content
+   * unsolicited; explicit opt-ins (Settings button / `?debug=true`)
+   * mount expanded.
+   */
+  startCollapsed?: boolean;
 }
 
 /**
@@ -103,11 +90,12 @@ export interface SetupOptions {
  *
  * Creates a single panel bound to the current page, subscribes once to
  * the global host-container debug bus, and returns a dispose function
- * that tears everything down (DOM + subscription + topbar button).
+ * that tears everything down (DOM + subscription).
  *
- * The panel is hidden on first load and remembers its open/closed and
- * dock-position state across reloads via localStorage. Toggle via the
- * debug icon in the topbar or the panel's `×` button.
+ * The panel mounts visible whenever debug mode is on. The header's `×`
+ * button exits debug mode entirely (clears the session flag and
+ * reloads) — re-enter via the host Settings panel's "Open in debug
+ * mode" button.
  *
  * Calling twice without disposing is a no-op on the second call.
  */
@@ -124,8 +112,7 @@ export function setupTruapiDebugPanel(options: SetupOptions = {}): () => void {
     capacity: options.capacity ?? DEFAULT_CAPACITY,
   });
   const state: PanelState = {
-    hidden: !readStoredVisible(),
-    collapsed: false,
+    collapsed: options.startCollapsed ?? false,
     selectedSeq: null,
     filters: initialFilterState(),
     view: "list",
@@ -133,41 +120,12 @@ export function setupTruapiDebugPanel(options: SetupOptions = {}): () => void {
   };
 
   const ui = buildPanel(state, store);
-  ui.panel.classList.toggle("hidden", state.hidden);
   document.body.appendChild(ui.panel);
   applyDockPosition(ui, state, { persist: false });
-
-  const setVisible = (visible: boolean): void => {
-    state.hidden = !visible;
-    ui.panel.classList.toggle("hidden", state.hidden);
-    topbarBtn?.classList.toggle("active", visible);
-    adjustIframeForPanel(ui.panel, state);
-    writeStoredVisible(visible);
-  };
-
-  // Install a topbar toggle button (matches the visual language of the
-  // existing `.topbar-btn` controls). If the topbar isn't present yet
-  // (main.ts calls us early), poll for it a handful of times.
-  let topbarBtn: HTMLButtonElement | null = null;
-  const tryInstallTopbarButton = (): void => {
-    const right = document.querySelector<HTMLElement>("#topbar .topbar-right");
-    if (right === null || topbarBtn !== null) {
-      return;
-    }
-    topbarBtn = makeTopbarButton();
-    topbarBtn.addEventListener("click", () => {
-      setVisible(state.hidden);
-    });
-    right.insertBefore(topbarBtn, right.firstChild);
-    topbarBtn.classList.toggle("active", !state.hidden);
-  };
-  tryInstallTopbarButton();
-  const topbarPoll = setInterval(() => {
-    tryInstallTopbarButton();
-    if (topbarBtn !== null) {
-      clearInterval(topbarPoll);
-    }
-  }, 250);
+  if (state.collapsed) {
+    ui.panel.classList.add("collapsed");
+    ui.collapseBtn.textContent = "▲";
+  }
 
   // When a new product iframe is mounted, re-apply the iframe height
   // adjustment so the panel doesn't cover freshly-rendered app content.
@@ -177,7 +135,15 @@ export function setupTruapiDebugPanel(options: SetupOptions = {}): () => void {
   window.addEventListener("dotli:product-loaded", onProductLoaded);
 
   ui.closeBtn.addEventListener("click", () => {
-    setVisible(false);
+    // Exit debug mode entirely: the panel is bound to debug mode, and
+    // re-entry is via the host Settings "Open in debug mode" button.
+    try {
+      sessionStorage.setItem(DEBUG_SESSION_KEY, "0");
+      // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable in exotic environments; fall through to plain reload.
+    } catch {
+      /* ignore */
+    }
+    window.location.reload();
   });
 
   // Event subscription. rAF-throttled render to avoid jank under load.
@@ -213,9 +179,7 @@ export function setupTruapiDebugPanel(options: SetupOptions = {}): () => void {
     unsubscribeHostPapp();
     unsubscribeDotli();
     unsubscribeStore();
-    clearInterval(topbarPoll);
     window.removeEventListener("dotli:product-loaded", onProductLoaded);
-    topbarBtn?.remove();
     ui.panel.remove();
     restoreIframeLayout();
   };
@@ -231,18 +195,18 @@ function adjustIframeForPanel(panel: HTMLElement, state: PanelState): void {
   const topOffset = hasTopbar ? 40 : 0;
   if (state.dock === "right") {
     iframe.style.height = `calc(100vh - ${String(topOffset)}px)`;
-    const panelWidth = state.hidden ? 0 : panel.offsetWidth;
-    iframe.style.width = `calc(100vw - ${String(panelWidth)}px)`;
+    // When collapsed, the 32px header bar overlays the top-right corner
+    // of the iframe rather than reserving a full-height column — mirrors
+    // how bottom-dock collapse overlays only the bottom 32px.
+    iframe.style.width = state.collapsed
+      ? "100%"
+      : `calc(100vw - ${String(panel.offsetWidth)}px)`;
   } else {
     // Host's prepareIframe / renderIframe sets inline width:100%. Restore
     // that explicitly — clearing to "" falls back to the HTML iframe
     // default of 300px and breaks the layout.
     iframe.style.width = "100%";
-    const panelHeight = state.hidden
-      ? 0
-      : state.collapsed
-        ? 32
-        : panel.offsetHeight;
+    const panelHeight = state.collapsed ? 32 : panel.offsetHeight;
     iframe.style.height = `calc(100vh - ${String(topOffset)}px - ${String(panelHeight)}px)`;
   }
 }
@@ -257,35 +221,11 @@ function restoreIframeLayout(): void {
   iframe.style.width = "100%";
 }
 
-function makeTopbarButton(): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.id = TOPBAR_BUTTON_ID;
-  btn.className = "topbar-btn truapi-debug-topbar-btn";
-  btn.title = "TrUAPI debug panel";
-  btn.type = "button";
-  // Small "bug" glyph; matches the 12x12 stroke style of the existing topbar icons.
-  btn.innerHTML = `
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="8" y="6" width="8" height="14" rx="4"/>
-      <path d="M12 6v-2"/>
-      <path d="M9 3l3 3 3-3"/>
-      <path d="M4 12h4"/>
-      <path d="M16 12h4"/>
-      <path d="M5 6l3 3"/>
-      <path d="M19 6l-3 3"/>
-      <path d="M5 18l3-2"/>
-      <path d="M19 18l-3-2"/>
-    </svg>
-  `;
-  return btn;
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 
 type PanelView = "list" | "timeline";
 
 interface PanelState {
-  hidden: boolean;
   collapsed: boolean;
   selectedSeq: EventSeq | null;
   filters: FilterState;

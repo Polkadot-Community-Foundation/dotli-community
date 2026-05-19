@@ -33,7 +33,7 @@ import { initTopBar, wipeOriginState } from "@dotli/ui/topbar";
 import { listenForSandboxBitswap } from "@dotli/ui/bulletin-bitswap";
 import { getCachedCid, setCachedCid } from "@dotli/storage/cid-cache";
 import { dur, elapsed } from "@dotli/shared/perf";
-import { BASE_DOMAIN, SITE_ID } from "@dotli/config/config";
+import { BASE_DOMAIN, DEBUG, SITE_ID } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
 import { escapeHtml } from "@dotli/shared/html";
@@ -122,15 +122,6 @@ if (m.enabled && typeof PerformanceObserver !== "undefined") {
 }
 
 const T0 = performance.now();
-
-// Build-time gate for the TrUAPI debug panel. Vite constant-folds
-// `import.meta.env.VITE_APP_DEBUG` *only at the access site*, so this
-// const must live in this module — re-exporting it via
-// `packages/config/src/config.ts`'s `DEBUG` would turn it into a
-// cross-module runtime read and defeat the dynamic-import DCE that
-// strips `panel-*.js` from production builds.
-const DEBUG_BUILD =
-  (import.meta.env.VITE_APP_DEBUG as string | undefined) === "true";
 
 /**
  * Parse a localhost proxy URL from the path.
@@ -375,27 +366,28 @@ import type * as RenderModule from "@dotli/ui/bridge";
 type RenderChunk = typeof RenderModule;
 
 /**
- * Runtime gate for the TrUAPI debug panel. Only consulted in debug
- * builds (see `DEBUG_BUILD` above) — production strips the call
- * site entirely. In debug builds the panel is on by default so
- * reviewers see it immediately without appending `?debug=truapi`.
+ * Resolve the TrUAPI debug panel mode for this page load.
  *
- * The existing opt-out signals still work:
- *   - `?debug=off` in the URL disables it (and persists the choice
- *     to sessionStorage so reloads respect it).
- *   - An already-persisted `sessionStorage["dotli:truapi-debug"]` of
- *     `"0"` disables it for the rest of the tab's lifetime.
+ *   - `enabled`: whether to mount the panel.
+ *   - `explicit`: whether the user opted in (URL or sessionStorage).
+ *     Drives the initial collapsed state — explicit opt-ins start
+ *     expanded, dev-environment auto-enables start collapsed so the
+ *     panel doesn't cover content unsolicited.
  *
- * The legacy `?debug=truapi` opt-in is also still handled for
- * symmetry, and both URL forms are stripped from `history` so the
- * param doesn't leak into the sandbox iframe (whose strict URL
- * validator would reject it as "Invalid sandbox URL").
+ * Precedence (highest → lowest):
+ *   1. `?debug=true` / `?debug=off` in the URL — persisted to
+ *      sessionStorage and stripped from `history` (so the param doesn't
+ *      leak into the sandbox iframe's strict URL validator).
+ *   2. Existing `sessionStorage["dotli:truapi-debug"]` — `"1"` enables,
+ *      `"0"` disables.
+ *   3. Build-time `DEBUG` (from `VITE_APP_DEBUG`) — on in `dev-paseo` /
+ *      `dev-polkadot` / `bun run preview:debug`, off in staging / prod.
  */
-function shouldEnableTruapiDebug(): boolean {
+function resolveTruapiDebugMode(): { enabled: boolean; explicit: boolean } {
   try {
     const url = new URL(window.location.href);
     const param = url.searchParams.get("debug");
-    if (param === "truapi" || param === "off") {
+    if (param === "true" || param === "off") {
       sessionStorage.setItem("dotli:truapi-debug", param === "off" ? "0" : "1");
       url.searchParams.delete("debug");
       const rewritten =
@@ -408,18 +400,17 @@ function shouldEnableTruapiDebug(): boolean {
     }
     const persisted = sessionStorage.getItem("dotli:truapi-debug");
     if (persisted === "1") {
-      return true;
+      return { enabled: true, explicit: true };
     }
     if (persisted === "0") {
-      return false;
+      return { enabled: false, explicit: true };
     }
-    // Default for this branch: on.
-    return true;
-    // eslint-disable-next-line no-restricted-syntax -- URL/sessionStorage may be unavailable in exotic environments (Safari private mode); the debug panel is purely a dev-facing overlay, so we fall through to the on-by-default behaviour below.
+    return { enabled: DEBUG, explicit: false };
+    // eslint-disable-next-line no-restricted-syntax -- URL/sessionStorage may be unavailable in exotic environments (Safari private mode); fall through to the build-time default.
   } catch {
-    /* ignore — fall through to the branch default */
+    /* ignore */
   }
-  return true;
+  return { enabled: DEBUG, explicit: false };
 }
 
 // ── Main-thread liveness monitor ─────────────────────────────
@@ -758,25 +749,24 @@ async function main(): Promise<void> {
   performance.mark("dotli:main:start");
   log.warn(`[dot.li perf] main() started (${elapsed(T0)})`);
 
-  // ── Experimental: TrUAPI debug panel ─────────────────────
+  // ── TrUAPI debug panel ───────────────────────────────────
   //
-  // Build-time gate: `VITE_APP_DEBUG="true"` ships the panel; anything
-  // else (production / dot.li) collapses `DEBUG_BUILD` to `false` so
-  // Vite DCEs the panel import, the runtime URL-param gate, and the
-  // main-thread monitor below. The bus module stays imported but its
-  // exports become no-ops (see dotli-debug-bus.ts) so bare emit calls
-  // throughout main() are inert without needing call-site changes.
+  // Runtime-gated: the panel ships in every build but the heavy chunk
+  // is only fetched when the user opts in via `?debug=true` (set by the
+  // "Open in debug mode" Settings button) or a persisted sessionStorage
+  // entry. When disabled, the bus stays in its null-stub state and
+  // every `emitDotliDebugEvent` call throughout main() early-exits.
   //
-  // Within debug builds the runtime gate (`?debug=off`, sessionStorage)
-  // still lets developers silence the panel on a per-tab basis.
+  // `?debug=off` and sessionStorage still let users silence the panel
+  // on a per-tab basis after enabling it.
   const { emitDotliDebugEvent, enableDotliDebugBuffering } =
     await import("@dotli/truapi-debug/dotli-debug-bus");
-  const debugEnabled = DEBUG_BUILD && shouldEnableTruapiDebug();
-  if (debugEnabled) {
+  const debugMode = resolveTruapiDebugMode();
+  if (debugMode.enabled) {
     enableDotliDebugBuffering();
     void import("@dotli/truapi-debug/panel").then(
       ({ setupTruapiDebugPanel }) => {
-        setupTruapiDebugPanel();
+        setupTruapiDebugPanel({ startCollapsed: !debugMode.explicit });
         log.warn(`[dot.li] TrUAPI debug panel enabled`);
       },
     );
@@ -797,7 +787,7 @@ async function main(): Promise<void> {
   // bridge has exchanged traffic in both directions (first outbound
   // response posted) or after MAX_MAIN_MONITOR_MS, whichever comes
   // first.
-  if (debugEnabled) {
+  if (debugMode.enabled) {
     startMainThreadMonitor(bootFlowId, emitDotliDebugEvent);
     // Forward sandbox-origin debug events up to the host's debug bus so
     // the "what is the product iframe doing?" window (SW register,

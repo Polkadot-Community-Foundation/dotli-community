@@ -7,26 +7,24 @@
 // checks `hasDotliDebugListeners()` before constructing expensive
 // payloads).
 //
-// Build-time gate: `VITE_APP_DEBUG="true"` activates the real bus;
-// any other value (production / dot.li) collapses `DEBUG_BUILD` to
-// `false`, the `bus` constant resolves to `null`, every export's
-// `if (bus === null) return` early-exits, and Vite's tree-shaker
-// drops the `createNanoEvents` import (the package is marked
-// `sideEffects: false`). Net result: prod bundles ship empty stubs
-// and zero bus state. This const has to live in *this* module —
-// importing `DEBUG` from `@dotli/config/config` would turn it into a
-// cross-module runtime read that Vite/Rollup will not constant-fold.
+// Runtime gate: the bus stays `null` until `enableDotliDebugBuffering()`
+// flips it on. That call is made by `resolveTruapiDebugMode()` in
+// `apps/host/src/main.ts` when the panel is going to mount — either
+// because the user opted in (`?debug=true` / sessionStorage) or
+// because the build flag `VITE_APP_DEBUG=true` auto-enables it in
+// dev environments. Before that point every emit/subscribe
+// early-exits on `bus === null`, so users on staging/prod who never
+// open debug mode pay no runtime cost beyond the (small) module
+// shell. The panel chunk itself is still dynamically imported, so
+// the heavy UI code stays out of the eager bundle.
 
 import { createNanoEvents } from "nanoevents";
 
 import type { DotliDebugEvent } from "./dotli-debug-types.ts";
 
-const DEBUG_BUILD =
-  (import.meta.env.VITE_APP_DEBUG as string | undefined) === "true";
-
-const bus = DEBUG_BUILD
-  ? createNanoEvents<{ event: (e: DotliDebugEvent) => void }>()
-  : null;
+let bus: ReturnType<
+  typeof createNanoEvents<{ event: (e: DotliDebugEvent) => void }>
+> | null = null;
 let listenerCount = 0;
 
 /**
@@ -38,7 +36,7 @@ let listenerCount = 0;
  *
  * Semantics: zero cost when debug is never enabled. When enabled
  * explicitly via `enableDotliDebugBuffering()` (called early by
- * `shouldEnableTruapiDebug()` in main.ts), events are retained until
+ * `resolveTruapiDebugMode()` in main.ts), events are retained until
  * the first subscriber attaches, then replayed and buffering is
  * switched off. One-shot — subsequent unsub/resub cycles don't
  * accumulate.
@@ -57,9 +55,7 @@ function noopUnsubscribe(): void {
  * decision to enable the debug panel, before any emit site runs.
  */
 export function enableDotliDebugBuffering(): void {
-  if (bus === null) {
-    return;
-  }
+  bus ??= createNanoEvents<{ event: (e: DotliDebugEvent) => void }>();
   bufferingEnabled = true;
 }
 
