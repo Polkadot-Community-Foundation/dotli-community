@@ -47,7 +47,7 @@ function getMetadataUrl(): string {
 export type AuthState =
   | { status: "idle" }
   | { status: "pairing"; payload: string }
-  | { status: "attesting"; username?: string }
+  | { status: "attesting" }
   | { status: "authenticated"; session: UserSession; identity: Identity | null }
   | { status: "error"; message: string };
 
@@ -344,6 +344,9 @@ export function startPairing(): void {
           // Pairing + attestation both done; session is persisted.
           // sessions.subscribe() is the primary pickup path, but call
           // pickUpSession() here as a fallback.
+          if (currentState.status !== "authenticated") {
+            setState({ status: "attesting" });
+          }
           pickUpSession();
           break;
         case "none":

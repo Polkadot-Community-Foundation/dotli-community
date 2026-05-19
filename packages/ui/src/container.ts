@@ -9,6 +9,7 @@
 
 import {
   createDefaultLogger,
+  CreateTransactionErr,
   DeriveEntropyErr,
   GenericError,
   GetUserIdErr,
@@ -23,6 +24,7 @@ import {
   SigningErr,
   StatementProofErr,
   StorageErr,
+  toHex,
 } from "@novasamatech/host-api";
 import type { Provider } from "@novasamatech/host-api";
 import {
@@ -60,7 +62,12 @@ import {
   requestLogin,
   type AuthState,
 } from "@dotli/auth/auth";
-import { showSignPayloadModal, showSignRawModal } from "@dotli/auth/signing";
+import {
+  showCreateTransactionModal,
+  showSignPayloadModal,
+  showSignRawModal,
+  type ContainerCreateTransactionPayload,
+} from "@dotli/auth/signing";
 import {
   deriveProductPublicKey,
   productPublicKeyToAddress,
@@ -391,6 +398,59 @@ function wireContainerHandlers(
     }),
   );
 
+  // host-api 0.7.9 delegates extrinsic construction to the wallet via
+  // host_create_transaction. We forward the typed payload to the paired
+  // mobile app and return the signed extrinsic bytes the wallet builds.
+  container.handleCreateTransaction((payload, { ok, err }) =>
+    queueWalletFlow(() => {
+      log.warn(`[${label}] handleCreateTransaction invoked:`, {
+        signer: payload.signer,
+        genesisHash: toHex(payload.genesisHash),
+        callDataLen: payload.callData.length,
+        extensions: payload.extensions.map((e) => e.id),
+        txExtVersion: payload.txExtVersion,
+      });
+
+      if (!isProductAccountValid(label, payload.signer[0])) {
+        log.warn(
+          `[${label}] handleCreateTransaction — invalid signer[0]=${payload.signer[0]}`,
+        );
+        return errAsync(new CreateTransactionErr.PermissionDenied());
+      }
+
+      return promptCachedSubmitPermission(label, "ChainSubmit").andThen(
+        (granted) => {
+          if (!granted) {
+            log.warn(
+              `[${label}] handleCreateTransaction — ChainSubmit not granted`,
+            );
+            return err(new CreateTransactionErr.PermissionDenied());
+          }
+          const session = getSession();
+          if (!session) {
+            log.error(
+              `[${label}] handleCreateTransaction — no session, rejecting`,
+            );
+            return err(new CreateTransactionErr.Rejected());
+          }
+
+          return fromPromise(
+            showCreateTransactionModal(session, payload, label),
+            (e) => e as never,
+          )
+            .andThen((signedTx) => {
+              log.warn(`[${label}] handleCreateTransaction — resolved OK`);
+              return ok(signedTx);
+            })
+            .orElse((e) => {
+              log.warn(`[${label}] handleCreateTransaction — rejected:`, e);
+              return err(e);
+            });
+        },
+      );
+    }),
+  );
+
   // Legacy-account signing wires. Re-derive the same `(session, identifier, 0)`
   // public key, SS58-encode it, and require it equals the product-supplied
   // `signer: string` before opening the regular signing modal with a synthetic
@@ -514,6 +574,83 @@ function wireContainerHandlers(
           log.warn(`[${label}] handleSignRawWithLegacyAccount — rejected:`, e);
           return err(e);
         });
+    }),
+  );
+
+  // Legacy-account create-transaction. The host-papp SSO message only carries
+  // the product-account flavor, so we re-route the request through the same
+  // wallet flow using a synthetic `[identifier, 0]` tuple. Mirrors the trust
+  // model of `handleSignPayloadWithLegacyAccount` above. `payload.signer` is
+  // the raw 32-byte public key (codec is `AccountId = Bytes(32)`).
+  container.handleCreateTransactionWithLegacyAccount((payload, { ok, err }) =>
+    queueWalletFlow(() => {
+      log.warn(`[${label}] handleCreateTransactionWithLegacyAccount invoked:`, {
+        signerHex: toHex(payload.signer),
+        genesisHash: toHex(payload.genesisHash),
+        callDataLen: payload.callData.length,
+        extensions: payload.extensions.map((e) => e.id),
+        txExtVersion: payload.txExtVersion,
+      });
+
+      const session = getSession();
+      if (!session) {
+        log.error(
+          `[${label}] handleCreateTransactionWithLegacyAccount — no session, rejecting`,
+        );
+        return errAsync(new CreateTransactionErr.Rejected());
+      }
+
+      const identifier = labelToProductIdentifier(label);
+      const derivedPk = deriveProductPublicKey(
+        session.rootAccountId,
+        identifier,
+        0,
+      );
+      if (toHex(derivedPk) !== toHex(payload.signer)) {
+        log.warn(
+          `[${label}] handleCreateTransactionWithLegacyAccount — signer mismatch (expected ${productPublicKeyToAddress(derivedPk)}, got pk=${toHex(payload.signer)})`,
+        );
+        return errAsync(
+          new CreateTransactionErr.Unknown({
+            reason: "Account can't be derived from product account id",
+          }),
+        );
+      }
+
+      return promptCachedSubmitPermission(label, "ChainSubmit").andThen(
+        (granted) => {
+          if (!granted) {
+            log.warn(
+              `[${label}] handleCreateTransactionWithLegacyAccount — ChainSubmit not granted`,
+            );
+            return err(new CreateTransactionErr.PermissionDenied());
+          }
+          const productPayload: ContainerCreateTransactionPayload = {
+            signer: [identifier, 0],
+            genesisHash: payload.genesisHash,
+            callData: payload.callData,
+            extensions: payload.extensions,
+            txExtVersion: payload.txExtVersion,
+          };
+          return fromPromise(
+            showCreateTransactionModal(session, productPayload, label),
+            (e) => e as never,
+          )
+            .andThen((signedTx) => {
+              log.warn(
+                `[${label}] handleCreateTransactionWithLegacyAccount — resolved OK`,
+              );
+              return ok(signedTx);
+            })
+            .orElse((e) => {
+              log.warn(
+                `[${label}] handleCreateTransactionWithLegacyAccount — rejected:`,
+                e,
+              );
+              return err(e);
+            });
+        },
+      );
     }),
   );
 

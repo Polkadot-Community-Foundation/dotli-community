@@ -14,7 +14,7 @@
   "devDependencies": {
     "@dotli/eslint-config": "workspace:*",
     "@dotli/typescript-config": "workspace:*",
-    "eslint": "^10.2.1",
+    "eslint": "^10.4.0",
     "happy-dom": "^20.9.0",
     "typescript": "~6.0.3",
     "vite": "^8.0.10",
@@ -29,10 +29,10 @@
     "@ensdomains/content-hash": "^3.0.0",
     "@polkadot-api/json-rpc-provider": "^0.2.0",
     "@polkadot-api/json-rpc-provider-proxy": "^0.4.0",
-    "@polkadot-api/signer": "^0.3.1",
+    "@polkadot-api/signer": "^0.3.3",
     "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
-    "polkadot-api": "^2.1.0",
+    "polkadot-api": "^2.1.4",
     "smoldot": "^3.1.1"
   }
 }

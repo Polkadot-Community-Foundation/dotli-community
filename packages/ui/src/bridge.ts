@@ -2,8 +2,8 @@
 //
 // Connects embedded dApps to host services (accounts, signing, chain
 // connections, scoped storage) via postMessage protocol.
-// Only imported by the host build — keeps smoldot, auth, and verifiable.js
-// out of the sandbox bundle.
+// Only imported by the host build, keeps smoldot and auth out of the
+// sandbox bundle.
 
 import { BASE_DOMAIN } from "@dotli/config/config";
 import { SANDBOX_CONTRACT_PARAMS } from "@dotli/config/host-sandbox-contract";

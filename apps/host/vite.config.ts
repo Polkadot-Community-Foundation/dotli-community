@@ -427,7 +427,7 @@ export default defineConfig({
     ),
   },
   optimizeDeps: {
-    exclude: ["@polkadot-api/wasm-executor", "verifiablejs"],
+    exclude: ["@polkadot-api/wasm-executor"],
   },
   build: {
     target: "esnext",

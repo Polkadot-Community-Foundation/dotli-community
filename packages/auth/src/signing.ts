@@ -8,7 +8,12 @@
 // rather than a derived address; computing the address would mean
 // duplicating the wallet's derivation logic for display only.
 
-import { SigningErr, toHex } from "@novasamatech/host-api";
+import {
+  CreateTransactionErr,
+  SigningErr,
+  enumValue,
+  toHex,
+} from "@novasamatech/host-api";
 import { log } from "@dotli/shared/log";
 import type { UserSession } from "@novasamatech/host-papp";
 
@@ -43,6 +48,14 @@ export interface ContainerSignRawRequest {
   payload:
     | { tag: "Bytes"; value: Uint8Array }
     | { tag: "Payload"; value: string };
+}
+
+export interface ContainerCreateTransactionPayload {
+  signer: [string, number];
+  genesisHash: Uint8Array;
+  callData: Uint8Array;
+  extensions: { id: string; extra: Uint8Array; additionalSigned: Uint8Array }[];
+  txExtVersion: number;
 }
 
 /** Timeout for the wallet to respond (ms). Covers WS drops and unresponsive wallets. */
@@ -315,6 +328,101 @@ export function showSignRawModal(
           removeModal(backdrop);
           const msg = e instanceof Error ? e.message : "Request timed out";
           reject(new SigningErr.Unknown({ reason: msg }));
+        },
+      );
+    });
+  });
+}
+
+/**
+ * Create-transaction modal. host-api 0.7.9 delegates extrinsic construction
+ * to the wallet via host_create_transaction. The host forwards the typed
+ * payload (signer tuple, genesis hash, call data, extensions, txExtVersion)
+ * and the wallet returns the signed extrinsic bytes. The legacy-account
+ * variant routes through the same flow with a synthetic product-account
+ * tuple, see handleCreateTransactionWithLegacyAccount in container.ts.
+ */
+export function showCreateTransactionModal(
+  session: UserSession,
+  payload: ContainerCreateTransactionPayload,
+  appLabel: string,
+): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const signerLabel = `${payload.signer[0]} / ${String(payload.signer[1])}`;
+    const genesisHashHex = toHex(payload.genesisHash);
+    const callDataHex = toHex(payload.callData);
+    const callDataPreview =
+      callDataHex.length > 80 ? `${callDataHex.slice(0, 80)}...` : callDataHex;
+
+    log.warn("[dot.li signing] createTransaction request received:", {
+      appLabel,
+      signer: payload.signer,
+      genesisHash: genesisHashHex,
+      callDataLen: payload.callData.length,
+      extensions: payload.extensions.map((e) => e.id),
+      txExtVersion: payload.txExtVersion,
+    });
+    log.warn("[dot.li signing] session info:", {
+      localAccountId: toHex(session.localAccount.accountId),
+      sessionRoot: toHex(session.remoteAccount.accountId),
+    });
+
+    const fields: { label: string; value: string; mono?: boolean }[] = [
+      { label: "App", value: appLabel },
+      { label: "Signer", value: signerLabel },
+      { label: "Genesis Hash", value: genesisHashHex, mono: true },
+      { label: "Call Data", value: callDataPreview, mono: true },
+      { label: "Tx Ext Version", value: String(payload.txExtVersion) },
+    ];
+
+    const { backdrop, signBtn, cancelBtn } = createModalDOM(
+      "Sign Transaction",
+      fields,
+    );
+
+    cancelBtn.addEventListener("click", () => {
+      log.warn("[dot.li signing] user cancelled createTransaction");
+      removeModal(backdrop);
+      reject(new CreateTransactionErr.Rejected());
+    });
+
+    signBtn.addEventListener("click", () => {
+      signBtn.disabled = true;
+      signBtn.textContent = "Signing...";
+
+      log.warn("[dot.li signing] dispatching createTransaction to session");
+
+      void withTimeout(
+        session.createTransaction({
+          payload: enumValue("v1", payload),
+        }),
+        SIGN_TIMEOUT_MS,
+      ).then(
+        (result) => {
+          result.match(
+            (signedTransaction) => {
+              log.warn("[dot.li signing] createTransaction SUCCESS:", {
+                signedTxLen: signedTransaction.length,
+              });
+              removeModal(backdrop);
+              resolve(signedTransaction);
+            },
+            (e) => {
+              log.error(
+                "[dot.li signing] createTransaction FAILED:",
+                e.message,
+                e,
+              );
+              removeModal(backdrop);
+              reject(new CreateTransactionErr.Unknown({ reason: e.message }));
+            },
+          );
+        },
+        (e: unknown) => {
+          log.error("[dot.li signing] createTransaction timed out:", e);
+          removeModal(backdrop);
+          const msg = e instanceof Error ? e.message : "Request timed out";
+          reject(new CreateTransactionErr.Unknown({ reason: msg }));
         },
       );
     });
