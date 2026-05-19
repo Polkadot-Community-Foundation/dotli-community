@@ -122,7 +122,7 @@ const VALID_NETWORKS: ReadonlySet<string> = new Set<Network>([
 ]);
 
 function defaultNetwork(): Network {
-  return NetworkName.PASEO_NEXT_V1;
+  return NetworkName.PASEO_NEXT_V2;
 }
 let networkOverride: Network | null = null;
 
