@@ -817,7 +817,6 @@ function renderModePopover(): void {
 
   appendSectionHeader(leftCol, "Network");
   const networkChoices: [Network, string, string][] = [
-    ["paseo-next-v1", "Paseo Next V1", "Current Paseo Next testnet"],
     ["paseo-next-v2", "Paseo Next V2", "Upgraded Paseo Next system chains"],
   ];
   const networkGroup = document.createElement("div");
