@@ -84,10 +84,16 @@ jobs:
     name: E2E Product
     runs-on: parity-default
     needs: unit
-    timeout-minutes: 20
+    # Headroom over Playwright's globalTimeout (30 min) so a stuck run is
+    # cut off by Playwright with diagnostics, not by GHA mid-stream.
+    timeout-minutes: 35
     if: ${{ github.event.sender.type != 'Bot' }}
     env:
       SIGNER_BOT_BASE_URL: https://signing-bot-dev.novasama-tech.org/
+      # Must match the host's `defaultNetwork()` in
+      # `packages/config/src/network.ts`. Setting explicitly so a host
+      # network bump can't silently leave the bot on the wrong chain.
+      SIGNER_BOT_NETWORK: paseo-next-v2
       SIGNER_BOT_SVC_TOKEN: ${{ secrets.SIGNER_BOT_SVC_TOKEN }}
     steps:
       - name: Checkout
@@ -101,9 +107,23 @@ jobs:
       - name: Build
         run: bunx --bun turbo run build
 
+      # Exit code 99 from playwright = Nova bot unavailable (signal raised
+      # by apps/host/e2e/global-setup.ts). Treat as soft-pass with a clear
+      # annotation: this is a Nova-side outage, not a dot.li test failure,
+      # and shouldn't block a PR.
       - name: Run E2E
-        run: bunx --bun playwright test --config=e2e/playwright.config.ts
+        id: e2e
         working-directory: apps/host
+        run: |
+          set +e
+          bunx --bun playwright test --config=e2e/playwright.config.ts
+          code=$?
+          if [ "$code" -eq 99 ]; then
+            echo "::warning::Signer bot unavailable — E2E Product suite skipped (Nova-side outage, not a dot.li failure)."
+            echo "bot_unavailable=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          exit $code
 
       - name: Upload test results
         if: always()
@@ -165,4 +185,28 @@ jobs:
         uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: e2e-product
+          delete: true
+
+      # Bot-unavailable surfaces as a distinct sticky comment so the
+      # reviewer can tell at a glance that the suite didn't actually run.
+      # Separate header from the failure note so the two can coexist
+      # without overwriting each other across runs.
+      - name: Post bot-unavailable note on PR
+        if: steps.e2e.outputs.bot_unavailable == 'true' && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: e2e-product-bot-unavailable
+          message: |
+            ⚠️ **E2E Product suite skipped** — Nova signing bot is unavailable.
+
+            This is a Nova-side outage and **not a dot.li test failure**. Re-run
+            from the Actions tab once the bot recovers.
+
+            Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Clear stale bot-unavailable note on PR
+        if: success() && steps.e2e.outputs.bot_unavailable != 'true' && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: e2e-product-bot-unavailable
           delete: true

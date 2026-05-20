@@ -2,15 +2,36 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const TRANSIENT = new Set([502, 503, 504]);
 
+// Per-attempt request timeout. The bot side rarely needs more than a few
+// seconds, even for pair (attestation + handshake). Without a client-side
+// cap, a hung response would silently extend the whole suite.
+const PAIR_REQUEST_TIMEOUT_MS = 30_000;
+const HEALTH_REQUEST_TIMEOUT_MS = 5_000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchRetry(
   url: string,
   init: RequestInit,
   attempts = 4,
+  timeoutMs = PAIR_REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
   let last: unknown = null;
   for (let i = 1; i <= attempts; i++) {
     try {
-      const r = await fetch(url, init);
+      const r = await fetchWithTimeout(url, init, timeoutMs);
       if (r.ok || !TRANSIENT.has(r.status) || i === attempts) return r;
       console.warn(
         `[bot] ${init.method ?? "GET"} ${url} → ${r.status} (attempt ${i}/${attempts})`,
@@ -98,12 +119,49 @@ export async function disconnect(
   svcToken: string,
   sessionId: string,
 ): Promise<void> {
-  await fetch(`${base.replace(/\/$/, "")}/api/disconnect`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${svcToken}`,
-      "Content-Type": "application/json",
+  await fetchWithTimeout(
+    `${base.replace(/\/$/, "")}/api/disconnect`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${svcToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ sessionId }),
     },
-    body: JSON.stringify({ sessionId }),
-  }).catch(() => {});
+    PAIR_REQUEST_TIMEOUT_MS,
+  ).catch(() => {});
+}
+
+export interface BotHealth {
+  ok: boolean;
+  status?: string;
+  uptime?: number;
+  error?: string;
+}
+
+/**
+ * Lightweight bot reachability probe. Used by globalSetup to fail-fast
+ * when the bot is unreachable, distinguishing "Nova is down" from
+ * "dot.li is broken" in CI output. No auth required.
+ */
+export async function health(base: string): Promise<BotHealth> {
+  try {
+    const r = await fetchWithTimeout(
+      `${base.replace(/\/$/, "")}/api/health`,
+      { method: "GET", headers: { Accept: "application/json" } },
+      HEALTH_REQUEST_TIMEOUT_MS,
+    );
+    if (!r.ok) {
+      return { ok: false, error: `${r.status} ${r.statusText}` };
+    }
+    const body = (await r.json()) as { status?: string; uptime?: number };
+    return {
+      ok: body.status === "ok",
+      status: body.status,
+      uptime: body.uptime,
+    };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 }

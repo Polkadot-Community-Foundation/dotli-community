@@ -40,6 +40,7 @@ pnpm-lock.yaml
 test-results/
 playwright-report/
 **/tests/results.json
+apps/host/e2e/.auth/
 
 # PAPI
 .papi/descriptors

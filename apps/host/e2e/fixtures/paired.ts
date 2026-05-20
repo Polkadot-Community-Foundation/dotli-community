@@ -1,25 +1,28 @@
 import { test as base, type Page, type Frame } from "@playwright/test";
-import { pair, disconnect, generateUsername } from "../helpers/signer-bot";
-import { extractQrPayload } from "../helpers/qr";
+import { existsSync } from "node:fs";
+import { STATE_FILE } from "./paths";
 
-const SVC_TOKEN = process.env.SIGNER_BOT_SVC_TOKEN ?? "";
-const BOT_BASE =
-  process.env.SIGNER_BOT_BASE_URL ??
-  "https://signing-bot-dev.novasama-tech.org";
-const BOT_NETWORK = process.env.SIGNER_BOT_NETWORK ?? "paseo-next";
 const PORT = process.env.PORT ?? "5173";
 const HOST = process.env.E2E_HOST ?? "host-playground";
 
+// Restored-session badge wait. The bot was paired once in globalSetup, the
+// storageState restores the host's auth on every context, so seeing the
+// user-badge should be near-instant. A tight cap surfaces a broken bot or
+// host fast instead of running out the workflow clock.
+const USER_BADGE_TIMEOUT_MS = 15_000;
+const PRODUCT_IFRAME_TIMEOUT_MS = 20_000;
+
 /**
- * Worker-scoped fixtures: open a fresh dot.li session, hand its QR
- * deeplink to the Nova signing bot, wait until the host confirms the
- * pairing badge, and locate the host-playground iframe. All tests in the
- * worker share the same paired session — wallet token is one-shot, so we
- * never re-pair within a worker.
+ * Worker-scoped fixtures: open a fresh page that inherits the
+ * once-per-run bot pairing via `storageState` written by globalSetup.
+ * No QR scan, no bot pair API call here. If the badge doesn't appear
+ * inside 15 s the worker fails fast — the bot is either down or the
+ * host can't restore auth from the saved state.
  *
- * Per-run username (`dotlitests…`) — see helpers/signer-bot.ts. Each worker
- * gets its own user so on-chain state (allowances, derived product
- * accounts) doesn't leak between runs.
+ * State sharing: every worker reads the same `.auth/state.json`, so all
+ * tests across the run share one bot user. This matches the prior
+ * behavior under `workers: 1` (worker-scope pairing) and avoids the
+ * re-pair cascade that previously timed out CI on a single test failure.
  */
 export const test = base.extend<
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- no test-scoped fixtures
@@ -28,20 +31,19 @@ export const test = base.extend<
 >({
   pairedPage: [
     async ({ browser }, use) => {
-      if (!SVC_TOKEN) {
-        throw new Error("SIGNER_BOT_SVC_TOKEN not set");
+      if (!existsSync(STATE_FILE)) {
+        throw new Error(
+          `pairedPage: ${STATE_FILE} missing — globalSetup must run first. ` +
+            `If you ran the test directly, ensure SIGNER_BOT_SVC_TOKEN is set ` +
+            `and re-run via \`bun run test:e2e\`.`,
+        );
       }
-      console.log("[fixture] pairedPage: starting setup");
 
-      const username = generateUsername();
-      console.log(`[pair] bot=${BOT_BASE} username=${username}`);
-
-      const ctx = await browser.newContext();
+      const ctx = await browser.newContext({ storageState: STATE_FILE });
       const page = await ctx.newPage();
 
-      // Capture host page + iframe console logs — invaluable for diagnosing
-      // SDK calls that never resolve. Surface warn/error/info lines that
-      // mention dotli internals; drop the rest to keep output readable.
+      // Surface host + iframe console noise filtered to dotli internals so
+      // we can diagnose SDK calls that never resolve without flooding logs.
       page.on("console", (msg) => {
         const text = msg.text();
         const type = msg.type();
@@ -50,8 +52,6 @@ export const test = base.extend<
           type === "warning" ||
           /\[dotli|\[dot\.li|host-papp|statement.store|signing/i.test(text)
         ) {
-          // Pairing payloads + statement bodies get full text; everything
-          // else is truncated to keep output readable.
           const isFullText =
             type === "error" ||
             text.includes("polkadotapp://") ||
@@ -62,17 +62,26 @@ export const test = base.extend<
         }
       });
       page.on("pageerror", (err) => {
-        // Full stack — TDZ errors and similar are unintelligible without
-        // file/line context.
         console.log(`[browser:pageerror] ${err.message}`);
         if (err.stack) {
           console.log(`[browser:pageerror:stack] ${err.stack}`);
         }
       });
 
-      // WebSocket frames — we want to see statement_submit calls going out and
-      // any subscription pushes coming back. Filter to method/result lines so
-      // we don't flood the log with every chain-head update.
+      // Mirror the init flags globalSetup used so the page boots into the
+      // same backend mode and the restored localStorage stays consistent.
+      await page.addInitScript(() => {
+        try {
+          localStorage.setItem("dotli:mode", "gateway");
+          localStorage.setItem("dotli:chain-backend", "rpc");
+          localStorage.setItem("dotli:content-backend", "ipfs-gateway");
+        } catch {
+          /* ignore */
+        }
+      });
+
+      // WebSocket frames — statement_submit / broadcast traffic for
+      // diagnosing the signing tests. Filtered to avoid chain-head spam.
       try {
         const cdp = await ctx.newCDPSession(page);
         await cdp.send("Network.enable");
@@ -94,53 +103,24 @@ export const test = base.extend<
         console.log(`[ws] CDP attach failed: ${(e as Error).message}`);
       }
 
-      await page.addInitScript(() => {
-        try {
-          localStorage.setItem("dotli:mode", "gateway");
-          localStorage.setItem("dotli:chain-backend", "rpc");
-          localStorage.setItem("dotli:content-backend", "ipfs-gateway");
-        } catch {
-          /* ignore */
-        }
-      });
-
       await page.goto(`http://${HOST}.localhost:${PORT}/`, {
-        timeout: 120_000,
+        timeout: 60_000,
       });
       await page
         .getByRole("button", { name: "Switch to Gateway" })
         .click({ timeout: 5_000 })
         .catch(() => {});
 
-      const authBtn = page.locator("#auth-button");
-      await authBtn.waitFor({ state: "visible", timeout: 30_000 });
-      await authBtn.click();
-
-      const qrCanvas = page.locator("#auth-modal-qr canvas");
-      await qrCanvas.waitFor({ state: "visible", timeout: 60_000 });
-
-      const deeplink = await extractQrPayload(page, "#auth-modal-qr canvas");
-      console.log(`[pair] deeplink (full): ${deeplink}`);
-
-      const pairStart = Date.now();
-      const result = await pair(BOT_BASE, SVC_TOKEN, {
-        handshake: deeplink,
-        username,
-        network: BOT_NETWORK,
-      });
-      console.log(
-        `[pair] bot paired in ${Math.round((Date.now() - pairStart) / 1000)}s sessionId=${result.sessionId.slice(0, 16)}…`,
-      );
-
+      const restoreStart = Date.now();
       await page
         .locator("#auth-button .user-badge")
-        .waitFor({ state: "visible", timeout: 90_000 });
-      console.log(`[pair] authenticated as ${username}`);
+        .waitFor({ state: "visible", timeout: USER_BADGE_TIMEOUT_MS });
+      console.log(
+        `[pairedPage] session restored in ${Date.now() - restoreStart}ms`,
+      );
 
       await use(page);
 
-      console.log("[fixture] pairedPage: tearing down");
-      await disconnect(BOT_BASE, SVC_TOKEN, result.sessionId);
       await ctx.close();
     },
     { scope: "worker" },
@@ -148,10 +128,12 @@ export const test = base.extend<
 
   productFrame: [
     async ({ pairedPage }, use) => {
-      console.log("[fixture] productFrame: locating iframe");
       const start = Date.now();
       let frame: Frame | undefined;
-      for (let i = 0; i < 60; i++) {
+      // Iframe attach + first paint usually lands within a few seconds of
+      // the user-badge. Bounded loop instead of a single waitFor so we can
+      // probe multiple frames as they mount.
+      while (Date.now() - start < PRODUCT_IFRAME_TIMEOUT_MS) {
         for (const f of pairedPage.frames()) {
           if (f === pairedPage.mainFrame()) continue;
           const ok = await f
@@ -165,14 +147,14 @@ export const test = base.extend<
           }
         }
         if (frame) break;
-        await pairedPage.waitForTimeout(2_000);
+        await pairedPage.waitForTimeout(500);
       }
       if (!frame) {
-        throw new Error("host-playground iframe never became visible");
+        throw new Error(
+          `host-playground iframe not visible within ${PRODUCT_IFRAME_TIMEOUT_MS}ms`,
+        );
       }
-      console.log(
-        `[pair] iframe ready (${Math.round((Date.now() - start) / 1000)}s)`,
-      );
+      console.log(`[productFrame] iframe ready in ${Date.now() - start}ms`);
       await use(frame);
     },
     { scope: "worker" },

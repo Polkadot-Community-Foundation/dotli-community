@@ -48,9 +48,21 @@ if (process.env.CI !== "true") {
 
 export default defineConfig({
   testDir: "./tests",
-  timeout: 300_000,
-  retries: 0,
+  // Per-test cap. Most tests complete in well under a minute; ones that
+  // need longer override via `test.setTimeout(...)`. The previous 5-minute
+  // ceiling masked stuck fixtures and inflated total run time.
+  timeout: 60_000,
+  // One retry absorbs single-flake jitter (chain finality, bot latency)
+  // without masking systemic failures. globalSetup ensures retries
+  // don't re-pair — they reuse the same bot session.
+  retries: 1,
   workers: 1,
+  // Hard ceiling on the whole run. Anything past this is GitHub Actions'
+  // problem to discover; we'd rather surface it as a clear timeout from
+  // Playwright with diagnostics than have GHA cancel the job mid-stream.
+  globalTimeout: 30 * 60_000,
+  globalSetup: "./global-setup.ts",
+  globalTeardown: "./global-teardown.ts",
   use: {
     browserName: "chromium",
     headless: process.env.HEADED !== "1",
