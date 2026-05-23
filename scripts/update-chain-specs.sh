@@ -131,10 +131,10 @@ process.stdin.on("end", async () => {
 
   fs.writeFileSync(process.argv[1], JSON.stringify(currentSpec));
   const size = fs.statSync(process.argv[1]).size;
-  console.log("  Updated paseo.json: " + (size / 1024).toFixed(1) + " KB");
+  console.log("  Updated paseo.smol.json: " + (size / 1024).toFixed(1) + " KB");
   console.log("  Boot nodes: " + currentSpec.bootNodes.length);
 });
-' "$SPECS_DIR/paseo.json"
+' "$SPECS_DIR/paseo.smol.json"
 
 echo ""
 echo "Done. Chain specs updated in packages/resolver/src/chain-specs/"

@@ -2,7 +2,8 @@ name: Refresh Chain Spec Checkpoints
 
 on:
   schedule:
-    - cron: '0 0 */2 * *' # Every 48 hours
+    # Every 6 hours starting at 00:00 UTC.
+    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       skip_bootnode_check:
@@ -49,7 +50,7 @@ jobs:
         with:
           title: 'chore: refresh chain spec checkpoints'
           body: |
-            Automated 24-hourly update of Paseo relay chain spec checkpoint.
+            Automated update of Paseo relay chain spec checkpoint.
 
             This keeps the smoldot light client sync gap small
             instead of falling further behind on cold loads.
