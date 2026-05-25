@@ -100,7 +100,7 @@ Telegraph style. Root rules only. Read scoped `AGENTS.md` before subtree work.
 ## Git
 
 - Commits: `type(scope): message`, conventional, single-line, lowercase after colon, no period. Types: `feat`, `fix`, `chore`, `docs`, `refactor`.
-- Branches: `feat/<slug>`, `fix/<slug>`, or personal name (`tiago-<topic>`).
+- Branches: `feat/<slug>`, `fix/<slug>`, `chore/<slug>`, `docs/<slug>`, `refactor/<slug>`.
 - PRs against `main`. CI runs lint, tests, E2E, bundle-size, perf. Reviewers auto-assigned by `.github/workflows/assign.yml`.
 - `main`: rebase before push; no merge commits.
 - User says `commit`: your changes only. `commit all`: all changes in grouped chunks. `push`: may `git pull --rebase` first.
