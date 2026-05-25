@@ -38,6 +38,12 @@ server {
 
     include /etc/nginx/snippets/sentry-tunnel.conf;
 
+    location = /__preview {
+        set $csp_ancestors "revx.dev stg.revx.dev http://localhost:*";
+        include /etc/nginx/snippets/dotli-headers-iframeable.conf;
+        try_files /index.html =404;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }
@@ -90,7 +96,7 @@ server {
 
     limit_req zone=dotli_limit burst=30 nodelay;
 
-    set $csp_ancestors "dot.li *.dot.li *.app.dot.li";
+    set $csp_ancestors "dot.li *.dot.li *.app.dot.li revx.dev stg.revx.dev http://localhost:*";
     include /etc/nginx/snippets/dotli-headers-iframeable.conf;
     include /etc/nginx/snippets/dotli-precompressed.conf;
 
