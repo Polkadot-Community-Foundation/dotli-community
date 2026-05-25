@@ -20,13 +20,6 @@ test.describe("dot.li > host-playground.dot", () => {
       await runTestExpectSuccess(productFrame, "accounts-provider-legacy");
     });
 
-    test("Legacy Signer", async ({ productFrame }) => {
-      await runTestExpectSuccess(
-        productFrame,
-        "accounts-provider-legacy-signer",
-      );
-    });
-
     test("Get Product Account", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "accounts-provider-product");
     });
@@ -55,9 +48,6 @@ test.describe("dot.li > host-playground.dot", () => {
       await runTestExpectSuccess(productFrame, "accounts-provider-alias");
     });
 
-    test("Ring VRF Proof", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "accounts-ring-vrf-proof");
-    });
   });
 
   test.describe("Auth", () => {
@@ -543,60 +533,6 @@ test.describe("dot.li > host-playground.dot", () => {
       expect(status).toBe("success");
     });
 
-    test("Sign Payload (Legacy)", async ({ pairedPage, productFrame }) => {
-      // Given
-      test.setTimeout(180_000);
-
-      // When
-      const status = await runWebSignedTest(
-        pairedPage,
-        productFrame,
-        "sign-payload-legacy",
-        ["Allow", "Sign"],
-        { timeoutMs: 60_000, preClickDelayMs: 1_000 },
-      );
-
-      // Then
-      expect(status).toBe("success");
-    });
-
-    test("Sign Raw (Legacy Account)", async ({ pairedPage, productFrame }) => {
-      // Given
-      test.setTimeout(180_000);
-
-      // When
-      const status = await runWebSignedTest(
-        pairedPage,
-        productFrame,
-        "sign-raw-legacy",
-        ["Allow", "Sign"],
-        { timeoutMs: 120_000, preClickDelayMs: 1_000 },
-      );
-
-      // Then
-      expect(status).toBe("success");
-    });
-
-    test("Sign Payload (Legacy hostApi)", async ({
-      pairedPage,
-      productFrame,
-    }) => {
-      // Given
-      test.setTimeout(180_000);
-
-      // When
-      const status = await runWebSignedTest(
-        pairedPage,
-        productFrame,
-        "sign-payload-legacy-host-api",
-        ["Allow", "Sign"],
-        { timeoutMs: 60_000, preClickDelayMs: 1_000 },
-      );
-
-      // Then
-      expect(status).toBe("success");
-    });
-
     test("Sign Payload (wsProvider)", async ({ pairedPage, productFrame }) => {
       // Given
       test.setTimeout(180_000);
@@ -627,9 +563,6 @@ test.describe("dot.li > host-playground.dot", () => {
     });
     test.skip("Create Transaction", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "create-transaction");
-    });
-    test.skip("Create Transaction (Legacy)", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "create-transaction-legacy");
     });
     test.skip("Contract: Store Value", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "contract-store-value");
