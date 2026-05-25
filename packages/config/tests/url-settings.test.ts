@@ -41,15 +41,15 @@ describe("parseSettingsFromSearch", () => {
 describe("writeSettingsToSearch", () => {
   it("drops default-valued axes and preserves unrelated params", () => {
     const search = new URLSearchParams(
-      "network=paseo-next-v2&chainBackend=rpc-gateway&skipArchiveCache=0&keep=me",
+      "network=paseo-next-v2&chainBackend=rpc-gateway&skipArchiveCache=1&keep=me",
     );
     const changed = writeSettingsToSearch(
       {
         network: NetworkName.PASEO_NEXT_V1,
         chainBackend: "smoldot-direct",
         cache: {
-          skipCidCache: true,
-          skipArchiveCache: true,
+          skipCidCache: false,
+          skipArchiveCache: false,
           skipWorkerCache: true,
         },
       },
@@ -69,8 +69,8 @@ describe("writeSettingsToSearch", () => {
         network: NetworkName.PASEO_NEXT_V2,
         chainBackend: "smoldot-direct",
         cache: {
-          skipCidCache: false,
-          skipArchiveCache: true,
+          skipCidCache: true,
+          skipArchiveCache: false,
           skipWorkerCache: true,
         },
       },
@@ -78,7 +78,7 @@ describe("writeSettingsToSearch", () => {
     );
     expect(search.get("network")).toBe(NetworkName.PASEO_NEXT_V2);
     expect(search.get("chainBackend")).toBeNull();
-    expect(search.get("skipCidCache")).toBe("0");
+    expect(search.get("skipCidCache")).toBe("1");
     expect(search.get("skipArchiveCache")).toBeNull();
     expect(search.get("skipWorkerCache")).toBeNull();
   });

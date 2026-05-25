@@ -177,15 +177,10 @@ export function isVerifiedSession(chainBackend: Backend): boolean {
   return chainBackend !== "rpc-gateway";
 }
 
-// Fresh-install default: every cache off. The cached layers (dotNS CID
-// resolution, SW archive, protocol worker IDB) can mask real behavior
-// and confuse debugging — "did my code actually run, or did a stale
-// cache win?". Users who want the speed boost opt in through the
-// settings popover; existing users with a persisted preference keep
-// whatever they chose.
+// Fresh-install default. Persisted preferences override these.
 const DEFAULT_CACHE: CacheSettings = {
-  skipCidCache: true,
-  skipArchiveCache: true,
+  skipCidCache: false,
+  skipArchiveCache: false,
   skipWorkerCache: true,
 };
 

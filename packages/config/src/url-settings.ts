@@ -29,8 +29,8 @@ const URL_PARAM_NAMES = {
 const URL_DEFAULT_NETWORK: Network = NetworkName.PASEO_NEXT_V1;
 const URL_DEFAULT_BACKEND: Backend = "smoldot-direct";
 const URL_DEFAULT_CACHE: CacheSettings = {
-  skipCidCache: true,
-  skipArchiveCache: true,
+  skipCidCache: false,
+  skipArchiveCache: false,
   skipWorkerCache: true,
 };
 

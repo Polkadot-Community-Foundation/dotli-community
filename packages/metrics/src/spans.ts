@@ -88,6 +88,21 @@ export const CACHE_READ_LATENCY = "cache.read_latency";
 /** IndexedDB write latency for CID store */
 export const CACHE_WRITE_LATENCY = "cache.write_latency";
 
+/** SWR revalidate: fresh CID matches the served one. */
+export const CACHE_REVALIDATE_MATCH = "cache.revalidate_match";
+
+/** SWR revalidate: fresh CID differs, user gets a reload notice. */
+export const CACHE_REVALIDATE_UPDATE = "cache.revalidate_update";
+
+/** SWR revalidate: on-chain pointer cleared, cache evicted and page reloaded. */
+export const CACHE_REVALIDATE_CLEARED = "cache.revalidate_cleared";
+
+/** SWR revalidate failed (resolver threw). Cache entry left intact. */
+export const CACHE_REVALIDATE_ERROR = "cache.revalidate_error";
+
+/** Wall-clock duration of the SWR revalidate resolve. */
+export const CACHE_REVALIDATE_LATENCY = "cache.revalidate_latency";
+
 /** Time to fetch Paseo relay chain spec */
 export const CHAINSPEC_PASEO = "chainspec.paseo";
 

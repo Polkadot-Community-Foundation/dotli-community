@@ -128,9 +128,47 @@ export async function setCachedCid(label: string, cid: string): Promise<void> {
     stop();
   } catch (err) {
     stop();
-    // Log + Sentry so operators can see when the cache is degrading; a
-    // silent swallow would let an IDB regression go unnoticed.
     log.error("[dot.li cid-cache] write error:", err);
     captureException(err, { kind: "cid_cache_write_error" });
   }
+}
+
+/** Remove a cached entry. Best-effort: failures are logged, not thrown. */
+export async function evictCachedCid(label: string): Promise<void> {
+  const stop = m.timer(S.CACHE_WRITE_LATENCY);
+  try {
+    const db = await getDb();
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).delete(label);
+    stop();
+  } catch (err) {
+    stop();
+    log.error("[dot.li cid-cache] evict error:", err);
+    captureException(err, { kind: "cid_cache_evict_error" });
+  }
+}
+
+export type RevalidateOutcome =
+  | { kind: "match" }
+  | { kind: "update"; cid: string }
+  | { kind: "cleared" };
+
+/** Reconcile a freshly-resolved CID against the served one: write, evict, or noop. */
+export async function recordRevalidateOutcome(
+  label: string,
+  servedCid: string,
+  freshCid: string | null,
+): Promise<RevalidateOutcome> {
+  if (freshCid === null) {
+    await evictCachedCid(label);
+    m.count(S.CACHE_REVALIDATE_CLEARED);
+    return { kind: "cleared" };
+  }
+  await setCachedCid(label, freshCid);
+  if (freshCid === servedCid) {
+    m.count(S.CACHE_REVALIDATE_MATCH);
+    return { kind: "match" };
+  }
+  m.count(S.CACHE_REVALIDATE_UPDATE);
+  return { kind: "update", cid: freshCid };
 }

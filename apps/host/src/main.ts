@@ -32,7 +32,11 @@ import {
 } from "@dotli/ui/ui";
 import { initTopBar, wipeOriginState } from "@dotli/ui/topbar";
 import { listenForSandboxBitswap } from "@dotli/ui/bulletin-bitswap";
-import { getCachedCid, setCachedCid } from "@dotli/storage/cid-cache";
+import {
+  getCachedCid,
+  setCachedCid,
+  recordRevalidateOutcome,
+} from "@dotli/storage/cid-cache";
 import { dur, elapsed } from "@dotli/shared/perf";
 import { BASE_DOMAIN, DEBUG, SITE_ID } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
@@ -47,6 +51,7 @@ import {
   isVerifiedSession,
   getCacheSettings,
   setCacheSettings,
+  type Backend,
 } from "@dotli/config/mode";
 import { NETWORK_KEY, getNetwork, setNetwork } from "@dotli/config/network";
 import {
@@ -552,6 +557,55 @@ function listenForSandboxDebugEvents(emit: EmitFn): void {
       /* ignore — a malformed event shouldn't kill the host */
     }
   });
+}
+
+/** SWR pass after fast-path render. Re-resolves, updates cache, surfaces a reload notice on change. */
+async function runBackgroundRevalidate(
+  label: string,
+  servedCid: string,
+  chainBackend: Backend,
+): Promise<void> {
+  const stopTimer = m.timer(S.CACHE_REVALIDATE_LATENCY);
+  try {
+    let freshCid: string | null;
+    if (chainBackend !== "rpc-gateway") {
+      const { resolveDotNameRemote } = await import("@dotli/protocol/client");
+      freshCid = await resolveDotNameRemote(label);
+    } else {
+      const { resolveDotNameViaRpc } =
+        await import("@dotli/resolver/rpc-resolve");
+      freshCid = await resolveDotNameViaRpc(label);
+    }
+    stopTimer();
+    const outcome = await recordRevalidateOutcome(label, servedCid, freshCid);
+    if (outcome.kind === "update") {
+      log.warn(
+        `[dot.li cid-cache] revalidate: ${label} updated ${servedCid} -> ${outcome.cid}`,
+      );
+      showNotification({
+        label: "New version available",
+        text: "This site has been updated. Reload to see the latest version.",
+        dismissMs: 0,
+        action: {
+          label: "Reload",
+          onClick: () => {
+            window.location.reload();
+          },
+        },
+      });
+    } else if (outcome.kind === "cleared") {
+      // Owner unset the pointer. Cache is already evicted; reload to show the cold-path error.
+      log.warn(
+        `[dot.li cid-cache] revalidate: ${label} cleared on-chain, reloading`,
+      );
+      window.location.reload();
+    }
+  } catch (err) {
+    stopTimer();
+    m.count(S.CACHE_REVALIDATE_ERROR);
+    log.warn(`[dot.li cid-cache] revalidate failed for ${label}:`, err);
+    captureException(err, { kind: "cid_cache_revalidate_error" });
+  }
 }
 
 // ── Main ─────────────────────────────────────────────────────
@@ -1097,6 +1151,10 @@ async function main(): Promise<void> {
           totalMs: performance.now() - T0,
           path: "fast",
         },
+      });
+      // SWR: keep the cache honest across reloads without blocking the render.
+      requestIdleCallback(() => {
+        void runBackgroundRevalidate(label, cachedCid, chainBackend);
       });
       return;
     }
