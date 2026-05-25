@@ -60,10 +60,6 @@ const T0 = performance.now();
 // storage requests, no trust-shield context, and no unified loading UI.
 // `main()` rejects top-level loads with an explicit error; these helpers
 // now just postMessage to the host parent — there is no "else" branch.
-const loadingEl = document.querySelector<HTMLElement>("#app > .loading");
-if (loadingEl) {
-  loadingEl.style.display = "none";
-}
 
 function showStatus(message: string): void {
   window.parent.postMessage({ type: "dotli:loading-status", message }, "*");

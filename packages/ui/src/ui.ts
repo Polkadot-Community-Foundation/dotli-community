@@ -5,6 +5,7 @@
 
 import { getRecentLabels, addRecentLabel } from "@dotli/storage/cid-cache";
 import { BASE_DOMAIN, SITE_ID } from "@dotli/config/config";
+import { getBackend } from "@dotli/config/mode";
 import { escapeHtml, isValidDotLabel } from "@dotli/shared/html";
 
 const app = document.getElementById("app") ?? document.body;
@@ -173,7 +174,8 @@ export function showGatewayEscape(
 
 // Per-step timeout thresholds (seconds). If a step exceeds its
 // limit, a contextual hint fades in below the status line.
-const SLOW_THRESHOLDS: Record<string, { secs: number; hint: string }> = {
+type SlowHint = string | { smoldot: string; rpc: string };
+const SLOW_THRESHOLDS: Record<string, { secs: number; hint: SlowHint }> = {
   "Starting light client": {
     secs: 8,
     hint: "The smoldot light client is slow to initialize — could be a network issue",
@@ -192,7 +194,10 @@ const SLOW_THRESHOLDS: Record<string, { secs: number; hint: string }> = {
   },
   Resolving: {
     secs: 10,
-    hint: "Smoldot is still catching up on the Paseo relay chain",
+    hint: {
+      smoldot: "Smoldot is still catching up on the Paseo relay chain",
+      rpc: "The RPC endpoint is slow to answer the resolver query",
+    },
   },
   "Connecting to peers": {
     secs: 10,
@@ -212,12 +217,19 @@ const SLOW_THRESHOLDS: Record<string, { secs: number; hint: string }> = {
   },
 };
 
+function resolveHint(hint: SlowHint): string {
+  if (typeof hint === "string") {
+    return hint;
+  }
+  return getBackend() === "rpc-gateway" ? hint.rpc : hint.smoldot;
+}
+
 function getSlowThreshold(
   message: string,
 ): { secs: number; hint: string } | null {
   for (const [key, value] of Object.entries(SLOW_THRESHOLDS)) {
     if (message.startsWith(key) || message.includes(key.toLowerCase())) {
-      return value;
+      return { secs: value.secs, hint: resolveHint(value.hint) };
     }
   }
   return { secs: 20, hint: "This is taking longer than expected" };
