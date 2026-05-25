@@ -93,7 +93,7 @@ export const DOT_NODE =
 export const SW_ARCHIVE_CACHE_MAX = 8;
 
 /** Max chain connections per origin on the protocol host. */
-export const MAX_CONNECTIONS_PER_ORIGIN = 3;
+export const MAX_CONNECTIONS_PER_ORIGIN = 10;
 
 /** Max nested container bridges per host shell. */
 export const MAX_NESTED_BRIDGES = 5;

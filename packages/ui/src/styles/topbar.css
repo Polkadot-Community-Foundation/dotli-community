@@ -665,6 +665,13 @@
 .mode-radio-row:hover {
   background: #222;
 }
+.mode-radio-row.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.mode-radio-row.disabled:hover {
+  background: transparent;
+}
 .mode-radio-input {
   position: absolute;
   opacity: 0;

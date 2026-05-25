@@ -16,7 +16,12 @@
 // belongs in this file too.
 
 import { isValidNetwork, NetworkName, type Network } from "./network";
-import type { Backend, CacheSettings } from "./mode";
+import {
+  defaultBackend,
+  isSharedWorkerAvailable,
+  type Backend,
+  type CacheSettings,
+} from "./mode";
 
 const URL_PARAM_NAMES = {
   network: "network",
@@ -27,7 +32,6 @@ const URL_PARAM_NAMES = {
 } as const;
 
 const URL_DEFAULT_NETWORK: Network = NetworkName.PASEO_NEXT_V1;
-const URL_DEFAULT_BACKEND: Backend = "smoldot-direct";
 const URL_DEFAULT_CACHE: CacheSettings = {
   skipCidCache: false,
   skipArchiveCache: false,
@@ -71,13 +75,17 @@ export function parseSettingsFromSearch(
 ): ParsedUrlSettings {
   const rawNetwork = search.get(URL_PARAM_NAMES.network);
   const rawBackend = search.get(URL_PARAM_NAMES.chainBackend);
+  const backend =
+    rawBackend !== null && VALID_BACKENDS.has(rawBackend)
+      ? (rawBackend as Backend)
+      : null;
   return {
     network:
       rawNetwork !== null && isValidNetwork(rawNetwork) ? rawNetwork : null,
     chainBackend:
-      rawBackend !== null && VALID_BACKENDS.has(rawBackend)
-        ? (rawBackend as Backend)
-        : null,
+      backend === "smoldot-shared-worker" && !isSharedWorkerAvailable()
+        ? null
+        : backend,
     skipArchiveCache: parseBoolean(
       search.get(URL_PARAM_NAMES.skipArchiveCache),
     ),
@@ -100,9 +108,7 @@ export function writeSettingsToSearch(
   applyAxis(
     search,
     URL_PARAM_NAMES.chainBackend,
-    settings.chainBackend === URL_DEFAULT_BACKEND
-      ? null
-      : settings.chainBackend,
+    settings.chainBackend === defaultBackend() ? null : settings.chainBackend,
   );
   applyBooleanAxis(
     search,

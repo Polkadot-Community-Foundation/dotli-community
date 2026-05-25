@@ -60,6 +60,7 @@ import {
   CACHE_KEY,
   getBackend,
   setBackend,
+  isSharedWorkerAvailable,
   isVerifiedSession,
   getCacheSettings,
   setCacheSettings,
@@ -778,6 +779,13 @@ async function applyUrlSettings(): Promise<void> {
     readRawLocalStorage(BACKEND_KEY) !== null ||
     readRawLocalStorage(CACHE_KEY) !== null;
 
+  const rawUrlBackend = search.get("chainBackend");
+  const rawPersistedBackend = readRawLocalStorage(BACKEND_KEY);
+  const sharedWorkerFallback =
+    !isSharedWorkerAvailable() &&
+    (rawUrlBackend === "smoldot-shared-worker" ||
+      rawPersistedBackend === "smoldot-shared-worker");
+
   // Bootstrap shared mode BEFORE reading prior values, so `prior.chain` /
   // `prior.cache` reflect the cross-subdomain shared store (production) or
   // per-origin localStorage (localhost). The swapped adapter also mirrors
@@ -824,6 +832,14 @@ async function applyUrlSettings(): Promise<void> {
     window.history.replaceState(null, "", newUrl);
   }
 
+  if (sharedWorkerFallback) {
+    showNotification({
+      label: "Light client (worker) unavailable",
+      text: "This browser doesn't support Light client (worker). Falling back to the Light client (direct).",
+      dismissMs: 5_000,
+    });
+  }
+
   const changed =
     next.network !== prior.network ||
     next.chain !== prior.chain ||
@@ -868,6 +884,26 @@ async function applyUrlSettings(): Promise<void> {
     // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); cross-origin purges are best-effort, reload below is unconditional.
   } catch {
     /* sessionStorage unavailable */
+  }
+  window.location.reload();
+}
+
+function switchBackendAndReload(nextBackend: Backend): void {
+  setBackend(nextBackend);
+  const search = new URLSearchParams(window.location.search);
+  if (
+    writeSettingsToSearch(
+      {
+        network: getNetwork(),
+        chainBackend: nextBackend,
+        cache: getCacheSettings(),
+      },
+      search,
+    )
+  ) {
+    const query = search.toString();
+    const newUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+    window.history.replaceState(null, "", newUrl);
   }
   window.location.reload();
 }
@@ -1300,8 +1336,7 @@ async function main(): Promise<void> {
       // verification badge for a faster, trust-based load.
       const cancelGatewayEscape = showGatewayEscape(() => {
         m.count(S.GATEWAY_ESCAPE, { from_backend: chainBackend });
-        setBackend("rpc-gateway");
-        window.location.reload();
+        switchBackendAndReload("rpc-gateway");
       });
 
       try {
@@ -1488,8 +1523,7 @@ async function main(): Promise<void> {
             reason: err instanceof Error ? err.message : "resolution failed",
           },
         });
-        setBackend(nextBackend);
-        window.location.reload();
+        switchBackendAndReload(nextBackend);
       },
     });
   }

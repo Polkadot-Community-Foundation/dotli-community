@@ -30,6 +30,10 @@ export interface CacheSettings {
 export const BACKEND_KEY = "dotli:chain-backend";
 export const CACHE_KEY = "dotli:cache-settings";
 
+export function isSharedWorkerAvailable(): boolean {
+  return typeof SharedWorker !== "undefined";
+}
+
 // Pre-collapse keys. `rpc` chain backend maps to `rpc-gateway`. Legacy
 // `dotli:mode` and `dotli:content-backend` carried the content axis that
 // no longer exists. Read once, migrate, delete.
@@ -112,10 +116,18 @@ export function migrateLegacyOn(target: ModeStorage): Backend | null {
 export function getBackend(): Backend {
   const stored = storage.getItem(BACKEND_KEY);
   if (stored !== null && VALID_BACKENDS.has(stored)) {
+    if (stored === "smoldot-shared-worker" && !isSharedWorkerAvailable()) {
+      storage.removeItem(BACKEND_KEY);
+      return "smoldot-direct";
+    }
     return stored as Backend;
   }
   const migrated = migrateLegacyOn(storage);
   if (migrated !== null) {
+    if (migrated === "smoldot-shared-worker" && !isSharedWorkerAvailable()) {
+      storage.removeItem(BACKEND_KEY);
+      return "smoldot-direct";
+    }
     return migrated;
   }
   const computed = defaultBackend();
@@ -127,15 +139,8 @@ export function setBackend(chainBackend: Backend): void {
   storage.setItem(BACKEND_KEY, chainBackend);
 }
 
-/**
- * Default for first-load users. `smoldot-direct` is the trustless,
- * self-contained entry point (single-tab smoldot, no cross-tab
- * coordination, no SharedWorker lifecycle quirks). Users who want the
- * shared-worker path or the fast gateway path switch via the settings
- * popover. The choice is then persisted so this is not consulted again.
- */
-function defaultBackend(): Backend {
-  return "smoldot-direct";
+export function defaultBackend(): Backend {
+  return isSharedWorkerAvailable() ? "smoldot-shared-worker" : "smoldot-direct";
 }
 
 /**

@@ -22,6 +22,7 @@ import {
   setCacheSettings,
   getBackend,
   setBackend,
+  isSharedWorkerAvailable,
   isVerifiedSession,
   type Backend,
   type CacheSettings,
@@ -862,14 +863,28 @@ function renderModePopover(): void {
   ];
   const chainGroup = document.createElement("div");
   leftCol.appendChild(chainGroup);
+  const sharedWorkerSupported = isSharedWorkerAvailable();
   const rerenderChain = (): void => {
     chainGroup.innerHTML = "";
     for (const [value, label, desc] of chainChoices) {
-      renderChainRadio(chainGroup, value, label, desc, draft.chain, (next) => {
-        draft.chain = next;
-        rerenderChain();
-        syncApply();
-      });
+      const disabled =
+        value === "smoldot-shared-worker" && !sharedWorkerSupported;
+      const effectiveDesc = disabled
+        ? "Unavailable in this browser or private window"
+        : desc;
+      renderChainRadio(
+        chainGroup,
+        value,
+        label,
+        effectiveDesc,
+        draft.chain,
+        disabled,
+        (next) => {
+          draft.chain = next;
+          rerenderChain();
+          syncApply();
+        },
+      );
     }
   };
   rerenderChain();
@@ -1630,6 +1645,7 @@ function renderChainRadio(
   label: string,
   description: string,
   current: Backend,
+  disabled: boolean,
   onSelect: (next: Backend) => void,
 ): void {
   const row = buildRadioRow(`dotli-backend-${value}`, "dotli-backend", {
@@ -1637,6 +1653,7 @@ function renderChainRadio(
     label,
     description,
     selected: value === current,
+    disabled,
   });
   row.querySelector("input")?.addEventListener("change", () => {
     onSelect(value);
@@ -1672,16 +1689,19 @@ function buildRadioRow(
     label: string;
     description: string;
     selected: boolean;
+    disabled?: boolean;
   },
 ): HTMLLabelElement {
   const row = document.createElement("label");
-  row.className = `mode-radio-row${opts.selected ? " selected" : ""}`;
+  const disabled = opts.disabled === true;
+  row.className = `mode-radio-row${opts.selected ? " selected" : ""}${disabled ? " disabled" : ""}`;
 
   const radio = document.createElement("input");
   radio.type = "radio";
   radio.name = name;
   radio.value = opts.value;
   radio.checked = opts.selected;
+  radio.disabled = disabled;
   radio.className = "mode-radio-input";
   row.appendChild(radio);
 
