@@ -34,7 +34,10 @@ export type MetricOutcome =
   // Bitswap
   | "not-found"
   | "invalid-cid"
-  | "aborted";
+  | "aborted"
+  // Manifest reader
+  | "empty"
+  | "invalid";
 
 export type MetricAttributes = {
   mode?: string;

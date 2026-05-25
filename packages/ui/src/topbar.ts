@@ -11,6 +11,11 @@ import type { AuthState } from "@dotli/auth/auth";
 import type { Identity } from "@novasamatech/host-papp";
 import { log } from "@dotli/shared/log";
 import { escapeHtml } from "@dotli/shared/html";
+import {
+  formatAppVersion,
+  getActiveAppManifest,
+  getActiveRootManifest,
+} from "@dotli/shared/active-manifest";
 import { SITE_ID } from "@dotli/config/config";
 import {
   getCacheSettings,
@@ -1434,6 +1439,16 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
     const cfg = getActiveServicesConfig();
     rows.push(["Relay node", cfg.relay.rpcs[0] ?? "n/a"]);
     rows.push(["AssetHub node", cfg.assethub.rpcs[0] ?? "n/a"]);
+  }
+
+  // Product manifest snapshot.
+  const root = getActiveRootManifest();
+  if (root !== null) {
+    rows.push(["Manifest", `v${String(root.schemaVersion)}`]);
+  }
+  const app = getActiveAppManifest();
+  if (app !== null) {
+    rows.push(["App version", formatAppVersion(app.appVersion)]);
   }
 
   rows.push(["Browser", summarizeUserAgent(navigator.userAgent)]);

@@ -1,4 +1,4 @@
-// dot.li — Protocol host entry point
+// Protocol host entry point
 //
 // Three modes, selected explicitly via `?mode=` URL parameter:
 //   1. "shared-worker" — smoldot runs in a SharedWorker shared across tabs
@@ -39,6 +39,14 @@ window.addEventListener("vite:preloadError", (event) => {
 });
 import type { JsonRpcProvider } from "@polkadot-api/json-rpc-provider";
 import type { StringJsonRpcConnection } from "@dotli/protocol/broker";
+import type {
+  ExecutableManifest,
+  ManifestResult,
+  RootManifest,
+} from "@dotli/resolver/manifest";
+
+/** Bridge-boundary allowlist for executable-manifest kinds. */
+const EXECUTABLE_KINDS = new Set(["app", "widget", "worker"]);
 import {
   MAX_CONNECTIONS_PER_ORIGIN,
   SITE_ID,
@@ -657,7 +665,14 @@ async function initDirectMode(): Promise<void> {
     import("@dotli/resolver/smoldot"),
     import("@dotli/resolver/bulletin"),
   ]);
-  const { getRelayChain, getSmoldot, resolveDotName, resolveOwner } = resolve;
+  const {
+    getRelayChain,
+    getSmoldot,
+    resolveDotName,
+    resolveExecutableManifest,
+    resolveOwner,
+    resolveRootManifest,
+  } = resolve;
   const { terminateSmoldot, onSmoldotFatal } = smoldotMod;
   const { submitPreimageTransaction, getTestSigner } = bulletin;
 
@@ -692,6 +707,8 @@ async function initDirectMode(): Promise<void> {
     },
     resolveDotName,
     resolveOwner,
+    resolveExecutableManifest,
+    resolveRootManifest,
     submitBulletinPreimage: (value) =>
       submitPreimageTransaction(value, getTestSigner()),
   });
@@ -1021,6 +1038,19 @@ interface EngineOptions {
     onStatus: (message: string) => void,
   ) => Promise<string | null>;
   resolveOwner?: (label: string) => Promise<string | null>;
+  /**
+   * Product-manifest readers.
+   *
+   * `rpc-gateway` mode resolves manifests in the host process, not via the
+   * iframe engine, so these stay unwired there.
+   */
+  resolveExecutableManifest?: (
+    label: string,
+    kind: "app" | "widget" | "worker",
+  ) => Promise<ManifestResult<ExecutableManifest>>;
+  resolveRootManifest?: (
+    label: string,
+  ) => Promise<ManifestResult<RootManifest>>;
   /** Bulletin Paseo preimage submission. Omitted in `rpc` mode (no smoldot). */
   submitBulletinPreimage?: (value: Uint8Array) => Promise<void>;
 }
@@ -1103,6 +1133,52 @@ function createEngine(options: EngineOptions): ProtocolEngine {
         const payload = request.payload as ProtocolRequestMap["resolveOwner"];
         assertStr(payload.label, "label");
         const result = await options.resolveOwner(payload.label);
+        respond({
+          namespace: "dotli:protocol",
+          kind: "response",
+          id: request.id,
+          ok: true,
+          result,
+        });
+        return;
+      }
+
+      case "resolveExecutableManifest": {
+        if (!options.resolveExecutableManifest) {
+          throw new Error(
+            "resolveExecutableManifest is not served by this protocol mode",
+          );
+        }
+        const payload =
+          request.payload as ProtocolRequestMap["resolveExecutableManifest"];
+        assertStr(payload.label, "label");
+        if (!(EXECUTABLE_KINDS as ReadonlySet<string>).has(payload.kind)) {
+          throw new Error(`Unsupported executable kind: ${payload.kind}`);
+        }
+        const result = await options.resolveExecutableManifest(
+          payload.label,
+          payload.kind,
+        );
+        respond({
+          namespace: "dotli:protocol",
+          kind: "response",
+          id: request.id,
+          ok: true,
+          result,
+        });
+        return;
+      }
+
+      case "resolveRootManifest": {
+        if (!options.resolveRootManifest) {
+          throw new Error(
+            "resolveRootManifest is not served by this protocol mode",
+          );
+        }
+        const payload =
+          request.payload as ProtocolRequestMap["resolveRootManifest"];
+        assertStr(payload.label, "label");
+        const result = await options.resolveRootManifest(payload.label);
         respond({
           namespace: "dotli:protocol",
           kind: "response",

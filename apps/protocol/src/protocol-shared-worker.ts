@@ -1,4 +1,4 @@
-// dot.li — Protocol SharedWorker
+// Protocol SharedWorker
 //
 // Runs smoldot directly on the SharedWorker thread using `start()` from
 // `polkadot-api/smoldot` (no sub-Worker needed — `Worker` constructor is
@@ -26,7 +26,9 @@ import {
   getRelayChain,
   getSmoldotDirect,
   resolveDotName,
+  resolveExecutableManifest,
   resolveOwner,
+  resolveRootManifest,
   waitForAssetHubFinalized,
 } from "@dotli/resolver/resolve";
 import {
@@ -38,6 +40,9 @@ import * as S from "@dotli/metrics/spans";
 import { initSentry, installGlobalErrorHandlers } from "@dotli/metrics/sentry";
 import { createChainBrokerManager } from "@dotli/protocol/broker";
 import { serializeError } from "@dotli/shared/errors";
+
+/** Bridge-boundary allowlist for executable-manifest kinds. */
+const EXECUTABLE_KINDS = new Set(["app", "widget", "worker"]);
 
 initSentry("worker");
 installGlobalErrorHandlers("worker");
@@ -345,6 +350,45 @@ async function handleRequest(
       swLog(
         `Owner "${payload.label}" → ${result ?? "null"} (${String(Math.round(performance.now() - t))}ms)`,
       );
+      sendToPort(port, {
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: request.id,
+        ok: true,
+        result,
+      });
+      return;
+    }
+
+    case "resolveExecutableManifest": {
+      const payload =
+        request.payload as ProtocolRequestMap["resolveExecutableManifest"];
+      assertString(payload.label, "label");
+      // postMessage payloads are untrusted strings even though TS narrows
+      // `payload.kind` to the union. Widening through Set.has keeps the
+      // runtime check intact under strict TS rules.
+      if (!(EXECUTABLE_KINDS as ReadonlySet<string>).has(payload.kind)) {
+        throw new Error(`Unsupported executable kind: ${payload.kind}`);
+      }
+      const result = await resolveExecutableManifest(
+        payload.label,
+        payload.kind,
+      );
+      sendToPort(port, {
+        namespace: "dotli:protocol",
+        kind: "response",
+        id: request.id,
+        ok: true,
+        result,
+      });
+      return;
+    }
+
+    case "resolveRootManifest": {
+      const payload =
+        request.payload as ProtocolRequestMap["resolveRootManifest"];
+      assertString(payload.label, "label");
+      const result = await resolveRootManifest(payload.label);
       sendToPort(port, {
         namespace: "dotli:protocol",
         kind: "response",

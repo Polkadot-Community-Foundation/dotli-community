@@ -12,6 +12,7 @@ export type Network = NetworkName;
 export interface DotnsStorageSlots {
   readonly REGISTRY_RECORDS: number;
   readonly CONTENTHASH: number;
+  readonly TEXT_RECORDS?: number;
 }
 
 export interface DotnsContracts {
@@ -109,7 +110,7 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
     dotns: {
       DOTNS_REGISTRY: "0x8877344A885682523B4613779C95688ed7037BfD",
       DOTNS_CONTENT_RESOLVER: "0x2c9FF5D9136DBE5814C7B4FDbeDC15273a776663",
-      storageSlots: { REGISTRY_RECORDS: 0, CONTENTHASH: 0 },
+      storageSlots: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
     },
   },
 };

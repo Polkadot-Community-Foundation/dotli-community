@@ -1,4 +1,4 @@
-// dot.li — Shared contract storage reading utilities
+// Shared contract storage reading utilities
 //
 // Low-level functions for reading Solidity storage slots from a Revive
 // (EVM-on-Polkadot) contract via polkadot-api's UnsafeApi. Used by both
@@ -7,10 +7,12 @@
 import type { PolkadotClient } from "polkadot-api";
 import {
   computeMappingSlot,
+  computeNestedStringMappingSlot,
   addToSlot,
   extractAddress,
   decodeBytesSlot,
 } from "./abi";
+import { PartialStorageReadError } from "./errors";
 
 export type StatusCallback = (status: string) => void;
 export type UnsafeApi = ReturnType<PolkadotClient["getUnsafeApi"]>;
@@ -140,19 +142,71 @@ export async function readMappingBytes(
   for (let i = 0; i < slotsNeeded; i++) {
     const slotKey = addToSlot(decoded.dataSlot, i);
     const slotData = await readStorageSlot(api, contractAddress, slotKey);
-    // If any slot read returns null mid-way, throw — silently zero-padding
+    // If any slot read returns null mid-way, throw. Silently zero-padding
     // the gap would return a corrupted contenthash that reads upstream as
     // "name not found", masking the actual RPC failure.
     if (slotData === null) {
-      throw new Error(
-        `Partial storage read at slot ${String(i)}/${String(slotsNeeded)} for mapping bytes (contract=${contractAddress})`,
-      );
+      throw new PartialStorageReadError(contractAddress, i, slotsNeeded, {
+        mappingKind: "mapping bytes",
+      });
     }
     const offset = i * 32;
     const copyLen = Math.min(32, decoded.length - offset);
     result.set(slotData.slice(0, copyLen), offset);
   }
   return result;
+}
+
+/**
+ * Read a UTF-8 string value from `mapping(bytes32 => mapping(string => string))`.
+ *
+ * The dotNS content resolver stores text records under this shape. The outer
+ * key is the namehash of the dotNS name, the inner key is the record name
+ * such as `"manifest"` or `"executable"`.
+ *
+ * Returns `null` when the value is unset. Throws when a multi-slot read
+ * aborts partway, mirroring [`readMappingBytes`](./storage.ts).
+ */
+export async function readNestedMappingString(
+  api: UnsafeApi,
+  contractAddress: string,
+  outerKey: `0x${string}`,
+  innerKey: string,
+  outerSlot: number,
+): Promise<string | null> {
+  const baseSlotKey = computeNestedStringMappingSlot(
+    outerKey,
+    innerKey,
+    outerSlot,
+  );
+  const baseData = await readStorageSlot(api, contractAddress, baseSlotKey);
+  if (baseData === null) {
+    return null;
+  }
+  const decoded = decodeBytesSlot(baseData, baseSlotKey);
+  if (decoded === null) {
+    return null;
+  }
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  if (decoded.inline) {
+    return decoder.decode(decoded.data);
+  }
+  const slotsNeeded = Math.ceil(decoded.length / 32);
+  const result = new Uint8Array(decoded.length);
+  for (let i = 0; i < slotsNeeded; i++) {
+    const slotKey = addToSlot(decoded.dataSlot, i);
+    const slotData = await readStorageSlot(api, contractAddress, slotKey);
+    if (slotData === null) {
+      throw new PartialStorageReadError(contractAddress, i, slotsNeeded, {
+        mappingKind: "nested string mapping",
+        innerKey,
+      });
+    }
+    const offset = i * 32;
+    const copyLen = Math.min(32, decoded.length - offset);
+    result.set(slotData.slice(0, copyLen), offset);
+  }
+  return decoder.decode(result);
 }
 
 export async function readMappingAddress(

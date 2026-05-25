@@ -5,6 +5,11 @@ import type {
   JsonRpcRequest,
 } from "@polkadot-api/json-rpc-provider";
 import { ProtocolFatalError, ProtocolInitFailedError } from "./errors";
+import type {
+  ExecutableManifest,
+  ManifestResult,
+  RootManifest,
+} from "@dotli/resolver/manifest";
 import { BASE_DOMAIN, type SiteId } from "@dotli/config/config";
 import {
   getActiveSupportedGenesisHashes,
@@ -481,6 +486,8 @@ const METHOD_TIMEOUTS: Partial<Record<ProtocolRequestMethod, number>> = {
   chainConnect: 30_000,
   resolveDotName: 90_000,
   resolveOwner: 90_000,
+  resolveExecutableManifest: 30_000,
+  resolveRootManifest: 30_000,
   bulletinSubmitPreimage: 150_000,
 };
 
@@ -564,6 +571,31 @@ export async function resolveOwnerRemote(
   label: string,
 ): Promise<string | null> {
   return (await postRequest("resolveOwner", { label })) as string | null;
+}
+
+/**
+ * Remote proxy for the executable-manifest reader.
+ *
+ * Returns the same discriminated result as the in-process
+ * `resolveExecutableManifest`. The bridge serialises the result as-is.
+ */
+export async function resolveExecutableManifestRemote(
+  label: string,
+  kind: "app" | "widget" | "worker",
+): Promise<ManifestResult<ExecutableManifest>> {
+  return (await postRequest("resolveExecutableManifest", {
+    label,
+    kind,
+  })) as ManifestResult<ExecutableManifest>;
+}
+
+/** Remote proxy for the root-manifest reader. */
+export async function resolveRootManifestRemote(
+  label: string,
+): Promise<ManifestResult<RootManifest>> {
+  return (await postRequest("resolveRootManifest", {
+    label,
+  })) as ManifestResult<RootManifest>;
 }
 
 export async function submitPreimageRemote(value: Uint8Array): Promise<void> {

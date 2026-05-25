@@ -1,4 +1,4 @@
-// dot.li — ABI helpers and Solidity storage key computation
+// ABI helpers and Solidity storage key computation
 //
 // Provides namehash (EIP-137) and storage slot key computation for
 // reading Solidity contract storage directly via ReviveApi.get_storage.
@@ -81,6 +81,29 @@ export function computeMappingSlot(
  */
 export function computeBytesDataSlot(baseSlot: `0x${string}`): `0x${string}` {
   return toHex(new Uint8Array(keccak_256(hexToBytes(baseSlot))));
+}
+
+/**
+ * Compute the storage slot for a nested mapping with a string inner key.
+ *
+ * Used for `mapping(bytes32 outerKey => mapping(string innerKey => T))` at
+ * outer slot N. The inner mapping lives at `keccak256(outerKey ++ N)`, both
+ * padded to 32 bytes. The value sits at `keccak256(utf8(innerKey) ++ midSlot)`.
+ *
+ * Solidity hashes string keys as raw UTF-8 bytes with no length prefix and
+ * no padding, which is why this helper exists alongside `computeMappingSlot`
+ * (which expects a fixed-width key).
+ */
+export function computeNestedStringMappingSlot(
+  outerKey: `0x${string}`,
+  innerKey: string,
+  outerSlot: number,
+): `0x${string}` {
+  const midSlot = computeMappingSlot(outerKey, outerSlot);
+  const innerBytes = new TextEncoder().encode(innerKey);
+  return toHex(
+    new Uint8Array(keccak_256(concatBytes(innerBytes, hexToBytes(midSlot)))),
+  );
 }
 
 /**

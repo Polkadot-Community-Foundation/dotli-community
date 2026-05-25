@@ -1,4 +1,4 @@
-// dot.li — Host entry point
+// Host entry point
 //
 // Flow: parse URL → render direct preview/local target, or resolve .dot name
 // via smoldot → iframe to cid.app.dot.li.
@@ -31,13 +31,25 @@ import {
   showGatewayEscape,
 } from "@dotli/ui/ui";
 import { initTopBar, wipeOriginState } from "@dotli/ui/topbar";
-import { listenForSandboxBitswap } from "@dotli/ui/bulletin-bitswap";
+import {
+  bitswapGet,
+  listenForSandboxBitswap,
+} from "@dotli/ui/bulletin-bitswap";
 import {
   getCachedCid,
   setCachedCid,
   recordRevalidateOutcome,
 } from "@dotli/storage/cid-cache";
 import { dur, elapsed } from "@dotli/shared/perf";
+import {
+  setActiveAppManifest,
+  setActiveRootManifest,
+} from "@dotli/shared/active-manifest";
+import type {
+  ExecutableManifest,
+  ManifestResult,
+  RootManifest,
+} from "@dotli/resolver/manifest";
 import { BASE_DOMAIN, DEBUG, SITE_ID } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
@@ -320,6 +332,74 @@ function setShieldState(state: "validating" | "verified"): void {
 
   shieldVerified = true;
   setupTopbarAutoHide();
+}
+
+/**
+ * Apply the product's branding from the root manifest at `<label>.dot`.
+ *
+ * Runs after the app iframe is rendered so a slow or absent manifest never
+ * blocks first paint. The manifest itself is read through the user's
+ * selected backend (smoldot or RPC). The icon bytes flow through the same
+ * backend via `bitswapGet`, which dispatches through the protocol bridge.
+ */
+async function applyProductBranding(
+  label: string,
+  chainBackend: Backend,
+): Promise<void> {
+  let rootResult: ManifestResult<RootManifest>;
+  let appResult: ManifestResult<ExecutableManifest>;
+  if (chainBackend === "rpc-gateway") {
+    const mod = await import("@dotli/resolver/rpc-resolve");
+    [rootResult, appResult] = await Promise.all([
+      mod.resolveRootManifestViaRpc(label),
+      mod.resolveExecutableManifestViaRpc(label, "app"),
+    ]);
+  } else {
+    const mod = await import("@dotli/protocol/client");
+    [rootResult, appResult] = await Promise.all([
+      mod.resolveRootManifestRemote(label),
+      mod.resolveExecutableManifestRemote(label, "app"),
+    ]);
+  }
+  if (rootResult.kind === "ok") {
+    const root = rootResult.value;
+    document.title = root.displayName;
+    setActiveRootManifest({
+      schemaVersion: root.$v,
+      displayName: root.displayName,
+      description: root.description,
+      icon: root.icon,
+    });
+    try {
+      const bytes = await bitswapGet(root.icon.cid);
+      const blob = new Blob([new Uint8Array(bytes)], {
+        type: `image/${root.icon.format}`,
+      });
+      setFavicon(URL.createObjectURL(blob), root.icon.format);
+      // eslint-disable-next-line no-restricted-syntax -- favicon fetch is cosmetic; failing it must not affect the tab title or the loaded app. Logged so the failure is still observable in the diagnostics console.
+    } catch (err: unknown) {
+      log.warn(
+        `[dot.li manifest] icon fetch failed for ${label}.dot: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  if (appResult.kind === "ok" && appResult.value.kind === "app") {
+    setActiveAppManifest({
+      schemaVersion: appResult.value.$v,
+      appVersion: appResult.value.appVersion,
+    });
+  }
+}
+
+function setFavicon(href: string, format: "jpeg" | "png"): void {
+  const existing = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+  const link = existing ?? document.createElement("link");
+  link.rel = "icon";
+  link.type = `image/${format}`;
+  link.href = href;
+  if (existing === null) {
+    document.head.appendChild(link);
+  }
 }
 
 /**
@@ -1139,6 +1219,11 @@ async function main(): Promise<void> {
         const { renderAppSubdomain } = await renderChunkPromise;
         await renderAppSubdomain(cachedCid, label);
       });
+      void applyProductBranding(label, chainBackend).catch((err: unknown) => {
+        log.warn(
+          `[dot.li manifest] branding failed for ${label}.dot: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
       performance.mark("dotli:main:end");
       log.warn(`[dot.li perf] === TOTAL (fast path): ${dur(T0)} ===`);
       emitDotliDebugEvent({
@@ -1201,6 +1286,10 @@ async function main(): Promise<void> {
       });
     };
 
+    /**
+     * Try the app subname first, fall back to the base label when the
+     * subname has no contenthash.
+     */
     let cid: string | null;
     if (chainBackend !== "rpc-gateway") {
       log.warn(
@@ -1220,10 +1309,10 @@ async function main(): Promise<void> {
           await import("@dotli/protocol/client");
         const { statusToPhase } = await import("@dotli/resolver/resolve");
         populateOwner(resolveOwnerRemote, label);
-        cid = await resolveDotNameRemote(label, (msg: string) => {
+        const onResolveProgress = (msg: string): void => {
           // Progress events arrive as opaque strings across the iframe
           // boundary. The resolver package owns the authoritative
-          // mapping from status text → `ResolvePhase`; we defer to it
+          // mapping from status text to ResolvePhase, so we defer to it
           // instead of maintaining a parallel regex here.
           const phase = statusToPhase(msg);
           if (phase === "asset-hub-connecting") {
@@ -1238,7 +1327,14 @@ async function main(): Promise<void> {
           }
           emitPhase(msg, phase ?? "progress");
           showStatus(msg);
-        });
+        };
+        cid = await resolveDotNameRemote(`app.${label}`, onResolveProgress);
+        if (cid === null) {
+          cid = await resolveDotNameRemote(label, onResolveProgress);
+          log.warn(
+            `[dot.li resolve] fallback ${label}.dot contenthash -> ${cid ?? "null"}`,
+          );
+        }
       } finally {
         cancelGatewayEscape();
       }
@@ -1249,10 +1345,17 @@ async function main(): Promise<void> {
       const { resolveDotNameViaRpc, resolveOwnerViaRpc } =
         await import("@dotli/resolver/rpc-resolve");
       populateOwner(resolveOwnerViaRpc, label);
-      cid = await resolveDotNameViaRpc(label, (msg: string) => {
+      const onResolveProgress = (msg: string): void => {
         emitPhase(msg, "progress");
         showStatus(msg);
-      });
+      };
+      cid = await resolveDotNameViaRpc(`app.${label}`, onResolveProgress);
+      if (cid === null) {
+        cid = await resolveDotNameViaRpc(label, onResolveProgress);
+        log.warn(
+          `[dot.li resolve] fallback ${label}.dot contenthash -> ${cid ?? "null"}`,
+        );
+      }
     }
 
     emitDotliDebugEvent({
@@ -1293,6 +1396,11 @@ async function main(): Promise<void> {
 
     const { renderAppSubdomain } = await renderChunkPromise;
     await renderAppSubdomain(cid, label);
+    void applyProductBranding(label, chainBackend).catch((err: unknown) => {
+      log.warn(
+        `[dot.li manifest] branding failed for ${label}.dot: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
 
     m.distribution(S.E2E_SLOW, performance.now() - coldStartMs, "millisecond", {
       outcome: "ok",

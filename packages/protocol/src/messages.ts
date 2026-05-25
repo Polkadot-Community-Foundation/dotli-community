@@ -2,6 +2,11 @@ export interface ProtocolRequestMap {
   warmup: Record<string, never>;
   resolveDotName: { label: string };
   resolveOwner: { label: string };
+  resolveExecutableManifest: {
+    label: string;
+    kind: "app" | "widget" | "worker";
+  };
+  resolveRootManifest: { label: string };
   authHasSession: { siteId: string };
   authStorageRead: { siteId: string; key: string };
   authStorageWrite: { siteId: string; key: string; value: string };

@@ -1,4 +1,4 @@
-// dot.li — Trusted RPC-based dotNS resolver
+// Trusted RPC-based dotNS resolver
 //
 // Reads the dotNS contract storage directly from a public Asset Hub Paseo
 // RPC node over WSS JSON-RPC. This trades trustlessness for speed — used
@@ -13,8 +13,19 @@ import { getActiveServicesConfig } from "@dotli/config/network";
 import { log } from "@dotli/shared/log";
 import { dur } from "@dotli/shared/perf";
 import { namehash, toHex, decodeIpfsContenthashResult } from "./abi";
+import {
+  ContenthashDecodeError,
+  UnsupportedContenthashCodecError,
+} from "./errors";
 import { readMappingBytes, readMappingAddress } from "./storage";
 import type { StatusCallback, UnsafeApi } from "./storage";
+import { readExecutableManifest, readRootManifest } from "./manifest";
+import type {
+  ExecutableKind,
+  ExecutableManifest,
+  ManifestResult,
+  RootManifest,
+} from "./manifest";
 
 export type { StatusCallback } from "./storage";
 
@@ -137,17 +148,35 @@ export async function resolveDotNameViaRpc(
       onStatus?.(`Domain "${domain}" not found or no content set`);
       return null;
     case "unsupported-codec":
-      throw new Error(
-        `Domain "${domain}" has a non-IPFS contenthash (codec=${decoded.codec ?? "unknown"})`,
-      );
-    case "decode-error": {
-      const cause = decoded.cause;
-      throw new Error(
-        `Failed to decode contenthash for "${domain}": ${cause instanceof Error ? cause.message : String(cause)}`,
-        cause instanceof Error ? { cause } : undefined,
-      );
-    }
+      throw new UnsupportedContenthashCodecError(domain, decoded.codec);
+    case "decode-error":
+      throw new ContenthashDecodeError(domain, decoded.cause);
   }
+}
+
+/**
+ * Read the executable manifest at `<kind>.<label>.dot` over the gateway
+ * RPC client.
+ *
+ * The return shape matches the smoldot path so the host shell can branch
+ * on a single discriminated union regardless of backend.
+ */
+export async function resolveExecutableManifestViaRpc(
+  label: string,
+  kind: ExecutableKind,
+): Promise<ManifestResult<ExecutableManifest>> {
+  const api = await ensureClient();
+  const dotns = getActiveServicesConfig().dotns;
+  return readExecutableManifest(api, dotns, label, kind);
+}
+
+/** Gateway-backed reader for the root manifest at `<label>.dot`. */
+export async function resolveRootManifestViaRpc(
+  label: string,
+): Promise<ManifestResult<RootManifest>> {
+  const api = await ensureClient();
+  const dotns = getActiveServicesConfig().dotns;
+  return readRootManifest(api, dotns, label);
 }
 
 /**

@@ -1,4 +1,4 @@
-// dot.li — Pre-defined metric names
+// Pre-defined metric names
 //
 // Metric name constants so instrumentation is consistent
 // and discoverable. All names are prefixed with "dotli." automatically
@@ -45,6 +45,16 @@ export const RESOLVE_TOTAL = "resolve.total";
 
 /** Time for a single contract storage read */
 export const RESOLVE_STORAGE_READ = "resolve.storage_read";
+
+/**
+ * Time to read and validate one product-manifest text record off
+ * `DOTNS_CONTENT_RESOLVER`.
+ *
+ * Tag `kind` with one of `root, app, widget, worker` and `outcome` with one
+ * of `ok, empty, invalid, error` so dashboards can tell "name has no
+ * manifest yet" apart from "manifest is malformed".
+ */
+export const RESOLVE_MANIFEST_READ = "resolve.manifest_read";
 
 /** CID cache hit — page loads from cache (fast path) */
 export const CACHE_HIT = "cache.hit";

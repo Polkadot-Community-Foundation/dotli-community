@@ -44,6 +44,9 @@ Good documentation starts with a single, clear sentence. Everything else comes a
 4. **Link to related items.** Help readers navigate. Reference related functions, types, or modules directly rather than describing them.
 5. **Think about context.** If you're explaining too many foreign concepts to document one function, the API design may need work.
 6. **No code section separators.** Don't use `// -----------` or similar decorative dividers to split sections within a file. Let the code structure speak for itself.
+7. **No em-dashes, semicolons, or prose-conjunction `+`.** Rewrite the sentence. Two short sentences read better than one long one with a dash.
+8. **No external spec citations in code comments.** Don't write "per RFC 0001" or "see EIP-137" inside a comment. Explain the rule itself. If a reader needs the spec, the commit message and the PR description are the right place. Code comments stand alone.
+9. **No "on-chain" in prose.** Say "network" or "remote" instead. The host already knows the data sits on a chain. Calling it "the network value" reads naturally; "the on-chain value" reads as crypto jargon.
 
 #### TypeScript
 
