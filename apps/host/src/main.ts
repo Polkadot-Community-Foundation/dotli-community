@@ -12,6 +12,7 @@ if (typeof globalThis.requestIdleCallback !== "function") {
 }
 
 import "./pwa";
+import "./offline";
 import "@dotli/ui/styles.css";
 import * as Sentry from "@sentry/browser";
 import {
