@@ -1,8 +1,9 @@
-// dot.li — App context entry point
+// App context entry point.
 //
-// Runs on cid.app.dot.li — parses the CID from the subdomain,
-// fetches content via P2P, and renders it in a sandboxed iframe.
-// No dotns resolution, no smoldot, no topbar.
+// Runs on `<label>.app.dot.li` (the human dotns name). The resolved CID
+// arrives on the host-to-sandbox URL contract (`?cid=`). This fetches the
+// content over P2P, verifies it against the contract CID, and renders it in
+// a sandboxed iframe. No dotns resolution here, no smoldot, no topbar.
 
 import "@dotli/ui/styles.css";
 import {
@@ -54,12 +55,12 @@ import * as S from "@dotli/metrics/spans";
 
 const T0 = performance.now();
 
-// The sandbox only runs embedded inside the host iframe (`dot.li` →
-// `cid.app.dot.li`). Direct / bookmarked loads of the sandbox origin are
-// unsupported: they have no container bridge to answer account / signing /
-// storage requests, no trust-shield context, and no unified loading UI.
-// `main()` rejects top-level loads with an explicit error; these helpers
-// now just postMessage to the host parent — there is no "else" branch.
+// The sandbox only runs embedded inside the host iframe (`dot.li` iframes
+// `<label>.app.dot.li`). Direct or bookmarked loads of the sandbox origin
+// are unsupported. They have no container bridge to answer account, signing,
+// or storage requests, no trust-shield context, and no unified loading UI.
+// `main()` rejects top-level loads with an explicit error. These helpers
+// always postMessage to the host parent. There is no "else" branch.
 
 function showStatus(message: string): void {
   window.parent.postMessage({ type: "dotli:loading-status", message }, "*");
@@ -94,28 +95,26 @@ function failLoading(...args: Parameters<typeof showError>): void {
 }
 
 /**
- * Extract the CID from the hostname.
+ * Extract the app subdomain label (the dotns name) from the hostname.
  *
- * Examples:
- *   "bafyrei1234.app.dot.li"     → "bafyrei1234"
- *   "bafyrei1234.app.localhost"   → "bafyrei1234"
- *   "app.dot.li"                  → null (bare app domain)
- *   "dot.li"                      → null
+ * The CID no longer lives in the origin (it arrives on the host contract), so
+ * this only confirms we are on a real `<label>.app.<root>` origin. Returns
+ * `null` for a bare `app.<root>` or any non-`*.app.*` host.
  */
-function parseCidFromHostname(): string | null {
+function parseSubdomainLabel(): string | null {
   const hostname = window.location.hostname;
 
-  // Production: cid.app.{BASE_DOMAIN}
+  // Production: <label>.app.{BASE_DOMAIN}
   const appSuffix = `.app.${BASE_DOMAIN}`;
   if (hostname.endsWith(appSuffix)) {
-    const cid = hostname.slice(0, -appSuffix.length);
-    return cid || null;
+    const label = hostname.slice(0, -appSuffix.length);
+    return label || null;
   }
 
-  // Local dev: cid.app.localhost
+  // Local dev: <label>.app.localhost
   if (hostname.endsWith(".app.localhost")) {
-    const cid = hostname.slice(0, -".app.localhost".length);
-    return cid || null;
+    const label = hostname.slice(0, -".app.localhost".length);
+    return label || null;
   }
 
   return null;
@@ -567,26 +566,28 @@ async function main(): Promise<void> {
     return;
   }
 
-  const cid = parseCidFromHostname();
-  if (cid === null) {
+  // The origin is now the dotns label (`<label>.app.<root>`), not the CID.
+  // We still require a subdomain so a bare `app.<root>` top load fails
+  // loudly. The actual CID arrives on the host contract below.
+  const subdomainLabel = parseSubdomainLabel();
+  if (subdomainLabel === null) {
     failLoading(
-      "No CID",
-      `This page requires a CID in the subdomain (e.g. bafyrei....app.${BASE_DOMAIN})`,
+      "Sandbox URL not supported",
+      `This page must load as a dotns app subdomain (e.g. myapp.app.${BASE_DOMAIN}) through dot.li.`,
     );
     stopApp();
     return;
   }
 
-  log.warn(`[dot.li app] CID from hostname: ${cid}`);
   showStatus("Loading content...");
 
-  // The sandbox lives on cid.app.dot.li and cannot read the host's
-  // localStorage, so every user-chosen axis MUST arrive via URL param.
-  // The validator lives in `@dotli/config/host-sandbox-contract` so the
-  // schema + accepted values are a single source of truth for host +
-  // sandbox. Missing/invalid contract values are a hard error; there
-  // is no silent default. Extra keys are user query params and pass
-  // through.
+  // The sandbox lives on `<label>.app.dot.li` and cannot read the host's
+  // localStorage, so every user-chosen axis (and the resolved CID) must
+  // arrive via URL param. The validator in
+  // `@dotli/config/host-sandbox-contract` is the single source of truth
+  // for the schema and accepted values across host and sandbox. Missing
+  // or invalid contract values are a hard error. There is no silent
+  // default. Extra keys are user query params and pass through.
   const urlParams = new URL(window.location.href).searchParams;
   const parsed = validateSandboxParams(urlParams);
   if (!parsed.ok) {
@@ -594,7 +595,7 @@ async function main(): Promise<void> {
     stopApp();
     return;
   }
-  const { chainBackend, network, skipArchiveCache } = parsed.params;
+  const { cid, chainBackend, network, skipArchiveCache } = parsed.params;
   const isGateway = chainBackend === "rpc-gateway";
 
   setNetworkOverride(network);

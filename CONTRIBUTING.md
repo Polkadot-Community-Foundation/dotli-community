@@ -44,7 +44,7 @@ Good documentation starts with a single, clear sentence. Everything else comes a
 4. **Link to related items.** Help readers navigate. Reference related functions, types, or modules directly rather than describing them.
 5. **Think about context.** If you're explaining too many foreign concepts to document one function, the API design may need work.
 6. **No code section separators.** Don't use `// -----------` or similar decorative dividers to split sections within a file. Let the code structure speak for itself.
-7. **No em-dashes, semicolons, or prose-conjunction `+`.** Rewrite the sentence. Two short sentences read better than one long one with a dash.
+7. **No em-dashes, semicolons, prose-conjunction `+`, or Unicode arrows (`→`, `←`, `↔`).** Rewrite the sentence. Two short sentences read better than one long one with a dash, and arrows belong in diagrams (where `->` is fine if it's a real arrow, not a stand-in for "becomes" or "then").
 8. **No external spec citations in code comments.** Don't write "per RFC 0001" or "see EIP-137" inside a comment. Explain the rule itself. If a reader needs the spec, the commit message and the PR description are the right place. Code comments stand alone.
 9. **No "on-chain" in prose.** Say "network" or "remote" instead. The host already knows the data sits on a chain. Calling it "the network value" reads naturally; "the on-chain value" reads as crypto jargon.
 
@@ -61,10 +61,10 @@ export async function resolveLabel(label: string): Promise<Cid | null> {
 
 ```ts
 /**
- * Two-build, CID-subdomain bridge.
+ * Two-build, per-product subdomain bridge.
  *
  * The host shell at name.dot.li resolves the label, then iframes
- * cid.app.dot.li with the resolved CID. Each CID gets a distinct origin so SW, storage, and auth stay isolated per app.
+ * name.app.dot.li with the resolved CID threaded through the URL contract. Each product gets a distinct origin so SW, storage, and auth stay isolated across products.
  */
 ```
 

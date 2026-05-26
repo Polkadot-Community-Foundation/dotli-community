@@ -99,7 +99,7 @@ const PHASE_PAIRS: [string, string, string][] = [
   ],
   ["    Chain sync", "dotli:smoldot:sync:start", "dotli:smoldot:sync:end"],
   ["  SW smoldot", "dotli:smoldot:sw:start", "dotli:smoldot:sw:end"],
-  // App phases (cid.app.localhost — content fetch + render)
+  // App phases on `<label>.app.localhost` cover content fetch and render.
   ["App total", "dotli:app:start", "dotli:app:end"],
   ["  P2P attempt", "dotli:fetch:p2p:start", "dotli:fetch:p2p:end"],
   ["  Gateway fetch", "dotli:fetch:gateway:start", "dotli:fetch:gateway:end"],
@@ -166,7 +166,7 @@ async function collectMarks(page: Page): Promise<PerfMark[]> {
     timeOrigin: performance.timeOrigin,
   }));
 
-  // Collect app iframe marks (cid.app.localhost) and normalize to host timeline
+  // Collect app iframe marks (<label>.app.localhost) and normalize to host timeline
   const appFrame = page
     .frames()
     .find((f) => f.url().includes(".app.localhost"));
@@ -230,7 +230,7 @@ async function waitForPipeline(page: Page): Promise<void> {
     { timeout: 90_000, polling: 500 },
   );
 
-  // 2. Wait for the app iframe (cid.app.localhost) to appear and finish
+  // 2. Wait for the app iframe (<label>.app.localhost) to appear and finish
   const appFrame = await getAppFrame(page, 30_000);
   if (appFrame !== null) {
     try {
@@ -254,7 +254,7 @@ async function waitForPipeline(page: Page): Promise<void> {
 }
 
 /**
- * Poll for the app iframe (cid.app.localhost) among the page's frames.
+ * Poll for the app iframe (<label>.app.localhost) among the page's frames.
  * Returns null if not found within the timeout.
  */
 async function getAppFrame(page: Page, timeout: number): Promise<Frame | null> {

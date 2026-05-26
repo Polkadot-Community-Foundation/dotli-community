@@ -36,24 +36,24 @@ The topbar is hidden on the landing page and only appears when viewing an app.
 
 ## Architecture
 
-dot.li uses a **two-build, CID-subdomain architecture** that separates concerns between the host shell and the app content layer:
+dot.li uses a **two-build, per-product subdomain architecture** that separates concerns between the host shell and the app content layer:
 
 ```
 name.dot.li              Host build (topbar, dotns resolution, smoldot, bridge)
-                          Resolves name -> CID, then iframes cid.app.dot.li
+                          Resolves name -> CID, iframes name.app.dot.li with the CID
+                          threaded through the URL contract
 
-cid.app.dot.li           App build (CID from subdomain, content fetch, render)
-                          Parses CID from URL, fetches via bitswap/gateway, renders
+name.app.dot.li          App build (CID from URL contract, content fetch, render)
+                          Reads CID from URL, fetches via bitswap/gateway, renders
 ```
 
-| URL                            | Role         | What happens                                                     |
-| ------------------------------ | ------------ | ---------------------------------------------------------------- |
-| `testingout.dot.li`            | Host shell   | Resolves `testingout` via dotns, iframes `bafyrei....app.dot.li` |
-| `bafyrei....app.dot.li`        | App content  | Parses CID from subdomain, fetches content, renders              |
-| `dot.li`                       | Landing page | Search bar, recent apps                                          |
-| Direct `bafyrei....app.dot.li` | Standalone   | Works without a host — fetches and renders directly              |
+| URL                     | Role         | What happens                                                                |
+| ----------------------- | ------------ | --------------------------------------------------------------------------- |
+| `testingout.dot.li`     | Host shell   | Resolves `testingout` via dotns, iframes `testingout.app.dot.li?cid=bafy..` |
+| `testingout.app.dot.li` | App content  | Reads CID from URL contract, fetches content, renders                       |
+| `dot.li`                | Landing page | Search bar, recent apps                                                     |
 
-Each `cid.app.dot.li` is a distinct origin, preventing SW/storage/security conflicts between apps.
+Each product gets its own `<label>.app.dot.li` origin, so versions of the same product share an origin while different products stay isolated for SW/storage/security purposes.
 
 ### What it does
 
@@ -64,7 +64,7 @@ Each `cid.app.dot.li` is a distinct origin, preventing SW/storage/security confl
 ```
 testingout.dot.li
     -> Host: smoldot resolves dotNS -> IPFS CID
-    -> Host: iframes cid.app.dot.li
+    -> Host: iframes <label>.app.dot.li with cid in URL contract
     -> App:  fetches content via smoldot bitswap_v1_get or IPFS gateway
     -> App:  renders dApp in sandboxed iframe with container bridge
 ```
@@ -78,7 +78,7 @@ Single-file apps are served as blob URLs. Multi-file SPAs (directories) are fetc
 3. Call `recordExists(node)` on the dotNS Registry contract via Revive dry-run
 4. Call `contenthash(node)` on the dotNS ContentResolver contract
 5. Decode the contenthash bytes to an IPFS CID (using `@ensdomains/content-hash`)
-6. Create an iframe to `cid.app.dot.li` which fetches and renders the content
+6. Create an iframe to `<label>.app.dot.li?cid=<cid>` which fetches and renders the content
 
 All contract calls are read-only dry-runs executed through the smoldot light client — no RPC server needed.
 

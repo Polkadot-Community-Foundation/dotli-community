@@ -133,7 +133,7 @@ The host catches this and emits a \`boot:failed\` event (or a user-facing error 
     body: `The host is about to insert an \`<iframe>\` into the DOM for the product. Two modes:
 
 • \`iframe\` — plain embed of the URL directly (localhost dev-server proxy).
-• \`subdomain\` — the full sandboxed flow: an iframe pointing at \`cid.app.dot.li\` where the sandbox origin is responsible for fetching the CID's content, decompressing the archive, and rendering the product into its own nested iframe. The host stays the cross-origin bridge.
+• \`subdomain\` — the full sandboxed flow: an iframe pointing at \`<label>.app.dot.li\` where the sandbox origin is responsible for fetching the CID's content, decompressing the archive, and rendering the product into its own nested iframe. The host stays the cross-origin bridge.
 
 The iframe's \`sandbox\` and \`allow\` attributes are configured here based on the label's per-product permissions.`,
   },
@@ -163,7 +163,7 @@ If the product calls \`handleChainConnection()\` the host will create a \`ChainP
 
   "bridge:iframe_load": {
     title: "Product iframe loaded",
-    body: `The browser has fired the product iframe's \`load\` event. For the \`iframe\` mode that means the dApp's own HTML has finished loading; for the \`subdomain\` mode it's the sandbox shell at \`cid.app.dot.li\` that's loaded — the inner dApp iframe is still being mounted and bootstrapped by the sandbox.
+    body: `The browser has fired the product iframe's \`load\` event. For the \`iframe\` mode that means the dApp's own HTML has finished loading; for the \`subdomain\` mode it's the sandbox shell at \`<label>.app.dot.li\` that's loaded — the inner dApp iframe is still being mounted and bootstrapped by the sandbox.
 
 This is a common culprit for the gap between \`setup_ready\` and the first \`host_handshake_response\`: if the iframe takes many seconds to load (cold IPFS gateway, slow archive fetch), the product can't post anything to the host yet, so the host sits there with nothing to reply to.`,
   },
@@ -227,11 +227,9 @@ These are intentionally chatty on purpose: they're the control signal against wh
     body: `The main-thread monitor has stopped emitting stalls and heartbeats. \`bridge_ready\` means the primary TrUAPI bridge finished its handshake and the monitor's reason-to-exist has been met. \`max_duration\` means the monitor hit its 2-minute safety cap without ever seeing \`bridge:first_outbound\` — usually a sign that the bridge never completed at all.`,
   },
 
-  // ── sandbox (cid.app.dot.li) ──────────────────────────
-
   "sandbox:started": {
     title: "Sandbox boot started",
-    body: `The sandbox iframe at \`cid.app.dot.li\` has just started executing its own \`main()\`. It parses the CID from its hostname, reads the curated URL params (content backend, chain backend, skip flags), and begins the "fetch the archive → render it" pipeline.
+    body: `The sandbox iframe at \`<label>.app.dot.li\` has just started executing its own \`main()\`. It reads the curated URL params (resolved CID, content backend, chain backend, skip flags) from the host contract, and begins the "fetch the archive, then render it" pipeline.
 
 Everything that happens from here until \`sandbox:document_written\` runs in the **sandbox origin**, not the host. During this window the host has already set \`iframe.src\` and is sending \`host_handshake_request\` on the bridge, but the product itself won't exist inside the sandbox iframe until \`document.write\` runs at the end of this flow. That's why you can see a long silent gap in the host's bridge swimlane: there is nothing to respond because the product isn't loaded yet.`,
   },

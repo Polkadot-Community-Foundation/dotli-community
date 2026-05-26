@@ -21,7 +21,7 @@ Telegraph style. Root rules only. Read scoped `AGENTS.md` before subtree work.
 
 ## Architecture
 
-- Two builds, two origins. `name.dot.li` (host shell) iframes `cid.app.dot.li` (per-CID app, distinct origin) so SW/storage/auth stay isolated. When debugging, check which build you're in.
+- Two builds, two origins. `name.dot.li` (host shell) iframes `name.app.dot.li` (per-product app, distinct origin) so SW/storage/auth stay isolated. Host resolves dotns to a CID and threads it into the sandbox via the URL contract. When debugging, check which build you're in.
 - smoldot in a SharedWorker via `apps/protocol`; chain access only through `packages/protocol` bridge. No direct WebSockets in host or sandbox.
 - Multi-file SPAs: SW intercepts under `/dotli-app/`; `packages/content` parses CAR into a file map. SPA breaks in preview but not dev: suspect SW state.
 - Metrics registry centralized in `packages/metrics/src/spans.ts`; reuse constants for any tag/attribute/span/breadcrumb. No string literals at call sites.

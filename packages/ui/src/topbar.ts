@@ -995,7 +995,7 @@ function renderModePopover(): void {
 /**
  * Apply the pending draft and wipe every piece of persisted state we own on
  * this origin before reloading. The reload path also signals the protocol
- * iframe (host.dot.li) and the sandbox iframe (cid.app.dot.li) to purge
+ * iframe (host.dot.li) and the sandbox iframe (<label>.app.dot.li) to purge
  * their origins — each origin has to wipe itself, we can't reach across.
  *
  * Order matters:

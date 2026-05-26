@@ -1,7 +1,7 @@
 // dot.li — App Service Worker
 //
 // Archive serving only — no smoldot, no chain sync.
-// Runs on cid.app.dot.li to serve multi-file SPA archives from in-memory/IndexedDB cache.
+// Runs on <label>.app.dot.li to serve multi-file SPA archives from in-memory/IndexedDB cache.
 
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;
@@ -392,7 +392,7 @@ self.addEventListener("fetch", (event: FetchEvent) => {
  *     `index.html` fallback for a top-level navigation).
  *   - `null` — we don't own it; the caller MUST let the request fall
  *     through to the network. The sandbox origin hosts BOTH the shell
- *     (`cid.app.localhost/index.html` + its vite-hashed `/assets/*.js`
+ *     (`<label>.app.localhost/index.html` + its vite-hashed `/assets/*.js`
  *     and `/assets/*.css`) AND, post-boot, whatever the currently-loaded
  *     dApp archive contains. Returning a 404 for shell asset requests
  *     just because they're not in the dApp archive breaks every refresh

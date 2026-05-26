@@ -362,7 +362,7 @@ test.describe("Sandbox side-effects from URL contract keys", () => {
 
     try {
       // Visit 1 (no fullReset): warm the sandbox so we have a Frame to plant
-      // a marker DB into. Same sandbox origin (cid.app.localhost:PORT) is used
+      // a marker DB into. Same sandbox origin (<label>.app.localhost:PORT) is used
       // for visit 2, so the marker should persist across navigations until the
       // purge wipes it.
       await page.goto(`${HOST_BY_LABEL}/`);

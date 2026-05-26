@@ -20,7 +20,7 @@ export type DotliDebugEvent =
   | MainEvent
   | SandboxEvent;
 
-/** Sandbox (cid.app.dot.li) lifecycle. These events originate in the
+/** Sandbox (<label>.app.dot.li) lifecycle. These events originate in the
  *  sandbox iframe and are forwarded to the host's debug bus via
  *  `postMessage({ type: "dotli:debug-event", event })`.
  *

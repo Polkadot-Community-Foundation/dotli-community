@@ -6,7 +6,10 @@
 // sandbox bundle.
 
 import { BASE_DOMAIN } from "@dotli/config/config";
-import { SANDBOX_CONTRACT_PARAMS } from "@dotli/config/host-sandbox-contract";
+import {
+  SANDBOX_CONTRACT_PARAMS,
+  SANDBOX_SCHEMA_VERSION,
+} from "@dotli/config/host-sandbox-contract";
 import { getBackend, getCacheSettings } from "@dotli/config/mode";
 import { getNetwork } from "@dotli/config/network";
 import { m } from "@dotli/metrics/metrics";
@@ -187,11 +190,18 @@ export async function renderIframe(url: string, label: string): Promise<void> {
 }
 
 /**
- * Render content in a cross-origin app subdomain iframe (cid.app.dot.li).
- * Used by the host build to delegate content fetching+rendering to the app context.
+ * Render content in a cross-origin app subdomain iframe at
+ * `<label>.app.dot.li`.
+ *
+ * The host build delegates content fetching and rendering to the app
+ * context. The origin is the human dotns label. The host owns dotns
+ * resolution and threads the resolved CID through the URL contract
+ * (`?cid=`), since it is no longer in the origin. The sandbox does
+ * not re-resolve.
  *
  * Sets up the container bridge targeting the app iframe. The app context
- * acts as a transparent postMessage relay between the host and the dApp iframe.
+ * acts as a transparent postMessage relay between the host and the dApp
+ * iframe.
  */
 export async function renderAppSubdomain(
   cid: string,
@@ -220,7 +230,7 @@ export async function renderAppSubdomain(
   const chainBackend = getBackend();
   const network = getNetwork();
   const cache = getCacheSettings();
-  const appOrigin = getAppOrigin(cid);
+  const appOrigin = getAppOrigin(label);
   const deepPath = getDeepPath();
   // One-shot: the settings popover sets this flag right before reloading so
   // the first sandbox boot after "Save & Apply" wipes its own origin too.
@@ -239,6 +249,13 @@ export async function renderAppSubdomain(
   let url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
   try {
     const parsed = new URL(url);
+    // CID is no longer in the origin, so the host hands the resolved CID to
+    // the sandbox here. `v` lets a stale sandbox reject a mismatched build.
+    parsed.searchParams.set(SANDBOX_CONTRACT_PARAMS.cid, cid);
+    parsed.searchParams.set(
+      SANDBOX_CONTRACT_PARAMS.v,
+      String(SANDBOX_SCHEMA_VERSION),
+    );
     parsed.searchParams.set(SANDBOX_CONTRACT_PARAMS.chainBackend, chainBackend);
     parsed.searchParams.set(SANDBOX_CONTRACT_PARAMS.network, network);
     if (cache.skipArchiveCache) {
@@ -250,7 +267,7 @@ export async function renderAppSubdomain(
     url = parsed.toString();
   } catch {
     const sep = url.includes("?") ? "&" : "?";
-    url += `${sep}${SANDBOX_CONTRACT_PARAMS.chainBackend}=${chainBackend}&${SANDBOX_CONTRACT_PARAMS.network}=${network}`;
+    url += `${sep}${SANDBOX_CONTRACT_PARAMS.cid}=${cid}&${SANDBOX_CONTRACT_PARAMS.v}=${String(SANDBOX_SCHEMA_VERSION)}&${SANDBOX_CONTRACT_PARAMS.chainBackend}=${chainBackend}&${SANDBOX_CONTRACT_PARAMS.network}=${network}`;
     if (cache.skipArchiveCache) {
       url += `&${SANDBOX_CONTRACT_PARAMS.skipArchiveCache}=1`;
     }
@@ -350,13 +367,15 @@ export async function renderAppSubdomain(
   });
 }
 
-function getAppOrigin(cid: string): string {
+// Origin is the human dotns label (`<label>.app.<root>`), not the CID. Storage
+// and permissions stay stable across content (CID) updates of the same name.
+function getAppOrigin(label: string): string {
   const hostname = window.location.hostname;
   if (hostname.endsWith(".localhost") || hostname === "localhost") {
     const port = import.meta.env.DEV ? "5174" : window.location.port;
-    return `http://${cid}.app.localhost:${port}`;
+    return `http://${label}.app.localhost:${port}`;
   }
-  return `https://${cid}.app.${BASE_DOMAIN}`;
+  return `https://${label}.app.${BASE_DOMAIN}`;
 }
 
 function cleanup(): void {

@@ -87,7 +87,6 @@ export function summariseSystemEvent(ev: StoredSystemEvent): string {
         ? "Main-thread monitor stopped (bridge traffic established)."
         : "Main-thread monitor stopped (max duration reached).";
 
-    // ── sandbox (cid.app.dot.li) ────────────────────────
     case "sandbox:started":
       return `Sandbox iframe started (cid=${str(p.cid)}, backend=${str(p.contentBackend)}).`;
     case "sandbox:sw_register_begin":

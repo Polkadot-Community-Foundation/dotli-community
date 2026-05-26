@@ -1,7 +1,8 @@
-// Host entry point
+// Host entry point.
 //
-// Flow: parse URL → render direct preview/local target, or resolve .dot name
-// via smoldot → iframe to cid.app.dot.li.
+// Parses the URL, then either renders a direct preview or local target, or
+// resolves the `.dot` name via smoldot and iframes the sandbox at
+// `<label>.app.dot.li` with the resolved CID threaded through the URL contract.
 
 // Polyfill for Safari < 18.4 which lacks requestIdleCallback
 if (typeof globalThis.requestIdleCallback !== "function") {
@@ -182,20 +183,16 @@ const RESERVED_HOST_PARAMS = [
 ] as const;
 
 /**
- * Extract the .dot label from the current hostname.
+ * Extract the `.dot` label from the current hostname.
  *
- * Examples:
- *   "myapp.dot.li"            → "myapp"
- *   "myapp.localhost"          → "myapp"    (local dev)
- *   "dot.li"                  → null        (landing page)
- *   "localhost"                → null        (landing page)
- *   "cid.app.dot.li"          → null        (handled by app-main.ts)
- *   "cid.app.localhost"       → null        (handled by app-main.ts)
+ * Returns `"myapp"` for `myapp.dot.li` or `myapp.localhost`. Returns `null`
+ * for the bare landing pages (`dot.li`, `localhost`) and for sandbox origins
+ * (`*.app.dot.li`, `*.app.localhost`), which are handled by `app-main.ts`.
  */
 function parseDotLabel(): string | null {
   const hostname = window.location.hostname;
 
-  // Production: name.{BASE_DOMAIN} (but NOT cid.app.{BASE_DOMAIN})
+  // Production: name.{BASE_DOMAIN} (but NOT *.app.{BASE_DOMAIN})
   if (hostname.endsWith(`.${BASE_DOMAIN}`)) {
     if (hostname.endsWith(`.app.${BASE_DOMAIN}`)) {
       return null;
@@ -204,7 +201,7 @@ function parseDotLabel(): string | null {
     return label || null;
   }
 
-  // Local dev: name.localhost (but NOT cid.app.localhost)
+  // Local dev: name.localhost (but NOT *.app.localhost)
   if (hostname.endsWith(".localhost")) {
     if (hostname.endsWith(".app.localhost")) {
       return null;
@@ -595,7 +592,7 @@ function startMainThreadMonitor(flowId: string, emit: EmitFn): void {
 
 /**
  * Accept `{ type: "dotli:debug-event", event: DotliDebugEvent }` from
- * any child iframe (specifically the sandbox at `cid.app.dot.li`) and
+ * any child iframe (specifically the sandbox at `<label>.app.dot.li`) and
  * push the payload into the local debug bus.
  *
  * The sandbox lives on a different origin and can't touch the host's
