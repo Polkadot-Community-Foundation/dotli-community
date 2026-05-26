@@ -1,0 +1,10 @@
+/**
+ * Env overrides shared by every spec in this directory.
+ *
+ * Centralised so a single env change propagates everywhere. Tests
+ * import these instead of re-reading `process.env`.
+ */
+
+export const DOMAIN = process.env.DOMAIN ?? "host-playground";
+export const PORT = process.env.PORT ?? "5173";
+export const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS ?? "45000", 10);

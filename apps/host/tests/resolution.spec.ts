@@ -1,258 +1,34 @@
 /**
- * End-to-end resolution tests across all supported backend combinations.
+ * Cold resolution test against every supported backend.
  *
- * Env overrides: COMBO_DOMAIN, COMBO_PORT, COMBO_TIMEOUT_MS
+ * Env overrides: DOMAIN, PORT, TIMEOUT_MS
  */
 
-import { expect, type Page, type Frame } from "@playwright/test";
-import {
-  IFRAME_FORWARDER,
-  SHARED_WORKER_FORWARDER,
-  WORKER_FORWARDER,
-} from "./helpers/iframe-logs-forwarder";
+import { DOMAIN, PORT, TIMEOUT_MS } from "./helpers/env";
+import { setupTest } from "./helpers/context";
+import { waitForResolutionOutcome } from "./helpers/product-frame";
+import { BACKENDS } from "./fixtures/settings";
 import { test } from "./helpers/shared-mode-reset";
 
-const DOMAIN = process.env.COMBO_DOMAIN ?? "host-playground";
-const PORT = process.env.COMBO_PORT ?? "5173";
-const TIMEOUT_MS = parseInt(process.env.COMBO_TIMEOUT_MS ?? "45000", 10);
-
-const BACKENDS = [
-  "smoldot-shared-worker",
-  "smoldot-direct",
-  "rpc-gateway",
-] as const;
-
-type Backend = (typeof BACKENDS)[number];
-
-async function waitForAppFrame(
-  page: Page,
-  timeoutMs: number,
-): Promise<Frame | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const frame = page.frames().find((f) => f.url().includes(".app.localhost"));
-    if (frame !== undefined) {
-      return frame;
-    }
-    await page.waitForTimeout(200);
-  }
-  return null;
-}
-
-async function waitForErrorPage(
-  page: Page,
-  timeoutMs: number,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const title = await page
-      .locator(".error-page-title")
-      .first()
-      .textContent({ timeout: 500 })
-      .catch(() => null);
-    if (title !== null && title.length > 0) {
-      const detail = await page
-        .locator(".error-page-detail")
-        .first()
-        .textContent({ timeout: 500 })
-        .catch(() => "");
-      return `${title}: ${detail ?? ""}`;
-    }
-    await page.waitForTimeout(250);
-  }
-  return "";
-}
-
-async function waitForAppEnd(page: Page, timeoutMs: number): Promise<void> {
-  const start = Date.now();
-  const appFrame = await waitForAppFrame(page, timeoutMs);
-  if (appFrame === null) {
-    throw new Error(
-      `Sandbox iframe never appeared within ${String(timeoutMs)}ms`,
-    );
-  }
-  const remaining = Math.max(1000, timeoutMs - (Date.now() - start));
-  await appFrame.waitForFunction(
-    () =>
-      performance
-        .getEntriesByType("mark")
-        .some((m) => m.name === "dotli:app:end"),
-    { timeout: remaining, polling: 500 },
-  );
-}
+const BASE_URL = `http://${DOMAIN}.localhost:${PORT}/`;
 
 test.setTimeout(BACKENDS.length * TIMEOUT_MS * 2);
 
-test.describe("Resolution with different backend settings", () => {
+test.describe("Resolution across chain backends", () => {
   for (const backend of BACKENDS) {
-    test(`resolves ${DOMAIN}.dot backend=${backend}`, async ({ browser }) => {
+    test(`As a user opening ${DOMAIN}.dot via ${backend}, the shell loads the app`, async ({
+      browser,
+    }) => {
       // Given
-      const context = await browser.newContext({
-        storageState: undefined,
-        serviceWorkers: "allow",
-      });
-
-      await context.addInitScript(
-        ({ backend }: { backend: Backend }) => {
-          try {
-            localStorage.setItem("dotli:chain-backend", backend);
-          } catch (err) {
-            console.warn("[resolution-test] localStorage seed failed", err);
-          }
-        },
-        { backend },
-      );
-
-      await context.route("**", async (route) => {
-        const req = route.request();
-        if (req.resourceType() !== "document") {
-          await route.continue();
-          return;
-        }
-        process.stdout.write(`[route:doc] ${req.url()}\n`);
-        try {
-          const response = await route.fetch();
-          const ct = (response.headers()["content-type"] || "").toLowerCase();
-          const body = await response.text();
-          const injected = body.replace(
-            /<head(\s[^>]*)?>/i,
-            (m) => `${m}${IFRAME_FORWARDER}`,
-          );
-          const finalBody =
-            body.length > 0 && injected !== body
-              ? injected
-              : IFRAME_FORWARDER + body;
-          await route.fulfill({
-            response,
-            body: finalBody,
-            headers: { ...response.headers(), "content-type": "text/html" },
-          });
-          process.stdout.write(
-            `[route:doc:done] ${req.url()} ct=${ct || "(none)"} injected=${finalBody !== body}\n`,
-          );
-        } catch (err) {
-          process.stdout.write(
-            `[route:doc:err] ${req.url()} ${err instanceof Error ? err.message : String(err)}\n`,
-          );
-          await route.continue();
-        }
-      });
-      await context.route("**/*smoldot_worker*.js", async (route) => {
-        try {
-          const response = await route.fetch();
-          const body = await response.text();
-          await route.fulfill({
-            response,
-            body: WORKER_FORWARDER + body,
-            headers: {
-              ...response.headers(),
-              "content-type": "application/javascript",
-            },
-          });
-        } catch {
-          await route.continue();
-        }
-      });
-
-      await context.route("**/protocol-shared-worker-*.js", async (route) => {
-        const response = await route.fetch();
-        const body = await response.text();
-        await route.fulfill({
-          body: SHARED_WORKER_FORWARDER + body,
-          contentType: "application/javascript",
-        });
-      });
-
-      await context.addInitScript(() => {
-        const OrigSW = window.SharedWorker;
-        // @ts-expect-error: replacing global constructor
-        window.SharedWorker = function (
-          url: string,
-          opts?: WorkerOptions | string,
-        ) {
-          const sw = new OrigSW(url, opts);
-          sw.port.addEventListener(
-            "message",
-            (e: MessageEvent<{ __pw_sw_log__?: boolean; text?: string }>) => {
-              if (e.data.__pw_sw_log__ === true) {
-                console.warn(`[SW] ${e.data.text ?? ""}`);
-              }
-            },
-          );
-          return sw;
-        };
-      });
-
-      const page = await context.newPage();
-      const consoleErrors: string[] = [];
-      page.on("console", (msg) => {
-        if (msg.type() === "error") {
-          consoleErrors.push(msg.text());
-        }
-        const text = msg.text();
-        if (text.startsWith("[FRAMELOG]")) {
-          console.log(text);
-        } else if (msg.type() === "error") {
-          console.log(`[raw:error] ${text}`);
-        }
-      });
+      const { context, page } = await setupTest(browser, { backend });
 
       try {
         // When
-        await page.goto(`http://${DOMAIN}.localhost:${PORT}/`, {
-          waitUntil: "commit",
-        });
-
-        const successPromise = waitForAppEnd(page, TIMEOUT_MS).then(() => ({
-          kind: "ok" as const,
-        }));
-        const errorPromise = waitForErrorPage(page, TIMEOUT_MS).then(
-          (reason) =>
-            reason.length > 0
-              ? { kind: "error" as const, reason }
-              : { kind: "timeout" as const },
-        );
-        const result = await Promise.race([successPromise, errorPromise]);
+        await page.goto(BASE_URL, { waitUntil: "commit" });
 
         // Then
-        if (result.kind === "error") {
-          throw new Error(
-            `Shell rendered error page for backend=${backend}: ${result.reason}`,
-          );
-        }
-        if (result.kind === "timeout") {
-          throw new Error(
-            `Neither success nor error-page appeared within ${String(TIMEOUT_MS)}ms`,
-          );
-        }
-
-        const hasError = await page
-          .locator(".error-page-title")
-          .first()
-          .isVisible()
-          .catch(() => false);
-        expect(hasError, "unexpected error-page after success").toBe(false);
-
-        const appFrame = page
-          .frames()
-          .find((f) => f.url().includes(".app.localhost"));
-        expect(appFrame, "sandbox iframe not attached").toBeDefined();
-        if (appFrame === undefined) {
-          throw new Error("sandbox iframe not attached");
-        }
-        const hasAppEnd = await appFrame.evaluate(() =>
-          performance
-            .getEntriesByType("mark")
-            .some((m) => m.name === "dotli:app:end"),
-        );
-        expect(hasAppEnd, "dotli:app:end mark missing").toBe(true);
+        await waitForResolutionOutcome(page, TIMEOUT_MS, backend);
       } finally {
-        if (consoleErrors.length > 0) {
-          console.log(`\n--- console errors (backend=${backend}) ---`);
-          for (const line of consoleErrors.slice(0, 20)) {
-            console.log(`  ${line}`);
-          }
-        }
         await context.close();
       }
     });

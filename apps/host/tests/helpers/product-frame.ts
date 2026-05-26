@@ -137,3 +137,33 @@ export async function waitForSandboxErrorPage(
   }
   return "";
 }
+
+/**
+ * Race the shell's success path against the host error page. Throws when
+ * the shell renders an error instead of completing, or when neither
+ * outcome appears within `timeoutMs`. `label` is appended to the error
+ * message so failing tests point at the right variant.
+ */
+export async function waitForResolutionOutcome(
+  page: Page,
+  timeoutMs: number,
+  label: string,
+): Promise<void> {
+  const successPromise = getProductFrame(page, timeoutMs).then(() => ({
+    kind: "ok" as const,
+  }));
+  const errorPromise = waitForErrorPage(page, timeoutMs).then((reason) =>
+    reason.length > 0
+      ? { kind: "error" as const, reason }
+      : { kind: "timeout" as const },
+  );
+  const result = await Promise.race([successPromise, errorPromise]);
+  if (result.kind === "error") {
+    throw new Error(`Shell rendered error page (${label}): ${result.reason}`);
+  }
+  if (result.kind === "timeout") {
+    throw new Error(
+      `Neither success nor error-page appeared within ${String(timeoutMs)}ms (${label})`,
+    );
+  }
+}
