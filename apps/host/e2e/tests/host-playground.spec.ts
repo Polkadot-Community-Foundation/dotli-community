@@ -47,7 +47,6 @@ test.describe("dot.li > host-playground.dot", () => {
     test("Product Account Alias", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "accounts-provider-alias");
     });
-
   });
 
   test.describe("Auth", () => {
