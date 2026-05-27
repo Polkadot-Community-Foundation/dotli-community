@@ -93,7 +93,7 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
     },
     assethub: {
       genesis:
-        "0x173cea9df45656cf612c8b8ece56e04e9a693c69cfaac47d3628dae735067af8",
+        "0xbf0488dbe9daa1de1c08c5f743e26fdc2a4ecd74cf87dd1b4b1eeb99ae4ef19f",
       rpcs: ["wss://paseo-asset-hub-next-rpc.polkadot.io"],
     },
     bulletin: {
@@ -104,7 +104,7 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
     },
     people: {
       genesis:
-        "0x053e1a785bb0990b98768124d9609e963d9ca3558f5ac6e90a4297aaa0a0bd4b",
+        "0xc5af1826b31493f08b7e2a823842f98575b806a784126f28da9608c68665afa5",
       rpcs: ["wss://paseo-people-next-system-rpc.polkadot.io"],
     },
     dotns: {
