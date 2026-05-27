@@ -98,6 +98,19 @@ export const MAX_CONNECTIONS_PER_ORIGIN = 10;
 /** Max nested container bridges per host shell. */
 export const MAX_NESTED_BRIDGES = 5;
 
+/** Drop scheduled notifications older than this many ms past `scheduledAt`. */
+export const SCHEDULED_NOTIFICATIONS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** Max pending scheduled notifications per product. 21st `schedule` returns ScheduleLimitReached. */
+export const SCHEDULED_NOTIFICATIONS_PER_PRODUCT_CAP = 20;
+
+/** Polling tick for the scheduler loop. */
+export const SCHEDULED_NOTIFICATIONS_POLL_INTERVAL_MS = 1_000;
+
+/** Visibility bias: hidden tabs only fire records older than `now - offset`, giving
+ *  a visible tab in the same origin first crack at the lock. */
+export const SCHEDULED_NOTIFICATIONS_HIDDEN_TAB_OFFSET_MS = 300;
+
 // Re-exported from the pure-constants `timeouts` sub-module so existing
 // `@dotli/config/config` callers keep working unchanged.
 export { TIMEOUTS } from "./timeouts";

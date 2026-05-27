@@ -28,6 +28,7 @@
     "@dotli/protocol": "workspace:*",
     "@dotli/sandbox-checker": "workspace:*",
     "@dotli/shared": "workspace:*",
+    "@dotli/storage": "workspace:*",
     "@dotli/truapi-debug": "workspace:*",
     "@noble/hashes": "^2.2.0",
     "@novasamatech/host-api": "0.7.9",

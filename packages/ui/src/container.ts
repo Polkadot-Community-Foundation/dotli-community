@@ -19,6 +19,7 @@ import {
   PaymentStatusErr,
   PaymentTopUpErr,
   PreimageSubmitErr,
+  PushNotificationError,
   RequestCredentialsErr,
   ResourceAllocationErr,
   SigningErr,
@@ -83,8 +84,11 @@ import { getBackend } from "@dotli/config/mode";
 import { computePreimageKey, hashToCid } from "@dotli/content/preimage";
 import { fetchFromIpfs } from "@dotli/content/ipfs";
 import { submitPreimageRemote } from "@dotli/protocol/client";
-import { showPushNotification } from "./notification";
 import { showNotification } from "./notification";
+import {
+  cancelNotification,
+  scheduleNotification,
+} from "./scheduled-notifications";
 import { showAliasPermissionModal } from "./alias-permission-modal";
 import { showPreimageSubmitModal } from "./preimage-modal";
 import {
@@ -910,14 +914,53 @@ function wireContainerHandlers(
     }),
   );
 
-  container.handlePushNotification(({ text, deeplink }, { ok }) => {
-    log.warn(`[${label}] Push notification:`, { text, deeplink });
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    showPushNotification({ text, deeplink, label });
-    // Return an opaque notification id; dotli doesn't currently
-    // support cancellation, so the value just needs to be unique.
-    return ok(Date.now());
-  });
+  container.handlePushNotification(
+    ({ text, deeplink, scheduledAt }, { ok }) => {
+      log.warn(`[${label}] Push notification:`, {
+        text,
+        deeplink,
+        scheduledAt,
+      });
+      const scheduledAtMs =
+        scheduledAt === undefined ? null : Number(scheduledAt);
+      return fromPromise(
+        scheduleNotification({
+          productId: label,
+          title: label,
+          text,
+          deeplink: deeplink ?? null,
+          scheduledAt: scheduledAtMs,
+        }),
+        (e) =>
+          new PushNotificationError.Unknown({
+            reason: e instanceof Error ? e.message : String(e),
+          }),
+      ).andThen((result) => {
+        if (!result.ok) {
+          // The only failure the scheduler reports is the per-product cap.
+          return errAsync(new PushNotificationError.ScheduleLimitReached());
+        }
+        if (result.immediate) {
+          showNotification({
+            text,
+            deeplink: deeplink ?? undefined,
+            label,
+          });
+        }
+        return ok(result.id);
+      });
+    },
+  );
+
+  container.handlePushNotificationCancel((id, { ok }) =>
+    fromPromise(
+      cancelNotification(label, id),
+      (e) =>
+        new GenericError({
+          reason: e instanceof Error ? e.message : String(e),
+        }),
+    ).andThen(() => ok(undefined)),
+  );
 
   //
   // Handlers resolve getStatementStore() lazily (at call time, not setup time)

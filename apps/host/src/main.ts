@@ -56,6 +56,7 @@ import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
 import { escapeHtml } from "@dotli/shared/html";
 import { showNotification } from "@dotli/ui/notification";
+import { initScheduledNotifications } from "@dotli/ui/scheduled-notifications";
 import {
   BACKEND_KEY,
   CACHE_KEY,
@@ -1076,6 +1077,8 @@ async function main(): Promise<void> {
     const host = new URL(previewTargetUrl).host;
     log.warn(`[dot.li perf] Preview route: ${host} (${elapsed(T0)})`);
 
+    initScheduledNotifications({ label: host });
+
     const urlBar = document.getElementById("topbar-url");
     if (urlBar !== null) {
       urlBar.innerHTML = `<div class="topbar-url-pill localhost-pill" id="url-pill"><svg class="localhost-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="topbar-url-text"><span class="dot-domain">${escapeHtml(host)}</span></span></div>`;
@@ -1108,6 +1111,8 @@ async function main(): Promise<void> {
   if (label === null && localhostUrl !== null) {
     const host = new URL(localhostUrl).host;
     log.warn(`[dot.li perf] Localhost proxy: ${host} (${elapsed(T0)})`);
+
+    initScheduledNotifications({ label: host });
 
     const urlBar = document.getElementById("topbar-url");
     if (urlBar !== null) {
@@ -1165,6 +1170,8 @@ async function main(): Promise<void> {
   });
 
   log.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed(T0)})`);
+
+  initScheduledNotifications({ label });
 
   // Pre-load render chunk in parallel (overlap with CID resolution)
   const renderChunkPromise: Promise<RenderChunk> = import("@dotli/ui/bridge");
