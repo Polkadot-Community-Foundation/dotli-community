@@ -140,7 +140,7 @@ export function validateSandboxParams(
   if (!isValidNetwork(network)) {
     return {
       ok: false,
-      reason: `Unknown network "${network}". Expected "paseo-next-v1" or "paseo-next-v2".`,
+      reason: `Unknown network "${network}". Expected "paseo-next-v1", "paseo-next-v2", or "previewnet".`,
     };
   }
 

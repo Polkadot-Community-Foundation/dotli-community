@@ -28,6 +28,10 @@ import bulletinPaseoV1Url from "./paseo-bulletin.smol.json?url";
 import bulletinPaseoV2Url from "./paseo-bulletin-next.smol.json?url";
 import peoplePaseoV1Url from "./paseo-people-next.smol.json?url";
 import peoplePaseoV2Url from "./paseo-people-next-system.smol.json?url";
+import previewnetRelayUrl from "./previewnet.smol.json?url";
+import assetHubPreviewnetUrl from "./previewnet-asset-hub.smol.json?url";
+import bulletinPreviewnetUrl from "./previewnet-bulletin-local.smol.json?url";
+import peoplePreviewnetUrl from "./previewnet-people.smol.json?url";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { SS_RELAY_CHAIN } from "@dotli/config/config";
@@ -41,16 +45,50 @@ const allChainSpecs = import.meta.glob<string>("./*.json", {
   eager: true,
 });
 
+// Paseo-next V1 and V2 share the Paseo relay. Previewnet runs its own Paseo
+// Local relay. Exhaustive so any new network must declare its relay rather
+// than silently inheriting Paseo.
+function relayUrlFor(network: Network): string {
+  switch (network) {
+    case "paseo-next-v1":
+    case "paseo-next-v2":
+      return paseoUrl;
+    case "previewnet":
+      return previewnetRelayUrl;
+  }
+}
+
 function assetHubUrlFor(network: Network): string {
-  return network === "paseo-next-v2" ? assetHubPaseoV2Url : assetHubPaseoV1Url;
+  switch (network) {
+    case "paseo-next-v1":
+      return assetHubPaseoV1Url;
+    case "paseo-next-v2":
+      return assetHubPaseoV2Url;
+    case "previewnet":
+      return assetHubPreviewnetUrl;
+  }
 }
 
 function bulletinUrlFor(network: Network): string {
-  return network === "paseo-next-v2" ? bulletinPaseoV2Url : bulletinPaseoV1Url;
+  switch (network) {
+    case "paseo-next-v1":
+      return bulletinPaseoV1Url;
+    case "paseo-next-v2":
+      return bulletinPaseoV2Url;
+    case "previewnet":
+      return bulletinPreviewnetUrl;
+  }
 }
 
 function peopleUrlFor(network: Network): string {
-  return network === "paseo-next-v2" ? peoplePaseoV2Url : peoplePaseoV1Url;
+  switch (network) {
+    case "paseo-next-v1":
+      return peoplePaseoV1Url;
+    case "paseo-next-v2":
+      return peoplePaseoV2Url;
+    case "previewnet":
+      return peoplePreviewnetUrl;
+  }
 }
 
 async function fetchChainSpec(url: string): Promise<string> {
@@ -76,7 +114,7 @@ let customRelayPromise: Promise<string> | null = null;
 export function getPaseoChainSpec(): Promise<string> {
   if (paseoPromise === null) {
     const stop = m.timer(S.CHAINSPEC_PASEO);
-    paseoPromise = fetchChainSpec(paseoUrl).then((text) => {
+    paseoPromise = fetchChainSpec(relayUrlFor(getNetwork())).then((text) => {
       stop();
       return text;
     });

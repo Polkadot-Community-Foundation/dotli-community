@@ -3,6 +3,7 @@
 export const NetworkName = {
   PASEO_NEXT_V1: "paseo-next-v1",
   PASEO_NEXT_V2: "paseo-next-v2",
+  PREVIEW_NET: "previewnet",
 } as const;
 
 export type NetworkName = (typeof NetworkName)[keyof typeof NetworkName];
@@ -113,6 +114,37 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
       storageSlots: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
     },
   },
+  [NetworkName.PREVIEW_NET]: {
+    relay: {
+      genesis:
+        "0x946053e2be0d883a5ae3de0394a683c63e3b1b3b98848feb721b1b127bd4aaf4",
+      rpcs: [
+        "wss://previewnet.substrate.dev/relay/alice",
+        "wss://previewnet.substrate.dev/relay/bob",
+      ],
+    },
+    assethub: {
+      genesis:
+        "0x29f7b15e6227f86b90bf5199b5c872c28649a30e5f15fae6dd8fa9d5d48d6fbb",
+      rpcs: ["wss://previewnet.substrate.dev/asset-hub"],
+    },
+    bulletin: {
+      genesis:
+        "0xf37fa1f1450ea120edbf64c3fc447f671a00e1f1095a698f42eeec073c7ee487",
+      rpcs: ["wss://previewnet.substrate.dev/bulletin"],
+      ipfsGateways: ["https://previewnet.substrate.dev"],
+    },
+    people: {
+      genesis:
+        "0x3389bc9179d3be32568c67278bd080d05631ac71982d28a3fe545421147b311e",
+      rpcs: ["wss://previewnet.substrate.dev/people"],
+    },
+    dotns: {
+      DOTNS_REGISTRY: "0x5622CA75C75726Da13ae46C69127C07c87538633",
+      DOTNS_CONTENT_RESOLVER: "0xBD003d5Dd04E68aC60d529a46AEfBdEf8941868C",
+      storageSlots: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
+    },
+  },
 };
 
 export const NETWORK_KEY = "dotli:network";
@@ -120,6 +152,7 @@ export const NETWORK_KEY = "dotli:network";
 const VALID_NETWORKS: ReadonlySet<string> = new Set<Network>([
   NetworkName.PASEO_NEXT_V1,
   NetworkName.PASEO_NEXT_V2,
+  NetworkName.PREVIEW_NET,
 ]);
 
 function defaultNetwork(): Network {

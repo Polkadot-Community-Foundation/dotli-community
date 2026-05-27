@@ -824,6 +824,7 @@ function renderModePopover(): void {
   appendSectionHeader(leftCol, "Network");
   const networkChoices: [Network, string, string][] = [
     ["paseo-next-v2", "Paseo Next V2", "Upgraded Paseo Next system chains"],
+    ["previewnet", "Previewnet", "Product Preview Network"],
   ];
   const networkGroup = document.createElement("div");
   leftCol.appendChild(networkGroup);
@@ -1487,6 +1488,8 @@ function networkLabel(n: Network): string {
       return "Paseo Next V1";
     case "paseo-next-v2":
       return "Paseo Next V2";
+    case "previewnet":
+      return "Previewnet";
   }
 }
 
