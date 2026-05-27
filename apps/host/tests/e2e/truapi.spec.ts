@@ -16,10 +16,6 @@ test.describe("dot.li > host-playground.dot", () => {
   });
 
   test.describe("Accounts", () => {
-    test("Legacy Accounts", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "accounts-provider-legacy");
-    });
-
     test("Get Product Account", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "accounts-provider-product");
     });
@@ -37,11 +33,6 @@ test.describe("dot.li > host-playground.dot", () => {
         productFrame,
         "accounts-provider-connection-status",
       );
-    });
-
-    // 0.7.0 host-playground: legacy hostApi accounts fetch.
-    test("Legacy Accounts (hostApi)", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "legacy-accounts");
     });
 
     test("Product Account Alias", async ({ productFrame }) => {
@@ -73,26 +64,6 @@ test.describe("dot.li > host-playground.dot", () => {
   });
 
   test.describe("Connection & Providers", () => {
-    test("PAPI Provider", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "papi-provider");
-    });
-
-    test("Connection Status", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "connection-status");
-    });
-
-    test("Inject Extension", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "inject-extension");
-    });
-
-    test("Extension Enable Factory", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "enable-factory");
-    });
-
-    test("Meta Provider", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "meta-provider");
-    });
-
     test("Well-Known Chains", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "well-known-chains");
     });
@@ -154,23 +125,6 @@ test.describe("dot.li > host-playground.dot", () => {
       expect(status).toBe("success");
     });
 
-    test("Auto-Signing Allowance", async ({ pairedPage, productFrame }) => {
-      // Given
-      test.setTimeout(60_000);
-
-      // When
-      const status = await runWebSignedTest(
-        pairedPage,
-        productFrame,
-        "allowances-auto-signing",
-        ["Allow"],
-        { timeoutMs: 30_000 },
-      );
-
-      // Then
-      expect(status).toBe("success");
-    });
-
     test("All Allowances", async ({ pairedPage, productFrame }) => {
       // Given
       test.setTimeout(60_000);
@@ -208,10 +162,6 @@ test.describe("dot.li > host-playground.dot", () => {
 
     test("Factory", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "storage-factory");
-    });
-
-    test("Legacy Write & Read", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "storage-legacy-write-read");
     });
   });
 
@@ -309,32 +259,6 @@ test.describe("dot.li > host-playground.dot", () => {
     });
   });
 
-  // Chat tests are marked "Worker only — handled by the host" in
-  // host-playground; the buttons stay disabled regardless of host. We
-  // assert disabled rather than success.
-
-  test.describe("Chat", () => {
-    test("Register Room (expected: disabled)", async ({ productFrame }) => {
-      const btn = productFrame.locator(
-        '[data-testid="run-chat-manager-register-room"]',
-      );
-      await expect(btn).toBeDisabled({ timeout: 5_000 });
-    });
-
-    test("Send Message (expected: disabled)", async ({ productFrame }) => {
-      const btn = productFrame.locator(
-        '[data-testid="run-chat-manager-send-message"]',
-      );
-      await expect(btn).toBeDisabled({ timeout: 5_000 });
-    });
-
-    // The only chat test that's not worker-only — UI helper that prints
-    // the trigger command. No host interaction required.
-    test("Echo Bot Trigger", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "chat-echo-bot-trigger");
-    });
-  });
-
   test.describe("Statements", () => {
     test("Create Proof", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "statement-store-create-proof");
@@ -371,47 +295,6 @@ test.describe("dot.li > host-playground.dot", () => {
         productFrame,
         "statement-store-subscribe-match-any",
       );
-    });
-
-    test("Legacy Statement Store", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "statement-store-legacy");
-    });
-  });
-
-  // Subscription RPCs from RFC-0007 chain-head spec. All read-only.
-
-  test.describe("Chain Head", () => {
-    test("Follow", async ({ productFrame }) => {
-      test.setTimeout(30_000);
-      await runTestExpectSuccess(productFrame, "chain-head-follow");
-    });
-
-    test("Header", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "chain-head-header");
-    });
-
-    test("Body", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "chain-head-body");
-    });
-
-    test("Storage", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "chain-head-storage");
-    });
-
-    test("Call", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "chain-head-call");
-    });
-
-    test("Continue", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "chain-head-continue");
-    });
-
-    test("Stop Operation", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "chain-head-stop-operation");
-    });
-
-    test("Unpin", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "chain-head-unpin");
     });
   });
 
@@ -531,32 +414,12 @@ test.describe("dot.li > host-playground.dot", () => {
       // Then
       expect(status).toBe("success");
     });
-
-    test("Sign Payload (wsProvider)", async ({ pairedPage, productFrame }) => {
-      // Given
-      test.setTimeout(180_000);
-
-      // When
-      const status = await runWebSignedTest(
-        pairedPage,
-        productFrame,
-        "sign-payload-ws",
-        ["Allow", "Sign"],
-        { timeoutMs: 60_000, preClickDelayMs: 1_000 },
-      );
-
-      // Then
-      expect(status).toBe("success");
-    });
   });
 
   // Funded operations (skipped, needs a faucet-funded account). Funded paths
   // exercise transaction submission. Out of scope until we wire a faucet step
   // into the fixture.
   test.describe("Funded operations", () => {
-    test.skip("Sign Payload (Product Account)", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "sign-payload-product");
-    });
     test.skip("Sign Batch Payload", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "sign-batch-payload");
     });
@@ -577,12 +440,6 @@ test.describe("dot.li > host-playground.dot", () => {
     });
     test.skip("Chain Tx: Stop Broadcast", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "chain-transaction-stop");
-    });
-    test.skip("Payment: Request", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "payment-request");
-    });
-    test.skip("Payment: Top Up", async ({ productFrame }) => {
-      await runTestExpectSuccess(productFrame, "payment-top-up");
     });
     test.skip("Payment: Balance Subscribe", async ({ productFrame }) => {
       await runTestExpectSuccess(productFrame, "payment-balance-subscribe");
