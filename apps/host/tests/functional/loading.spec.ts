@@ -1,7 +1,9 @@
 import { expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { HOST_ERRORS } from "../src/errors";
+import { HOST_ERRORS } from "../../src/errors";
 import { test } from "./helpers/shared-mode-reset";
+import { findAppFrame } from "../product-frame";
+import { seedBackend, type Backend } from "./fixtures/settings";
 
 const DOMAIN = process.env.COMBO_DOMAIN ?? "host-playground";
 const PORT = process.env.COMBO_PORT ?? "5173";
@@ -9,16 +11,9 @@ const HOST_URL = `http://${DOMAIN}.localhost:${PORT}/`;
 
 const RETRY_LABEL_FROM_SMOLDOT = "Try with RPC Node (trusted provider)";
 
-type Backend = "smoldot-direct" | "smoldot-shared-worker" | "rpc-gateway";
-
+// Preserve the post-retry backend that the in-page button just flipped.
 async function setBackend(page: Page, backend: Backend): Promise<void> {
-  // Only set on first load so a post-retry reload doesn't overwrite the
-  // backend that the retry button just flipped.
-  await page.addInitScript((backend) => {
-    if (localStorage.getItem("dotli:chain-backend") === null) {
-      localStorage.setItem("dotli:chain-backend", backend);
-    }
-  }, backend);
+  await seedBackend(page, backend, { onlyIfUnset: true });
 }
 
 /**
@@ -44,19 +39,27 @@ async function mockProtocolIframe(page: Page, script: string): Promise<void> {
 
 const READY = `window.parent.postMessage({namespace:"dotli:protocol",kind:"ready"},"*");`;
 
-// Post init-failed AFTER the iframe's load event fires so the parent has time
-// to register its ready-wait resolver. Posting synchronously during iframe
-// parsing runs before the parent's `ensureProtocolFrame` wires the waiter,
-// so the state reset has nothing to reject and the parent hangs on ready.
+// Post init-failed AFTER the iframe's load event fires, then retry with
+// exponential backoff until the parent acks via `resetProtocolFrameState` (which
+// blanks the iframe). A single fixed delay races the parent's `ensureProtocolFrame`
+// resolver-registration window; retries cover the worst case where the first
+// post lands before any waiter is queued.
 const initFailed = (message: string): string => `
   window.addEventListener("load", function() {
-    setTimeout(function() {
-      window.parent.postMessage({
-        namespace: "dotli:protocol",
-        kind: "init-failed",
-        message: ${JSON.stringify(message)},
-      }, "*");
-    }, 50);
+    var msg = {
+      namespace: "dotli:protocol",
+      kind: "init-failed",
+      message: ${JSON.stringify(message)},
+    };
+    var delay = 20;
+    var attempts = 0;
+    function post() {
+      if (attempts++ >= 12) return;
+      try { window.parent.postMessage(msg, "*"); } catch (e) { return; }
+      delay = Math.min(delay * 2, 500);
+      setTimeout(post, delay);
+    }
+    post();
   });
 `;
 
@@ -317,8 +320,6 @@ test("As a user using smoldot directly, when I click the gateway escape, the bac
   // Given
   await setBackend(page, "smoldot-direct");
   await shrinkTimeout(page, 10_000, 500);
-  // Keep the resolve pending long enough for the button to appear and be
-  // clicked before any response arrives.
   await mockProtocolIframe(
     page,
     errorResolveResponse("never resolves in test window", 30_000),
@@ -508,7 +509,7 @@ for (const [label, backend] of [
 
     // When
     await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(5_000);
+    await findAppFrame(page, 10_000);
 
     // Then
     const hostShellOrigin = `http://${DOMAIN}.localhost:${PORT}`;

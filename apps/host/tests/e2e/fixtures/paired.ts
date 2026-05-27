@@ -13,6 +13,35 @@ const USER_BADGE_TIMEOUT_MS = 15_000;
 const PRODUCT_IFRAME_TIMEOUT_MS = 20_000;
 
 /**
+ * Wait until the host-playground product iframe has mounted and rendered.
+ * Identified by its `<h1>` heading rather than URL because the frame URL
+ * lives on a per-CID subdomain that varies between builds.
+ */
+async function waitForHostPlaygroundFrame(
+  page: Page,
+  timeoutMs: number,
+): Promise<Frame> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const f of page.frames()) {
+      if (f === page.mainFrame()) continue;
+      const ok = await f
+        .locator('h1:has-text("Host Playground")')
+        .first()
+        .isVisible({ timeout: 500 })
+        .catch(() => false);
+      if (ok) {
+        return f;
+      }
+    }
+    await page.waitForTimeout(250);
+  }
+  throw new Error(
+    `host-playground iframe not visible within ${String(timeoutMs)}ms`,
+  );
+}
+
+/**
  * Worker-scoped fixtures: open a fresh page that inherits the
  * once-per-run bot pairing via `storageState` written by globalSetup.
  * No QR scan, no bot pair API call here. If the badge doesn't appear
@@ -129,31 +158,10 @@ export const test = base.extend<
   productFrame: [
     async ({ pairedPage }, use) => {
       const start = Date.now();
-      let frame: Frame | undefined;
-      // Iframe attach + first paint usually lands within a few seconds of
-      // the user-badge. Bounded loop instead of a single waitFor so we can
-      // probe multiple frames as they mount.
-      while (Date.now() - start < PRODUCT_IFRAME_TIMEOUT_MS) {
-        for (const f of pairedPage.frames()) {
-          if (f === pairedPage.mainFrame()) continue;
-          const ok = await f
-            .locator('h1:has-text("Host Playground")')
-            .first()
-            .isVisible({ timeout: 500 })
-            .catch(() => false);
-          if (ok) {
-            frame = f;
-            break;
-          }
-        }
-        if (frame) break;
-        await pairedPage.waitForTimeout(500);
-      }
-      if (!frame) {
-        throw new Error(
-          `host-playground iframe not visible within ${PRODUCT_IFRAME_TIMEOUT_MS}ms`,
-        );
-      }
+      const frame = await waitForHostPlaygroundFrame(
+        pairedPage,
+        PRODUCT_IFRAME_TIMEOUT_MS,
+      );
       console.log(`[productFrame] iframe ready in ${Date.now() - start}ms`);
       await use(frame);
     },

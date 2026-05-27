@@ -19,7 +19,7 @@ import {
   IFRAME_FORWARDER,
   SHARED_WORKER_FORWARDER,
   WORKER_FORWARDER,
-} from "./iframe-logs-forwarder";
+} from "../../iframe-logs-forwarder";
 import { BROWSER_PERMISSIONS, seedPermissions } from "../fixtures/permissions";
 import { seedSettings, type SettingsSeed } from "../fixtures/settings";
 

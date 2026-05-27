@@ -179,7 +179,7 @@ const RESERVED_HOST_PARAMS = [
   "skipWorkerCache",
   "fullReset",
   "v",
-  "e2e_init_auth",
+  "initAuthSubscribe",
 ] as const;
 
 /**
@@ -687,7 +687,7 @@ async function runBackgroundRevalidate(
 }
 
 // ── Main ─────────────────────────────────────────────────────
-interface DotliE2EApi {
+interface AuthSubscribeApi {
   backend: string;
   subscribeAll: (
     topicsHex: string[],
@@ -708,8 +708,8 @@ function hexToBytes(s: string): Uint8Array {
   return bytes;
 }
 
-async function runE2EAuthHook(chainBackend: string): Promise<void> {
-  log.warn("[dot.li e2e] init auth + statement store");
+async function runAuthSubscribeHook(chainBackend: string): Promise<void> {
+  log.warn("[dot.li auth-subscribe] init auth + statement store");
   const authMod = await import("@dotli/auth/auth");
   authMod.initAuth();
   const store = await authMod.onStatementStoreReady();
@@ -735,7 +735,7 @@ async function runE2EAuthHook(chainBackend: string): Promise<void> {
     });
   }
 
-  const api: DotliE2EApi = {
+  const api: AuthSubscribeApi = {
     backend: chainBackend,
     subscribeAll: (topicsHex, timeoutMs) =>
       subscribeFor({ matchAll: topicsHex.map(hexToBytes) }, timeoutMs),
@@ -743,9 +743,13 @@ async function runE2EAuthHook(chainBackend: string): Promise<void> {
       subscribeFor({ matchAny: topicsHex.map(hexToBytes) }, timeoutMs),
   };
 
-  (window as unknown as { __dotliE2E: DotliE2EApi }).__dotliE2E = api;
-  log.warn(`[dot.li e2e] window.__dotliE2E ready (backend=${chainBackend})`);
-  document.title = "dotli-e2e-ready";
+  (
+    window as unknown as { __dotliAuthSubscribe: AuthSubscribeApi }
+  ).__dotliAuthSubscribe = api;
+  log.warn(
+    `[dot.li auth-subscribe] window.__dotliAuthSubscribe ready (backend=${chainBackend})`,
+  );
+  document.title = "dotli-auth-subscribe-ready";
 }
 
 /** Best-effort `localStorage.getItem`; null on Safari-private-mode failure. */
@@ -1040,16 +1044,17 @@ async function main(): Promise<void> {
     });
   }
 
-  // E2E test hook: when `?e2e_init_auth=1` is in the URL, initialize the
-  // auth module + statement-store and expose `window.__dotliE2E` for the
-  // Playwright spec, then bail out before the normal landing/.dot flow
-  // runs. The protocol iframe pre-warm above is what makes
-  // `createRemoteChainProvider(...)` work for the smoldot statement-store
-  // path; that's why this branch sits *after* the pre-warm.
+  // Auth-subscribe hook: when `?initAuthSubscribe=1` is in the URL,
+  // initialize the auth module and statement-store, expose
+  // `window.__dotliAuthSubscribe` for the Playwright spec, then bail out
+  // before the normal landing/.dot flow runs. The protocol iframe
+  // pre-warm above is what makes `createRemoteChainProvider(...)` work
+  // for the smoldot statement-store path, so this branch sits AFTER the
+  // pre-warm.
   if (
-    new URLSearchParams(window.location.search).get("e2e_init_auth") === "1"
+    new URLSearchParams(window.location.search).get("initAuthSubscribe") === "1"
   ) {
-    await runE2EAuthHook(chainBackend);
+    await runAuthSubscribeHook(chainBackend);
     return;
   }
 

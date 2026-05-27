@@ -3,7 +3,8 @@
 ### How to Test
 
 - **Unit and functional tests** live next to the file they test, named after it (e.g. `permissions.test.ts` alongside `permissions.ts`).
-- **E2E tests** live under `apps/host/tests/` (resolution, loading, performance specs in-process against the preview server) and `apps/host/e2e/tests/` (WebHost product flows driving a real `host-playground.dot` build).
+- **Functional tests** live under `apps/host/tests/functional/` (resolution, loading, performance specs driven in-process against the preview server).
+- **E2E tests** live under `apps/host/tests/e2e/` (`truapi.spec.ts` exercises the full truapi surface against a real `host-playground.dot` build).
 - **Tests are user stories.** Name each test as a user story: `As a <role>, I <action> and <outcome>` for behaviour, or `As a <role>, <observable property>` for invariants.
 - **Structure with Given / When / Then.** Every multi-step test body uses `// Given`, `// When`, `// Then` comments to separate setup, action, and assertions.
 

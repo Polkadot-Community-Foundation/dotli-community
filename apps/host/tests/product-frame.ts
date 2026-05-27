@@ -18,23 +18,41 @@ export interface ProductLocation {
 }
 
 /**
+ * Wait for the sandbox iframe to attach without requiring it to finish loading.
+ * Returns null on timeout. Use this when the caller wants to handle a missing
+ * frame itself (e.g. perf harness logs a warning and continues).
+ */
+export async function findAppFrame(
+  page: Page,
+  timeoutMs: number,
+): Promise<Frame | null> {
+  // `page.frames()` checks the live frame tree which catches an iframe
+  // whose URL was set via `contentWindow.location` (not the DOM `src`
+  // attribute). The locator-based wait misses that case. Bounded poll
+  // with a short interval; Playwright's framework events fire between
+  // iterations.
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const frame = page.frames().find((f) => f.url().includes(".app.localhost"));
+    if (frame !== undefined) {
+      return frame;
+    }
+    await page.waitForTimeout(200);
+  }
+  return null;
+}
+
+/**
  * Wait for the sandbox iframe to attach AND finish `document.write` so the
- * product's URL is the one the test should observe.
+ * product's URL is the one the test should observe. Throws on timeout.
  */
 export async function getProductFrame(
   page: Page,
   timeoutMs: number,
 ): Promise<Frame> {
   const start = Date.now();
-  let frame: Frame | undefined;
-  while (Date.now() - start < timeoutMs) {
-    frame = page.frames().find((f) => f.url().includes(".app.localhost"));
-    if (frame !== undefined) {
-      break;
-    }
-    await page.waitForTimeout(200);
-  }
-  if (frame === undefined) {
+  const frame = await findAppFrame(page, timeoutMs);
+  if (frame === null) {
     throw new Error(
       `Sandbox iframe never appeared within ${String(timeoutMs)}ms`,
     );
@@ -82,24 +100,30 @@ export async function waitForErrorPage(
   page: Page,
   timeoutMs: number,
 ): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const title = await page
+  try {
+    await page
       .locator(".error-page-title")
       .first()
-      .textContent({ timeout: 500 })
-      .catch(() => null);
-    if (title !== null && title.length > 0) {
-      const detail = await page
-        .locator(".error-page-detail")
-        .first()
-        .textContent({ timeout: 500 })
-        .catch(() => "");
-      return `${title}: ${detail ?? ""}`;
-    }
-    await page.waitForTimeout(250);
+      .waitFor({ timeout: timeoutMs });
+  } catch {
+    return "";
   }
-  return "";
+  const title =
+    (await page
+      .locator(".error-page-title")
+      .first()
+      .textContent()
+      .catch(() => "")) ?? "";
+  if (title.length === 0) {
+    return "";
+  }
+  const detail =
+    (await page
+      .locator(".error-page-detail")
+      .first()
+      .textContent()
+      .catch(() => "")) ?? "";
+  return `${title}: ${detail}`;
 }
 
 /**
@@ -115,27 +139,34 @@ export async function waitForSandboxErrorPage(
   page: Page,
   timeoutMs: number,
 ): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const frame = page.frames().find((f) => f.url().includes(".app.localhost"));
-    if (frame !== undefined) {
-      const title = await frame
-        .locator(".error-page-title")
-        .first()
-        .textContent({ timeout: 500 })
-        .catch(() => null);
-      if (title !== null && title.length > 0) {
-        const detail = await frame
-          .locator(".error-page-detail")
-          .first()
-          .textContent({ timeout: 500 })
-          .catch(() => "");
-        return `${title}: ${detail ?? ""}`;
-      }
-    }
-    await page.waitForTimeout(250);
+  const frame = await findAppFrame(page, timeoutMs);
+  if (frame === null) {
+    return "";
   }
-  return "";
+  try {
+    await frame
+      .locator(".error-page-title")
+      .first()
+      .waitFor({ timeout: timeoutMs });
+  } catch {
+    return "";
+  }
+  const title =
+    (await frame
+      .locator(".error-page-title")
+      .first()
+      .textContent()
+      .catch(() => "")) ?? "";
+  if (title.length === 0) {
+    return "";
+  }
+  const detail =
+    (await frame
+      .locator(".error-page-detail")
+      .first()
+      .textContent()
+      .catch(() => "")) ?? "";
+  return `${title}: ${detail}`;
 }
 
 /**

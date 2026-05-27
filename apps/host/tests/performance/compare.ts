@@ -1,25 +1,23 @@
 #!/usr/bin/env bun
 /**
- * dot.li — Performance Comparison Tool
+ * Diffs perf runs and ranks deltas with statistical significance.
  *
- * Compares base.json vs last.json using:
- *   - p50 (primary), p95 (tail), p99 (worst case)
- *   - stddev, cv (stability)
- *   - Mann-Whitney U test (statistical significance)
+ * Compares `base.json` vs `last.json` along p50 (primary), p95 (tail),
+ * p99 (worst case), stddev, cv (stability), and runs a Mann-Whitney U
+ * test for significance.
  *
- * Rules:
- *   1. Compare p50 first — did the typical experience improve?
- *   2. Compare p95 — did tail latency improve?
- *   3. Check cv — did stability change?
- *   4. Only trust mean if cv is low on BOTH runs
- *   5. Delta < 5% with < 30 samples? Likely noise unless Mann-Whitney confirms
+ * Reading order:
+ *   1. p50 first. Did the typical experience improve?
+ *   2. p95 next. Did tail latency improve?
+ *   3. cv. Did stability change?
+ *   4. Only trust mean if cv is low on BOTH runs.
+ *   5. Delta < 5% with < 30 samples is likely noise unless Mann-Whitney confirms.
  *
- * Run: npm run test:perf:compare
+ * Run: bun run test:perf:compare
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-// ── Types ──────────────────────────────────────────────────
 
 interface PhaseStats {
   p50: number;
@@ -55,13 +53,9 @@ interface SavedResults {
   lukewarm?: RunStats | null;
 }
 
-// ── Paths ──────────────────────────────────────────────────
-
 const RESULTS_DIR = path.join(import.meta.dirname, "results");
 const BASE_FILE = path.join(RESULTS_DIR, "base.json");
 const LAST_FILE = path.join(RESULTS_DIR, "last.json");
-
-// ── Colors ─────────────────────────────────────────────────
 
 const R = "\x1b[0m";
 const G = "\x1b[32m";
@@ -70,7 +64,6 @@ const Y = "\x1b[33m";
 const D = "\x1b[2m";
 const B = "\x1b[1m";
 
-// ── Mann-Whitney U Test ────────────────────────────────────
 // Non-parametric test for comparing two independent samples.
 // Returns z-score and whether the difference is significant
 // at the 0.05 level (|z| > 1.96).
@@ -151,8 +144,6 @@ function mannWhitneyU(
   };
 }
 
-// ── Formatting ─────────────────────────────────────────────
-
 function fmt(ms: number): string {
   if (ms < 1000) {
     return `${String(ms)}ms`;
@@ -194,8 +185,6 @@ function loadJson(filepath: string): SavedResults | null {
   }
 }
 
-// ── Phase order ────────────────────────────────────────────
-
 const ORDERED_PHASES = [
   "End-to-end",
   "Host total",
@@ -211,8 +200,6 @@ const ORDERED_PHASES = [
   "  Gateway fetch",
   "  Archive parse",
 ];
-
-// ── Verdict logic ──────────────────────────────────────────
 
 interface Verdict {
   label: string;
@@ -247,8 +234,6 @@ function getVerdict(bStat: PhaseStats, lStat: PhaseStats): Verdict {
   // Big delta but not enough samples for significance
   return { label: "uncertain", color: Y, icon: "?" };
 }
-
-// ── Markdown output (for PR comments) ─────────────────────
 
 function verdictEmoji(v: Verdict): string {
   switch (v.label) {
@@ -379,12 +364,9 @@ function compareRunsMd(label: string, base: RunStats, last: RunStats): string {
   return lines.join("\n");
 }
 
-// ── Comparison (terminal) ─────────────────────────────────
-
 function standaloneRun(label: string, run: RunStats, verbose: boolean): void {
   const thin = "─".repeat(100);
 
-  // ── Compact summary (always shown) ──
   if ("End-to-end" in run.phases) {
     const total = run.phases["End-to-end"];
     console.log(
@@ -400,7 +382,6 @@ function standaloneRun(label: string, run: RunStats, verbose: boolean): void {
     return;
   }
 
-  // ── Detailed breakdown (--verbose) ──
   const allPhases = ORDERED_PHASES.filter((p) => p in run.phases);
 
   console.log(thin);
@@ -431,7 +412,6 @@ function compareRuns(
 ): void {
   const thin = "─".repeat(140);
 
-  // ── Compact summary (always shown) ──
   if ("End-to-end" in base.phases && "End-to-end" in last.phases) {
     const bTotal = base.phases["End-to-end"];
     const lTotal = last.phases["End-to-end"];
@@ -461,7 +441,6 @@ function compareRuns(
     return;
   }
 
-  // ── Detailed breakdown (--verbose) ──
   console.log(thin);
   console.log(
     `  Base: ${base.timestamp} (${String(base.iterations)} runs)    Last: ${last.timestamp} (${String(last.iterations)} runs)`,
@@ -524,8 +503,6 @@ function compareRuns(
 
   console.log(`\n${thin}`);
 }
-
-// ── Main ──────────────────────────────────────────────────
 
 const markdown = process.argv.includes("--markdown");
 const verbose = process.argv.includes("--verbose");

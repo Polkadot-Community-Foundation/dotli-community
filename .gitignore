@@ -39,8 +39,8 @@ pnpm-lock.yaml
 *.tsbuildinfo
 test-results/
 playwright-report/
-**/tests/results.json
-apps/host/e2e/.auth/
+**/results.json
+apps/host/tests/e2e/.auth/
 
 # PAPI
 .papi/descriptors

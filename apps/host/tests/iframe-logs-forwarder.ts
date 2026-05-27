@@ -1,7 +1,9 @@
 /**
- * Forward console.* from every iframe and Web Worker to Playwright's
- * page.on("console") as `[FRAMELOG]<origin>[level]`; otherwise only
- * the top frame is visible.
+ * Forwards console.* from every iframe and Web Worker to the top page.
+ *
+ * Playwright's `page.on("console")` only sees the top frame, so each
+ * frame's logs are re-posted as `[FRAMELOG]<origin>[level]` strings the
+ * top frame can echo for the test runner.
  */
 
 export const IFRAME_FORWARDER = `

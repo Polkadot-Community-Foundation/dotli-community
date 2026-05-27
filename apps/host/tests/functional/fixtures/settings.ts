@@ -93,3 +93,31 @@ export async function updateCacheSettings(
     localStorage.setItem("dotli:cache-settings", JSON.stringify(seed));
   }, seed);
 }
+
+/**
+ * Seed `dotli:chain-backend` in localStorage. `onlyIfUnset` preserves the
+ * key on retry-driven reloads where the in-page retry button has flipped
+ * the backend; default overwrite is right for fresh test starts.
+ */
+export async function seedBackend(
+  page: Page,
+  backend: Backend,
+  options: { onlyIfUnset?: boolean } = {},
+): Promise<void> {
+  await page.addInitScript(
+    ({ backend, onlyIfUnset }) => {
+      try {
+        if (
+          onlyIfUnset &&
+          localStorage.getItem("dotli:chain-backend") !== null
+        ) {
+          return;
+        }
+        localStorage.setItem("dotli:chain-backend", backend);
+      } catch (err) {
+        console.warn("[seedBackend] localStorage seed failed", err);
+      }
+    },
+    { backend, onlyIfUnset: options.onlyIfUnset ?? false },
+  );
+}

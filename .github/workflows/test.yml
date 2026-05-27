@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   unit:
-    name: Unit Tests
+    name: Unit
     runs-on: parity-default
     if: ${{ github.event.sender.type != 'Bot' }}
     steps:
@@ -35,8 +35,8 @@ jobs:
       - name: Run tests
         run: bunx --bun turbo run test
 
-  e2e-resolution:
-    name: E2E Resolution
+  functional:
+    name: Functional
     runs-on: parity-default
     needs: unit
     if: ${{ github.event.sender.type != 'Bot' }}
@@ -52,20 +52,20 @@ jobs:
       - name: Build
         run: bunx --bun turbo run build
 
-      - name: Run E2E tests
+      - name: Run functional tests
         working-directory: apps/host
-        run: bunx --bun playwright test tests/loading.spec.ts tests/resolution.spec.ts tests/navigation.spec.ts || true
+        run: bunx --bun playwright test --config=tests/functional/playwright.config.ts tests/functional/loading.spec.ts tests/functional/resolution.spec.ts tests/functional/navigation.spec.ts || true
 
-      - name: Apply E2E threshold
+      - name: Apply functional threshold
         working-directory: apps/host
         run: |
-          TOTAL=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]?] | length' tests/results.json)
+          TOTAL=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]?] | length' tests/functional/results.json)
           if [ "$TOTAL" -lt 9 ]; then
             echo "::error::expected at least 9 tests, got $TOTAL."
             exit 1
           fi
-          LOADING_FAILED=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]? | select(.file == "loading.spec.ts" and .ok == false)] | length' tests/results.json)
-          RESOLUTION_FAILED=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]? | select(.file == "resolution.spec.ts" and .ok == false)] | length' tests/results.json)
+          LOADING_FAILED=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]? | select(.file == "loading.spec.ts" and .ok == false)] | length' tests/functional/results.json)
+          RESOLUTION_FAILED=$(jq '[.suites[] | recurse(.suites[]?) | .specs[]? | select(.file == "resolution.spec.ts" and .ok == false)] | length' tests/functional/results.json)
           echo "loading.spec.ts failures: $LOADING_FAILED"
           echo "resolution.spec.ts failures: $RESOLUTION_FAILED"
           if [ "$LOADING_FAILED" -gt 0 ]; then
@@ -81,7 +81,7 @@ jobs:
   # with pairing handled by mission-control's signer bot (no Android emulator,
   # no Maestro).
   e2e-product:
-    name: E2E Product
+    name: E2E
     runs-on: parity-default
     needs: unit
     # Headroom over Playwright's globalTimeout (30 min) so a stuck run is
@@ -108,7 +108,7 @@ jobs:
         run: bunx --bun turbo run build
 
       # Exit code 99 from playwright = Nova bot unavailable (signal raised
-      # by apps/host/e2e/global-setup.ts). Treat as soft-pass with a clear
+      # by apps/host/tests/e2e/global-setup.ts). Treat as soft-pass with a clear
       # annotation: this is a Nova-side outage, not a dot.li test failure,
       # and shouldn't block a PR.
       - name: Run E2E
@@ -116,7 +116,7 @@ jobs:
         working-directory: apps/host
         run: |
           set +e
-          bunx --bun playwright test --config=e2e/playwright.config.ts
+          bunx --bun playwright test --config=tests/e2e/playwright.config.ts
           code=$?
           if [ "$code" -eq 99 ]; then
             echo "::warning::Signer bot unavailable — E2E Product suite skipped (Nova-side outage, not a dot.li failure)."
@@ -130,7 +130,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: e2e-product-results
-          path: apps/host/e2e/test-results/
+          path: apps/host/tests/e2e/test-results/
 
       # Build a punch list of failed tests + a one-line count summary from
       # the json reporter output. We do this on failure() so the sticky
@@ -142,7 +142,7 @@ jobs:
         id: failed
         working-directory: apps/host
         run: |
-          R=e2e/test-results/results.json
+          R=tests/e2e/test-results/results.json
           if [ ! -f "$R" ]; then
             echo "list=- (no results.json — suite likely crashed before any tests ran)" >> "$GITHUB_OUTPUT"
             echo "summary=suite did not produce results" >> "$GITHUB_OUTPUT"

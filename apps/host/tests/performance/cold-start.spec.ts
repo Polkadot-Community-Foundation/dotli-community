@@ -1,28 +1,21 @@
 /**
- * dot.li — Cold Start Performance Test (multi-run with statistics)
+ * Cold-start performance harness for the host shell.
  *
- * Runs the loading pipeline multiple times and computes p50, p95, p99,
- * mean, stddev, and coefficient of variation using simple-statistics.
+ * Runs the loading pipeline N times and computes p50, p95, p99, mean,
+ * stddev, and coefficient of variation via simple-statistics.
  *
  * Usage:
- *   npm run test:perf               — run N iterations, save to last.json
- *   npm run test:perf:base          — save as base.json (immutable)
- *   npm run test:perf:compare       — compare base vs last
- *   PERF_RUNS=5 npm run test:perf   — override iteration count
+ *   bun run test:perf               run N iterations, save to last.json
+ *   bun run test:perf:base          save as base.json (immutable)
+ *   bun run test:perf:compare       diff base vs last
+ *   PERF_RUNS=5 bun run test:perf   override iteration count
  */
 
-import {
-  test,
-  expect,
-  type Page,
-  type Browser,
-  type Frame,
-} from "@playwright/test";
+import { test, expect, type Page, type Browser } from "@playwright/test";
 import * as ss from "simple-statistics";
 import * as fs from "node:fs";
 import * as path from "node:path";
-
-// ── Types ──────────────────────────────────────────────────
+import { findAppFrame } from "../product-frame";
 
 interface PerfMark {
   name: string;
@@ -70,8 +63,6 @@ export interface SavedResults {
   lukewarm: RunStats | null;
 }
 
-// ── Constants ──────────────────────────────────────────────
-
 const RESULTS_DIR = path.join(import.meta.dirname, "results");
 const BASE_FILE = path.join(RESULTS_DIR, "base.json");
 const LAST_FILE = path.join(RESULTS_DIR, "last.json");
@@ -105,8 +96,6 @@ const PHASE_PAIRS: [string, string, string][] = [
   ["  Gateway fetch", "dotli:fetch:gateway:start", "dotli:fetch:gateway:end"],
   ["  Archive parse", "dotli:fetch:parse:start", "dotli:fetch:parse:end"],
 ];
-
-// ── Statistics (simple-statistics) ─────────────────────────
 
 /**
  * Discard outlier values that exceed 2x the best (minimum) time.
@@ -153,8 +142,6 @@ function computeStats(rawValues: number[]): PhaseStats {
     discarded,
   };
 }
-
-// ── Helpers ────────────────────────────────────────────────
 
 async function collectMarks(page: Page): Promise<PerfMark[]> {
   // Collect host-side marks + timeOrigin for cross-frame normalization
@@ -231,7 +218,7 @@ async function waitForPipeline(page: Page): Promise<void> {
   );
 
   // 2. Wait for the app iframe (<label>.app.localhost) to appear and finish
-  const appFrame = await getAppFrame(page, 30_000);
+  const appFrame = await findAppFrame(page, 30_000);
   if (appFrame !== null) {
     try {
       await appFrame.waitForFunction(
@@ -250,23 +237,11 @@ async function waitForPipeline(page: Page): Promise<void> {
     console.log("  Warning: app iframe not found within timeout");
   }
 
-  await page.waitForTimeout(500);
-}
-
-/**
- * Poll for the app iframe (<label>.app.localhost) among the page's frames.
- * Returns null if not found within the timeout.
- */
-async function getAppFrame(page: Page, timeout: number): Promise<Frame | null> {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const frame = page.frames().find((f) => f.url().includes(".app.localhost"));
-    if (frame !== undefined) {
-      return frame;
-    }
-    await page.waitForTimeout(200);
-  }
-  return null;
+  // Drain trailing network activity (chain-spec fetches, lazy chunks) so the
+  // perf snapshot captures phases that emit marks after `dotli:app:end`.
+  await page
+    .waitForLoadState("networkidle", { timeout: 5_000 })
+    .catch(() => {});
 }
 
 async function getBrowserMetrics(
@@ -322,20 +297,20 @@ async function withTimeout<T>(
   label: string,
 ): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<null>((resolve) => {
-    timer = setTimeout(() => {
-      console.log(
-        `  ⏱ ${label} timed out after ${String(ms / 1000)}s — skipping`,
-      );
-      resolve(null);
-    }, ms);
-  });
-  const result = await Promise.race([promise, timeout]);
-  clearTimeout(timer);
-  return result;
+  try {
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        console.log(
+          `  ⏱ ${label} timed out after ${String(ms / 1000)}s — skipping`,
+        );
+        resolve(null);
+      }, ms);
+    });
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
-
-// ── Aggregate per-run data into stats ──────────────────────
 
 interface SingleRun {
   phases: PhaseResult[];
@@ -379,8 +354,6 @@ function aggregateRuns(type: RunStats["type"], runs: SingleRun[]): RunStats {
   };
 }
 
-// ── Report printing ────────────────────────────────────────
-
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 const YELLOW = "\x1b[33m";
@@ -409,7 +382,6 @@ function printStatsTable(
   console.log(`\n${div}`);
   console.log(`  ${title}  (${String(stats.iterations)} iterations)`);
 
-  // ── Compact summary (always shown) ──
   if (totalPhase !== null) {
     let summary = `  p50: ${fmt(totalPhase.p50)}  |  p95: ${fmt(totalPhase.p95)}  |  cv: ${totalPhase.cv.toFixed(2)}`;
 
@@ -442,7 +414,6 @@ function printStatsTable(
 
   console.log(div);
 
-  // ── Detailed breakdown (only with PERF_VERBOSE=1) ──
   if (!PERF_VERBOSE) {
     console.log(
       `  ${DIM}Set PERF_VERBOSE=1 for detailed phase breakdown${RESET}\n`,
@@ -535,8 +506,6 @@ function printStatsTable(
 
   console.log(`\n${div}\n`);
 }
-
-// ── Run iterations ─────────────────────────────────────────
 
 async function runColdIteration(
   browser: Browser,
@@ -721,8 +690,6 @@ async function runLukewarmIterations(
 
   return runs;
 }
-
-// ── Tests ──────────────────────────────────────────────────
 
 // 3 tests × N iterations: cold (~15s each), warm (~5s each), lukewarm (~30s each = prime + measure)
 test.setTimeout(NUM_RUNS * 300_000 + 30_000);

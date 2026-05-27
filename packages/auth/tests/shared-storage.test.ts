@@ -56,13 +56,18 @@ describe("createSharedAuthStorageAdapter", () => {
     });
 
     await adapter.write("SsoSessions", "next-value");
-    // Flush the detached read-back chain scheduled by `.map()`.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Wait for the detached read-back chain scheduled by `.map()` to land
+    // its result in the subscriber. Polling on observable state is
+    // deterministic across event-loop schedulers; a fixed setTimeout(0)
+    // race-loses on slower JS engines.
+    await vi.waitFor(() => expect(seen).toContain("next-value"));
     await adapter.clear("SsoSessions");
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(seen).toContain(null));
     unsubscribe();
     await adapter.write("SsoSessions", "ignored");
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() =>
+      expect(writeSharedAuthStorage).toHaveBeenCalledTimes(2),
+    );
 
     expect(writeSharedAuthStorage).toHaveBeenNthCalledWith(
       1,

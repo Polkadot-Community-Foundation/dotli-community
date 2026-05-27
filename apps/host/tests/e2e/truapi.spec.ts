@@ -1,9 +1,9 @@
-import { test, expect } from "../fixtures/paired";
+import { test, expect } from "./fixtures/paired";
 import {
   waitForPlaygroundReady,
   runTestExpectSuccess,
-} from "../helpers/host-playground";
-import { runWebSignedTest } from "../helpers/signing";
+} from "./helpers/run-test";
+import { runWebSignedTest } from "./helpers/signing";
 
 // Note: Playwright destroys the worker process after a test failure, so the
 // worker-scoped pairing fixture re-pairs from scratch on every failed test

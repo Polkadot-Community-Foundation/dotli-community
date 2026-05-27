@@ -4,9 +4,9 @@
  * Env overrides: DOMAIN, PORT, TIMEOUT_MS
  */
 
-import { DOMAIN, PORT, TIMEOUT_MS } from "./helpers/env";
+import { DOMAIN, PORT, TIMEOUT_MS } from "../env";
 import { setupTest } from "./helpers/context";
-import { waitForResolutionOutcome } from "./helpers/product-frame";
+import { waitForResolutionOutcome } from "../product-frame";
 import { BACKENDS } from "./fixtures/settings";
 import { test } from "./helpers/shared-mode-reset";
 

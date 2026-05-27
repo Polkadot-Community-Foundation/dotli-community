@@ -44,14 +44,14 @@ jobs:
           name: perf-baseline
           workflow: perf.yml
           branch: main
-          path: apps/host/tests/results
+          path: apps/host/tests/performance/results
           if_no_artifact_found: warn
 
       - name: Rename baseline
         if: github.event_name == 'pull_request'
         run: |
-          if [ -f apps/host/tests/results/last.json ]; then
-            mv apps/host/tests/results/last.json apps/host/tests/results/base.json
+          if [ -f apps/host/tests/performance/results/last.json ]; then
+            mv apps/host/tests/performance/results/last.json apps/host/tests/performance/results/base.json
             echo "HAVE_BASE=true" >> "$GITHUB_ENV"
           else
             echo "HAVE_BASE=false" >> "$GITHUB_ENV"
@@ -68,7 +68,7 @@ jobs:
           PERF_SAVE_BASE: "1"
           PERF_DOMAIN_A: explore
           PERF_DOMAIN_B: host-playground
-        run: bunx --bun playwright test tests/cold-start.spec.ts || true
+        run: bunx --bun playwright test --config=tests/performance/playwright.config.ts tests/performance/cold-start.spec.ts || true
 
       - name: Run perf tests (PR)
         if: github.event_name == 'pull_request'
@@ -77,7 +77,7 @@ jobs:
           PERF_RUNS: "10"
           PERF_DOMAIN_A: explore
           PERF_DOMAIN_B: host-playground
-        run: bunx --bun playwright test tests/cold-start.spec.ts || true
+        run: bunx --bun playwright test --config=tests/performance/playwright.config.ts tests/performance/cold-start.spec.ts || true
 
       # ── main: upload baseline artifact ─────────────────────────
       - name: Upload baseline artifact
@@ -85,7 +85,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: perf-baseline
-          path: apps/host/tests/results/last.json
+          path: apps/host/tests/performance/results/last.json
           retention-days: 90
           overwrite: true
 
@@ -93,7 +93,7 @@ jobs:
       - name: Generate comparison
         if: github.event_name == 'pull_request' && env.HAVE_BASE == 'true'
         working-directory: apps/host
-        run: bun tests/compare.ts --markdown > /tmp/perf-comment.md || true
+        run: bun tests/performance/compare.ts --markdown > /tmp/perf-comment.md || true
 
       - name: Generate standalone report
         if: github.event_name == 'pull_request' && env.HAVE_BASE != 'true'

@@ -17,8 +17,9 @@ import {
   getProductFrame,
   getProductLocation,
   waitForSandboxErrorPage,
-} from "./helpers/product-frame";
+} from "../product-frame";
 import { test } from "./helpers/shared-mode-reset";
+import { seedBackend as seedChainBackend } from "./fixtures/settings";
 
 const LABEL = "host-playground";
 const PORT = process.env.COMBO_PORT ?? "5173";
@@ -27,19 +28,10 @@ const TIMEOUT_MS = parseInt(process.env.COMBO_TIMEOUT_MS ?? "45000", 10);
 const HOST_BY_LABEL = `http://${LABEL}.localhost:${PORT}`;
 const HOST_BY_PATH = `http://localhost:${PORT}`;
 
-/**
- * Seed the chain backend in localStorage. Navigation behaviour is the same
- * for every backend, so we pin the fastest/least-flaky one to keep the
- * suite deterministic.
- */
+// Navigation behaviour is the same for every backend, so we pin
+// `rpc-gateway` (fastest/least-flaky) to keep the suite deterministic.
 async function seedBackend(page: Page): Promise<void> {
-  await page.context().addInitScript(() => {
-    try {
-      localStorage.setItem("dotli:chain-backend", "rpc-gateway");
-    } catch (err) {
-      console.warn("[navigation-test] localStorage seed failed", err);
-    }
-  });
+  await seedChainBackend(page, "rpc-gateway");
 }
 
 test.describe("URL parameters are forwarded into the product", () => {

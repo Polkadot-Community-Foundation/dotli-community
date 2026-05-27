@@ -67,7 +67,7 @@ Telegraph style. Root rules only. Read scoped `AGENTS.md` before subtree work.
 - Before push: `bun run typecheck`, `bun run lint`, `bun run format:check` clean.
 - Touched `apps/host` source: also `bun run test:e2e`.
 - Touched `packages/metrics/src/spans.ts`: verify call sites consume the new key.
-- Touched `apps/host` resolution code: run `tests/resolution.spec.ts` before push.
+- Touched `apps/host` resolution code: run `tests/functional/resolution.spec.ts` before push.
 - Observability changes: query Sentry MCP for the exact field after deploy. Do not declare success from chat alone.
 - Do not skip git hooks (`--no-verify`) or bypass signing without explicit user approval. If a hook fails, fix the cause.
 - Hard build gate: `bun run build` before push if Vite config, lazy boundaries, or worker entry points changed.
@@ -87,15 +87,15 @@ Telegraph style. Root rules only. Read scoped `AGENTS.md` before subtree work.
 ## Tests
 
 - Vitest. Colocated `*.test.ts`; `happy-dom` (DOM), `fake-indexeddb` (IndexedDB).
-- E2E: Playwright in `apps/host/tests/{loading,resolution,navigation}.spec.ts` (preview-server-backed) and `apps/host/e2e/tests/host-playground.spec.ts` (WebHost product flows).
+- Functional E2E: Playwright in `apps/host/tests/functional/*.spec.ts` (preview-server-backed). Real-product E2E: `apps/host/tests/e2e/truapi.spec.ts` (driven against a `host-playground.dot` build).
 - Before writing or modifying E2E tests, read `CONTRIBUTING.md` `### How to Test` for user-story naming and the Given/When/Then convention.
-- Perf: `apps/host/tests/cold-start.spec.ts`; compare via `tests/compare.ts`.
-- Targeted: `bun --filter @dotli/<pkg> run test`. From `apps/host/`: `bunx playwright test tests/<file>.spec.ts --grep "<pattern>"`.
+- Perf: `apps/host/tests/performance/cold-start.spec.ts`; compare via `tests/performance/compare.ts`.
+- Targeted: `bun --filter @dotli/<pkg> run test`. From `apps/host/`: `bunx playwright test --config=tests/functional/playwright.config.ts tests/functional/<file>.spec.ts --grep "<pattern>"`.
 - Avoid brittle tests that grep workflow/docs strings. Prefer behavior assertions.
 - Clean timers/env/globals/mocks/IndexedDB/SW/temp dirs/module state.
 - Do not run multiple Vitest invocations concurrently in the same worktree; cache races on `node_modules/.vite`.
 - Live-prove the reported issue before landing when feasible. `bun run preview` plus a fresh Chrome profile reproduces cold-cache scenarios.
-- `apps/host/tests/results.json` is a local artifact; do not commit.
+- `apps/host/tests/functional/results.json` is a local artifact; do not commit.
 
 ## Git
 

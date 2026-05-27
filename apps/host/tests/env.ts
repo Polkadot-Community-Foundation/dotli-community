@@ -1,5 +1,5 @@
 /**
- * Env overrides shared by every spec in this directory.
+ * Env overrides shared by every host test suite.
  *
  * Centralised so a single env change propagates everywhere. Tests
  * import these instead of re-reading `process.env`.

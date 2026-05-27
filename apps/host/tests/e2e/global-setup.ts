@@ -7,7 +7,7 @@ import {
   generateUsername,
   type PairResult,
 } from "./helpers/signer-bot";
-import { extractQrPayload } from "./helpers/qr";
+import { extractQrPayload } from "./helpers/extract-qr-payload";
 import { STATE_FILE, SESSION_FILE } from "./fixtures/paths";
 
 // External-service config. Required, no defaults — a wrong/missing
@@ -31,7 +31,7 @@ function requiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
     console.error(
-      `[globalSetup] ${name} not set. Required: see apps/host/e2e/global-setup.ts and .github/workflows/test.yml.`,
+      `[globalSetup] ${name} not set. Required: see apps/host/tests/e2e/global-setup.ts and .github/workflows/test.yml.`,
     );
     process.exit(1);
   }
