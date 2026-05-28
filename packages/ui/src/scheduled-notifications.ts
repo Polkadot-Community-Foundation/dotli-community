@@ -55,6 +55,7 @@ type WakeMessage =
   | { kind: "fired"; hostId: number };
 
 let initialized = false;
+let shuttingDown = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let bcChannel: BroadcastChannel | null = null;
 // Hosts currently being fired by this tab. Within a single tab the IDB
@@ -88,6 +89,18 @@ export function initScheduledNotifications(opts: InitOpts): void {
     if (document.visibilityState === "visible") {
       ensurePolling();
     }
+  });
+
+  // Stop the polling loop before the page is torn down. The IDB
+  // connection enters "closing" the moment unload begins, and any tick
+  // still in flight at that point throws `InvalidStateError` from
+  // `db.transaction()`. `pagehide` fires for both regular unloads and
+  // the bfcache path, which is why it is preferred over `beforeunload`.
+  window.addEventListener("pagehide", () => {
+    shuttingDown = true;
+    stopPolling();
+    bcChannel?.close();
+    bcChannel = null;
   });
 }
 
@@ -178,7 +191,7 @@ async function rehydrate(): Promise<void> {
 }
 
 function ensurePolling(): void {
-  if (pollTimer !== null) {
+  if (shuttingDown || pollTimer !== null) {
     return;
   }
   pollTimer = setInterval(() => {
@@ -195,6 +208,9 @@ function stopPolling(): void {
 }
 
 async function tick(): Promise<void> {
+  if (shuttingDown) {
+    return;
+  }
   try {
     await removeStale(Date.now());
   } catch (err) {
