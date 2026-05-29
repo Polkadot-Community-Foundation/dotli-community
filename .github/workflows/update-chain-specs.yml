@@ -3,11 +3,11 @@ name: Refresh Chain Spec Checkpoints
 on:
   schedule:
     # Every 6 hours starting at 00:00 UTC.
-    - cron: '0 */6 * * *'
+    - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       skip_bootnode_check:
-        description: 'Skip bootnode health check (keep existing bootnodes)'
+        description: "Skip bootnode health check (keep existing bootnodes)"
         required: false
         type: boolean
         default: true
@@ -48,14 +48,13 @@ jobs:
         id: pr
         uses: peter-evans/create-pull-request@v8
         with:
-          title: 'chore: refresh chain spec checkpoints'
+          title: "chore: refresh chain spec checkpoints"
           body: |
-            Automated update of Paseo relay chain spec checkpoint.
+            Automated update of relay chain spec checkpoints.
 
             This keeps the smoldot light client sync gap small
             instead of falling further behind on cold loads.
           branch: auto/chain-spec-update
-          commit-message: 'chore: refresh chain spec checkpoints'
+          commit-message: "chore: refresh chain spec checkpoints"
           delete-branch: true
           labels: dependencies
-
