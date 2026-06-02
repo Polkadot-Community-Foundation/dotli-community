@@ -5,6 +5,7 @@ import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
 import { VitePWA } from "vite-plugin-pwa";
+import { prodNoAnalyticsAliases } from "../../packages/metrics/src/prod-no-analytics-aliases";
 
 // Local builds don't get `VITE_COMMIT_SHA` injected by CI. Fall back to the
 // git HEAD so Diagnostics shows a real commit identifier in dev too — "dev"
@@ -323,10 +324,12 @@ function previewCoepHeaders(): Plugin {
 }
 
 /**
- * Sentry plugin — only active when SENTRY_AUTH_TOKEN is set (CI deploys).
- * Skipped locally so source maps are preserved for debugging.
+ * Sentry sourcemap upload — skipped on prod (runtime SDK is aliased to a
+ * no-op, nothing to attribute) and locally without SENTRY_AUTH_TOKEN
+ * (preserves source maps for debugging).
  */
 function sentry(): Plugin | false {
+  if (process.env.VITE_APP_ENV === "production") return false;
   if (!process.env.SENTRY_AUTH_TOKEN) return false;
   return sentryVitePlugin({
     org: "paritytech",
@@ -398,6 +401,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      ...prodNoAnalyticsAliases(process.env.VITE_APP_ENV === "production"),
       "@dotli/config": resolve(PACKAGES, "config/src"),
       "@dotli/metrics": resolve(PACKAGES, "metrics/src"),
       "@dotli/shared": resolve(PACKAGES, "shared/src"),

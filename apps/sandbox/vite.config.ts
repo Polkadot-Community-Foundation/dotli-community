@@ -3,6 +3,7 @@ import { defineConfig, build as viteBuild, type Plugin } from "vite";
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
+import { prodNoAnalyticsAliases } from "../../packages/metrics/src/prod-no-analytics-aliases";
 
 // Mirror the host's behavior: fall back to git HEAD when CI didn't inject
 // `VITE_COMMIT_SHA`, so the SW's baked `__SW_VERSION__` is a real commit in
@@ -23,10 +24,12 @@ if (!process.env.VITE_COMMIT_SHA) {
 const OUT_DIR = "dist";
 
 /**
- * Sentry plugin — only active when SENTRY_AUTH_TOKEN is set (CI deploys).
- * Skipped locally so source maps are preserved for debugging.
+ * Sentry sourcemap upload — skipped on prod (runtime SDK is aliased to a
+ * no-op, nothing to attribute) and locally without SENTRY_AUTH_TOKEN
+ * (preserves source maps for debugging).
  */
 function sentry(): Plugin | false {
+  if (process.env.VITE_APP_ENV === "production") return false;
   if (!process.env.SENTRY_AUTH_TOKEN) return false;
   return sentryVitePlugin({
     org: "paritytech",
@@ -138,6 +141,7 @@ export default defineConfig({
   plugins: [wasm(), preloadCriticalAssets(), buildServiceWorker(), sentry()],
   resolve: {
     alias: {
+      ...prodNoAnalyticsAliases(process.env.VITE_APP_ENV === "production"),
       "@dotli/config": resolve(PACKAGES, "config/src"),
       "@dotli/metrics": resolve(PACKAGES, "metrics/src"),
       "@dotli/shared": resolve(PACKAGES, "shared/src"),

@@ -66,6 +66,39 @@ jobs:
           VITE_METRICS: ${{ secrets.VITE_METRICS }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
+      # Regression guard for paritytech/dotli#463: fails the deploy if any
+      # marker from the real metrics/sentry modules survives bundling.
+      - name: Assert no analytics in production bundles
+        if: inputs.app_env == 'production'
+        run: |
+          set -e
+          MARKERS=(
+            'dotli:sentry-uuid'
+            'dot.li sentry'
+            '__SENTRY_HUB__'
+            'VITE_METRICS=true'
+          )
+          FAILED=0
+          for dir in apps/host/dist apps/protocol/dist apps/sandbox/dist; do
+            if [ ! -d "$dir" ]; then
+              echo "::error::missing build output: $dir"
+              FAILED=1
+              continue
+            fi
+            for marker in "${MARKERS[@]}"; do
+              if grep -rIl --include='*.js' -- "$marker" "$dir" >/tmp/hits 2>/dev/null && [ -s /tmp/hits ]; then
+                echo "::error::found '$marker' in $dir:"
+                cat /tmp/hits
+                FAILED=1
+              fi
+            done
+          done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::production bundles contain analytics markers — see paritytech/dotli#463"
+            exit 1
+          fi
+          echo "production bundles are analytics-free."
+
       - uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
