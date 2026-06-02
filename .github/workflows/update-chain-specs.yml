@@ -1,4 +1,4 @@
-name: Refresh Chain Spec Checkpoints
+name: Refresh Chain Specs
 
 on:
   schedule:
@@ -29,7 +29,7 @@ jobs:
         with:
           bun-version: "1.3.6"
 
-      - name: Fetch fresh chain specs
+      - name: Refresh chain specs
         run: bash scripts/update-chain-specs.sh
         env:
           SKIP_BOOTNODE_CHECK: ${{ inputs.skip_bootnode_check == '' && 'true' || inputs.skip_bootnode_check }}
@@ -48,13 +48,10 @@ jobs:
         id: pr
         uses: peter-evans/create-pull-request@v8
         with:
-          title: "chore: refresh chain spec checkpoints"
+          title: "chore: refresh chain specs"
           body: |
-            Automated update of relay chain spec checkpoints.
-
-            This keeps the smoldot light client sync gap small
-            instead of falling further behind on cold loads.
+            Automated refresh of the smoldot chain specs.
           branch: auto/chain-spec-update
-          commit-message: "chore: refresh chain spec checkpoints"
+          commit-message: "chore: refresh chain specs"
           delete-branch: true
           labels: dependencies
