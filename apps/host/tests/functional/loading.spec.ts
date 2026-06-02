@@ -265,7 +265,7 @@ test("As a user using smoldot directly, when loading is slow (>10s) I see a one-
 
   // Then
   await expect(page.locator(".loading-gateway-btn")).toContainText(
-    "Use gateway instead",
+    "Use Trusted Provider",
     { timeout: 5_000 },
   );
   await expect(page.locator(".error-page-title")).toHaveText(
@@ -299,7 +299,7 @@ test("As a user using smoldot in shared worker, when loading is slow (>10s) I se
 
   // Then
   await expect(page.locator(".loading-gateway-btn")).toContainText(
-    "Use gateway instead",
+    "Use Trusted Provider",
     { timeout: 5_000 },
   );
   await expect(page.locator(".error-page-title")).toHaveText(
@@ -328,7 +328,7 @@ test("As a user using smoldot directly, when I click the gateway escape, the bac
   // When
   await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
   const gatewayBtn = page.locator(".loading-gateway-btn");
-  await expect(gatewayBtn).toContainText("Use gateway instead", {
+  await expect(gatewayBtn).toContainText("Use Trusted Provider", {
     timeout: 5_000,
   });
   await Promise.all([
@@ -428,7 +428,7 @@ test("As a user, when I visit a domain that has no content set, I see the approp
 
   // Then
   await expect(page.locator(".error-page-title")).toHaveText(
-    "This site can't be reached",
+    "This app can't be reached",
     { timeout: 10_000 },
   );
   await expect(page.locator(".error-page-domain")).toHaveText(`${DOMAIN}.dot`);

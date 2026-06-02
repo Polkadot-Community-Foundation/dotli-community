@@ -17,6 +17,42 @@ const PRODUCT_IFRAME_TIMEOUT_MS = 20_000;
  * Identified by its `<h1>` heading rather than URL because the frame URL
  * lives on a per-CID subdomain that varies between builds.
  */
+/**
+ * Background poller that dismisses the host's "Permission Request" modal
+ * by clicking its "Allow" button as soon as one appears. Idempotent: a
+ * dismissed modal that re-opens later (different permission, different
+ * test) is dismissed again. Returns a stop function that cancels the
+ * loop on fixture teardown.
+ */
+function startAutoAllow(page: Page): () => void {
+  let stopped = false;
+  const POLL_MS = 300;
+  void (async () => {
+    while (!stopped) {
+      try {
+        const allow = page.getByRole("button", { name: "Allow", exact: true });
+        const visible = await allow
+          .first()
+          .isVisible({ timeout: POLL_MS })
+          .catch(() => false);
+        if (visible) {
+          await allow
+            .first()
+            .click({ timeout: 2_000 })
+            .catch(() => {});
+        } else {
+          await page.waitForTimeout(POLL_MS);
+        }
+      } catch {
+        if (!stopped) await page.waitForTimeout(POLL_MS);
+      }
+    }
+  })();
+  return () => {
+    stopped = true;
+  };
+}
+
 async function waitForHostPlaygroundFrame(
   page: Page,
   timeoutMs: number,
@@ -148,8 +184,21 @@ export const test = base.extend<
         `[pairedPage] session restored in ${Date.now() - restoreStart}ms`,
       );
 
+      // Auto-allow Permission Request modals.
+      //
+      // The first signing-capable product call (e.g. `getProductAccount`,
+      // `requestResourceAllocation`) triggers the host's "Permission
+      // Request" modal asking the user to grant `AutoSigning` / similar.
+      // `runWebSignedTest` knows to click "Allow"; plain `runTest` reads
+      // (Get Product Account, Chain Spec, Contract Query, …) don't, and
+      // get stuck behind the modal backdrop. Run a low-rate poller that
+      // dismisses any Allow button that appears, so every test path
+      // works regardless of whether the helper expects a modal.
+      const stopAutoAllow = startAutoAllow(page);
+
       await use(page);
 
+      stopAutoAllow();
       await ctx.close();
     },
     { scope: "worker" },

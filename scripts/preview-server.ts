@@ -68,6 +68,12 @@ function serveFile(filePath: string, coep: boolean): Response | null {
     "Content-Type": mime,
     "Service-Worker-Allowed": "/",
     "Access-Control-Allow-Origin": "*",
+    // Loopback iframes across *.localhost subdomains (e.g. the protocol
+    // iframe at host.localhost loaded inside host-playground.localhost)
+    // are gated by Chrome's Private Network Access. Without this header
+    // the iframe never fires `load`, the protocol bridge handshake
+    // times out, and the pair flow can't surface the user-badge.
+    "Access-Control-Allow-Private-Network": "true",
     "Cache-Control": "no-cache",
   };
   if (coep) {
@@ -91,6 +97,15 @@ const MODE_SYNC_CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
+  // Chrome's Private Network Access gates cross-subdomain loopback
+  // requests (each `*.localhost` is its own site per PSL) and rejects
+  // them with "Permission was denied for this request to access the
+  // `loopback` address space" unless the server opts in. The mode-sync
+  // store is the cross-origin glue between the sandbox and the host
+  // shell, so without this header the host can't read its own auth /
+  // backend settings and every chain-dependent product call cascades
+  // into "Chain not supported" / disabled buttons.
+  "Access-Control-Allow-Private-Network": "true",
   "Access-Control-Max-Age": "600",
   "Cache-Control": "no-store",
 };
