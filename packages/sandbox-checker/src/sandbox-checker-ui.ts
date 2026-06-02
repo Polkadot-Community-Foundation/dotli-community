@@ -92,7 +92,7 @@ export function setupViolationPanel(iframe: HTMLIFrameElement): () => void {
   window.addEventListener("pointerup", onPointerUp);
 
   const hasTopbar = document.getElementById("topbar") !== null;
-  const topbarOffset = hasTopbar ? 40 : 0;
+  const topbarOffset = hasTopbar ? 56 : 0;
 
   function adjustIframe(): void {
     const panelHeight = collapsed ? 32 : panel.offsetHeight;
@@ -149,7 +149,7 @@ export function setupViolationPanel(iframe: HTMLIFrameElement): () => void {
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
     panel.remove();
-    iframe.style.height = hasTopbar ? "calc(100vh - 40px)" : "100vh";
+    iframe.style.height = hasTopbar ? "calc(100vh - 56px)" : "100vh";
   };
 }
 

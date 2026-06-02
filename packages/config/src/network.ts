@@ -155,7 +155,7 @@ const VALID_NETWORKS: ReadonlySet<string> = new Set<Network>([
   NetworkName.PREVIEW_NET,
 ]);
 
-function defaultNetwork(): Network {
+export function defaultNetwork(): Network {
   return NetworkName.PASEO_NEXT_V2;
 }
 let networkOverride: Network | null = null;

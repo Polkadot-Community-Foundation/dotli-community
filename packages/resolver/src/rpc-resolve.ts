@@ -114,7 +114,7 @@ export async function resolveDotNameViaRpc(
   const domain = `${label}.dot`;
   const node = namehash(domain);
 
-  onStatus?.(`Resolving "${domain}" via RPC...`);
+  onStatus?.(`Resolving "${domain}" via Trused Provider...`);
   const t0 = performance.now();
 
   const dotns = getActiveServicesConfig().dotns;
@@ -142,7 +142,7 @@ export async function resolveDotNameViaRpc(
       log.warn(
         `[dot.li rpc-resolve] JSON-RPC resolved ${domain} -> ${decoded.cid} (${dur(t0)})`,
       );
-      onStatus?.(`Resolved "${domain}" via RPC`);
+      onStatus?.(`Resolved "${domain}" via Trusted Provider`);
       return decoded.cid;
     case "empty":
       onStatus?.(`Domain "${domain}" not found or no content set`);

@@ -4,22 +4,67 @@
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.4);
   z-index: 2000;
   align-items: center;
   justify-content: center;
+  opacity: 0;
+  transition:
+    opacity 0.3s ease-out,
+    display 0.3s allow-discrete;
 }
 .auth-modal-backdrop.open {
   display: flex;
+  opacity: 1;
+}
+@starting-style {
+  .auth-modal-backdrop.open {
+    opacity: 0;
+  }
 }
 .auth-modal {
-  background: #151515;
-  border: 1px solid #2a2a2a;
+  background: rgba(22, 22, 22, 0.86);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
   padding: 24px;
   text-align: center;
   max-width: 340px;
   width: 100%;
+  opacity: 0;
+  transform: scale(0.7);
+  transition:
+    opacity 0.28s ease-out,
+    transform 0.3s cubic-bezier(0.34, 1.5, 0.5, 1);
+}
+.auth-modal-backdrop.open .auth-modal {
+  opacity: 1;
+  transform: scale(1);
+}
+@starting-style {
+  .auth-modal-backdrop.open .auth-modal {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth-modal-backdrop,
+  .auth-modal {
+    transition: none !important;
+  }
+}
+@supports not (
+  (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))
+) {
+  .auth-modal {
+    background: rgba(22, 22, 22, 0.97);
+  }
+}
+@supports (backdrop-filter: blur(1px)) {
+  .auth-modal {
+    backdrop-filter: blur(28px) saturate(180%);
+  }
 }
 .auth-modal h2 {
   font-size: 1rem;
@@ -28,7 +73,7 @@
 }
 .auth-modal p {
   font-size: 0.8rem;
-  color: #888;
+  color: rgba(255, 255, 255, 0.55);
   margin-bottom: 16px;
   line-height: 1.4;
 }
@@ -52,16 +97,21 @@
   margin-top: 16px;
   padding: 6px 16px;
   background: transparent;
-  border: 1px solid #333;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 6px;
-  color: #888;
+  color: rgba(255, 255, 255, 0.65);
   font-size: 0.8rem;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 .auth-modal-close:hover {
-  background: #1a1a1a;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #fff;
 }
 .auth-modal-error {
   color: #f87171;
@@ -70,15 +120,16 @@
 }
 .auth-modal-retry {
   padding: 6px 16px;
-  background: #e6007a;
+  background: #fafafa;
   border: none;
   border-radius: 6px;
-  color: #fff;
+  color: #0a0a0a;
   font-size: 0.8rem;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: background 0.15s ease;
 }
 .auth-modal-retry:hover {
-  opacity: 0.85;
+  background: #fff;
 }

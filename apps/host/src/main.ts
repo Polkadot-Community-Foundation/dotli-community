@@ -24,6 +24,7 @@ import {
 import {
   showStatus,
   showError,
+  showNoContentError,
   showLanding,
   initPhases,
   advancePhase,
@@ -242,9 +243,12 @@ function setTopbarVisible(visible: boolean): void {
   const iframe = document.querySelector("iframe");
   topbar.style.transform = visible ? "translateY(0)" : "translateY(-100%)";
   if (iframe) {
-    iframe.style.top = visible ? "40px" : "0";
-    iframe.style.height = visible ? "calc(100vh - 40px)" : "100vh";
+    iframe.style.top = visible ? "56px" : "0";
+    iframe.style.height = visible ? "calc(100vh - 56px)" : "100vh";
   }
+  window.dispatchEvent(
+    new CustomEvent<boolean>("topbar:visibility", { detail: visible }),
+  );
 }
 
 function scheduleTopbarHide(): void {
@@ -319,14 +323,11 @@ function setShieldState(state: "validating" | "verified"): void {
     verified: "VERIFIED",
     validating: "TRUSTED",
   };
-  const colors: Record<string, string> = {
-    verified: "#4ade80",
-    validating: "#eab308",
-  };
   const el = document.getElementById("domain-popover-verification");
   if (el !== null) {
     el.textContent = labels[state];
-    el.style.color = colors[state];
+    el.classList.remove("status-verified", "status-validating");
+    el.classList.add(`status-${state}`);
   }
 
   shieldVerified = true;
@@ -422,8 +423,8 @@ function populateOwner(
           e.stopPropagation();
           void navigator.clipboard.writeText(owner);
           const btn = e.currentTarget as HTMLElement;
-          btn.style.color = "#4ade80";
-          btn.style.borderColor = "#4ade80";
+          btn.style.color = "#fafafa";
+          btn.style.borderColor = "#fafafa";
           setTimeout(() => {
             btn.style.color = "";
             btn.style.borderColor = "";
@@ -836,8 +837,8 @@ async function applyUrlSettings(): Promise<void> {
 
   if (sharedWorkerFallback) {
     showNotification({
-      label: "Light client (worker) unavailable",
-      text: "This browser doesn't support Light client (worker). Falling back to the Light client (direct).",
+      label: "Light Client Shared unavailable",
+      text: "This browser doesn't support Light Client Shared. Falling back to Light Client Per-Tab.",
       dismissMs: 5_000,
     });
   }
@@ -1190,7 +1191,7 @@ async function main(): Promise<void> {
     showError("UI failed to initialise", err.message);
     return;
   }
-  urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><svg id="verification-shield" class="verification-shield" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm-1 14.59l-3.29-3.3 1.41-1.41L11 13.76l4.88-4.88 1.41 1.41L11 16.59z"/></svg><span class="topbar-url-text"><span class="dot-domain">${escapeHtml(label)}</span><span class="dot-tld">.dot</span></span></div>`;
+  urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><span class="verification-shield-wrap"><svg id="verification-shield" class="verification-shield" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-describedby="verification-tooltip"><path d="M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm-1 14.59l-3.29-3.3 1.41-1.41L11 13.76l4.88-4.88 1.41 1.41L11 16.59z"/></svg><span class="verification-tooltip" id="verification-tooltip" role="tooltip"><span class="verification-tooltip-title">How was this site loaded?</span><span class="verification-tooltip-row"><span class="verification-tooltip-dot is-verified" aria-hidden="true"></span><span><strong>Verified</strong> — Your light client checked the content directly. No trust required.</span></span><span class="verification-tooltip-row"><span class="verification-tooltip-dot is-trusted" aria-hidden="true"></span><span><strong>Trusted</strong> — Fetched via a trusted RPC provider. Faster, but you rely on the provider.</span></span></span></span><span class="topbar-url-text"><span class="dot-domain">${escapeHtml(label)}</span><span class="dot-tld">.dot</span></span></div>`;
 
   // Domain info popover toggle
   const urlPill = document.getElementById("url-pill");
@@ -1422,10 +1423,7 @@ async function main(): Promise<void> {
     );
 
     if (cid === null) {
-      showError(
-        `${label}.dot`,
-        "This domain has no content set. The owner needs to publish content to the Bulletin Chain and set the content hash.",
-      );
+      showNoContentError(label);
       performance.mark("dotli:main:end");
       return;
     }
@@ -1513,8 +1511,8 @@ async function main(): Promise<void> {
       chainBackend === "rpc-gateway" ? "smoldot-shared-worker" : "rpc-gateway";
     const btnLabel =
       nextBackend === "rpc-gateway"
-        ? "Try with RPC Node (trusted provider)"
-        : "Try Light Client (smoldot worker)";
+        ? "Try Trusted Providers"
+        : "Try Light Client Shared";
     showError("Domain can't be reached", error.message, {
       label: btnLabel,
       onClick: () => {

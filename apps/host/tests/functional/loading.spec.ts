@@ -9,7 +9,7 @@ const DOMAIN = process.env.COMBO_DOMAIN ?? "host-playground";
 const PORT = process.env.COMBO_PORT ?? "5173";
 const HOST_URL = `http://${DOMAIN}.localhost:${PORT}/`;
 
-const RETRY_LABEL_FROM_SMOLDOT = "Try with RPC Node (trusted provider)";
+const RETRY_LABEL_FROM_SMOLDOT = "Try Trusted Providers";
 
 // Preserve the post-retry backend that the in-page button just flipped.
 async function setBackend(page: Page, backend: Backend): Promise<void> {
@@ -427,11 +427,13 @@ test("As a user, when I visit a domain that has no content set, I see the approp
   await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
 
   // Then
-  await expect(page.locator(".error-page-title")).toHaveText(`${DOMAIN}.dot`, {
-    timeout: 10_000,
-  });
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "This site can't be reached",
+    { timeout: 10_000 },
+  );
+  await expect(page.locator(".error-page-domain")).toHaveText(`${DOMAIN}.dot`);
   await expect(page.locator(".error-page-detail")).toContainText(
-    "This domain has no content set",
+    "Check if there is a typo",
   );
   await expect(page.locator("#error-retry-btn")).toHaveCount(0);
 });

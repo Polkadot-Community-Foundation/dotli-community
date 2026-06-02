@@ -39,7 +39,7 @@ import { test } from "./helpers/shared-mode-reset";
 
 const BASE_URL = `http://${DOMAIN}.localhost:${PORT}/`;
 const LANDING_URL = `http://localhost:${PORT}/`;
-const FALLBACK_LABEL = "Light client (worker) unavailable";
+const FALLBACK_LABEL = "Light Client Shared unavailable";
 
 test.setTimeout(BACKENDS.length * TIMEOUT_MS * 4);
 

@@ -112,7 +112,7 @@ export async function renderIframe(url: string, label: string): Promise<void> {
 
   const hasTopbar = document.getElementById("topbar") !== null;
   const iframeStyle = hasTopbar
-    ? "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;"
+    ? "position:fixed;top:56px;left:0;width:100%;height:calc(100vh - 56px);border:none;margin:0;padding:0;"
     : "position:fixed;top:0;left:0;width:100%;height:100vh;border:none;margin:0;padding:0;";
 
   app.innerHTML = "";
@@ -286,7 +286,7 @@ export async function renderAppSubdomain(
   );
   iframe.allow = buildAllowAttribute(label);
   iframe.style.cssText =
-    "position:fixed;top:40px;left:0;width:100%;height:calc(100vh - 40px);border:none;margin:0;padding:0;";
+    "position:fixed;top:56px;left:0;width:100%;height:calc(100vh - 56px);border:none;margin:0;padding:0;";
   document.body.style.margin = "0";
   document.body.style.overflow = "hidden";
 

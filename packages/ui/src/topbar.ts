@@ -73,6 +73,9 @@ let permissionsPopoverBackdrop: HTMLElement | null = null;
 /** The label of the currently loaded product (set via dotli:product-loaded event). */
 let currentProductLabel: string | null = null;
 
+/** True once the host has rendered an error page; no product will load. */
+let productErrored = false;
+
 // Hexagon SVG for the logged-out state
 // User icon for the logged-out state
 const USER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
@@ -112,18 +115,14 @@ function getStoredTheme(): "light" | "dark" {
   if (stored === "light" || stored === "dark") {
     return stored;
   }
+  if (window.matchMedia("(prefers-color-scheme: light)").matches) {
+    return "light";
+  }
   return "dark";
 }
 
 function applyTheme(theme: "light" | "dark"): void {
   document.documentElement.setAttribute("data-theme", theme);
-  const sunIcon = document.getElementById("theme-icon-sun");
-  const moonIcon = document.getElementById("theme-icon-moon");
-  if (sunIcon !== null && moonIcon !== null) {
-    // In dark mode show moon (click to go light), in light mode show sun (click to go dark)
-    sunIcon.style.display = theme === "light" ? "block" : "none";
-    moonIcon.style.display = theme === "dark" ? "block" : "none";
-  }
   // Notify render.ts to re-resolve scheme-specific theme-color
   window.dispatchEvent(new Event("dotli:theme-changed"));
 }
@@ -197,9 +196,16 @@ export function initTopBar(): void {
   const moreButton = document.getElementById("more-button");
   const morePopover = document.getElementById("more-popover");
   if (moreButton !== null && morePopover !== null) {
-    moreButton.addEventListener("click", (e) => {
-      e.stopPropagation();
-      morePopover.classList.toggle("open");
+    const setMoreOpen = (open: boolean): void => {
+      morePopover.classList.toggle("open", open);
+      moreButton.setAttribute("aria-expanded", String(open));
+    };
+    moreButton.addEventListener("click", () => {
+      // Don't stop propagation: let the document-level close-outside handler
+      // run so opening the burger also closes settings/permissions popovers.
+      // That handler won't touch the more popover itself because
+      // `moreButton.contains(target)` is true for clicks on the burger.
+      setMoreOpen(!morePopover.classList.contains("open"));
     });
     morePopover.addEventListener("click", (e) => {
       const row = (e.target as HTMLElement).closest<HTMLButtonElement>(
@@ -213,7 +219,7 @@ export function initTopBar(): void {
       // the row click as "outside" the just-opened target popover and
       // immediately close it back.
       e.stopPropagation();
-      morePopover.classList.remove("open");
+      setMoreOpen(false);
       const targetId = row.dataset.target;
       if (targetId !== undefined) {
         document.getElementById(targetId)?.click();
@@ -231,6 +237,7 @@ export function initTopBar(): void {
       !moreButton.contains(e.target as Node)
     ) {
       morePopover.classList.remove("open");
+      moreButton.setAttribute("aria-expanded", "false");
     }
     if (
       userPopover.classList.contains("open") &&
@@ -490,6 +497,19 @@ function initPermissions(): void {
   window.addEventListener("dotli:product-loaded", (e) => {
     const { label } = (e as CustomEvent<{ label: string }>).detail;
     currentProductLabel = label;
+    productErrored = false;
+    updatePermissionsButtonState();
+    if (permissionsPopover.classList.contains("open")) {
+      renderPermissionsPopover();
+    }
+  });
+
+  // Re-render the popover hint when the host swaps in an error page.
+  // Clear the label too so any previously loaded product's grants stop
+  // showing — the error page means no product is mounted.
+  window.addEventListener("dotli:product-error", () => {
+    productErrored = true;
+    currentProductLabel = null;
     updatePermissionsButtonState();
     if (permissionsPopover.classList.contains("open")) {
       renderPermissionsPopover();
@@ -515,6 +535,7 @@ function initPermissions(): void {
 /** Update the shield icon to reflect whether any permissions are active. */
 function updatePermissionsButtonState(): void {
   if (currentProductLabel === null) {
+    permissionsButton.classList.remove("has-grants");
     return;
   }
   permissionsButton.classList.toggle(
@@ -545,8 +566,9 @@ function renderPermissionsPopover(): void {
   if (currentProductLabel === null) {
     const hint = document.createElement("div");
     hint.className = "permissions-popover-footer";
-    hint.textContent =
-      "Wait for the app to finish loading to change its permissions.";
+    hint.textContent = productErrored
+      ? "No app is loaded on this domain."
+      : "Wait for the app to finish loading to change its permissions.";
     permissionsPopoverList.appendChild(hint);
     return;
   }
@@ -852,14 +874,18 @@ function renderModePopover(): void {
   const chainChoices: [Backend, string, string][] = [
     [
       "smoldot-shared-worker",
-      "Light Client (smoldot worker)",
-      "Light client shared across tabs (recommended)",
+      "Light Client Shared",
+      "Verified in your browser, shared across tabs (recommended)",
     ],
-    ["smoldot-direct", "Light Client (smoldot direct)", "Light client per tab"],
+    [
+      "smoldot-direct",
+      "Light Client Per-Tab",
+      "Verified in your browser, separate per tab",
+    ],
     [
       "rpc-gateway",
-      "RPC and Gateway (trusted providers)",
-      "RPC nodes and IPFS gateway",
+      "Trusted Providers",
+      "Fetched from trusted servers, fastest but less private",
     ],
   ];
   const chainGroup = document.createElement("div");
@@ -1193,8 +1219,19 @@ declare const __NOVASAMATECH_VERSIONS__:
 function renderDiagnostics(parent: HTMLElement): void {
   const base = buildBaseDiagnosticsRows();
   const rowHandles = new Map<string, InfoRowHandle>();
+  const COPYABLE_ROWS = new Set([
+    "Site",
+    "Relay node",
+    "AssetHub node",
+    "Bulletin Node",
+  ]);
   for (const entry of base) {
-    rowHandles.set(entry[0], renderInfoRow(parent, entry[0], entry[1]));
+    rowHandles.set(
+      entry[0],
+      renderInfoRow(parent, entry[0], entry[1], {
+        copyable: COPYABLE_ROWS.has(entry[0]),
+      }),
+    );
   }
 
   // When running in RPC chain mode, ask the live ws-provider which URI
@@ -1300,9 +1337,11 @@ function renderDiagnostics(parent: HTMLElement): void {
     }
   }
 
-  const shareRow = document.createElement("div");
-  shareRow.className = "mode-cache-row";
+  const actionsRow = document.createElement("div");
+  actionsRow.className = "mode-cache-row mode-diag-links-row";
+
   const shareBtn = document.createElement("button");
+  shareBtn.type = "button";
   shareBtn.className = "mode-clear-btn";
   shareBtn.textContent = "Share diagnostic";
   shareBtn.title =
@@ -1327,14 +1366,11 @@ function renderDiagnostics(parent: HTMLElement): void {
     url.searchParams.set("body", body);
     window.open(url.toString(), "_blank", "noopener,noreferrer");
   });
-  shareRow.appendChild(shareBtn);
-  parent.appendChild(shareRow);
 
-  const debugRow = document.createElement("div");
-  debugRow.className = "mode-cache-row";
-  const debugBtn = document.createElement("button");
-  debugBtn.className = "mode-clear-btn";
   const debugOn = isTruapiDebugEnabled();
+  const debugBtn = document.createElement("button");
+  debugBtn.type = "button";
+  debugBtn.className = "mode-clear-btn";
   debugBtn.textContent = debugOn ? "Exit debug mode" : "Open in debug mode";
   debugBtn.title = debugOn
     ? "Reload this tab with the TrUAPI debug panel disabled"
@@ -1344,8 +1380,10 @@ function renderDiagnostics(parent: HTMLElement): void {
     url.searchParams.set("debug", debugOn ? "off" : "true");
     window.location.assign(url.toString());
   });
-  debugRow.appendChild(debugBtn);
-  parent.appendChild(debugRow);
+
+  actionsRow.appendChild(shareBtn);
+  actionsRow.appendChild(debugBtn);
+  parent.appendChild(actionsRow);
 }
 
 function isTruapiDebugEnabled(): boolean {
@@ -1455,6 +1493,7 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
     const cfg = getActiveServicesConfig();
     rows.push(["Relay node", cfg.relay.rpcs[0] ?? "n/a"]);
     rows.push(["AssetHub node", cfg.assethub.rpcs[0] ?? "n/a"]);
+    rows.push(["Bulletin Node", cfg.bulletin.rpcs[0] ?? "n/a"]);
   }
 
   // Product manifest snapshot.
@@ -1474,11 +1513,11 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
 function backendLabel(b: Backend): string {
   switch (b) {
     case "smoldot-shared-worker":
-      return "Smoldot Worker";
+      return "Light Client Shared";
     case "smoldot-direct":
-      return "Smoldot Direct";
+      return "Light Client Per-Tab";
     case "rpc-gateway":
-      return "RPC Node + Gateway";
+      return "Trusted Providers";
   }
 }
 
@@ -1623,6 +1662,7 @@ function renderInfoRow(
   parent: HTMLElement,
   label: string,
   value: string,
+  options: { copyable?: boolean } = {},
 ): InfoRowHandle {
   const row = document.createElement("div");
   row.className = "mode-endpoint-row mode-info-row";
@@ -1635,9 +1675,42 @@ function renderInfoRow(
   row.appendChild(labelEl);
   row.appendChild(valueEl);
   parent.appendChild(row);
+
+  let currentValue = value;
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+  if (options.copyable === true) {
+    row.classList.add("mode-info-row-copyable");
+    row.title = `Click to copy ${label}`;
+    row.addEventListener("click", () => {
+      if (
+        currentValue === "" ||
+        currentValue === "…" ||
+        currentValue === "n/a"
+      ) {
+        return;
+      }
+      void navigator.clipboard.writeText(currentValue).then(() => {
+        valueEl.textContent = "Copied";
+        row.classList.add("copied");
+        if (copiedTimer !== undefined) {
+          clearTimeout(copiedTimer);
+        }
+        copiedTimer = setTimeout(() => {
+          valueEl.textContent = currentValue;
+          row.classList.remove("copied");
+          copiedTimer = undefined;
+        }, 1000);
+      });
+    });
+  }
+
   return {
     update: (next) => {
-      valueEl.textContent = next;
+      currentValue = next;
+      if (copiedTimer === undefined) {
+        valueEl.textContent = next;
+      }
     },
   };
 }

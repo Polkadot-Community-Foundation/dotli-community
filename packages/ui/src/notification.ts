@@ -27,7 +27,7 @@ export interface NotificationParams {
   deeplink?: string;
   /** SVG string for the icon. Default: bell. */
   icon?: string;
-  /** CSS color for icon background. Default: #e6007a. */
+  /** CSS color for icon background. Default: inherits from .notif-icon (#0a0a0a). */
   iconBackground?: string;
   /** Auto-dismiss in ms. 0 = persistent (manual close only). Default: NOTIFICATION_DISMISS_MS. */
   dismissMs?: number;

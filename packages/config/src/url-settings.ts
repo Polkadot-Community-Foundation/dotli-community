@@ -15,7 +15,7 @@
 // They are part of the public URL contract surface and changing them
 // belongs in this file too.
 
-import { isValidNetwork, NetworkName, type Network } from "./network";
+import { defaultNetwork, isValidNetwork, type Network } from "./network";
 import {
   defaultBackend,
   isSharedWorkerAvailable,
@@ -31,7 +31,6 @@ const URL_PARAM_NAMES = {
   skipWorkerCache: "skipWorkerCache",
 } as const;
 
-const URL_DEFAULT_NETWORK: Network = NetworkName.PASEO_NEXT_V1;
 const URL_DEFAULT_CACHE: CacheSettings = {
   skipCidCache: false,
   skipArchiveCache: false,
@@ -103,7 +102,7 @@ export function writeSettingsToSearch(
   applyAxis(
     search,
     URL_PARAM_NAMES.network,
-    settings.network === URL_DEFAULT_NETWORK ? null : settings.network,
+    settings.network === defaultNetwork() ? null : settings.network,
   );
   applyAxis(
     search,

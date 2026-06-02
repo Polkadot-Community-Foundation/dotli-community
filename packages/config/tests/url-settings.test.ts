@@ -140,11 +140,11 @@ describe("writeSettingsToSearch with environment-aware default", () => {
 describe("writeSettingsToSearch", () => {
   it("drops default-valued axes and preserves unrelated params", () => {
     const search = new URLSearchParams(
-      "network=paseo-next-v2&chainBackend=rpc-gateway&skipArchiveCache=1&keep=me",
+      "network=paseo-next-v1&chainBackend=rpc-gateway&skipArchiveCache=1&keep=me",
     );
     const changed = writeSettingsToSearch(
       {
-        network: NetworkName.PASEO_NEXT_V1,
+        network: NetworkName.PASEO_NEXT_V2,
         chainBackend: "smoldot-direct",
         cache: {
           skipCidCache: false,
@@ -165,7 +165,7 @@ describe("writeSettingsToSearch", () => {
     const search = new URLSearchParams();
     writeSettingsToSearch(
       {
-        network: NetworkName.PASEO_NEXT_V2,
+        network: NetworkName.PASEO_NEXT_V1,
         chainBackend: "smoldot-direct",
         cache: {
           skipCidCache: true,
@@ -175,7 +175,7 @@ describe("writeSettingsToSearch", () => {
       },
       search,
     );
-    expect(search.get("network")).toBe(NetworkName.PASEO_NEXT_V2);
+    expect(search.get("network")).toBe(NetworkName.PASEO_NEXT_V1);
     expect(search.get("chainBackend")).toBeNull();
     expect(search.get("skipCidCache")).toBe("1");
     expect(search.get("skipArchiveCache")).toBeNull();
