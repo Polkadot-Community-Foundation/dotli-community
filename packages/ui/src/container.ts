@@ -679,7 +679,14 @@ function wireContainerHandlers(
           const outcomes = await session
             .requestResourceAllocation({
               callingProductId: labelToProductIdentifier(label),
-              resources,
+              // host-api 0.8 renamed BulletInAllowance to BulletinAllowance, but
+              // papp 0.7.9 still speaks the old tag to the v0.7 mobile app.
+              // Translate on the way in so the scale codec finds the variant.
+              resources: resources.map((r) =>
+                r.tag === "BulletinAllowance"
+                  ? { tag: "BulletInAllowance" as const, value: undefined }
+                  : r,
+              ),
               onExisting: "Increase",
             })
             .match(
@@ -1180,10 +1187,14 @@ function wireContainerHandlers(
   });
 
   container.handleThemeSubscribe((_params, send) => {
-    const readTheme = (): "light" | "dark" =>
-      document.documentElement.getAttribute("data-theme") === "light"
-        ? "light"
-        : "dark";
+    const readTheme = () =>
+      ({
+        name: { tag: "Default", value: undefined },
+        variant:
+          document.documentElement.getAttribute("data-theme") === "light"
+            ? "Light"
+            : "Dark",
+      }) as const;
 
     send(readTheme());
 

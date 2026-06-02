@@ -18,7 +18,7 @@ function describeResource(resource: AllocatableResourceValue): string {
   switch (resource.tag) {
     case "StatementStoreAllowance":
       return "Post statements on your behalf";
-    case "BulletInAllowance":
+    case "BulletinAllowance":
       return "Publish bulletin posts on your behalf";
     case "SmartContractAllowance":
       return `Sign up to ${String(resource.value)} smart-contract calls automatically`;

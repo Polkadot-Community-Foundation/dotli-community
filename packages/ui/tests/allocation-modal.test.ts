@@ -34,7 +34,7 @@ describe("showAllocationRequestModal", () => {
   it("renders one item per resource with the expected label", () => {
     const resources: AllocatableResourceValue[] = [
       { tag: "StatementStoreAllowance", value: undefined },
-      { tag: "BulletInAllowance", value: undefined },
+      { tag: "BulletinAllowance", value: undefined },
       { tag: "SmartContractAllowance", value: 5 },
       { tag: "AutoSigning", value: undefined },
     ];
@@ -70,7 +70,7 @@ describe("showAllocationRequestModal", () => {
 
   it("rejects on Cancel and removes the modal", async () => {
     const resources: AllocatableResourceValue[] = [
-      { tag: "BulletInAllowance", value: undefined },
+      { tag: "BulletinAllowance", value: undefined },
     ];
     const promise = showAllocationRequestModal(
       "myapp",
