@@ -20,6 +20,7 @@ import type { Statement } from "@novasamatech/sdk-statement";
 import { toHex } from "@novasamatech/host-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { createRemoteChainProvider } from "@dotli/protocol/client";
+import { ok, ResultAsync, type Result } from "neverthrow";
 import { SITE_ID } from "@dotli/config/config";
 import { getActiveServicesConfig } from "@dotli/config/network";
 import { getBackend } from "@dotli/config/mode";
@@ -118,9 +119,31 @@ function logStatement(prefix: string, stmt: Statement): void {
 
 function createLoggingStatementStore(
   inner: StatementStoreAdapter,
+  queryTimeoutMs: number,
 ): StatementStoreAdapter {
   return {
-    queryStatements: inner.queryStatements.bind(inner),
+    queryStatements(filter) {
+      // sdk-statement's getStatements implements "query" as subscribe + wait
+      // for an event with `data.remaining === 0`. Smoldot only emits the
+      // statement_statement notification when fresh statements arrive via
+      // gossip, never as an empty-initial-page sentinel, so for a topic
+      // with no statements the query hangs forever — which leaves
+      // session.init() stuck in 'initialization' and silently queues every
+      // subsequent submitRequestMessage. Race against a short timeout
+      // resolving to [] so init can proceed; the parallel subscribe still
+      // delivers new statements normally.
+      const inner$: Promise<Result<Statement[], Error>> = Promise.resolve(
+        inner.queryStatements(filter),
+      );
+      const timeout$ = new Promise<Result<Statement[], Error>>((resolve) => {
+        setTimeout(() => {
+          resolve(ok([]));
+        }, queryTimeoutMs);
+      });
+      return new ResultAsync<Statement[], Error>(
+        Promise.race([inner$, timeout$]),
+      );
+    },
     subscribeStatements(filter, callback) {
       const topics = "matchAll" in filter ? filter.matchAll : filter.matchAny;
       log.warn(
@@ -211,8 +234,14 @@ export function initAuth(): void {
     m.setDefaults({ people_rpc_endpoint: peopleRpcEndpoint });
   }
 
+  // Short timeout for the smoldot path covers its empty-topic hang. WS is a
+  // generous upper bound that should never trip in practice.
+  const queryStatementsTimeoutMs = useSmoldotForAuth ? 3_000 : 30_000;
   const rawStatementStore = createPapiStatementStoreAdapter(lazyClient);
-  const statementStore = createLoggingStatementStore(rawStatementStore);
+  const statementStore = createLoggingStatementStore(
+    rawStatementStore,
+    queryStatementsTimeoutMs,
+  );
   statementStoreInstance = statementStore;
   for (const resolve of storeReadyResolvers) {
     resolve(statementStore);

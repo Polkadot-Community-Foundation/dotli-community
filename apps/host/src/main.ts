@@ -365,7 +365,8 @@ async function applyProductBranding(
         type: `image/${root.icon.format}`,
       });
       setFavicon(URL.createObjectURL(blob), root.icon.format);
-      // eslint-disable-next-line no-restricted-syntax -- favicon fetch is cosmetic; failing it must not affect the tab title or the loaded app. Logged so the failure is still observable in the diagnostics console.
+      // Favicon fetch is cosmetic. A failure must not affect the tab title or
+      // the loaded app, and is logged so it stays observable in diagnostics.
     } catch (err: unknown) {
       log.warn(
         `[dot.li manifest] icon fetch failed for ${label}.dot: ${err instanceof Error ? err.message : String(err)}`,
