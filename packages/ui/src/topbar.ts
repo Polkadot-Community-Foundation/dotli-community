@@ -395,14 +395,52 @@ function renderAttesting(): void {
   `;
 }
 
+// Clock glyph for the "account still being set up" state.
+const PENDING_ICON_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+
+// Recognize known wallet-side SSO failures and return friendly copy, or null to
+// fall back to the raw error. OriginPersonProviderError ("error 0" =
+// noPersonsExist) means the signer's personhood is not yet included in a VRF
+// ring, so the wallet cannot grant the host its statement-store allowance yet.
+function friendlyAuthError(
+  message: string,
+): { title: string; subtitle: string } | null {
+  if (message.includes("OriginPersonProviderError")) {
+    return {
+      title: "Your account is still being set up",
+      subtitle: "Please try again later",
+    };
+  }
+  return null;
+}
+
 function renderError(message: string): void {
   const container = document.createElement("div");
-  container.style.textAlign = "center";
+  container.className = "auth-modal-error-view";
 
-  const msg = document.createElement("p");
-  msg.className = "auth-modal-error";
-  msg.textContent = message;
-  container.appendChild(msg);
+  const friendly = friendlyAuthError(message);
+  if (friendly) {
+    const icon = document.createElement("div");
+    icon.className = "auth-modal-pending-icon";
+    icon.innerHTML = PENDING_ICON_SVG;
+    container.appendChild(icon);
+
+    const title = document.createElement("div");
+    title.className = "auth-modal-pending-title";
+    title.textContent = friendly.title;
+    container.appendChild(title);
+
+    const subtitle = document.createElement("div");
+    subtitle.className = "auth-modal-pending-subtitle";
+    subtitle.textContent = friendly.subtitle;
+    container.appendChild(subtitle);
+  } else {
+    const msg = document.createElement("p");
+    msg.className = "auth-modal-error";
+    msg.textContent = message;
+    container.appendChild(msg);
+  }
 
   const retry = document.createElement("button");
   retry.className = "auth-modal-retry";

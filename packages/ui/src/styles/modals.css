@@ -133,3 +133,35 @@
 .auth-modal-retry:hover {
   background: #fff;
 }
+.auth-modal-error-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.auth-modal-pending-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+}
+.auth-modal-pending-icon svg {
+  width: 22px;
+  height: 22px;
+}
+.auth-modal-pending-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 4px;
+}
+.auth-modal-pending-subtitle {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: 16px;
+}
