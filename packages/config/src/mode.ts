@@ -186,7 +186,7 @@ export function isVerifiedSession(chainBackend: Backend): boolean {
 const DEFAULT_CACHE: CacheSettings = {
   skipCidCache: false,
   skipArchiveCache: false,
-  skipWorkerCache: true,
+  skipWorkerCache: false,
 };
 
 /**

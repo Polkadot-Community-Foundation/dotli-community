@@ -5,8 +5,9 @@
 // `.dot` resolution and remote dApp clients share one upstream JSON-RPC
 // loop through a broker.
 //
-// Chain DB persistence is handled by smoldot internally — we do NOT
-// manually save/load chain databases to IndexedDB.
+// Chain DB persistence lives in `./smoldot-db`. Each chain loads any
+// saved blob and passes it as `addChain.databaseContent`, then snapshots
+// back into IDB on a timer. Keys are scoped by network + chain.
 
 import { start as startSmoldotDirect } from "polkadot-api/smoldot";
 import { startFromWorker } from "polkadot-api/smoldot/from-worker";
@@ -21,8 +22,15 @@ import {
 import { getSmProvider } from "polkadot-api/sm-provider";
 import type { JsonRpcProvider } from "polkadot-api";
 import { log } from "@dotli/shared/log";
+import { getNetwork } from "@dotli/config/network";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
+import {
+  loadChainDb,
+  saveChainDb,
+  tapChain,
+  type ChainDbTap,
+} from "./smoldot-db";
 
 /** The smoldot Client type (shared by `start()` and `startFromWorker()`). */
 export type SmoldotClient = ReturnType<typeof startFromWorker>;
@@ -144,6 +152,97 @@ function smoldotLogCallback(
 let smoldotInstance: SmoldotClient | null = null;
 let relayChainPromise: Promise<SmoldotChain> | null = null;
 
+interface PersistenceEntry {
+  tap: ChainDbTap;
+  initialTimer: ReturnType<typeof setTimeout>;
+  periodicTimer: ReturnType<typeof setInterval>;
+}
+const persistence = new Map<string, PersistenceEntry>();
+
+function dbKeyFor(chainName: string): string {
+  return `${getNetwork()}:${chainName}`;
+}
+
+function unrefHandle(handle: ReturnType<typeof setTimeout>): void {
+  // Node-only no-op in browsers, lets vitest exit instead of hanging on timers.
+  const h = handle as unknown as { unref?: () => void };
+  if (typeof h.unref === "function") {
+    h.unref();
+  }
+}
+
+function schedulePersistence(chainName: string, tap: ChainDbTap): void {
+  if (persistence.has(chainName)) {
+    return;
+  }
+  const key = dbKeyFor(chainName);
+  let inFlight = false;
+  async function persist(): Promise<void> {
+    // The chain may have been removed through a path that didn't call
+    // `teardownPersistence` directly (e.g. a `getSmProvider` disconnect on the
+    // resolver chain). Self-heal so the interval doesn't leak for the life of
+    // the SharedWorker.
+    if (tap.isStopped()) {
+      teardownPersistence(chainName);
+      return;
+    }
+    if (inFlight) {
+      return;
+    }
+    inFlight = true;
+    try {
+      const content = await tap.extractDb();
+      if (content !== null && (await saveChainDb(key, content))) {
+        log.debug(
+          `[dot.li smoldot] persisted ${chainName} DB (${String(content.length)} bytes)`,
+        );
+      }
+    } catch (err: unknown) {
+      log.warn(
+        `[dot.li smoldot] persist ${chainName} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      inFlight = false;
+    }
+  }
+  const initialTimer = setTimeout(() => {
+    void persist();
+  }, 30_000);
+  const periodicTimer = setInterval(() => {
+    void persist();
+  }, 60_000);
+  unrefHandle(initialTimer);
+  unrefHandle(periodicTimer);
+  persistence.set(chainName, { tap, initialTimer, periodicTimer });
+}
+
+function teardownPersistence(chainName: string): void {
+  const entry = persistence.get(chainName);
+  if (entry === undefined) {
+    return;
+  }
+  clearTimeout(entry.initialTimer);
+  clearInterval(entry.periodicTimer);
+  entry.tap.stop();
+  persistence.delete(chainName);
+}
+
+function teardownAllPersistence(): void {
+  for (const name of [...persistence.keys()]) {
+    teardownPersistence(name);
+  }
+}
+
+function attachPersistence(
+  chainName: string,
+  underlying: SmoldotChain,
+): SmoldotChain {
+  teardownPersistence(chainName);
+  const tap = tapChain(underlying);
+  schedulePersistence(chainName, tap);
+  return tap.chain;
+}
+
 /**
  * Create smoldot using `start()` — runs on the current thread.
  *
@@ -206,6 +305,7 @@ export function terminateSmoldot(): void {
   } catch {
     /* already destroyed or crashed — safe to ignore */
   }
+  teardownAllPersistence();
   smoldotInstance = null;
   relayChainPromise = null;
   resolverAssetHubPromise = null;
@@ -220,12 +320,22 @@ export function getRelayChain(): Promise<SmoldotChain> {
   // Clear the cached promise on rejection so the next call retries
   // against a fresh smoldot / chain-spec fetch instead of handing the
   // same dead rejection to every caller forever.
-  relayChainPromise ??= getPaseoChainSpec()
-    .then((chainSpec) => {
-      log.warn("[dot.li smoldot] Adding relay chain...");
-      m.breadcrumb("Adding relay chain");
-      return getSmoldot().addChain({ chainSpec });
+  relayChainPromise ??= Promise.all([
+    getPaseoChainSpec(),
+    loadChainDb(dbKeyFor("relay")),
+  ])
+    .then(([chainSpec, databaseContent]) => {
+      const warm = databaseContent !== null;
+      log.warn(
+        `[dot.li smoldot] Adding relay chain (${warm ? "WARM" : "COLD"} start${warm ? `, ${String(databaseContent.length)} bytes` : ""})`,
+      );
+      m.breadcrumb("Adding relay chain", { warm: String(warm) });
+      return getSmoldot().addChain({
+        chainSpec,
+        ...(databaseContent !== null ? { databaseContent } : {}),
+      });
     })
+    .then((chain) => attachPersistence("relay", chain))
     .catch((error: unknown) => {
       relayChainPromise = null;
       m.count(S.BOOTNODE_ERROR, { chain: "relay" });
@@ -249,13 +359,21 @@ export function getBulletinChain(): Promise<SmoldotChain> {
   bulletinChainPromise ??= Promise.all([
     getRelayChain(),
     getBulletinPaseoChainSpec(),
+    loadChainDb(dbKeyFor("bulletin")),
   ])
-    .then(([relayChain, chainSpec]) =>
-      getSmoldot().addChain({
+    .then(([relayChain, chainSpec, databaseContent]) => {
+      const warm = databaseContent !== null;
+      log.warn(
+        `[dot.li smoldot] Adding Bulletin parachain (${warm ? "WARM" : "COLD"} start${warm ? `, ${String(databaseContent.length)} bytes` : ""})`,
+      );
+      m.breadcrumb("Adding Bulletin parachain", { warm: String(warm) });
+      return getSmoldot().addChain({
         chainSpec,
         potentialRelayChains: [relayChain],
-      }),
-    )
+        ...(databaseContent !== null ? { databaseContent } : {}),
+      });
+    })
+    .then((chain) => attachPersistence("bulletin", chain))
     .catch((error: unknown) => {
       bulletinChainPromise = null;
       m.count(S.BOOTNODE_ERROR, { chain: "bulletin" });
@@ -306,8 +424,22 @@ export function getPeopleChain(): Promise<SmoldotChain> {
 
   const relayPromise =
     SS_RELAY_CHAIN !== undefined && SS_RELAY_CHAIN !== ""
-      ? (customRelayChainPromise ??= getCustomRelayChainSpec()
-          .then((spec) => getSmoldot().addChain({ chainSpec: spec }))
+      ? (customRelayChainPromise ??= Promise.all([
+          getCustomRelayChainSpec(),
+          loadChainDb(dbKeyFor("custom-relay")),
+        ])
+          .then(([spec, databaseContent]) => {
+            const warm = databaseContent !== null;
+            log.warn(
+              `[dot.li smoldot] Adding custom relay chain (${warm ? "WARM" : "COLD"} start${warm ? `, ${String(databaseContent.length)} bytes` : ""})`,
+            );
+            m.breadcrumb("Adding custom relay chain", { warm: String(warm) });
+            return getSmoldot().addChain({
+              chainSpec: spec,
+              ...(databaseContent !== null ? { databaseContent } : {}),
+            });
+          })
+          .then((chain) => attachPersistence("custom-relay", chain))
           .catch((error: unknown) => {
             customRelayChainPromise = null;
             m.count(S.BOOTNODE_ERROR, { chain: "custom-relay" });
@@ -315,14 +447,25 @@ export function getPeopleChain(): Promise<SmoldotChain> {
           }))
       : getRelayChain();
 
-  peopleChainPromise = Promise.all([relayPromise, getPeopleChainSpec()])
-    .then(([relayChain, chainSpec]) =>
-      getSmoldot().addChain({
+  peopleChainPromise = Promise.all([
+    relayPromise,
+    getPeopleChainSpec(),
+    loadChainDb(dbKeyFor("people")),
+  ])
+    .then(([relayChain, chainSpec, databaseContent]) => {
+      const warm = databaseContent !== null;
+      log.warn(
+        `[dot.li smoldot] Adding People parachain (${warm ? "WARM" : "COLD"} start${warm ? `, ${String(databaseContent.length)} bytes` : ""})`,
+      );
+      m.breadcrumb("Adding People parachain", { warm: String(warm) });
+      return getSmoldot().addChain({
         chainSpec,
         potentialRelayChains: [relayChain],
         statementStore: { maxSeenStatements: 65536 },
-      }),
-    )
+        ...(databaseContent !== null ? { databaseContent } : {}),
+      });
+    })
+    .then((chain) => attachPersistence("people", chain))
     .catch((error: unknown) => {
       peopleChainPromise = null;
       m.count(S.BOOTNODE_ERROR, { chain: "people" });
@@ -338,15 +481,24 @@ function createAssetHubChain(
   relay: Promise<SmoldotChain>,
 ): Promise<SmoldotChain> {
   const t0 = performance.now();
-  return Promise.all([relay, getAssetHubPaseoChainSpec()])
-    .then(([relayChain, chainSpec]) => {
-      log.warn("[dot.li smoldot] Adding Asset Hub parachain...");
-      m.breadcrumb("Adding Asset Hub parachain");
+  return Promise.all([
+    relay,
+    getAssetHubPaseoChainSpec(),
+    loadChainDb(dbKeyFor("asset-hub")),
+  ])
+    .then(([relayChain, chainSpec, databaseContent]) => {
+      const warm = databaseContent !== null;
+      log.warn(
+        `[dot.li smoldot] Adding Asset Hub parachain (${warm ? "WARM" : "COLD"} start${warm ? `, ${String(databaseContent.length)} bytes` : ""})`,
+      );
+      m.breadcrumb("Adding Asset Hub parachain", { warm: String(warm) });
       return getSmoldot().addChain({
         chainSpec,
         potentialRelayChains: [relayChain],
+        ...(databaseContent !== null ? { databaseContent } : {}),
       });
     })
+    .then((chain) => attachPersistence("asset-hub", chain))
     .then((chain) => {
       m.measure(S.SMOLDOT_ASSET_HUB, performance.now() - t0);
       m.distribution(S.SMOLDOT_ASSET_HUB, performance.now() - t0);
@@ -390,6 +542,7 @@ export function releaseResolverAssetHubChain(): void {
     return;
   }
   log.warn("[dot.li smoldot] Releasing resolver Asset Hub chain");
+  teardownPersistence("asset-hub");
   void resolverAssetHubPromise
     .then((chain) => {
       chain.remove();
@@ -423,6 +576,7 @@ export function getDappAssetHubChain(): Promise<SmoldotChain> {
       jsonRpcResponses: chain.jsonRpcResponses,
       remove() {
         dappAssetHubPromise = null;
+        teardownPersistence("asset-hub");
         chain.remove();
       },
     }))

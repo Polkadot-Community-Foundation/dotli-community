@@ -88,7 +88,7 @@ describe("writeSettingsToSearch with environment-aware default", () => {
           cache: {
             skipCidCache: true,
             skipArchiveCache: true,
-            skipWorkerCache: true,
+            skipWorkerCache: false,
           },
         },
         search,
@@ -108,7 +108,7 @@ describe("writeSettingsToSearch with environment-aware default", () => {
           cache: {
             skipCidCache: true,
             skipArchiveCache: true,
-            skipWorkerCache: true,
+            skipWorkerCache: false,
           },
         },
         search,
@@ -127,7 +127,7 @@ describe("writeSettingsToSearch with environment-aware default", () => {
           cache: {
             skipCidCache: true,
             skipArchiveCache: true,
-            skipWorkerCache: true,
+            skipWorkerCache: false,
           },
         },
         search,
@@ -149,7 +149,7 @@ describe("writeSettingsToSearch", () => {
         cache: {
           skipCidCache: false,
           skipArchiveCache: false,
-          skipWorkerCache: true,
+          skipWorkerCache: false,
         },
       },
       search,
@@ -158,6 +158,7 @@ describe("writeSettingsToSearch", () => {
     expect(search.get("network")).toBeNull();
     expect(search.get("chainBackend")).toBeNull();
     expect(search.get("skipArchiveCache")).toBeNull();
+    expect(search.get("skipWorkerCache")).toBeNull();
     expect(search.get("keep")).toBe("me");
   });
 
@@ -170,7 +171,7 @@ describe("writeSettingsToSearch", () => {
         cache: {
           skipCidCache: true,
           skipArchiveCache: false,
-          skipWorkerCache: true,
+          skipWorkerCache: false,
         },
       },
       search,

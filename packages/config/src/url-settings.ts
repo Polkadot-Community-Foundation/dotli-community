@@ -34,7 +34,7 @@ const URL_PARAM_NAMES = {
 const URL_DEFAULT_CACHE: CacheSettings = {
   skipCidCache: false,
   skipArchiveCache: false,
-  skipWorkerCache: true,
+  skipWorkerCache: false,
 };
 
 const VALID_BACKENDS: ReadonlySet<string> = new Set<Backend>([

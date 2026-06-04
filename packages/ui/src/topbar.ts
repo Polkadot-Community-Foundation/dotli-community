@@ -27,6 +27,7 @@ import {
   type Backend,
   type CacheSettings,
 } from "@dotli/config/mode";
+import { clearCidCache } from "@dotli/storage/cid-cache";
 import { getNetwork, setNetwork, type Network } from "@dotli/config/network";
 import { getActiveServicesConfig } from "@dotli/config/network";
 import { writeSettingsToSearch } from "@dotli/config/url-settings";
@@ -1006,9 +1007,9 @@ function renderModePopover(): void {
     }
     clearBtn.disabled = true;
     clearBtn.textContent = "Clearing…";
-    // Apply the current persisted settings (no-op as a diff) so the reset
-    // path always re-seeds localStorage with a valid baseline.
-    void applyAndReset(persisted, persisted);
+    // Force the full-reset pipeline: wipe every origin regardless of the
+    // current cache toggles, then re-seed localStorage with the baseline.
+    void applyAndReset(persisted, persisted, { forceFullWipe: true });
   });
   clearRow.appendChild(clearBtn);
   leftCol.appendChild(clearRow);
@@ -1024,13 +1025,13 @@ function renderModePopover(): void {
   applyRow.appendChild(applyBtn);
   parent.appendChild(applyRow);
 
-  // Warning text: changing any backend/cache option triggers a full wipe of
-  // host + protocol + sandbox state on reload. Shown only when the draft is
-  // dirty so the idle popover isn't noisy.
+  // Warning text: applying reloads the app. Backend/network changes keep
+  // caches warm; only caches the user turns off get cleared. Shown only
+  // when the draft is dirty so the idle popover isn't noisy.
   const resetWarning = document.createElement("p");
   resetWarning.className = "mode-apply-warning";
   resetWarning.textContent =
-    "Applying will wipe all cached data across every origin.";
+    "Applying reloads the app. Caches you turn off are cleared.";
   parent.appendChild(resetWarning);
 
   syncApply = (): void => {
@@ -1058,51 +1059,78 @@ function renderModePopover(): void {
 }
 
 /**
- * Apply the pending draft and wipe every piece of persisted state we own on
- * this origin before reloading. The reload path also signals the protocol
- * iframe (host.dot.li) and the sandbox iframe (<label>.app.dot.li) to purge
- * their origins — each origin has to wipe itself, we can't reach across.
+ * Apply the pending draft, then reload. Cache deletion is scoped to what
+ * actually changed:
  *
- * Order matters:
- *   1. Persist the new settings (so the re-apply after wipe uses them).
- *   2. Mark cross-origin reset flags in sessionStorage (host main + bridge
- *      consume these on the next boot).
- *   3. Wipe host-origin state. After wipe we re-write just the settings +
- *      the cross-origin flags so the next boot has both the user's choice
- *      and the "please purge yourselves" signal intact.
- *   4. Reload.
+ *   - Backend / network changes delete nothing — the cached CID, archive,
+ *     and worker state stay warm.
+ *   - Turning a cache toggle off clears that cache's origin:
+ *       dotNS   → clear the host-origin CID store here, directly.
+ *       Archive → flag the sandbox iframe to purge its origin on next boot
+ *                 (reuses the existing `pending-reset:sandbox` signal the
+ *                 bridge already consumes).
+ *       Worker  → no signal needed; the persisted `skipWorkerCache` flag
+ *                 makes the protocol iframe purge on its next boot.
+ *
+ * `forceFullWipe` (the "Clear all caches" button) bypasses the diff and
+ * wipes every origin via the original full-reset pipeline: wipe host state,
+ * re-apply settings, and flag the protocol + sandbox iframes to purge
+ * themselves regardless of their persisted prefs.
+ *
+ * Order matters: persist settings first (so the reload boots with them),
+ * run the host-origin deletes, mark cross-origin one-shot signals, reload.
  */
 async function applyAndReset(
   draft: ModeDraft,
   prior: ModeDraft,
+  { forceFullWipe = false }: { forceFullWipe?: boolean } = {},
 ): Promise<void> {
   try {
-    // Snapshot the theme so we don't yank the user into a different colour
-    // scheme just because they changed the resolution mode.
-    const theme = localStorage.getItem("dotli-theme");
-
-    if (draft.chain !== prior.chain) {
+    if (forceFullWipe) {
+      // Snapshot the theme so the wipe (which clears localStorage) doesn't
+      // yank the user into a different colour scheme.
+      const theme = localStorage.getItem("dotli-theme");
+      await wipeOriginState();
       setBackend(draft.chain);
-    }
-    if (draft.network !== prior.network) {
       setNetwork(draft.network);
-    }
-    if (
-      draft.cache.skipCidCache !== prior.cache.skipCidCache ||
-      draft.cache.skipArchiveCache !== prior.cache.skipArchiveCache ||
-      draft.cache.skipWorkerCache !== prior.cache.skipWorkerCache
-    ) {
       setCacheSettings(draft.cache);
-    }
+      if (theme === "light" || theme === "dark") {
+        localStorage.setItem("dotli-theme", theme);
+      }
+      // Force every origin to purge regardless of persisted prefs.
+      try {
+        sessionStorage.setItem("dotli:pending-reset:protocol", "1");
+        sessionStorage.setItem("dotli:pending-reset:sandbox", "1");
+        // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); cross-origin purges are best-effort, reload below is unconditional.
+      } catch {
+        /* sessionStorage unavailable — cross-origin purges skipped */
+      }
+    } else {
+      // No origin wipe. Persist the new choices, then delete only the caches
+      // the user just turned off (skip flag flipped false -> true).
+      setBackend(draft.chain);
+      setNetwork(draft.network);
+      setCacheSettings(draft.cache);
 
-    await wipeOriginState();
+      const cidTurnedOff =
+        draft.cache.skipCidCache && !prior.cache.skipCidCache;
+      const archiveTurnedOff =
+        draft.cache.skipArchiveCache && !prior.cache.skipArchiveCache;
 
-    // Re-apply the user's choices + theme after wipe.
-    setBackend(draft.chain);
-    setNetwork(draft.network);
-    setCacheSettings(draft.cache);
-    if (theme === "light" || theme === "dark") {
-      localStorage.setItem("dotli-theme", theme);
+      if (cidTurnedOff) {
+        await clearCidCache();
+      }
+      if (archiveTurnedOff) {
+        // Archive cache lives on the sandbox origin, unreachable from here.
+        // Reuse the existing one-shot flag the bridge turns into fullReset=1
+        // so the sandbox purges itself on its next boot.
+        try {
+          sessionStorage.setItem("dotli:pending-reset:sandbox", "1");
+          // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); the sandbox purge is best-effort, reload below is unconditional.
+        } catch {
+          /* sessionStorage unavailable — sandbox purge skipped */
+        }
+      }
     }
 
     // Mirror the new settings to the URL so the reload below boots with
@@ -1122,16 +1150,6 @@ async function applyAndReset(
       const query = search.toString();
       const newUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
       window.history.replaceState(null, "", newUrl);
-    }
-
-    // Cross-origin purge signals — consumed by host main (protocol iframe)
-    // and the bridge (sandbox iframe) on the next boot.
-    try {
-      sessionStorage.setItem("dotli:pending-reset:protocol", "1");
-      sessionStorage.setItem("dotli:pending-reset:sandbox", "1");
-      // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); cross-origin purges are best-effort, reload below is unconditional.
-    } catch {
-      /* sessionStorage unavailable — cross-origin purges skipped */
     }
   } finally {
     window.location.reload();

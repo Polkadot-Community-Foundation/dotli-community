@@ -133,6 +133,33 @@ export async function setCachedCid(label: string, cid: string): Promise<void> {
   }
 }
 
+/**
+ * Clear every cached label→CID entry. Used when the user turns the dotNS
+ * cache off in settings. Awaits transaction completion so a reload right
+ * after won't abort the clear mid-flight. Best-effort: failures are logged.
+ */
+export async function clearCidCache(): Promise<void> {
+  const stop = m.timer(S.CACHE_WRITE_LATENCY);
+  try {
+    const db = await getDb();
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).clear();
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => {
+        resolve();
+      };
+      tx.onerror = () => {
+        reject(tx.error ?? new Error("IDB clear error"));
+      };
+    });
+    stop();
+  } catch (err) {
+    stop();
+    log.error("[dot.li cid-cache] clear error:", err);
+    captureException(err, { kind: "cid_cache_clear_error" });
+  }
+}
+
 /** Remove a cached entry. Best-effort: failures are logged, not thrown. */
 export async function evictCachedCid(label: string): Promise<void> {
   const stop = m.timer(S.CACHE_WRITE_LATENCY);
