@@ -679,8 +679,9 @@ function wireContainerHandlers(
           const outcomes = await session
             .requestResourceAllocation({
               callingProductId: labelToProductIdentifier(label),
-              // host-api 0.8 renamed BulletInAllowance to BulletinAllowance, but
-              // papp 0.7.9 still speaks the old tag to the v0.7 mobile app.
+              // The product-facing host-api protocol spells this variant
+              // `BulletinAllowance`, but papp's host-to-mobile resource
+              // allocation codec still uses the legacy `BulletInAllowance`.
               // Translate on the way in so the scale codec finds the variant.
               resources: resources.map((r) =>
                 r.tag === "BulletinAllowance"

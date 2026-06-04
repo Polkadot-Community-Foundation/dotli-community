@@ -20,29 +20,14 @@ import type { Statement } from "@novasamatech/sdk-statement";
 import { toHex } from "@novasamatech/host-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { createRemoteChainProvider } from "@dotli/protocol/client";
-import { SITE_ID, isLocalhost } from "@dotli/config/config";
+import { SITE_ID } from "@dotli/config/config";
 import { getActiveServicesConfig } from "@dotli/config/network";
 import { getBackend } from "@dotli/config/mode";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 
-// The metadata URL is SCALE-encoded into the QR handshake payload and
-// fetched by the Polkadot App over the public internet. On localhost the
-// phone can't reach `http://<x>.localhost:<port>/metadata.json` (and iOS
-// ATS blocks plain HTTP anyway), so dev pairing silently fails. Map
-// `<x>.localhost:<port>` → `<x>.dot.li` so the phone fetches metadata
-// from the deployed copy of the same shell.
-function getMetadataUrl(): string {
-  if (isLocalhost) {
-    const host = window.location.hostname;
-    const subdomain = host.endsWith(".localhost")
-      ? `${host.slice(0, -".localhost".length)}.`
-      : "";
-    return `https://${subdomain}dot.li/metadata.json`;
-  }
-  return `${window.location.origin}/metadata.json`;
-}
+declare const __DOTLI_VERSION__: string | undefined;
 
 export type AuthState =
   | { status: "idle" }
@@ -236,7 +221,12 @@ export function initAuth(): void {
 
   adapter = createPappAdapter({
     appId: siteId,
-    metadata: getMetadataUrl(),
+    hostMetadata: {
+      hostName: "Polkadot Web",
+      hostIcon: "https://dot.li/dotli.png",
+      hostVersion:
+        typeof __DOTLI_VERSION__ === "string" ? __DOTLI_VERSION__ : undefined,
+    },
     adapters: { lazyClient, statementStore, storage },
   });
 

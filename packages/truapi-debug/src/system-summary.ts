@@ -124,7 +124,7 @@ export function summariseSystemEvent(ev: StoredSystemEvent): string {
     case "sso:awaiting_response":
       return "Waiting for wallet response on handshake topic.";
     case "sso:response_received":
-      return `Wallet response received for session ${str(p.sessionId)}.`;
+      return `Wallet response received (identity account).`;
     case "sso:session_established":
       return `Session ${str(p.sessionId)} established.`;
     case "sso:pairing_failed":
@@ -132,11 +132,11 @@ export function summariseSystemEvent(ev: StoredSystemEvent): string {
 
     // ── attestation (host-papp) ──────────────────────────
     case "attestation:started":
-      return `Starting guest identity attestation for candidate ${str(p.candidateAddress)}.`;
+      return `Starting guest identity attestation for candidate ${str(p.candidateAccountId)}.`;
     case "attestation:username_claimed":
       return `Username claimed: ${str(p.username)}.`;
     case "attestation:allowance_granted":
-      return `Verifier allowance granted (${str(p.verifierAddress)}).`;
+      return `Verifier allowance granted (${str(p.verifierAccountId)}).`;
     case "attestation:vrf_proof_generated":
       return "VRF ring-proof generated for candidate.";
     case "attestation:person_registered":
@@ -152,7 +152,7 @@ export function summariseSystemEvent(ev: StoredSystemEvent): string {
     case "session:peer_action_received":
       return `Peer action received: ${str(p.actionKind)} (msg=${str(p.messageId)}).`;
     case "session:peer_action_processed":
-      return `Peer action processed (msg=${str(p.messageId)}, handled=${String(p.processed)}).`;
+      return `Peer action processed (msg=${str(p.messageId)}).`;
     case "session:peer_action_failed":
       return `Peer action failed (msg=${str(p.messageId)}): ${str(p.reason)}.`;
     case "session:host_action_sent":
