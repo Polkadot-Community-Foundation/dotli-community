@@ -1,7 +1,8 @@
 {
   "name": "@dotli/truapi-debug",
   "private": true,
-  "version": "0.2.2",
+  "license": "AGPL-3.0-only",
+  "version": "0.5.0",
   "type": "module",
   "exports": {
     "./*": "./src/*"

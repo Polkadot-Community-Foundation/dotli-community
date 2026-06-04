@@ -46,14 +46,19 @@ apps/host/**/.auth/
 .papi/descriptors
 
 # Env
-.env
-.env.sentry-build-plugin
+.env*
+!.env.example
+
+# Deploy (uncommitted SSH targets; see deploy.env.example)
+deploy.env
 
 # Turbo
 .turbo
 
 # AI
 .claude/settings.local.json
+.claude/sessions/
+.claude/cache/
 .claude/worktrees
 .cursor
 .codeium

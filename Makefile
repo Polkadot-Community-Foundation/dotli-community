@@ -3,8 +3,14 @@
 # the default SendEnv LC_*; setting LC_ALL here overrides it everywhere.
 export LC_ALL := C.UTF-8
 
-REMOTE_PRD = ubuntu@51.158.111.82
-REMOTE_STG = ubuntu@51.159.177.252
+# Deploy SSH targets are not committed. Set them in a gitignored deploy.env
+# (copy deploy.env.example) or pass REMOTE=user@host on the command line. CI
+# deploys read DEPLOY_HOST and DEPLOY_USER secrets via the ci-deploy target and
+# do not use these.
+-include deploy.env
+
+REMOTE_PRD ?=
+REMOTE_STG ?=
 
 # env tag → site filename in /etc/nginx/sites-available/
 SITE_polkadot      := dot.li
@@ -182,3 +188,4 @@ ci-deploy:
 _require-env:
 	@test -n "$(ENV)" || (echo "ENV not set. Use ENV=<$(subst $() ,|,$(VALID_ENVS))>"; exit 1)
 	@test -n "$(DEPLOY_PATH_$(ENV))" || (echo "Unknown ENV: $(ENV). Valid: $(VALID_ENVS)"; exit 1)
+	@test -n "$(or $(REMOTE),$(REMOTE_FOR_$(ENV)))" || (echo "No deploy target for ENV=$(ENV). Set REMOTE_PRD/REMOTE_STG in deploy.env (copy deploy.env.example) or pass REMOTE=user@host."; exit 1)

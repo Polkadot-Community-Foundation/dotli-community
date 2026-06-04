@@ -28,12 +28,28 @@ works for the first boot and for later top-ups.
 
 ### Inputs you pass to the command
 
-| Variable               | Required | Notes                                                                                                                                      |
-| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ENV`                  | no       | One of `polkadot`, `dev-polkadot`, `paseo`, `dev-paseo`, `dev-test`, `westend`, `dev-westend`. Defaults to `polkadot`                      |
-| `ADMIN_EMAIL`          | yes      | Let's Encrypt contact email.                                                                                                               |
-| `CLOUDFLARE_API_TOKEN` | yes      | Cloudflare token with DNS edit on the zone.                                                                                                |
-| `REMOTE`               | no       | `user@host` override. Defaults to the per-env mapping in `Makefile`. Pass this when bringing up a brand-new box that isn't in the map yet. |
+| Variable               | Required | Notes                                                                                                                                                                                               |
+| ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ENV`                  | no       | One of `polkadot`, `dev-polkadot`, `paseo`, `dev-paseo`, `dev-test`, `westend`, `dev-westend`. Defaults to `polkadot`                                                                               |
+| `ADMIN_EMAIL`          | yes      | Let's Encrypt contact email.                                                                                                                                                                        |
+| `CLOUDFLARE_API_TOKEN` | yes      | Cloudflare token with DNS edit on the zone.                                                                                                                                                         |
+| `REMOTE`               | no       | `user@host` override. When unset, the target resolves from `REMOTE_PRD` / `REMOTE_STG` (see [Configure deploy targets](#configure-deploy-targets)). Pass this to deploy a box not covered by those. |
+
+## Configure deploy targets
+
+The production and staging SSH targets are not committed to the repo. Provide
+them in one of two ways:
+
+- **`deploy.env`** (recommended for repeat deploys): copy `deploy.env.example`
+  to `deploy.env` (gitignored) and set `REMOTE_PRD` / `REMOTE_STG`. The
+  `Makefile` includes it automatically.
+- **`REMOTE=user@host`** on the command line: overrides both for a single run,
+  useful for a one-off or a brand-new box.
+
+If neither is set, `make deploy` / `make provision` fails fast with a message
+telling you to configure a target. CI deploys do not use these: the GitHub
+Actions path reads `DEPLOY_HOST` / `DEPLOY_USER` from repository secrets via the
+`ci-deploy` target.
 
 ## What `make provision` does
 
