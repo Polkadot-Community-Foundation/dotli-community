@@ -35,5 +35,8 @@
   },
   "overrides": {
     "smoldot": "3.1.4"
+  },
+  "patchedDependencies": {
+    "@novasamatech/host-papp@0.8.5": "patches/@novasamatech%2Fhost-papp@0.8.5.patch"
   }
 }

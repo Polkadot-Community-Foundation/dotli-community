@@ -1,0 +1,30 @@
+diff --git a/dist/sso/auth/impl.js b/dist/sso/auth/impl.js
+index 66104643771a1e5d8edec80edf626e655dfde563..d61568b9c86a0e49b0a8a1fafce5f6aa5e5ebee9 100644
+--- a/dist/sso/auth/impl.js
++++ b/dist/sso/auth/impl.js
+@@ -6,6 +6,7 @@ import { createState, readonly } from '../../helpers/state.js';
+ import { toError } from '../../helpers/utils.js';
+ import { createStoredUserSession } from '../userSessionRepository.js';
+ import { startPairingV2 } from './v2/service.js';
++import { createSharedSecret } from '../../crypto.js';
+ export function createAuth({ hostMetadata, deviceIdentity, deviceIdentityStore, statementStore, ssoSessionRepository, userSecretRepository, onAuthSuccess, }) {
+     const pairingStatus = createState({ step: 'none' });
+     let authResult = null;
+@@ -148,7 +149,16 @@ export function createAuth({ hostMetadata, deviceIdentity, deviceIdentityStore,
+     };
+     function persistAndNotify(identity, success, _flowId) {
+         const localAccount = createLocalSessionAccount(createAccountId(identity.statementAccountPublicKey));
+-        const remoteAccount = createRemoteSessionAccount(createAccountId(success.peerStatementAccountId ?? new Uint8Array(32)), success.deviceEncPubKey);
++        // Mobile SSO spec v0.2.2 derives the session channel + body
++        // encryption key from ECDH(host_encPriv, ssoEncPubKey), not from
++        // the raw deviceEncPubKey (V1 behaviour). Without this, channels
++        // and encryption keys mismatch the wallet and the host can never
++        // hear back from signRaw / signPayload / createTransaction.
++        // Fall back to deviceEncPubKey for V1 peers (no ssoEncPubKey).
++        const sessionKeyMaterial = success.ssoEncPubKey
++            ? createSharedSecret(identity.encryptionPrivateKey, success.ssoEncPubKey)
++            : success.deviceEncPubKey;
++        const remoteAccount = createRemoteSessionAccount(createAccountId(success.peerStatementAccountId ?? new Uint8Array(32)), sessionKeyMaterial);
+         const session = createStoredUserSession(localAccount, remoteAccount, createAccountId(success.rootAccountId ?? new Uint8Array(32)), {
+             identityAccountId: createAccountId(success.identityAccountId),
+             identityChatPublicKey: success.identityChatPublicKey,
