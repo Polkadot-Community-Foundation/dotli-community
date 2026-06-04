@@ -55,7 +55,7 @@
   color: rgba(0, 0, 0, 0.3);
 }
 [data-theme="light"] .verification-shield.validating {
-  color: #b45309;
+  color: #ff8c00;
 }
 [data-theme="light"] .verification-shield.verified {
   color: #16a34a;
@@ -63,13 +63,6 @@
 [data-theme="light"] .verification-shield.stale {
   color: #dc2626;
 }
-[data-theme="light"] .domain-popover-value.status-verified {
-  color: #16a34a;
-}
-[data-theme="light"] .domain-popover-value.status-validating {
-  color: #b45309;
-}
-
 [data-theme="light"] #permissions-button.has-grants::after {
   background: #0a0a0a;
   box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.8);
@@ -79,7 +72,6 @@
   box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.8);
 }
 
-[data-theme="light"] .domain-popover,
 [data-theme="light"] .more-popover,
 [data-theme="light"] .user-popover,
 [data-theme="light"] .mode-popover,
@@ -96,7 +88,6 @@
   [data-theme="light"] #topbar {
     backdrop-filter: blur(20px) saturate(180%);
   }
-  [data-theme="light"] .domain-popover,
   [data-theme="light"] .more-popover,
   [data-theme="light"] .user-popover,
   [data-theme="light"] .mode-popover,
@@ -112,7 +103,6 @@
   [data-theme="light"] #topbar {
     background: rgba(248, 248, 248, 0.97);
   }
-  [data-theme="light"] .domain-popover,
   [data-theme="light"] .more-popover,
   [data-theme="light"] .user-popover,
   [data-theme="light"] .mode-popover,
@@ -122,23 +112,6 @@
   }
 }
 
-[data-theme="light"] .domain-popover-label {
-  color: rgba(0, 0, 0, 0.5);
-}
-[data-theme="light"] .domain-popover-value {
-  color: rgba(0, 0, 0, 0.78);
-}
-[data-theme="light"] .domain-popover-value.loading {
-  color: rgba(0, 0, 0, 0.4);
-}
-[data-theme="light"] .domain-popover-copy {
-  border-color: rgba(0, 0, 0, 0.14);
-  color: rgba(0, 0, 0, 0.5);
-}
-[data-theme="light"] .domain-popover-copy:hover {
-  color: #111;
-  border-color: rgba(0, 0, 0, 0.32);
-}
 [data-theme="light"] .verification-tooltip {
   background: rgba(255, 255, 255, 0.96);
   border-color: rgba(0, 0, 0, 0.1);
@@ -156,31 +129,10 @@
   box-shadow: 0 0 6px rgba(22, 163, 74, 0.4);
 }
 [data-theme="light"] .verification-tooltip-dot.is-trusted {
-  background: #b45309;
-  box-shadow: 0 0 6px rgba(180, 83, 9, 0.4);
+  background: #ff8c00;
+  box-shadow: 0 0 6px rgba(255, 140, 0, 0.4);
 }
 
-[data-theme="light"] .honor-badge.unknown {
-  color: rgba(0, 0, 0, 0.45);
-  background: rgba(0, 0, 0, 0.04);
-  border-color: rgba(0, 0, 0, 0.08);
-}
-[data-theme="light"] .honor-badge.neutral {
-  color: rgba(0, 0, 0, 0.65);
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.1);
-}
-[data-theme="light"] .honor-badge.positive {
-  color: #fafafa;
-  background: #0a0a0a;
-  border-color: #0a0a0a;
-}
-[data-theme="light"] .honor-badge.negative {
-  color: rgba(0, 0, 0, 0.85);
-  background: transparent;
-  border-style: dashed;
-  border-color: rgba(0, 0, 0, 0.45);
-}
 
 [data-theme="light"] .auth-modal-backdrop {
   background: rgba(0, 0, 0, 0.3);

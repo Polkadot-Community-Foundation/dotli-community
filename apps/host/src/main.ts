@@ -319,17 +319,6 @@ function setShieldState(state: "validating" | "verified"): void {
     );
   }
 
-  const labels: Record<string, string> = {
-    verified: "VERIFIED",
-    validating: "TRUSTED",
-  };
-  const el = document.getElementById("domain-popover-verification");
-  if (el !== null) {
-    el.textContent = labels[state];
-    el.classList.remove("status-verified", "status-validating");
-    el.classList.add(`status-${state}`);
-  }
-
   shieldVerified = true;
   setupTopbarAutoHide();
 }
@@ -400,52 +389,6 @@ function setFavicon(href: string, format: "jpeg" | "png"): void {
   if (existing === null) {
     document.head.appendChild(link);
   }
-}
-
-/**
- * Fire-and-forget: populate the domain popover with owner info.
- */
-function populateOwner(
-  resolveOwner: (label: string) => Promise<string | null>,
-  label: string,
-): void {
-  void resolveOwner(label)
-    .then((owner) => {
-      const el = document.getElementById("domain-popover-owner");
-      if (el === null) {
-        return;
-      }
-      if (owner !== null) {
-        el.classList.remove("loading");
-        el.innerHTML = `${escapeHtml(owner)}<button class="domain-popover-copy" title="Copy address"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>`;
-        const copyBtn = el.querySelector(".domain-popover-copy");
-        copyBtn?.addEventListener("click", (e) => {
-          e.stopPropagation();
-          void navigator.clipboard.writeText(owner);
-          const btn = e.currentTarget as HTMLElement;
-          btn.style.color = "#fafafa";
-          btn.style.borderColor = "#fafafa";
-          setTimeout(() => {
-            btn.style.color = "";
-            btn.style.borderColor = "";
-          }, 1000);
-        });
-      } else {
-        el.textContent = "Unknown";
-        el.classList.remove("loading");
-      }
-    })
-    .catch((err: unknown) => {
-      // Capture the actual cause so failed owner lookups (timeout, RPC down,
-      // decode error) are observable instead of just rendering "Unavailable".
-      captureException(err, { surface: "host_owner_lookup" });
-      const el = document.getElementById("domain-popover-owner");
-      if (el === null) {
-        return;
-      }
-      el.textContent = "Unavailable";
-      el.classList.remove("loading");
-    });
 }
 
 import type * as RenderModule from "@dotli/ui/bridge";
@@ -1191,31 +1134,7 @@ async function main(): Promise<void> {
     showError("UI failed to initialise", err.message);
     return;
   }
-  urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><span class="verification-shield-wrap"><svg id="verification-shield" class="verification-shield" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-describedby="verification-tooltip"><path d="M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm-1 14.59l-3.29-3.3 1.41-1.41L11 13.76l4.88-4.88 1.41 1.41L11 16.59z"/></svg><span class="verification-tooltip" id="verification-tooltip" role="tooltip"><span class="verification-tooltip-title">How was this site loaded?</span><span class="verification-tooltip-row"><span class="verification-tooltip-dot is-verified" aria-hidden="true"></span><span><strong>Verified</strong> — Your light client checked the content directly. No trust required.</span></span><span class="verification-tooltip-row"><span class="verification-tooltip-dot is-trusted" aria-hidden="true"></span><span><strong>Trusted</strong> — Fetched via a trusted RPC provider. Faster, but you rely on the provider.</span></span></span></span><span class="topbar-url-text"><span class="dot-domain">${escapeHtml(label)}</span><span class="dot-tld">.dot</span></span></div>`;
-
-  // Domain info popover toggle
-  const urlPill = document.getElementById("url-pill");
-  const domainPopover = document.getElementById("domain-popover");
-  if (urlPill === null || domainPopover === null) {
-    const err = new Error(
-      `Required DOM node missing: ${urlPill === null ? "#url-pill" : "#domain-popover"}`,
-    );
-    captureException(err, { surface: "host_main_dom_invariant" });
-    showError("UI failed to initialise", err.message);
-    return;
-  }
-  urlPill.addEventListener("click", (e) => {
-    e.stopPropagation();
-    domainPopover.classList.toggle("open");
-  });
-  document.addEventListener("click", (e) => {
-    if (!domainPopover.contains(e.target as Node)) {
-      domainPopover.classList.remove("open");
-    }
-  });
-  window.addEventListener("blur", () => {
-    domainPopover.classList.remove("open");
-  });
+  urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><span class="verification-shield-wrap"><svg id="verification-shield" class="verification-shield" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-describedby="verification-tooltip"><path d="M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm-1 14.59l-3.29-3.3 1.41-1.41L11 13.76l4.88-4.88 1.41 1.41L11 16.59z"/></svg><span class="verification-tooltip" id="verification-tooltip" role="tooltip"><span class="verification-tooltip-title">How was this site loaded?</span><span class="verification-tooltip-row"><span class="verification-tooltip-dot is-verified" aria-hidden="true"></span><strong class="verification-tooltip-label">Verified</strong><span class="verification-tooltip-desc">More secure, checked by your light client.</span></span><span class="verification-tooltip-row"><span class="verification-tooltip-dot is-trusted" aria-hidden="true"></span><strong class="verification-tooltip-label">Trusted</strong><span class="verification-tooltip-desc">Served by an external RPC provider.</span></span></span></span><span class="topbar-url-text"><span class="dot-domain">${escapeHtml(label)}</span><span class="dot-tld">.dot</span></span></div>`;
 
   // Listen for status messages from the sandbox iframe so the loading
   // UI continues seamlessly from resolution into content fetching.
@@ -1350,10 +1269,8 @@ async function main(): Promise<void> {
       });
 
       try {
-        const { resolveDotNameRemote, resolveOwnerRemote } =
-          await import("@dotli/protocol/client");
+        const { resolveDotNameRemote } = await import("@dotli/protocol/client");
         const { statusToPhase } = await import("@dotli/resolver/resolve");
-        populateOwner(resolveOwnerRemote, label);
         const onResolveProgress = (msg: string): void => {
           // Progress events arrive as opaque strings across the iframe
           // boundary. The resolver package owns the authoritative
@@ -1387,9 +1304,8 @@ async function main(): Promise<void> {
       log.warn(
         `[dot.li resolve] path=json-rpc (gateway mode) (${elapsed(T0)})`,
       );
-      const { resolveDotNameViaRpc, resolveOwnerViaRpc } =
+      const { resolveDotNameViaRpc } =
         await import("@dotli/resolver/rpc-resolve");
-      populateOwner(resolveOwnerViaRpc, label);
       const onResolveProgress = (msg: string): void => {
         emitPhase(msg, "progress");
         showStatus(msg);

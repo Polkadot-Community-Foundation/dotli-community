@@ -7,7 +7,6 @@
    The transform timing function overshoots slightly for a subtle bounce. */
 @media (prefers-reduced-motion: reduce) {
   .more-popover,
-  .domain-popover,
   .user-popover,
   .mode-popover,
   .permissions-popover,
@@ -239,14 +238,6 @@
   color: rgba(255, 255, 255, 0.5);
   letter-spacing: 0.01em;
   user-select: none;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease;
-}
-.topbar-url-pill:hover {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.14);
 }
 /* Clip from the head so the TLD stays anchored, like a browser address bar. */
 .topbar-url-text {
@@ -333,8 +324,7 @@
   .more-popover,
   .user-popover,
   .mode-popover,
-  .permissions-popover,
-  .domain-popover {
+  .permissions-popover {
     background: rgba(20, 20, 20, 0.97);
   }
 }
@@ -347,7 +337,6 @@
   .user-popover,
   .mode-popover,
   .permissions-popover,
-  .domain-popover,
   .permissions-popover-menu {
     backdrop-filter: blur(24px) saturate(180%);
   }
@@ -363,106 +352,13 @@
   transition: color 0.3s ease;
 }
 .verification-shield.validating {
-  color: #eab308;
+  color: #ff8c00;
 }
 .verification-shield.verified {
   color: #4ade80;
 }
 .verification-shield.stale {
   color: #f87171;
-}
-
-/* ── Domain Info Popover ────────────────── */
-.domain-popover {
-  display: none;
-  position: fixed;
-  top: 60px;
-  left: 50%;
-  transform: translateX(-50%) scale(0.92);
-  transform-origin: top center;
-  width: 280px;
-  background: rgba(20, 20, 20, 0.82);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  z-index: 1500;
-  padding: 14px 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  opacity: 0;
-  transition:
-    opacity 0.15s ease-out,
-    transform 0.22s cubic-bezier(0.34, 1.5, 0.64, 1),
-    display 0.22s allow-discrete;
-}
-.domain-popover.open {
-  display: block;
-  opacity: 1;
-  transform: translateX(-50%) scale(1);
-}
-@starting-style {
-  .domain-popover.open {
-    opacity: 0;
-    transform: translateX(-50%) scale(0.92);
-  }
-}
-.domain-popover-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.domain-popover-row:last-child {
-  margin-bottom: 0;
-}
-.domain-popover-label {
-  font-size: 0.68rem;
-  color: #666;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  flex-shrink: 0;
-  width: 48px;
-}
-.domain-popover-value {
-  font-size: 0.75rem;
-  color: #ccc;
-  font-family:
-    ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
-  word-break: break-all;
-  line-height: 1.4;
-}
-.domain-popover-value.loading {
-  color: #555;
-}
-.domain-popover-value.status-verified {
-  color: #4ade80;
-  font-weight: 600;
-}
-.domain-popover-value.status-validating {
-  color: #eab308;
-  font-weight: 600;
-}
-.domain-popover-copy {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  background: none;
-  border: 1px solid #333;
-  border-radius: 4px;
-  color: #666;
-  cursor: pointer;
-  flex-shrink: 0;
-  padding: 0;
-  margin-left: 4px;
-  transition:
-    color 0.15s,
-    border-color 0.15s;
-  vertical-align: middle;
-}
-.domain-popover-copy:hover {
-  color: #fff;
-  border-color: #555;
 }
 
 /* Shield tooltip: hovering the verification shield (or the URL pill in
@@ -509,12 +405,6 @@
   transform: translateY(0);
   transition-delay: 0.2s;
 }
-/* Suppress while the click-popover is open so the two surfaces don't
-   stack below the topbar. The popover already conveys richer detail. */
-body:has(.domain-popover.open) .verification-tooltip {
-  opacity: 0;
-  pointer-events: none;
-}
 .verification-tooltip-title {
   font-size: 0.68rem;
   display: block;
@@ -525,9 +415,10 @@ body:has(.domain-popover.open) .verification-tooltip {
   margin-bottom: 10px;
 }
 .verification-tooltip-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: start;
+  column-gap: 8px;
   font-size: 0.74rem;
   line-height: 1.45;
   margin-bottom: 8px;
@@ -535,7 +426,8 @@ body:has(.domain-popover.open) .verification-tooltip {
 .verification-tooltip-row:last-child {
   margin-bottom: 0;
 }
-.verification-tooltip-row strong {
+.verification-tooltip-row strong,
+.verification-tooltip-label {
   color: rgba(255, 255, 255, 0.95);
   font-weight: 600;
 }
@@ -551,40 +443,8 @@ body:has(.domain-popover.open) .verification-tooltip {
   box-shadow: 0 0 6px rgba(74, 222, 128, 0.45);
 }
 .verification-tooltip-dot.is-trusted {
-  background: #eab308;
-  box-shadow: 0 0 6px rgba(234, 179, 8, 0.45);
-}
-
-/* ── Honor Badge ────────────────────────── */
-.honor-badge {
-  display: inline-block;
-  font-size: 0.68rem;
-  font-family: system-ui, sans-serif;
-  font-weight: 500;
-  padding: 1px 8px;
-  border-radius: 4px;
-  letter-spacing: 0.02em;
-}
-.honor-badge.unknown {
-  color: rgba(255, 255, 255, 0.4);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-.honor-badge.neutral {
-  color: rgba(255, 255, 255, 0.65);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-.honor-badge.positive {
-  color: #0a0a0a;
-  background: #fafafa;
-  border: 1px solid #fafafa;
-  font-weight: 600;
-}
-.honor-badge.negative {
-  color: rgba(255, 255, 255, 0.85);
-  background: transparent;
-  border: 1px dashed rgba(255, 255, 255, 0.45);
+  background: #ff8c00;
+  box-shadow: 0 0 6px rgba(255, 140, 0, 0.45);
 }
 
 /* ── User Badge ─────────────────────────── */
