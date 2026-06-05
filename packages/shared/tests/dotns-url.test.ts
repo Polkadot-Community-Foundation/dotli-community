@@ -294,3 +294,35 @@ describe("normalizeUrl", () => {
     expect(dotNsUrl.normalizeUrl("")).toBe("");
   });
 });
+
+describe("isWebcontainerPreviewHost", () => {
+  it("matches local-credentialless webcontainer hosts", () => {
+    expect(
+      dotNsUrl.isWebcontainerPreviewHost(
+        "abc--3000--def.local-credentialless.webcontainer-api.io",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches enterprise local-corp webcontainer hosts", () => {
+    expect(
+      dotNsUrl.isWebcontainerPreviewHost(
+        "abc--3000--def.local-corp.webcontainer-api.io",
+      ),
+    ).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    expect(dotNsUrl.isWebcontainerPreviewHost("ABC.WEBCONTAINER-API.IO")).toBe(
+      true,
+    );
+  });
+
+  it("rejects non-webcontainer hosts", () => {
+    expect(dotNsUrl.isWebcontainerPreviewHost("mytestapp.dot")).toBe(false);
+    expect(dotNsUrl.isWebcontainerPreviewHost("localhost:3000")).toBe(false);
+    expect(dotNsUrl.isWebcontainerPreviewHost("evil-webcontainer-api.io")).toBe(
+      false,
+    );
+  });
+});

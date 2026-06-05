@@ -112,21 +112,37 @@ function subscribeSession(
   });
 }
 
-function isProductAccountValid(label: string, accountId: string): boolean {
-  if (label.startsWith("localhost:")) {
-    return dotNsUrl.isProductIdentifier(accountId);
-  }
-  return accountId === `${label}.dot`;
+// localhost proxy + webcontainer previews — developer affordances for running a
+// `.dot` app before it's deployed.
+function isDevPreviewLabel(label: string): boolean {
+  return (
+    label.startsWith("localhost:") || dotNsUrl.isWebcontainerPreviewHost(label)
+  );
 }
 
 /**
  * Derivation product-id from an iframe label.
  *
- * Localhost-proxy keeps the bare `localhost:<port>` label, dotNs products
- * get the `.dot` suffix appended. Same rule encoded in `isProductAccountValid`.
+ * Dev previews (localhost proxy, webcontainer) keep the bare host label, dotNs
+ * products get the `.dot` suffix appended. Same rule encoded in
+ * `isProductAccountValid`.
  */
 function labelToProductIdentifier(label: string): string {
-  return label.startsWith("localhost:") ? label : `${label}.dot`;
+  return isDevPreviewLabel(label) ? label : `${label}.dot`;
+}
+
+function labelAcceptsIdentifier(label: string, id: string): boolean {
+  return (
+    dotNsUrl.isProductIdentifier(id) || id === labelToProductIdentifier(label)
+  );
+}
+
+// Dev previews are permissive; a deployed `.dot` must sign as its own identifier.
+function isProductAccountValid(label: string, accountId: string): boolean {
+  if (isDevPreviewLabel(label)) {
+    return labelAcceptsIdentifier(label, accountId);
+  }
+  return accountId === labelToProductIdentifier(label);
 }
 
 function wireContainerHandlers(
@@ -202,7 +218,7 @@ function wireContainerHandlers(
         return err(new RequestCredentialsErr.NotConnected(undefined));
       }
 
-      if (!dotNsUrl.isProductIdentifier(dotNsIdentifier)) {
+      if (!labelAcceptsIdentifier(label, dotNsIdentifier)) {
         return err(new RequestCredentialsErr.DomainNotValid(undefined));
       }
 
@@ -272,11 +288,11 @@ function wireContainerHandlers(
         return err(new RequestCredentialsErr.NotConnected(undefined));
       }
 
-      if (!dotNsUrl.isProductIdentifier(productAccountId[0])) {
+      if (!labelAcceptsIdentifier(label, productAccountId[0])) {
         return err(new RequestCredentialsErr.DomainNotValid(undefined));
       }
 
-      const identifier = label + ".dot";
+      const identifier = labelToProductIdentifier(label);
       const isOwnDomain = identifier === productAccountId[0];
 
       if (isOwnDomain) {

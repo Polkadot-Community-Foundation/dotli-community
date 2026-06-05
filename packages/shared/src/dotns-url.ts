@@ -49,6 +49,10 @@ function isProductIdentifier(id: string): boolean {
   return n.endsWith(".dot") || n === "localhost" || n.startsWith("localhost:");
 }
 
+function isWebcontainerPreviewHost(host: string): boolean {
+  return host.toLowerCase().endsWith(".webcontainer-api.io");
+}
+
 function parseUrl(url: string): URL | null {
   try {
     return new URL(url);
@@ -223,6 +227,7 @@ function normalizeUrl(url: string): string {
 export const dotNsUrl = {
   isDotDomain,
   isProductIdentifier,
+  isWebcontainerPreviewHost,
   parseDotNsDomain,
   parseLocalhostUrl,
   normalizeUrl,

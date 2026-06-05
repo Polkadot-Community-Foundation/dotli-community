@@ -17,7 +17,7 @@ export function parsePreviewTargetUrl(
     const isLocalhost = dotNsUrl.parseLocalhostUrl(target.toString()) !== null;
     const isWebContainer =
       target.protocol === "https:" &&
-      target.hostname.endsWith(".local-credentialless.webcontainer-api.io");
+      dotNsUrl.isWebcontainerPreviewHost(target.hostname);
 
     if (
       (!isLocalhost && !isWebContainer) ||
