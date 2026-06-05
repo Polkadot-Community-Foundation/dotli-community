@@ -104,11 +104,11 @@
         "@dotli/resolver": "workspace:*",
         "@dotli/shared": "workspace:*",
         "@noble/hashes": "^2.2.0",
-        "@novasamatech/host-api": "0.8.5",
-        "@novasamatech/host-papp": "0.8.5",
+        "@novasamatech/host-api": "0.8.6",
+        "@novasamatech/host-papp": "0.8.6",
         "@novasamatech/sdk-statement": "^0.6.0",
-        "@novasamatech/statement-store": "0.8.5",
-        "@novasamatech/storage-adapter": "0.8.5",
+        "@novasamatech/statement-store": "0.8.6",
+        "@novasamatech/storage-adapter": "0.8.6",
         "@scure/sr25519": "^2.2.0",
         "neverthrow": "^8.2.0",
         "polkadot-api": "^2.1.4",
@@ -298,9 +298,9 @@
       "version": "0.5.0",
       "dependencies": {
         "@dotli/shared": "workspace:*",
-        "@novasamatech/host-api": "0.8.5",
-        "@novasamatech/host-container": "0.8.5",
-        "@novasamatech/host-papp": "0.8.5",
+        "@novasamatech/host-api": "0.8.6",
+        "@novasamatech/host-container": "0.8.6",
+        "@novasamatech/host-papp": "0.8.6",
         "nanoevents": "^9.1.0",
       },
       "devDependencies": {
@@ -328,11 +328,11 @@
         "@dotli/storage": "workspace:*",
         "@dotli/truapi-debug": "workspace:*",
         "@noble/hashes": "^2.2.0",
-        "@novasamatech/host-api": "0.8.5",
-        "@novasamatech/host-container": "0.8.5",
-        "@novasamatech/host-papp": "0.8.5",
+        "@novasamatech/host-api": "0.8.6",
+        "@novasamatech/host-container": "0.8.6",
+        "@novasamatech/host-papp": "0.8.6",
         "@novasamatech/sdk-statement": "^0.6.0",
-        "@novasamatech/statement-store": "0.8.5",
+        "@novasamatech/statement-store": "0.8.6",
         "@polkadot-api/json-rpc-provider": "^0.2.0",
         "neverthrow": "^8.2.0",
         "polkadot-api": "^2.1.4",
@@ -357,9 +357,6 @@
         "@dotli/resolver",
       ],
     },
-  },
-  "patchedDependencies": {
-    "@novasamatech/host-papp@0.8.5": "patches/@novasamatech%2Fhost-papp@0.8.5.patch",
   },
   "overrides": {
     "smoldot": "3.2.0",
@@ -699,21 +696,21 @@
 
     "@noble/hashes": ["@noble/hashes@2.2.0", "", {}, "sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg=="],
 
-    "@novasamatech/host-api": ["@novasamatech/host-api@0.8.5", "", { "dependencies": { "@novasamatech/scale": "0.8.5", "nanoevents": "9.1.0", "nanoid": "5.1.11", "neverthrow": "^8.2.0", "scale-ts": "1.6.1" } }, "sha512-3KshDN1YSDaN76Yiu5DazCZ2F94JLWrS6taIuSV66PmHJlDUb45nG5NW5mwKyUNTax8ItIxgRzfhUeNkrMV/QA=="],
+    "@novasamatech/host-api": ["@novasamatech/host-api@0.8.6", "", { "dependencies": { "@novasamatech/scale": "0.8.6", "nanoevents": "9.1.0", "nanoid": "5.1.11", "neverthrow": "^8.2.0", "scale-ts": "1.6.1" } }, "sha512-DayCRwOncCcYO/Hc+pYQaBXsTYOn8h/2dl/hAFy1yVgG/LEBLcZrUmhUpotUFEhgWvfc0/KQa59P7T11H49AWA=="],
 
-    "@novasamatech/host-container": ["@novasamatech/host-container@0.8.5", "", { "dependencies": { "@noble/hashes": "2.2.0", "@novasamatech/host-api": "0.8.5", "@polkadot-api/substrate-client": "^0.7.0", "nanoevents": "9.1.0", "nanoid": "5.1.11", "neverthrow": "^8.2.0", "polkadot-api": ">=2" } }, "sha512-SUWxRgdZUdTWpjOVwxQOQ7aYo7pmSU69EF7Qi40XTGosEalR7AzQHMKsdyqpmM6mNH6niL72dOeUdbm1Xtm5PA=="],
+    "@novasamatech/host-container": ["@novasamatech/host-container@0.8.6", "", { "dependencies": { "@noble/hashes": "2.2.0", "@novasamatech/host-api": "0.8.6", "@polkadot-api/substrate-client": "^0.7.0", "nanoevents": "9.1.0", "nanoid": "5.1.11", "neverthrow": "^8.2.0", "polkadot-api": ">=2" } }, "sha512-N93SQcRpmiSmeHJyKo01box9OMBdx6CAdc8OxU5A2ykmpFRM+Ex65UoyKi6hWhF8f1OlBKuMN0LdtU3LDH7LsA=="],
 
-    "@novasamatech/host-papp": ["@novasamatech/host-papp@0.8.5", "", { "dependencies": { "@noble/ciphers": "2.2.0", "@noble/curves": "2.2.0", "@noble/hashes": "2.2.0", "@novasamatech/host-api": "0.8.5", "@novasamatech/scale": "0.8.5", "@novasamatech/statement-store": "0.8.5", "@novasamatech/storage-adapter": "0.8.5", "@polkadot-api/utils": "^0.4.0", "@polkadot-labs/hdkd-helpers": "^0.0.30", "nanoevents": "9.1.0", "nanoid": "5.1.11", "neverthrow": "^8.2.0", "polkadot-api": ">=2", "rxjs": "^7.8.2", "scale-ts": "1.6.1" } }, "sha512-+8LZ1Yo9ulmN6YElS1RCKAfTwh6yFZQWpUcLaRyrdR3l22cyjkp9WZfXb1vOuMue9kLSxSzXA8sxWCt2U7et6g=="],
+    "@novasamatech/host-papp": ["@novasamatech/host-papp@0.8.6", "", { "dependencies": { "@noble/ciphers": "2.2.0", "@noble/curves": "2.2.0", "@noble/hashes": "2.2.0", "@novasamatech/host-api": "0.8.6", "@novasamatech/scale": "0.8.6", "@novasamatech/statement-store": "0.8.6", "@novasamatech/storage-adapter": "0.8.6", "@polkadot-api/utils": "^0.4.0", "@polkadot-labs/hdkd-helpers": "^0.0.30", "nanoevents": "9.1.0", "nanoid": "5.1.11", "neverthrow": "^8.2.0", "polkadot-api": ">=2", "rxjs": "^7.8.2", "scale-ts": "1.6.1" } }, "sha512-H1Wyu9TIcwUQONPH/iuaRfNzGjhqaDR/zTG5dHk02TDfmGdZxZm55nsQQZgnGQ96BcRmJ2GWJPo+O1AdYSvxnw=="],
 
-    "@novasamatech/scale": ["@novasamatech/scale@0.8.5", "", { "dependencies": { "@polkadot-api/utils": "^0.4.0", "scale-ts": "1.6.1" } }, "sha512-Cq0AlzK2WNHnggx/0gZhD39Ep6Q7nLjwgBWK8wdWmIUg1PGWiEQ4VktlEPQWbnd1qlMf9AW5Ds8Aq0VepfHtRA=="],
+    "@novasamatech/scale": ["@novasamatech/scale@0.8.6", "", { "dependencies": { "@polkadot-api/utils": "^0.4.0", "scale-ts": "1.6.1" } }, "sha512-XsiNMntDVUmwQYieowid2s5t1THk/Asb4JohmWOrIFetj5ZdaD8mjLCt42WTWxaZaJyYyCjjGBssnUbcLyTWFw=="],
 
     "@novasamatech/sdk-statement": ["@novasamatech/sdk-statement@0.6.0", "", { "dependencies": { "@polkadot-api/substrate-bindings": "0.20.1", "@polkadot-api/utils": "^0.4.0", "polkadot-api": "^2.0.2" } }, "sha512-NTqM+yS45iHgy87lVSWIpFozrTfCUWb7r4ZpsDtN1eFnfixXpDKpPXDWQsvPs+nh18r/jmoMgtlTjUltrS6mYQ=="],
 
-    "@novasamatech/statement-store": ["@novasamatech/statement-store@0.8.5", "", { "dependencies": { "@noble/ciphers": "2.2.0", "@noble/hashes": "2.2.0", "@novasamatech/scale": "0.8.5", "@novasamatech/sdk-statement": "^0.6.0", "@novasamatech/substrate-slot-sr25519-wasm": "0.8.5", "@polkadot-api/substrate-bindings": "^0.20.3", "@polkadot-api/substrate-client": "^0.7.0", "@polkadot-labs/hdkd-helpers": "^0.0.30", "@polkadot-labs/schnorrkel-wasm": "0.0.8", "@scure/sr25519": "2.2.0", "nanoid": "5.1.11", "neverthrow": "^8.2.0", "polkadot-api": ">=2", "scale-ts": "1.6.1" } }, "sha512-3TGpdQhcQQyrwuDR0+bbyhC1I70VBqj0XOSv6S4SB0ymwRCF3jprbY3yLymOPszkeXdl0FlUMBbkhOzqxaqaJg=="],
+    "@novasamatech/statement-store": ["@novasamatech/statement-store@0.8.6", "", { "dependencies": { "@noble/ciphers": "2.2.0", "@noble/hashes": "2.2.0", "@novasamatech/scale": "0.8.6", "@novasamatech/sdk-statement": "^0.6.0", "@novasamatech/substrate-slot-sr25519-wasm": "0.8.6", "@polkadot-api/substrate-bindings": "^0.20.3", "@polkadot-api/substrate-client": "^0.7.0", "@polkadot-labs/hdkd-helpers": "^0.0.30", "@polkadot-labs/schnorrkel-wasm": "0.0.8", "@scure/sr25519": "2.2.0", "nanoid": "5.1.11", "neverthrow": "^8.2.0", "polkadot-api": ">=2", "scale-ts": "1.6.1" } }, "sha512-8ai2QEBk+twJsNHQF34XXgteQskyS0O3QR6+3qvJ3kX2jQlzC8VAKhdMeOLrYNF6ErDdzGFV6ydXHAXWiCD1bw=="],
 
-    "@novasamatech/storage-adapter": ["@novasamatech/storage-adapter@0.8.5", "", { "dependencies": { "nanoevents": "^9.1.0", "neverthrow": "^8.2.0" } }, "sha512-6JQ/dPvfDZlOJyirS3/CAMTDfYciZD/vbVHsUU6QgLq8YsDnIfGSqYs3gnr3nAoKt7EvQsduMXJaVTQI/LZI5A=="],
+    "@novasamatech/storage-adapter": ["@novasamatech/storage-adapter@0.8.6", "", { "dependencies": { "nanoevents": "^9.1.0", "neverthrow": "^8.2.0" } }, "sha512-YYLI3DVAkF/r8Yi62yhywHzzuFgSBfScsUgjH9ALP3/QK8+bmJRGPAl5eUkcY9wP5GTRMjfHY10mqHKLI3WyYQ=="],
 
-    "@novasamatech/substrate-slot-sr25519-wasm": ["@novasamatech/substrate-slot-sr25519-wasm@0.8.5", "", {}, "sha512-rc80B241jpByYO9wPv7oeWkz9gA9rAuqKu5vlzIeswlztoWGzaD4qlxdKOfEmH3u/j9nV6gO7PIyuQzewq5bYg=="],
+    "@novasamatech/substrate-slot-sr25519-wasm": ["@novasamatech/substrate-slot-sr25519-wasm@0.8.6", "", {}, "sha512-GdbsekRopYPCM9a7TrrK9Jc7QpAzBkgLr/LM1H+oo24/t/vr5wYRbQ1IlU42Jxa2zLFzLLu3VzdBo4sw5t0i3A=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.130.0", "", {}, "sha512-ibD2usx9JRu7f5pu2tMKMI4cpA4NgXJQoYRP4pQ7Pxmn1l6k/53qWtQWZayhYy3X4QZkt90Ot+mJEaeXouio6Q=="],
 

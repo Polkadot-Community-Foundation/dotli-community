@@ -32,7 +32,7 @@ import {
   createContainer,
   createIframeProvider,
   createRateLimiter,
-  deriveProductEntropy,
+  deriveProductEntropyFromSource,
 } from "@novasamatech/host-container";
 import type { Container, RateLimiter } from "@novasamatech/host-container";
 import type { SignedStatement } from "@novasamatech/sdk-statement";
@@ -762,37 +762,29 @@ function wireContainerHandlers(
   });
 
   //
-  // Deterministic 32-byte entropy scoped to the calling product and
-  // a caller-chosen key. We feed `deriveProductEntropy` the user's
-  // session secret (the same material we use to sign statement
-  // proofs) so the output is stable across calls for the same
-  // session, but distinct per-product via the `${label}.dot`
-  // productId.
+  // Deterministic 32-byte entropy scoped to the calling product and a
+  // caller-chosen key. Uses the wallet-provided `rootEntropySource` (RFC-0007
+  // layer 1) so the output stays stable across re-pairings instead of churning
+  // with each session's statement-account secret.
   container.handleDeriveEntropy((key, { ok, err }) => {
     const session = getSession();
     if (!session) {
       return err(new DeriveEntropyErr.Unknown({ reason: "Not connected" }));
     }
-
-    return fromPromise(readSessionSecret(session.id), (e) => e as Error)
-      .mapErr((e) => new DeriveEntropyErr.Unknown({ reason: e.message }))
-      .andThen((secret) => {
-        if (!secret) {
-          return err(
-            new DeriveEntropyErr.Unknown({ reason: "Session secret missing" }),
-          );
-        }
-        try {
-          const entropy = deriveProductEntropy(secret, `${label}.dot`, key);
-          return ok(entropy);
-        } catch (e) {
-          return err(
-            new DeriveEntropyErr.Unknown({
-              reason: e instanceof Error ? e.message : String(e),
-            }),
-          );
-        }
-      });
+    try {
+      const entropy = deriveProductEntropyFromSource(
+        session.rootEntropySource,
+        `${label}.dot`,
+        key,
+      );
+      return ok(entropy);
+    } catch (e) {
+      return err(
+        new DeriveEntropyErr.Unknown({
+          reason: e instanceof Error ? e.message : String(e),
+        }),
+      );
+    }
   });
 
   container.handleNavigateTo((url, { ok }) => {
