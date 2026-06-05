@@ -16,7 +16,8 @@ export type PermissionName =
   | DevicePermissionName
   | "ChainSubmit"
   | "PreimageSubmit"
-  | "StatementSubmit";
+  | "StatementSubmit"
+  | "GetUserId";
 
 /** Device permissions the host can't actually gate (see AUTO_GRANT_DEVICE_PERMISSIONS). */
 export type AutoGrantDevicePermission = "OpenUrl";
@@ -95,6 +96,7 @@ export const ALL_PERMISSIONS: readonly {
   { name: "ChainSubmit", label: "Sign Transactions" },
   { name: "PreimageSubmit", label: "Submit Preimages" },
   { name: "StatementSubmit", label: "Submit Statements" },
+  { name: "GetUserId", label: "Reveal Username" },
 ];
 
 /** Returns true if the permission name maps to an iframe `allow` directive. */

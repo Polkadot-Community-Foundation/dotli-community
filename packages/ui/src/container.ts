@@ -216,44 +216,34 @@ function wireContainerHandlers(
     },
   );
 
-  // Returns the derived `(session, identifier, 0)` slot, not the session root
-  // key — the *WithLegacyAccount wires below reject any signer that doesn't
-  // round-trip back to this same derivation.
-  container.handleGetLegacyAccounts((_, { ok }) => {
-    const state = getAuthState();
-    if (state.status !== "authenticated") {
-      return ok([]);
-    }
-    const identifier = labelToProductIdentifier(label);
-    const publicKey = deriveProductPublicKey(
-      state.session.rootAccountId,
-      identifier,
-      0,
-    );
-    return ok([{ publicKey, name: state.identity?.liteUsername }]);
-  });
+  // The web host has no user-imported accounts,
+  // only HDKD-derived product accounts.
+  container.handleGetLegacyAccounts((_, { ok }) => ok([]));
 
-  // RFC-0014 — return the user's primary username (replaces the
-  // RFC-0010 root-account slot removed in host-api 0.7.4). The host
-  // picks what counts as "primary" per product; dotli surfaces the
-  // same `liteUsername` already exposed via `handleGetLegacyAccounts`,
-  // so no prompt is shown. `NotConnected` strictly precedes
-  // `PermissionDenied` per the RFC.
+  // RFC-0015 — return the user's DotNS username. Disclosing it requires
+  // consent, gated by the per-product `GetUserId` permission. Returns
+  // `NotConnected` if no account is signed in, and `PermissionDenied` if the
+  // permission has not been granted explicitly.
   container.handleGetUserId((_, { ok, err }) => {
     const state = getAuthState();
     if (state.status !== "authenticated") {
-      return err(new GetUserIdErr.NotConnected(undefined));
+      return errAsync(new GetUserIdErr.NotConnected(undefined));
     }
     const primaryUsername =
       state.identity?.fullUsername ?? state.identity?.liteUsername;
     if (primaryUsername === undefined || primaryUsername === "") {
-      return err(
+      return errAsync(
         new GetUserIdErr.Unknown({
           reason: "No primary username for this session",
         }),
       );
     }
-    return ok({ primaryUsername });
+    return promptCachedSubmitPermission(label, "GetUserId").andThen(
+      (granted) =>
+        granted
+          ? ok({ primaryUsername })
+          : err(new GetUserIdErr.PermissionDenied(undefined)),
+    );
   });
 
   // RFC-0009 — products can trigger the host login flow. `requestLogin`
@@ -1261,6 +1251,7 @@ const CACHED_SUBMIT_PERMISSIONS = {
   ChainSubmit: { storageKey: "ChainSubmit", label: "Transaction signing" },
   PreimageSubmit: { storageKey: "PreimageSubmit", label: "Preimage submit" },
   StatementSubmit: { storageKey: "StatementSubmit", label: "Statement submit" },
+  GetUserId: { storageKey: "GetUserId", label: "Reveal Username" },
 } satisfies Record<string, { storageKey: PermissionName; label: string }>;
 
 function promptCachedSubmitPermission(
