@@ -1,17 +1,20 @@
-// dot.li — URL <-> Settings sync for the host shell.
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Two-way sync between the URL and host shell settings.
 //
 // Each `*.dot.li` is its own browser origin with its own localStorage, so
 // a fresh subdomain otherwise resets every settings axis. URL params let
 // a shared link seed those settings.
 //
-// Resolution order per axis is URL > localStorage > default. After
+// Resolution order per axis is URL, then localStorage, then default. After
 // resolution the host writes the chosen values back to both localStorage
 // and the URL (default-valued axes are stripped), so a clean
 // `acme.dot.li` URL always means "every axis at default" and a recipient
 // of a shared link sees the sender's exact configuration.
 //
 // Param names and default values are intentionally inlined here rather
-// than imported from `mode.ts` / `network.ts` / `host-sandbox-contract.ts`.
+// than imported from `mode.ts`, `network.ts`, or `host-sandbox-contract.ts`.
 // They are part of the public URL contract surface and changing them
 // belongs in this file too.
 

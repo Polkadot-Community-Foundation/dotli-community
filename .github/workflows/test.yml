@@ -18,7 +18,7 @@ concurrency:
 jobs:
   unit:
     name: Unit
-    runs-on: parity-default
+    runs-on: ubuntu-latest
     if: ${{ github.event.sender.type != 'Bot' }}
     steps:
       - name: Checkout
@@ -37,7 +37,7 @@ jobs:
 
   functional:
     name: Functional
-    runs-on: parity-default
+    runs-on: ubuntu-latest
     needs: unit
     if: ${{ github.event.sender.type != 'Bot' }}
     steps:
@@ -82,7 +82,7 @@ jobs:
   # no Maestro).
   e2e-product:
     name: E2E
-    runs-on: parity-default
+    runs-on: ubuntu-latest
     needs: unit
     # Headroom over Playwright's globalTimeout (30 min) so a stuck run is
     # cut off by Playwright with diagnostics, not by GHA mid-stream.

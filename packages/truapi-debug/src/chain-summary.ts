@@ -1,11 +1,14 @@
-// dot.li — Human-readable summary of a chain-protocol message
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Human-readable summary of a chain-protocol message
 //
 // Translates the decoded payload of a `remote_chain_*` TrUAPI message
 // into a single-sentence description. Used in the detail pane so a
 // reader doesn't have to parse the JSON to understand what a message
 // is doing.
 //
-// Returns `null` for non-chain messages or unknown shapes — the caller
+// Returns `null` for non-chain messages or unknown shapes. The caller
 // omits the summary section when null.
 
 import type { ChainAnnotations } from "./chain-decode.ts";
@@ -95,8 +98,6 @@ export function summariseChainMessage(
   }
 }
 
-// ── follow-receive event summaries ─────────────────────────
-
 function summariseFollowEvent(inner: unknown): string | null {
   const ev = asEnum(inner);
   if (ev === undefined) {
@@ -154,8 +155,6 @@ function summariseFollowEvent(inner: unknown): string | null {
   return null;
 }
 
-// ── request specialisations ─────────────────────────────────
-
 function summariseStorageRequest(
   ann: ChainAnnotations,
   inner: unknown,
@@ -179,8 +178,6 @@ function summariseCallRequest(ann: ChainAnnotations, inner: unknown): string {
   const fn = asString(p?.function);
   return `Invoke runtime api ${fn ?? "?"} on block ${fmtBlock(ann.blockHash)}${fmtFollowSub(ann.followSubscriptionId)}.`;
 }
-
-// ── response specialisations ────────────────────────────────
 
 function summariseHeaderResponse(
   ann: ChainAnnotations,
@@ -243,8 +240,6 @@ function summariseStringResponse(
   }
   return `${label}: ${value}.`;
 }
-
-// ── helpers ─────────────────────────────────────────────────
 
 function peelVersion(v: unknown): unknown {
   const o = asObj(v);

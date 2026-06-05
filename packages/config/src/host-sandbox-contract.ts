@@ -1,4 +1,7 @@
-// dot.li — Host to sandbox URL contract
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Host to sandbox URL contract.
 //
 // The sandbox runs on `<label>.app.<root>` and cannot read the host's
 // localStorage (different origin). The host MUST thread every user
@@ -79,7 +82,7 @@ export type SandboxParamsResult =
  * Validate a sandbox URL against the host-to-sandbox contract.
  *
  * Returns a discriminated result. The caller is expected to render the
- * failure reason in the UI and stop; never substitute defaults silently.
+ * failure reason in the UI and stop. Never substitute defaults silently.
  */
 export function validateSandboxParams(
   search: URLSearchParams,

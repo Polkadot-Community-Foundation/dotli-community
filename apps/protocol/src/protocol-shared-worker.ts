@@ -1,8 +1,11 @@
-// Protocol SharedWorker
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Protocol SharedWorker.
 //
 // Runs smoldot directly on the SharedWorker thread using `start()` from
-// `polkadot-api/smoldot` (no sub-Worker needed — `Worker` constructor is
-// not available in SharedWorkerGlobalScope).
+// `polkadot-api/smoldot` (no sub-Worker needed, because the `Worker`
+// constructor is not available in SharedWorkerGlobalScope).
 //
 // All protocol iframes (across all tabs) connect via MessagePort.
 // Smoldot persists as long as at least one tab is open.
@@ -46,7 +49,7 @@ const EXECUTABLE_KINDS = new Set(["app", "widget", "worker"]);
 
 initSentry("worker");
 installGlobalErrorHandlers("worker");
-// Only ever runs in shared-worker mode; tag every metric emitted from this
+// Only ever runs in shared-worker mode. Tag every metric emitted from this
 // context so broker/smoldot counters aggregate cleanly with the iframe's.
 m.setDefaults({ protocol_mode: "shared-worker" });
 import {
@@ -122,7 +125,7 @@ let chainBrokerManager: ReturnType<typeof createChainBrokerManager>;
 // Smoldot panic broadcast. When smoldot's log callback detects a WASM
 // panic, relay a `fatal` envelope to every connected port so the host
 // client rejects every in-flight request immediately instead of waiting
-// for a per-request timeout. `onSmoldotFatal` is idempotent + replays
+// for a per-request timeout. `onSmoldotFatal` is idempotent and replays
 // the last panic to late subscribers, so firing this once at module
 // load is enough for the lifetime of the SharedWorker.
 onSmoldotFatal((message) => {
@@ -140,14 +143,13 @@ onSmoldotFatal((message) => {
       port.postMessage(msg);
       // eslint-disable-next-line no-restricted-syntax -- defensive fatal broadcast: one closed port must not prevent delivery to the rest. `removePort` already cleans up ports that throw on later sends.
     } catch {
-      /* port already disconnected — ignore on broadcast */
+      /* port already disconnected, ignore on broadcast */
     }
   }
 });
 
-//
 // NO retries. NO cleanup-and-retry. NO backoff. The user picked
-// smoldot-shared-worker; if presync fails the actual cause is surfaced to
+// smoldot-shared-worker. If presync fails the actual cause is surfaced to
 // every waiting port and the engine stays dead until the user reloads.
 
 let presyncFailureMessage: string | null = null;
@@ -159,11 +161,11 @@ async function presync(): Promise<void> {
   try {
     // 1. Create smoldot on the SharedWorker's own thread.
     //
-    // `getSmoldotDirect()` is the in-thread smoldot bootstrap helper —
-    // the name is a polkadot-api convention meaning "run smoldot on the
+    // `getSmoldotDirect()` is the in-thread smoldot bootstrap helper. The
+    // name is a polkadot-api convention meaning "run smoldot on the
     // current execution context", NOT the dot.li chain backend named
     // "smoldot-direct". Inside a SharedWorker the `Worker` constructor
-    // is unavailable, so this is the only option; the chain backend the
+    // is unavailable, so this is the only option. The chain backend the
     // user picked is still honored via the iframe's `?mode=` param.
     swLog("Creating smoldot on SharedWorker thread...");
     getSmoldotDirect();
@@ -195,10 +197,10 @@ async function presync(): Promise<void> {
 
     // 4. Create the broker. The resolver's Asset Hub chain is released
     // lazily on the first dApp chainConnect (see handleRequest below),
-    // NOT here — the host still needs it for resolveDotName/resolveOwner.
+    // NOT here. The host still needs it for resolveDotName/resolveOwner.
     chainBrokerManager = createChainBrokerManager(createChainProvider);
 
-    // 5. Success — mark ready
+    // 5. Success: mark ready.
     swLog("Pre-sync complete, engine ready");
     engineReady = true;
 
@@ -218,7 +220,7 @@ async function presync(): Promise<void> {
     m.breadcrumb("smoldot presync failed", { reason: msg });
 
     // Surface the actual cause to every waiting port. Engine remains
-    // permanently dead — user must reload to retry.
+    // permanently dead. The user must reload to retry.
     presyncFailureMessage = msg;
     for (const port of pendingPorts) {
       const errorMsg: SWError = { type: "error", message: msg };
@@ -241,9 +243,9 @@ function sendToPort(port: MessagePort, envelope: ProtocolEnvelope): void {
   } catch (err: unknown) {
     // Distinguish "port closed" (expected on tab navigation) from any
     // other postMessage failure. Closed ports throw `InvalidStateError`
-    // / `DataCloneError` with `name === "InvalidStateError"`. Any other
-    // cause — structured-clone failure on an un-transferable payload,
-    // for example — is a real bug and we want it visible instead of
+    // or `DataCloneError` with `name === "InvalidStateError"`. Any other
+    // cause (a structured-clone failure on an un-transferable payload,
+    // for example) is a real bug and we want it visible instead of
     // silently removing an otherwise-healthy port.
     const name =
       err instanceof Error && typeof err.name === "string" ? err.name : "";
@@ -256,7 +258,7 @@ function sendToPort(port: MessagePort, envelope: ProtocolEnvelope): void {
       `sendToPort unexpected failure (name=${name || "<unknown>"}):`,
       err,
     );
-    // Remove the port regardless — we can't deliver to it — but the
+    // Remove the port regardless, since we can't deliver to it. The
     // error log above preserves the real cause for triage.
     removePort(port);
   }
@@ -304,8 +306,8 @@ async function handleRequest(
 
   switch (request.method) {
     case "warmup": {
-      // Pre-sync already started smoldot + relay chain + periodic saves.
-      // Just confirm it's done.
+      // Pre-sync already started smoldot, the relay chain, and periodic
+      // saves. Just confirm it's done.
       swLog(
         `Warmup acknowledged (engine already pre-synced) (${String(Math.round(performance.now() - t))}ms)`,
       );
@@ -422,7 +424,7 @@ async function handleRequest(
       // Releasing frees the chain so the dApp gets a FRESH chain with no
       // "announced blocks" history (avoids smoldot's per-connection block
       // deduplication). Gate this on the Asset-Hub genesis set the resolver
-      // knows about — other bridged chains (e.g. People for the
+      // knows about. Other bridged chains (e.g. People for the
       // statement-store) must not trigger an Asset-Hub teardown, and the
       // set lives next to the Asset-Hub provider factory so adding another
       // network (e.g. Westend Asset Hub) is a single edit there.
@@ -548,7 +550,7 @@ async function handleRequest(
 }
 
 // Proactively clean up stale ports by sending a ping.
-// Posting to a closed port throws — we catch that to detect dead ports.
+// Posting to a closed port throws, and we catch that to detect dead ports.
 function cleanStalePorts(): void {
   for (const p of [...ports]) {
     try {
@@ -603,11 +605,11 @@ self.addEventListener("connect", (event) => {
   port.start();
 
   if (engineReady) {
-    // Engine already synced — signal ready immediately
+    // Engine already synced, signal ready immediately.
     const readyMsg: SWReady = { type: "ready" };
     port.postMessage(readyMsg);
   } else if (presyncFailureMessage !== null) {
-    // Pre-sync already failed; surface the original cause immediately
+    // Pre-sync already failed. Surface the original cause immediately
     // instead of queuing this port forever.
     const errorMsg: SWError = {
       type: "error",
@@ -615,7 +617,7 @@ self.addEventListener("connect", (event) => {
     };
     port.postMessage(errorMsg);
   } else {
-    // Engine still syncing — queue port, will signal when pre-sync completes
+    // Engine still syncing. Queue the port and signal when pre-sync completes.
     swLog("Engine not ready yet, queuing port for ready signal");
     pendingPorts.push(port);
   }

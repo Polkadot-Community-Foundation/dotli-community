@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Statement store type mapping between Host API and SDK formats.
 //
 // Host API uses SCALE codec types (PascalCase tags, Uint8Array fields).
@@ -84,7 +87,7 @@ export function mapFromHostSignedStatement(
 export function mapFromHostStatement(
   statement: CodecType<typeof HostStatement>,
 ): Statement {
-  // Only include fields that have values — the SDK's SCALE codec iterates
+  // Only include fields that have values. The SDK's SCALE codec iterates
   // object keys and crashes on `proof: undefined` (reads `proof.type`).
   const result: Statement = {
     topics: statement.topics.map(toHex),

@@ -1,11 +1,14 @@
-// dot.li — Sandboxed content rendering
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li Sandboxed content rendering
 //
 // Takes fetched content and renders it in a sandboxed <iframe>.
 // The iframe isolates the resolved site from the viewer's origin.
 //
-// This module is bridge-free — it does not import the container bridge,
+// This module is bridge-free. It does not import the container bridge,
 // auth, resolver, or smoldot. The host build uses bridge.ts which
-// adds container bridge support for dApp ↔ host communication.
+// adds container bridge support for dApp-to-host communication.
 
 import { packArchive, type ArchiveFiles } from "@dotli/content/archive";
 import { buildAllowAttribute } from "./permissions";
@@ -20,7 +23,7 @@ function darkenColor(color: string, amount: number): string {
     return color;
   }
   let hex = match[1];
-  // Expand shorthand (#abc → #aabbcc)
+  // Expand shorthand (#abc becomes #aabbcc)
   if (hex.length === 3 || hex.length === 4) {
     hex = hex
       .split("")
@@ -46,8 +49,8 @@ let currentBlobUrl: string | null = null;
  */
 function getDeepPath(): string {
   const { pathname, search, hash } = window.location;
-  // Strip the base path and .dot label segment from path-based URLs
-  // e.g. /name.dot/foo/bar → /foo/bar, /dotli/name.dot/foo → /foo
+  // Strip the base path and .dot label segment from path-based URLs.
+  // e.g. /name.dot/foo/bar becomes /foo/bar, /dotli/name.dot/foo becomes /foo
   let p = pathname;
   const base = import.meta.env.BASE_URL;
   if (base !== "/" && p.startsWith(base)) {
@@ -116,7 +119,7 @@ export async function renderArchive(
 
   const sw = navigator.serviceWorker.controller;
   if (sw === null) {
-    // SW not ready — fall back to rendering index.html as single file
+    // SW not ready, fall back to rendering index.html as single file
     const indexHtml = files["index.html"] as Uint8Array | undefined;
     if (indexHtml !== undefined) {
       await renderContent(indexHtml, label);
@@ -164,7 +167,7 @@ export async function renderArchive(
   renderIframe(swUrl, label);
 }
 
-// Pre-created iframe element — call prepareIframe() early to avoid
+// Pre-created iframe element. Call prepareIframe() early to avoid
 // DOM creation overhead during the render-critical path.
 let preparedIframe: HTMLIFrameElement | null = null;
 
@@ -178,13 +181,13 @@ export function prepareIframe(): void {
   }
   const hasTopbar = document.getElementById("topbar") !== null;
   const iframe = document.createElement("iframe");
-  // TODO(security): allow-scripts + allow-same-origin together allows sandbox
-  // escape. This is intentional — the container bridge (container.ts) needs
+  // TODO(security): allow-scripts and allow-same-origin together allow sandbox
+  // escape. This is intentional. The container bridge (container.ts) needs
   // same-origin access to communicate with the parent frame via postMessage
   // and to access SW-served resources. Without allow-same-origin the SW cannot
   // intercept iframe fetches, breaking archive serving entirely.
   // TODO: sandbox permissions should be defined by a dApp manifest rather than
-  // hardcoded — allow each product to declare its required permissions.
+  // hardcoded, so each product can declare its required permissions.
   iframe.sandbox.add(
     "allow-scripts",
     "allow-same-origin",
@@ -248,7 +251,7 @@ export function renderIframe(url: string, label: string): void {
       doc = iframe.contentDocument;
       // eslint-disable-next-line no-restricted-syntax -- cross-origin iframe access: some browsers throw, others return null; both mean "can't read title from here" and the caller falls back to `${label}.dot`.
     } catch {
-      /* cross-origin — fall through with doc=null */
+      /* cross-origin: fall through with doc=null */
     }
 
     if (!doc) {

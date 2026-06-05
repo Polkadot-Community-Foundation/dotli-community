@@ -1,8 +1,11 @@
-// dot.li — TrUAPI debug filters
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// TrUAPI debug filters
 //
-// Filter state + predicate. Applied to both TrUAPI and system events.
+// Filter state and predicate. Applied to both TrUAPI and system events.
 // Direction and product filters are TrUAPI-specific and are bypassed
-// for system events. Tag filter is universal — it matches against the
+// for system events. The tag filter is universal. It matches against the
 // TrUAPI method tag for truapi events and against the `layer:event`
 // string for system events.
 
@@ -12,11 +15,11 @@ export type DirectionFilter = "both" | "incoming" | "outgoing";
 
 export interface FilterState {
   direction: DirectionFilter;
-  /** `undefined` → no product filter. `null` key matches events with `productId: undefined`. */
+  /** `undefined` means no product filter. A `null` key matches events with `productId: undefined`. */
   product: string | null | undefined;
   /** Case-insensitive substring match against the event's display tag. */
   tagQuery: string;
-  /** Whether TrUAPI (host ↔ product) events are visible. */
+  /** Whether TrUAPI (host and product) events are visible. */
   showTruapi: boolean;
   /** Whether System (SDK + dotli-internal) events are visible. */
   showSystem: boolean;

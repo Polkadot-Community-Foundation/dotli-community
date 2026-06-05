@@ -1,8 +1,11 @@
-// dot.li — TrUAPI debug formatters
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// TrUAPI debug formatters
 //
 // Pure helpers that turn decoded MessagePayloadSchema values into strings
 // suitable for the debug panel. Handles Uint8Array (hex, truncated) and
-// cycles. No DOM or SDK imports here — kept pure for easy testing.
+// cycles. No DOM or SDK imports here, kept pure for easy testing.
 
 const MAX_UINT8_PREVIEW_BYTES = 32;
 const MAX_STRING_PREVIEW_CHARS = 200;
@@ -30,10 +33,10 @@ function isUint8ArrayLike(v: unknown): v is Uint8Array {
 
 /**
  * JSON.stringify replacer that keeps output readable:
- * - Uint8Array → { __type: "Uint8Array", length, hex }
- * - bigint → string with trailing "n"
- * - cycles → "[Circular]"
- * - long strings → truncated
+ * - Uint8Array becomes { __type: "Uint8Array", length, hex }
+ * - bigint becomes a string with trailing "n"
+ * - cycles become "[Circular]"
+ * - long strings are truncated
  */
 export function makeReplacer(): (
   this: unknown,

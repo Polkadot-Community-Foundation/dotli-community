@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Settings fixtures.
  */
@@ -97,7 +100,7 @@ export async function updateCacheSettings(
 /**
  * Seed `dotli:chain-backend` in localStorage. `onlyIfUnset` preserves the
  * key on retry-driven reloads where the in-page retry button has flipped
- * the backend; default overwrite is right for fresh test starts.
+ * the backend. The default overwrite is right for fresh test starts.
  */
 export async function seedBackend(
   page: Page,

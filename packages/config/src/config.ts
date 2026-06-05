@@ -1,14 +1,17 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Universal Configuration
 
 // The shell is deployed across several root domains (dot.li, paseo.li,
 // paseoli.dev, ephemeral previews). `BASE_DOMAIN` derives the
-// registrable root from the current hostname — never silently defaulted
-// to "dot.li" — because the cross-origin allow-list (shared auth,
-// protocol iframe, SITE_ID) is keyed on this string.
+// registrable root from the current hostname and never silently
+// defaults to "dot.li", because the cross-origin allow-list (shared
+// auth, protocol iframe, SITE_ID) is keyed on this string.
 //
 // Localhost is a legal dev environment and keeps its explicit
-// `"dot.li"` fallback so local runs match the production allow-list;
-// anything else that doesn't parse as a two-segment hostname is a
+// `"dot.li"` fallback so local runs match the production allow-list.
+// Anything else that doesn't parse as a two-segment hostname is a
 // deploy misconfiguration and aborts boot rather than opening the
 // allow-list to the wrong origin.
 const hostname = self.location.hostname;
@@ -33,7 +36,7 @@ function deriveBaseDomain(): string {
 export const BASE_DOMAIN = deriveBaseDomain();
 
 // SiteId is the registrable root domain the shell is running on (e.g. "dot.li",
-// "paseo.li", "paseoli.dev"). It is a plain string — there is no closed union,
+// "paseo.li", "paseoli.dev"). It is a plain string with no closed union,
 // because the codebase is deployed on several root domains including ephemeral
 // ones, and a narrow union here would require an unsafe cast at the boundary.
 // Validation that a caller may only use the current shell's SiteId lives in
@@ -45,11 +48,13 @@ export const isLocalhost = isLocalEnv;
 
 export const SITE_ID: SiteId = isLocalhost ? "local.li" : BASE_DOMAIN;
 
-/** Use smoldot light client for the statement store chain (default: false).
- *  Set VITE_SS_USE_SMOLDOT=true to enable.
- *  Default is false for now until all dependencies to make statement
- *  store support in smoldot production-ready are in place, but can be
- *  enabled in development for testing and feedback. */
+/**
+ * Use the smoldot light client for the statement store chain.
+ *
+ * Set VITE_SS_USE_SMOLDOT=true to enable. Defaults to false until
+ * smoldot statement store support is production-ready, but can be
+ * enabled in development for testing and feedback.
+ */
 export const SS_USE_SMOLDOT =
   (import.meta.env.VITE_SS_USE_SMOLDOT as string | undefined) === "true";
 
@@ -59,12 +64,10 @@ export const SS_USE_SMOLDOT =
 export const SS_RELAY_CHAIN: string | undefined =
   (import.meta.env.VITE_SS_RELAY_CHAIN as string | undefined) ?? undefined;
 
-//
 // Allow-list polarity: DEBUG is ON only when VITE_APP_DEBUG === "true".
-// The previous `!== "false"` check had the wrong sign — a typo like
-// "flase" / "0" / "off" would silently enable debug in production
-// builds and flood real sessions with debug logs.
-
+// A negative check such as `!== "false"` would let a typo like "flase",
+// "0", or "off" silently enable debug in production builds and flood
+// real sessions with debug logs.
 export const DEBUG =
   (import.meta.env.VITE_APP_DEBUG as string | undefined) === "true";
 
@@ -72,9 +75,9 @@ export const DEBUG =
 export const DOT_NODE =
   "0x3fce7d1364a893e213bc4212792b517ffc88f5b13b86c8ef9c8d390c3a1370ce" as const;
 
-// Derived from the dotNS contracts using OpenZeppelin v5 (ERC-7201 namespaced
-// storage). OZ v5 stores Initializable/OwnableUpgradeable/ERC165 state at
-// hash-derived locations, so the contract's own variables start at slot 0.
+// Derived from the dotNS contracts using OpenZeppelin v5 namespaced storage.
+// OZ v5 stores Initializable/OwnableUpgradeable/ERC165 state at hash-derived
+// locations, so the contract's own variables start at slot 0.
 //
 // DotnsRegistry layout (own variables only):
 //   slot 0: records  mapping(bytes32 => Record{address owner, address resolver, bool exists})

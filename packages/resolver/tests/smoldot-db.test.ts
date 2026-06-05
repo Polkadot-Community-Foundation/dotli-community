@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import "fake-indexeddb/auto";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { loadChainDb, saveChainDb, tapChain } from "@dotli/resolver/smoldot-db";
@@ -64,7 +67,7 @@ function lastSentId(fake: ReturnType<typeof makeFakeChain>): string {
 
 describe("saveChainDb / loadChainDb", () => {
   beforeEach(async () => {
-    // fake-indexeddb persists across tests in the same worker; drop our store.
+    // fake-indexeddb persists across tests in the same worker, so drop our store.
     await new Promise<void>((resolve) => {
       const req = indexedDB.deleteDatabase("dotli-smoldot-db");
       req.onsuccess = () => {
@@ -149,7 +152,7 @@ describe("tapChain demux", () => {
     await flush();
     const dbId = lastSentId(fake);
 
-    // The DB reply must be swallowed; the external reply must pass through.
+    // The DB reply must be swallowed. The external reply must pass through.
     fake.emit(JSON.stringify({ jsonrpc: "2.0", id: dbId, result: BIG }));
     fake.emit(JSON.stringify({ jsonrpc: "2.0", id: 42, result: "external" }));
 

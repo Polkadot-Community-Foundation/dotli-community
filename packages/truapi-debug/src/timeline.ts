@@ -1,4 +1,7 @@
-// dot.li — TrUAPI timeline SVG renderer
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// TrUAPI timeline SVG renderer
 //
 // Keyed reconciliation renderer: each logical entity (rail, segment,
 // tick, persistent decoration) is keyed on a stable id, and on every
@@ -7,7 +10,7 @@
 //
 // The rebuild-from-scratch pattern (setting `svg.innerHTML = ...`)
 // destroys every DOM node, losing hover state and cursor tracking on
-// every tick of incoming traffic — what the user saw as "boxes flash
+// every tick of incoming traffic, which the user saw as "boxes flash
 // when a new event arrives". Reconciliation keeps the underlying
 // element identity stable so the browser's native hover/selection
 // tracking is uninterrupted.
@@ -95,7 +98,7 @@ export function renderSwimlanes(
       if (label !== null && label.textContent !== sw.header) {
         label.textContent = sw.header;
       }
-      row.appendChild(col); // re-append → preserve insertion order
+      row.appendChild(col); // re-append to preserve insertion order
     }
     const svg = col.querySelector<SVGSVGElement>("svg.td-tl-svg");
     if (svg !== null) {
@@ -160,7 +163,7 @@ function renderTimeline(
   const cache = getCache(svg);
   const touched = new Set<string>();
 
-  // Persistent decorations (dividers). Always present — reusing them
+  // Persistent decorations (dividers). Always present. Reusing them
   // across renders keeps them stable even under constant layout churn.
   upsertLine(
     svg,
@@ -207,8 +210,6 @@ function renderTimeline(
 
   return layout;
 }
-
-// ── Reconciliation primitives ──────────────────────────────
 
 function getCache(svg: SVGSVGElement): ElementCache {
   let c = cacheBySvg.get(svg);
@@ -281,8 +282,6 @@ function upsertLine(
   return el;
 }
 
-// ── Entry upserts ──────────────────────────────────────────
-
 function upsertRail(
   svg: SVGSVGElement,
   cache: ElementCache,
@@ -351,7 +350,7 @@ function upsertSegment(
   const isSelected =
     selectedSeq !== null && seg.memberSeqs.includes(selectedSeq);
 
-  // Rect (hover target — kept stable across re-renders). No inline
+  // Rect (hover target, kept stable across re-renders). No inline
   // text: labels went into the hover tooltip so boxes can stay very
   // narrow without overflow, and the detail pane carries the rest.
   const rectKey = `seg-${String(seg.seqAnchor)}`;
@@ -421,7 +420,7 @@ function upsertSegment(
 }
 
 /**
- * Compose the tooltip string for a segment — method name, detail, and
+ * Compose the tooltip string for a segment: method name, detail, and
  * a pending marker so the user can distinguish "in-flight" from
  * "complete" boxes at a glance.
  */
@@ -436,10 +435,8 @@ function buildSegmentTooltip(seg: SegmentEntry): string {
   return parts.join(" · ");
 }
 
-// ── Cheap selection application ────────────────────────────
-
 /**
- * Flip the `selected` class + highlight stroke between two segments
+ * Flip the `selected` class and highlight stroke between two segments
  * without recomputing anything else. Called from panel.ts on click.
  * Searches across every swimlane's SVG within the container.
  */
@@ -480,8 +477,6 @@ function findSegmentForSeq(
   }
   return null;
 }
-
-// ── Click hit-test (unchanged from previous version) ───────
 
 export function resolveTimelineClick(
   target: EventTarget | null,

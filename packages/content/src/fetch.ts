@@ -1,4 +1,7 @@
-// dot.li: Content fetching
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li content fetching.
 //
 // Two paths:
 //   - bitswap-rpc: smoldot's `bitswap_v1_get` via the protocol bridge.
@@ -7,10 +10,7 @@
 //   - gateway: HTTPS fetch from a trusted IPFS gateway (CAR for dag-pb,
 //     plain GET for raw).
 //
-// No Helia / libp2p path remains. `bitswap_v1_get` replaced it. The
-// helia/@helia-unixfs/libp2p packages are no longer in the dependency
-// graph. UnixFS walking lives in `archive.ts` driven by an injected
-// `BlockSource`.
+// UnixFS walking lives in `archive.ts`, driven by an injected `BlockSource`.
 
 import { dur } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
@@ -123,11 +123,11 @@ function classifyBitswapError(
 /**
  * Fetch content via IPFS gateway.
  *
- * No silent CAR→plain fallback. The CID codec deterministically decides
+ * No silent CAR-to-plain fallback. The CID codec deterministically decides
  * which transport is correct:
- *   - DAG-PB (0x70): UnixFS directory or chunked file → request CAR
- *   - RAW    (0x55): single raw block → plain HTTP GET
- * Any other codec is a hard failure — we don't guess. Any transport
+ *   - DAG-PB (0x70): UnixFS directory or chunked file, request CAR.
+ *   - RAW    (0x55): single raw block, plain HTTP GET.
+ * Any other codec is a hard failure and we don't guess. Any transport
  * failure surfaces with the original cause.
  */
 async function fetchViaGateway(

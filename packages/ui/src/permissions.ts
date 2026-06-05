@@ -1,9 +1,12 @@
-// dot.li — Permission storage
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li Permission storage
 //
 // Persists host-level permission decisions per product in localStorage.
 // Device permissions that map to a Permissions Policy directive also
-// gate the iframe `allow` attribute (granting/revoking reloads the
-// iframe); variants without a directive are policy-only.
+// gate the iframe `allow` attribute (granting or revoking reloads the
+// iframe). Variants without a directive are policy-only.
 //
 // Permission status: 'ask' (default), 'granted', or 'denied'.
 
@@ -50,13 +53,13 @@ export const DEVICE_PERMISSION_POLICY: Partial<
   Microphone: "microphone",
   Location: "geolocation",
   Bluetooth: "bluetooth",
-  // Clipboard write is always granted by dot.li (see buildAllowAttribute);
-  // the read directive requires explicit consent.
+  // Clipboard write is always granted by dot.li (see buildAllowAttribute).
+  // The read directive requires explicit consent.
   Clipboard: "clipboard-read",
-  // WebAuthn — covers the Biometrics variant for hosts that expose it via
-  // passkeys / platform authenticators.
+  // WebAuthn directive covering the Biometrics variant for hosts that expose
+  // it via passkeys or platform authenticators.
   Biometrics: "publickey-credentials-get",
-  // Chromium-only; harmless to include on browsers that ignore it.
+  // Chromium-only. Harmless to include on browsers that ignore it.
   NFC: "nfc",
   // Notifications has no Permissions Policy directive but IS host-gated
   // separately in handleDevicePermission (tri-state, no iframe reload).
@@ -65,10 +68,11 @@ export const DEVICE_PERMISSION_POLICY: Partial<
 
 /**
  * Device permissions whose enforcement is outside the host's reach.
- * Currently only OpenUrl — cross-origin navigation happens via anchor /
+ *
+ * Currently only OpenUrl. Cross-origin navigation happens via anchor or
  * window.open and has no host-side enforcement point. Requests for it
- * always resolve `true` and it is hidden from the settings popover —
- * offering a control that can't actually block would mislead users.
+ * always resolve `true` and it is hidden from the settings popover.
+ * Offering a control that can't actually block would mislead users.
  */
 export const AUTO_GRANT_DEVICE_PERMISSIONS: ReadonlySet<AutoGrantDevicePermission> =
   new Set<AutoGrantDevicePermission>(["OpenUrl"]);
@@ -104,8 +108,6 @@ export function isDevicePermission(name: string): boolean {
   return name in DEVICE_PERMISSION_POLICY;
 }
 
-// ── Storage helpers ──────────────────────────────────────
-
 const STORAGE_PREFIX = "dotli:permissions:";
 
 type StoredPermissions = Record<string, PermissionStatus>;
@@ -129,8 +131,6 @@ function readStored(label: string): StoredPermissions {
 function writeStored(label: string, data: StoredPermissions): void {
   localStorage.setItem(storageKey(label), JSON.stringify(data));
 }
-
-// ── Public API ───────────────────────────────────────────
 
 export function getPermissionStatus(
   label: string,

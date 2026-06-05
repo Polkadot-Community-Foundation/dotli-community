@@ -1,4 +1,7 @@
-// dot.li — Host-container bridge
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li Host-container bridge
 //
 // Connects embedded dApps to host services (accounts, signing, chain
 // connections, scoped storage) via postMessage protocol.
@@ -27,7 +30,7 @@ function newFlowId(prefix: string): string {
 // Re-export sandbox-safe rendering functions
 export { renderContent, renderArchive, prepareIframe } from "./render";
 
-// Eagerly load the container bridge chunk — starts downloading when
+// Eagerly load the container bridge chunk. Starts downloading when
 // this module is imported, so it's ready by the time we need it.
 const chunkLoadStart = performance.now();
 const containerChunkPromise = import("./container").then((mod) => {
@@ -49,7 +52,7 @@ let currentLabel: string | null = null;
 let currentUrl: string | null = null;
 let currentCid: string | null = null;
 
-// Listen for device permission grants — reload the iframe so the
+// Listen for device permission grants and reload the iframe so the
 // updated `allow` attribute takes effect.
 window.addEventListener("dotli:device-permission-changed", () => {
   if (
@@ -218,15 +221,15 @@ export async function renderAppSubdomain(
   currentUrl = null;
 
   // Propagate the two independent backend axes. The legacy `?mode=`
-  // preset param is no longer sent — host and sandbox deploy together,
+  // preset param is no longer sent. Host and sandbox deploy together,
   // there are no old sandbox builds in the wild, and the sandbox
   // validator rejects unknown params so keeping it would guarantee a
   // boot failure on the next deploy.
   //
   // The sandbox reads its own curated endpoint defaults from
   // `@dotli/config/network` (same package, built into its bundle), so
-  // the host no longer threads RPC/gateway URLs across the origin —
-  // there are no user-overridable endpoints to preserve.
+  // the host no longer threads RPC/gateway URLs across the origin.
+  // There are no user-overridable endpoints to preserve.
   const chainBackend = getBackend();
   const network = getNetwork();
   const cache = getCacheSettings();
@@ -244,7 +247,7 @@ export async function renderAppSubdomain(
     }
     // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); reset flag defaults to false which is the safe state.
   } catch {
-    /* sessionStorage unavailable — skip pending reset */
+    /* sessionStorage unavailable: skip pending reset */
   }
   let url = deepPath ? `${appOrigin}${deepPath}` : appOrigin;
   try {
@@ -290,7 +293,7 @@ export async function renderAppSubdomain(
   document.body.style.margin = "0";
   document.body.style.overflow = "hidden";
 
-  // Keep the loading overlay visible — the sandbox will post status
+  // Keep the loading overlay visible. The sandbox will post status
   // messages via dotli:loading-status and a final done=true to dismiss it.
   // Only remove non-loading children from #app before appending the iframe.
   const loading = app.querySelector(".loading");

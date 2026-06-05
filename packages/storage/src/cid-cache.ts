@@ -1,4 +1,7 @@
-// dot.li — IndexedDB-backed label→CID cache
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li IndexedDB-backed cache mapping a label to its CID.
 //
 // Enables stale-while-revalidate: on repeat visits, render from
 // the cached CID instantly while smoldot validates in the background.
@@ -61,8 +64,9 @@ export async function getCachedCidResult(
 }
 
 /**
- * Legacy surface — `null` collapses cache miss and storage error. New
- * callers should use `getCachedCidResult` so storage failures can be
+ * Legacy surface where `null` collapses cache miss and storage error.
+ *
+ * New callers should use `getCachedCidResult` so storage failures can be
  * surfaced rather than silently treated as "no cache".
  */
 export async function getCachedCid(label: string): Promise<string | null> {
@@ -109,7 +113,7 @@ export function addRecentLabel(label: string): Promise<void> {
     );
     // eslint-disable-next-line no-restricted-syntax -- localStorage unavailable / quota exceeded when appending to a UI-only "recent labels" list. Not worth a metric per page load; defaults keep working.
   } catch {
-    /* non-critical — recent list is UI decoration */
+    /* non-critical. The recent list is UI decoration */
   }
   return Promise.resolve();
 }
@@ -134,9 +138,11 @@ export async function setCachedCid(label: string, cid: string): Promise<void> {
 }
 
 /**
- * Clear every cached label→CID entry. Used when the user turns the dotNS
- * cache off in settings. Awaits transaction completion so a reload right
- * after won't abort the clear mid-flight. Best-effort: failures are logged.
+ * Clear every cached label-to-CID entry.
+ *
+ * Used when the user turns the dotNS cache off in settings. Awaits
+ * transaction completion so a reload right after won't abort the clear
+ * mid-flight. Best-effort: failures are logged.
  */
 export async function clearCidCache(): Promise<void> {
   const stop = m.timer(S.CACHE_WRITE_LATENCY);

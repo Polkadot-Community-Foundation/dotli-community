@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Forwards console.* from every iframe and Web Worker to the top page.
  *
@@ -29,7 +32,7 @@ export const IFRAME_FORWARDER = `
         if (!isTop) {
           window.parent.postMessage(payload, "*");
         } else {
-          // Top frame has no parent — emit the FRAMELOG line directly so
+          // Top frame has no parent. Emit the FRAMELOG line directly so
           // Playwright's page.on("console") captures it with the same
           // origin tagging as bridged child frames.
           origs.log("[FRAMELOG][" + frameTag + "][" + level + "]", text);
@@ -89,7 +92,7 @@ export const WORKER_FORWARDER = `
 
 /**
  * Companion shim for the SharedWorker bundle. Unlike a regular Worker,
- * a SharedWorker can't simply `self.postMessage()` — output is fanned out
+ * a SharedWorker cannot call `self.postMessage()`. Output is fanned out
  * across every connected MessagePort. Each `connect` event's port is
  * tracked, console.warn is hooked to broadcast a `__pw_sw_log__` envelope
  * to all ports, and a `__pw_sw_ping__/__pw_sw_pong__` round-trip lets the

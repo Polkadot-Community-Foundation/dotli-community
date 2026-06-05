@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { defineConfig } from "@playwright/test";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
@@ -16,15 +19,15 @@ try {
     process.env[key] = raw.replace(/^['"]|['"]$/g, "");
   }
 } catch {
-  /* no .env — env must already be set */
+  /* no .env, env must already be set */
 }
 
 // Stale-dist guard. The preview server serves built artifacts from
-// `apps/{host,sandbox,protocol}/dist`; if those are older than the lockfile
-// we're almost certainly running against an out-of-date build (we burned an
-// afternoon on this once — the symptoms look like obscure SDK byte-parity
-// bugs but the fix is `bun run build`). CI is unaffected because it always
-// builds fresh; this only fires for local repeat runs.
+// `apps/{host,sandbox,protocol}/dist`. If those are older than the lockfile
+// we're almost certainly running against an out-of-date build. The symptoms
+// look like obscure SDK byte-parity bugs but the fix is `bun run build`. CI
+// is unaffected because it always builds fresh. This only fires for local
+// repeat runs.
 if (process.env.CI !== "true") {
   try {
     const lockMtime = statSync(resolve(repoRoot, "bun.lock")).mtimeMs;

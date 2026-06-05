@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Product manifest reader.
 //
 // Reads text records off `DOTNS_CONTENT_RESOLVER`. The root manifest sits

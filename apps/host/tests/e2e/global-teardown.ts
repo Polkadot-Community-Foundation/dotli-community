@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { readFileSync, existsSync } from "node:fs";
 import type { FullConfig } from "@playwright/test";
 import { disconnect } from "./helpers/signer-bot";
@@ -20,7 +23,7 @@ export default async function globalTeardown(
       `[globalTeardown] disconnected sessionId=${session.sessionId.slice(0, 16)}…`,
     );
   } catch (e) {
-    // Best-effort — the bot times sessions out anyway.
+    // Best-effort. The bot times sessions out anyway.
     console.warn(`[globalTeardown] disconnect failed: ${(e as Error).message}`);
   }
 }

@@ -1,4 +1,7 @@
-// dot.li — TrUAPI debug panel DOM and interaction.
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// TrUAPI debug panel DOM and interaction.
 //
 // A docked, resizable panel that lists every host <-> product message
 // observed via the experimental `onHostApiDebugMessage` hook from
@@ -94,7 +97,7 @@ export interface SetupOptions {
  *
  * The panel mounts visible whenever debug mode is on. The header's `×`
  * button exits debug mode entirely (clears the session flag and
- * reloads) — re-enter via the host Settings panel's "Open in debug
+ * reloads). Re-enter via the host Settings panel's "Open in debug
  * mode" button.
  *
  * Calling twice without disposing is a no-op on the second call.
@@ -196,14 +199,14 @@ function adjustIframeForPanel(panel: HTMLElement, state: PanelState): void {
   if (state.dock === "right") {
     iframe.style.height = `calc(100vh - ${String(topOffset)}px)`;
     // When collapsed, the 32px header bar overlays the top-right corner
-    // of the iframe rather than reserving a full-height column — mirrors
+    // of the iframe rather than reserving a full-height column. Mirrors
     // how bottom-dock collapse overlays only the bottom 32px.
     iframe.style.width = state.collapsed
       ? "100%"
       : `calc(100vw - ${String(panel.offsetWidth)}px)`;
   } else {
     // Host's prepareIframe / renderIframe sets inline width:100%. Restore
-    // that explicitly — clearing to "" falls back to the HTML iframe
+    // that explicitly. Clearing to "" falls back to the HTML iframe
     // default of 300px and breaks the layout.
     iframe.style.width = "100%";
     const panelHeight = state.collapsed ? 32 : panel.offsetHeight;
@@ -220,8 +223,6 @@ function restoreIframeLayout(): void {
   iframe.style.height = hasTopbar ? "calc(100vh - 40px)" : "100vh";
   iframe.style.width = "100%";
 }
-
-// ────────────────────────────────────────────────────────────────────────────
 
 type PanelView = "list" | "timeline";
 
@@ -373,7 +374,7 @@ function wireHeader(ui: PanelUI, state: PanelState, store: EventStore): void {
   ui.clearBtn.addEventListener("click", () => {
     store.clear();
     state.selectedSeq = null;
-    // Explicitly rebuild detail — the selection is now gone and the
+    // Explicitly rebuild detail: the selection is now gone and the
     // incremental-render path intentionally doesn't touch the detail
     // pane, so without this the previously-selected event's body
     // would linger after clear.
@@ -645,10 +646,10 @@ function wireListSelection(
       state.selectedSeq === null ? -1 : seqs.indexOf(state.selectedSeq);
     let nextIdx: number;
     if (e.key === "ArrowDown") {
-      // From nothing → first row. From a valid index → next (clamped to last).
+      // From nothing, select the first row. From a valid index, the next row (clamped to last).
       nextIdx = currentIdx < 0 ? 0 : Math.min(currentIdx + 1, seqs.length - 1);
     } else {
-      // ArrowUp: from nothing → last row. Otherwise previous (clamped to first).
+      // ArrowUp: from nothing, select the last row. Otherwise the previous row (clamped to first).
       nextIdx = currentIdx < 0 ? seqs.length - 1 : Math.max(currentIdx - 1, 0);
     }
     if (nextIdx === currentIdx) {
@@ -769,8 +770,8 @@ function wireTimelineSelection(
  * click) and caused hundreds of ms of layout churn on large buffers.
  *
  * `data-rid` on each row lets one `querySelectorAll` collect every
- * sibling in the group — request/response (two events) and
- * subscriptions (one start + N receives + stop) are both handled the
+ * sibling in the group. Request/response (two events) and
+ * subscriptions (one start, N receives, and a stop) are both handled the
  * same way.
  */
 function applySelection(
@@ -830,7 +831,6 @@ function cssEscape(value: string): string {
   return value.replace(/["\\]/g, "\\$&");
 }
 
-// ────────────────────────────────────────────────────────────────────────────
 // Rendering
 
 interface RenderOptions {
@@ -838,9 +838,9 @@ interface RenderOptions {
    * When true, tear down and rebuild every row in the event list.
    * Required on filter changes (existing row visibility flips) and
    * initial mount. When false, existing row DOM is preserved and only
-   * new rows are appended / evicted rows are pruned — critical so that
-   * in-flight clicks on rows aren't dropped by `innerHTML =` replacing
-   * the target element between pointerdown and click.
+   * new rows are appended while evicted rows are pruned. This is critical
+   * so that in-flight clicks on rows aren't dropped by `innerHTML =`
+   * replacing the target element between pointerdown and click.
    */
   fullList?: boolean;
 }
@@ -877,7 +877,7 @@ function render(
   // Only rebuild the detail pane on user-initiated refreshes (filter
   // change, view swap, clear, initial mount). Rebuilding on every
   // incoming event tears down any in-progress user interaction inside
-  // the pane — clicks on the collapsible "What is this?" block get
+  // the pane: clicks on the collapsible "What is this?" block get
   // dropped between pointerdown and click when traffic is bursty.
   // Selection changes go through `applySelection` which rebuilds
   // detail explicitly on its own fast path.
@@ -914,7 +914,7 @@ function renderProductChips(
 
   // Fingerprint of the current product set. If it hasn't changed since
   // the last render we only need to refresh `.active` classes, not
-  // tear down and rebuild the buttons — rebuilding on every event was
+  // tear down and rebuild the buttons. Rebuilding on every event was
   // dropping in-flight clicks on the chips.
   const fingerprint = products.map((p) => p ?? "\0").join("|");
   const prevFingerprint = ui.productChipsContainer.dataset.fingerprint;
@@ -933,8 +933,8 @@ function renderProductChips(
     ui.productChipsContainer.innerHTML = html.join("");
     ui.productChipsContainer.dataset.fingerprint = fingerprint;
 
-    // One delegated listener on the container — survives chip rebuilds,
-    // no per-chip listener re-attachment on each render.
+    // One delegated listener on the container. It survives chip rebuilds,
+    // so there's no per-chip listener re-attachment on each render.
     if (ui.productChipsContainer.dataset.wired !== "1") {
       ui.productChipsContainer.dataset.wired = "1";
       ui.productChipsContainer.addEventListener("click", (e) => {
@@ -952,7 +952,7 @@ function renderProductChips(
         } else if (key !== undefined) {
           state.filters.product = key;
         }
-        // Filter change → list contents change → full rebuild is needed.
+        // Filter change alters list contents, so a full rebuild is needed.
         render(ui, state, store, { fullList: true });
       });
     }
@@ -1036,7 +1036,7 @@ function fullRebuildList(
  * events arriving at the tail of the ring buffer, oldest events possibly
  * evicted from the front.
  *
- * Preserves every row DOM node that is still visible — critical for
+ * Preserves every row DOM node that is still visible. Critical for
  * in-flight user interactions (a click whose row gets `innerHTML =`d away
  * between pointerdown and click is silently dropped by the browser).
  */
@@ -1231,7 +1231,7 @@ function shortHex(v: string): string {
   return v;
 }
 
-/** Deterministic hue for a requestId. Same id → same color on every row. */
+/** Deterministic hue for a requestId. The same id yields the same color on every row. */
 function ridColor(rid: string): string {
   let h = 0;
   for (let i = 0; i < rid.length; i++) {
@@ -1374,7 +1374,7 @@ function renderExplanationSection(ev: StoredSystemEvent): string {
  * Render an explanation body string as HTML. Preserves paragraph
  * breaks (blank lines) and keeps `code` spans with backticks so the
  * prose can reference identifiers without being mistaken for literal
- * text. Plain text otherwise — no Markdown engine dependency.
+ * text. Plain text otherwise, with no Markdown engine dependency.
  */
 function renderExplanationBody(body: string): string {
   const paragraphs = body.split(/\n\n+/);
@@ -1382,7 +1382,7 @@ function renderExplanationBody(body: string): string {
 }
 
 function renderExplanationParagraph(paragraph: string): string {
-  // Backticked `identifiers` → <code>identifiers</code>. Bullet lines
+  // Backticked `identifiers` become <code>identifiers</code>. Bullet lines
   // (`• ` prefix) become list items.
   const lines = paragraph.split("\n");
   const isBulletList = lines.every(
@@ -1404,7 +1404,7 @@ function renderExplanationParagraph(paragraph: string): string {
 function formatInlineCode(text: string): string {
   // Escape first, then turn escaped backtick runs into <code> spans.
   // Because escaping produces `&#39;`/`&amp;` sequences we keep the
-  // backtick search on the escaped string — it still identifies the
+  // backtick search on the escaped string. It still identifies the
   // literal `\`…\`` boundaries.
   const escaped = escapeHtml(text);
   return escaped.replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -1464,7 +1464,7 @@ function renderSummarySection(
  * Timeline-view detail: every member of the clicked box's requestId
  * group, stacked chronologically. Each member shows its decoded chain
  * annotations (if any) and its payload. Since all siblings are visible
- * together, no cross-link pills are needed — clicking a box is a
+ * together, no cross-link pills are needed. Clicking a box is a
  * "show me the whole handshake" action, not a "pick one message" one.
  */
 function renderGroupDetail(ev: StoredEvent, store: EventStore): string {
@@ -1611,8 +1611,6 @@ function renderChainSection(ann: ChainAnnotations): string {
     `<dl class="td-detail-head td-chain-head">${rows.join("")}</dl>`
   );
 }
-
-// ────────────────────────────────────────────────────────────────────────────
 
 function formatTime(ts: number): string {
   const d = new Date(ts);

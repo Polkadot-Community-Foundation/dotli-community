@@ -1,9 +1,12 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { setTimeout as sleep } from "node:timers/promises";
 
 const TRANSIENT = new Set([502, 503, 504]);
 
 // Per-attempt request timeout. The bot side rarely needs more than a few
-// seconds, even for pair (attestation + handshake). Without a client-side
+// seconds, even for pair (attestation and handshake). Without a client-side
 // cap, a hung response would silently extend the whole suite.
 const PAIR_REQUEST_TIMEOUT_MS = 30_000;
 const HEALTH_REQUEST_TIMEOUT_MS = 5_000;
@@ -51,12 +54,12 @@ async function fetchRetry(
 /**
  * Generate a per-run username for the Nova signing bot.
  *
- * Each test run gets its own throwaway user so on-chain state (allowances,
- * permissions, derived product accounts) doesn't leak between PRs. Format:
- * `dotlitests` + 6 lowercase letters → ~3·10^8 namespace, no collisions in
- * practice, and stays inside the bot's strictest username regex (^[a-z]+$)
- * so it works for both regular `username` and `liteUsername` fields if we
- * ever want one.
+ * Each test run gets its own throwaway user so network state (allowances,
+ * permissions, derived product accounts) doesn't leak between PRs. The
+ * format is `dotlitests` followed by 6 lowercase letters, a namespace of
+ * roughly 3·10^8 with no collisions in practice. It stays inside the bot's
+ * strictest username regex (^[a-z]+$) so it works for both regular
+ * `username` and `liteUsername` fields if we ever want one.
  */
 export function generateUsername(): string {
   const alphabet = "abcdefghijklmnopqrstuvwxyz";
@@ -111,8 +114,10 @@ export async function pair(
 }
 
 /**
- * Tear down a bot session at the end of a test worker. Best-effort —
- * failure to disconnect is non-fatal, the bot times sessions out anyway.
+ * Tear down a bot session at the end of a test worker.
+ *
+ * Best-effort. Failure to disconnect is non-fatal, the bot times
+ * sessions out anyway.
  */
 export async function disconnect(
   base: string,

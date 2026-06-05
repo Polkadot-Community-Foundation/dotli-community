@@ -1,7 +1,9 @@
-// CAR archive parsing and MIME type detection
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// CAR archive parsing and MIME type detection.
 //
 // Parses IPFS CAR (Content Addressable aRchive) files into a file map.
-// Ported from context__desktop/src/domains/product/ipfs/service.ts
 
 import { CarReader } from "@ipld/car";
 import * as dagPb from "@ipld/dag-pb";
@@ -76,7 +78,7 @@ const MAX_PARALLEL_BLOCK_FETCHES = 8;
 
 /**
  * Walk a UnixFS DAG starting at `rootCid`, fetching blocks via `blockSource`,
- * and assemble a flat `path → bytes` map.
+ * and assemble a flat map of path to bytes.
  *
  * Used by both the CAR-archive parser (gateway path, blocks already in memory)
  * and the bitswap-rpc fetcher (smoldot path, one block per RPC call). The

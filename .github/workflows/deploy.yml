@@ -17,7 +17,7 @@ on:
 jobs:
   quality-gate:
     name: Quality Gate
-    runs-on: parity-default
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:

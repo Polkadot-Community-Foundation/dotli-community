@@ -1,16 +1,19 @@
-// dot.li — TrUAPI debug event store
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// TrUAPI debug event store
 //
 // Ring buffer of debug events from three sources:
-//   - TrUAPI host ↔ product messages (from @novasamatech/host-container).
+//   - TrUAPI host-to-product messages (from @novasamatech/host-container).
 //   - Host-papp SSO/attestation/session events (from @novasamatech/host-papp).
 //   - dotli-internal boot/resolve/render/bridge/failover events (from
 //     @dotli/truapi-debug/dotli-debug-bus).
 //
-// All three sources store through the same ring + correlation index so
+// All three sources store through the same ring and correlation index so
 // the panel treats them uniformly. A discriminated `kind` field keeps
-// the shape legible: `truapi` events carry a `requestId`, `system`
-// events (SDK + dotli) carry a `flowId` — both serve as the
-// correlation key used by `firstInGroup` / `eventsInGroup`.
+// the shape legible. `truapi` events carry a `requestId`, `system`
+// events (SDK plus dotli) carry a `flowId`. Both serve as the
+// correlation key used by `firstInGroup` and `eventsInGroup`.
 //
 // Events are never mutated after insertion.
 
@@ -18,7 +21,7 @@ import type { HostApiDebugMessageEvent } from "@novasamatech/host-container";
 import type { HostPappDebugEvent } from "@novasamatech/host-papp/debug";
 import type { DotliDebugEvent } from "./dotli-debug-types.ts";
 
-/** Monotonic sequence number assigned at insertion time — stable, unique, sortable. */
+/** Monotonic sequence number assigned at insertion time. Stable, unique, and sortable. */
 export type EventSeq = number;
 
 export interface StoredTruapiEvent {
@@ -37,7 +40,7 @@ export interface StoredSystemEvent {
   kind: "system";
   seq: EventSeq;
   receivedAt: number;
-  /** Which bus produced the event — `host-papp` for SDK-originated ones. */
+  /** Which bus produced the event. `host-papp` for SDK-originated ones. */
   source: "host-papp" | "dotli";
   layer: string;
   event: string;
@@ -66,7 +69,7 @@ export class EventStore {
   private paused = false;
   private nextSeq = 0;
   private droppedCount = 0;
-  /** correlation key → first event observed with that key. */
+  /** Correlation key mapped to the first event observed with that key. */
   private readonly firstByKey = new Map<string, StoredEvent>();
   private readonly listeners = new Set<Listener>();
 
@@ -98,7 +101,7 @@ export class EventStore {
     this.notify();
   }
 
-  /** Insert a TrUAPI host↔product event. */
+  /** Insert a TrUAPI host-to-product event. */
   insertTruapi(ev: HostApiDebugMessageEvent): void {
     if (this.paused) {
       return;
@@ -178,14 +181,14 @@ export class EventStore {
   }
 
   /**
-   * First retained event for a given correlation key — the anchor of a
+   * First retained event for a given correlation key, the anchor of a
    * flow. Used to compute latency/duration inside a flow group.
    */
   firstInGroup(key: string): StoredEvent | undefined {
     return this.firstByKey.get(key);
   }
 
-  /** Lookup by seq. O(N) scan — used only on click/detail paths. */
+  /** Lookup by seq. O(N) scan, used only on click/detail paths. */
   getBySeq(seq: EventSeq): StoredEvent | undefined {
     for (let i = this.buf.length - 1; i >= 0; i--) {
       if (this.buf[i].seq === seq) {

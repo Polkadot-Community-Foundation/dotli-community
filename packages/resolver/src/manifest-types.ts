@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Product manifest types and handwritten validators.
 //
 // Hosts read these shapes from dotNS text records. Two records exist per
@@ -173,7 +176,7 @@ function validateWorkerFields(
   return errors;
 }
 
-/** Parse + validate a JSON string against the `RootManifest` schema. */
+/** Parse and validate a JSON string against the `RootManifest` schema. */
 export function parseRootManifest(
   json: string,
 ): ValidationResult<RootManifest> {
@@ -191,7 +194,7 @@ export function parseRootManifest(
   return validateRootManifest(raw);
 }
 
-/** Parse + validate a JSON string against the `ExecutableManifest` schema. */
+/** Parse and validate a JSON string against the `ExecutableManifest` schema. */
 export function parseExecutableManifest(
   json: string,
 ): ValidationResult<ExecutableManifest> {

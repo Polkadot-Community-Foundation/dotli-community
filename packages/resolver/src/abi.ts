@@ -1,6 +1,9 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // ABI helpers and Solidity storage key computation
 //
-// Provides namehash (EIP-137) and storage slot key computation for
+// Provides ENS-style namehash and storage slot key computation for
 // reading Solidity contract storage directly via ReviveApi.get_storage.
 
 import { keccak_256 } from "@noble/hashes/sha3.js";
@@ -24,8 +27,7 @@ function hexToBytes(hex: `0x${string}`): Uint8Array {
   return nobleHexToBytes(hex.slice(2));
 }
 
-// ── namehash (ENS EIP-137) ──────────────────────────────────
-
+/** Compute the ENS-style namehash of a dotted name. */
 export function namehash(name: string): `0x${string}` {
   let node = new Uint8Array(32); // 0x00...00
   if (name === "") {
@@ -42,12 +44,12 @@ export function namehash(name: string): `0x${string}` {
   return toHex(node);
 }
 
-// ── Solidity storage key computation ────────────────────────
+// Solidity storage key computation.
 //
 // For a mapping(bytes32 => T) at storage slot N, the value
 // for key K is stored at: keccak256(K ++ uint256(N))
 //
-// For bytes type (dynamic): if length ≤ 31, data is inline at
+// For bytes type (dynamic): if length <= 31, data is inline at
 // the computed slot. If > 31, data starts at keccak256(slot).
 
 /**
@@ -147,7 +149,7 @@ export function extractAddress(data: Uint8Array): string {
 /**
  * Read a Solidity `bytes` value from raw storage slot data.
  *
- * Short bytes (≤ 31): data is inline, lowest byte = length * 2.
+ * Short bytes (<= 31): data is inline, lowest byte = length * 2.
  * Long bytes (> 31): lowest bit is 1, full word = length * 2 + 1,
  * actual data at keccak256(baseSlot) spanning consecutive slots.
  *
@@ -190,8 +192,6 @@ export function decodeBytesSlot(
   };
 }
 
-// ── Contenthash decoding ──────────────────────────────────
-
 /**
  * Discriminated result so callers can distinguish:
  *   - `empty`              : slot was unset (the name has no contenthash)
@@ -200,7 +200,7 @@ export function decodeBytesSlot(
  *   - `ok`                 : valid IPFS CID
  *
  * Returning `string | null` would collapse all four into "not found",
- * hiding real on-chain decode failures behind the same UI message as
+ * hiding real network decode failures behind the same UI message as
  * "no record set".
  */
 export type ContenthashResult =

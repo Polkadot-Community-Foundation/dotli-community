@@ -1,4 +1,7 @@
-// dot.li — Human-readable summaries of system (non-TrUAPI) events.
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Human-readable summaries of system (non-TrUAPI) events.
 //
 // Mirrors chain-summary.ts for the System swimlane: each event becomes
 // a single sentence shown at the top of the detail pane. Keeps the
@@ -10,7 +13,7 @@ import type { StoredSystemEvent } from "./event-store.ts";
 export function summariseSystemEvent(ev: StoredSystemEvent): string {
   const p = ev.payload as Record<string, unknown>;
   switch (`${ev.layer}:${ev.event}`) {
-    // ── boot ─────────────────────────────────────────────
+    // boot
     case "boot:started":
       return `Host boot started (mode: ${str(p.mode)}, chain: ${str(p.chainBackend)}, content: ${str(p.contentBackend)}).`;
     case "boot:protocol_warmup_started":
@@ -39,7 +42,7 @@ export function summariseSystemEvent(ev: StoredSystemEvent): string {
     case "boot:failed":
       return `Boot failed (${str(p.dependency)}): ${str(p.reason)}.`;
 
-    // ── resolve ──────────────────────────────────────────
+    // resolve
     case "resolve:started":
       return `Resolving ${str(p.label)}.dot via ${str(p.source)}.`;
     case "resolve:phase":
@@ -53,13 +56,13 @@ export function summariseSystemEvent(ev: StoredSystemEvent): string {
     case "resolve:failed":
       return `Resolve failed via ${str(p.source)}: ${str(p.reason)}.`;
 
-    // ── render ───────────────────────────────────────────
+    // render
     case "render:iframe_begin":
       return `Rendering iframe for ${str(p.label)} (${str(p.mode)}).`;
     case "render:iframe_ready":
       return `Iframe ready (${str(p.mode)}).`;
 
-    // ── bridge ───────────────────────────────────────────
+    // bridge
     case "bridge:setup_begin":
       return `Setting up TrUAPI bridge (productId=${str(p.productId)}).`;
     case "bridge:setup_ready":
@@ -73,11 +76,11 @@ export function summariseSystemEvent(ev: StoredSystemEvent): string {
     case "bridge:nested_detected":
       return `Nested dApp #${str(p.nestedIndex)} detected (productId=${str(p.productId)}).`;
 
-    // ── failover ─────────────────────────────────────────
+    // failover
     case "failover:chain_backend":
       return `Chain backend failover: ${str(p.from)} → ${str(p.to)} (reason: ${str(p.reason)}).`;
 
-    // ── main-thread monitor ──────────────────────────────
+    // main-thread monitor
     case "main:stall_detected":
       return `Main thread blocked for ${numMs(p.durationMs)}.`;
     case "main:heartbeat":
@@ -116,7 +119,7 @@ export function summariseSystemEvent(ev: StoredSystemEvent): string {
     case "sandbox:failed":
       return `Sandbox failed: ${str(p.reason)}.`;
 
-    // ── SSO (host-papp) ──────────────────────────────────
+    // SSO (host-papp)
     case "sso:pairing_started":
       return `Wallet pairing started (product metadata=${str(p.metadata)}).`;
     case "sso:deeplink_generated":
@@ -130,7 +133,7 @@ export function summariseSystemEvent(ev: StoredSystemEvent): string {
     case "sso:pairing_failed":
       return `Wallet pairing failed: ${str(p.reason)}.`;
 
-    // ── attestation (host-papp) ──────────────────────────
+    // attestation (host-papp)
     case "attestation:started":
       return `Starting guest identity attestation for candidate ${str(p.candidateAccountId)}.`;
     case "attestation:username_claimed":
@@ -146,7 +149,7 @@ export function summariseSystemEvent(ev: StoredSystemEvent): string {
     case "attestation:failed":
       return `Attestation failed: ${str(p.reason)}.`;
 
-    // ── session (host-papp) ──────────────────────────────
+    // session (host-papp)
     case "session:opened":
       return `Session ${str(p.sessionId)} opened.`;
     case "session:peer_action_received":

@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Browser-context scaffolding for specs that bridge iframe and worker
  * console output to the page.

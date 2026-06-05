@@ -1,24 +1,25 @@
-// dot.li — App Service Worker
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li app Service Worker.
 //
-// Archive serving only — no smoldot, no chain sync.
-// Runs on <label>.app.dot.li to serve multi-file SPA archives from in-memory/IndexedDB cache.
+// Archive serving only, no smoldot and no chain sync.
+// Runs on <label>.app.dot.li to serve multi-file SPA archives from the
+// in-memory and IndexedDB cache.
 
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;
 
 // Baked at build time by vite.config.ts (`define.__SW_VERSION__`). The page
-// queries this via `GET_SW_VERSION` to detect stale workers; see M-14 in the
-// observability audit for the rationale.
+// queries this via `GET_SW_VERSION` to detect stale workers.
 declare const __SW_VERSION__: string;
 
 import { getMimeType } from "@dotli/shared/mime";
 import { SW_ARCHIVE_CACHE_MAX } from "@dotli/config/config";
 
-// ── Base path (derived at runtime from SW script location) ────
+// Base path, derived at runtime from the SW script location.
 const BASE = self.location.pathname.replace(/(?:src\/)?app-sw\.[jt]s$/, "");
 const DOTLI_APP_PREFIX = `${BASE}dotli-app/`;
-
-// ── Archive Serving ──────────────────────────────────────────
 
 function hasExtension(path: string): boolean {
   const lastSlash = path.lastIndexOf("/");
@@ -26,7 +27,7 @@ function hasExtension(path: string): boolean {
   return lastDot > lastSlash;
 }
 
-// ── IndexedDB archive persistence (pooled connection) ─────────
+// IndexedDB archive persistence (pooled connection).
 
 const ARCHIVE_DB_NAME = "dotli-sw";
 const ARCHIVE_DB_VERSION = 1;
@@ -117,7 +118,7 @@ async function loadArchiveFromDBByDomain(
   }
 }
 
-// ── Archive storage ──────────────────────────────────────────
+// Archive storage.
 
 let archivePacked: ArrayBuffer | null = null;
 let archiveFileIndex: Map<string, { o: number; l: number }> | null = null;
@@ -160,7 +161,7 @@ function getFile(path: string): ArrayBuffer | Uint8Array | undefined {
   return new Uint8Array(archivePacked, entry.o, entry.l);
 }
 
-// ── SW Lifecycle ─────────────────────────────────────────────
+// SW lifecycle.
 
 self.addEventListener("install", () => {
   void self.skipWaiting();
@@ -170,7 +171,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// ── Message Handling ─────────────────────────────────────────
+// Message handling.
 
 self.addEventListener("message", (event: ExtendableMessageEvent) => {
   const data = event.data as { type?: string; [key: string]: unknown } | null;
@@ -198,7 +199,7 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
 
   if (data.type === "SET_ARCHIVE") {
     // Reject malformed payloads loudly instead of ACKing as if it
-    // worked — the sender will loop forever trying to serve archives
+    // worked. The sender will loop forever trying to serve archives
     // from an empty SW if we ACK without applying the payload.
     const packed = data.packed as ArrayBuffer | undefined;
     const idx = data.index as { p: string; o: number; l: number }[] | undefined;
@@ -226,7 +227,7 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
     // before IDB flush would otherwise find an empty archive store and
     // fall through to the network for every sub-resource. Splitting this
     // into two signals (ARCHIVE_INDEXED vs ARCHIVE_PERSISTED) would be
-    // cleaner, but the page today only waits on ARCHIVE_READY — so we
+    // cleaner, but the page today only waits on ARCHIVE_READY, so we
     // gate ARCHIVE_READY on the slower, authoritative step.
     if (
       domain !== undefined &&
@@ -273,8 +274,8 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
       return;
     }
 
-    // No domain/cid supplied — index is live but there's nothing to
-    // persist. ACK immediately; IDB-lookup consumers will miss, which
+    // No domain/cid supplied: index is live but there's nothing to
+    // persist. ACK immediately. IDB-lookup consumers will miss, which
     // is the correct behavior when the caller supplied no key.
     if (source) {
       (source as Client).postMessage({ type: "ARCHIVE_READY" });
@@ -330,7 +331,7 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
   }
 });
 
-// ── Fetch Interception (archive serving) ─────────────────────
+// Fetch interception (archive serving).
 
 self.addEventListener("fetch", (event: FetchEvent) => {
   const url = new URL(event.request.url);
@@ -340,8 +341,8 @@ self.addEventListener("fetch", (event: FetchEvent) => {
 
   // SW infrastructure paths (the SW script itself, dev source,
   // node_modules, Vite virtual modules) are intentionally not served from
-  // the archive — let them reach the network. Note: this excludes well-known
-  // dApp filesystem paths only by accident; future archives that legitimately
+  // the archive. Let them reach the network. This excludes well-known
+  // dApp filesystem paths only by accident. Future archives that legitimately
   // contain `node_modules/` will not be served. Documented for follow-up.
   if (
     url.pathname === BASE ||
@@ -388,15 +389,15 @@ self.addEventListener("fetch", (event: FetchEvent) => {
  * Look up `pathname` in the loaded archive.
  *
  * Return values:
- *   - `Response` — we own this path (either a file hit, or the SPA
+ *   - `Response`: we own this path (either a file hit, or the SPA
  *     `index.html` fallback for a top-level navigation).
- *   - `null` — we don't own it; the caller MUST let the request fall
+ *   - `null`: we don't own it, and the caller MUST let the request fall
  *     through to the network. The sandbox origin hosts BOTH the shell
- *     (`<label>.app.localhost/index.html` + its vite-hashed `/assets/*.js`
+ *     (`<label>.app.localhost/index.html` plus its vite-hashed `/assets/*.js`
  *     and `/assets/*.css`) AND, post-boot, whatever the currently-loaded
  *     dApp archive contains. Returning a 404 for shell asset requests
  *     just because they're not in the dApp archive breaks every refresh
- *     once a previous archive is in memory — Firefox surfaces a 404 on
+ *     once a previous archive is in memory. Firefox surfaces a 404 on
  *     a module import as `NS_ERROR_CORRUPTED_CONTENT`, so the shell's
  *     own bundle fails to load and the page gets stuck on the loader.
  */
@@ -443,7 +444,7 @@ function lookupArchive(
         pathname === `${DOTLI_APP_PREFIX}index.html` ||
         pathname === DOTLI_APP_PREFIX
       ) {
-        // Primary index.html — inject only sandbox checker (no base/prefix rewrite)
+        // Primary index.html: inject only the sandbox checker, no base or prefix rewrite.
         return makePrimaryHtmlResponse(content, mime);
       }
       return makeHtmlResponse(content, mime);
@@ -464,7 +465,7 @@ function lookupArchive(
     });
   }
 
-  // SPA fallback — only for top-level navigations. Other requests fall
+  // SPA fallback, only for top-level navigations. Other requests fall
   // through to the network so shell assets (same origin, not in the
   // archive) reach nginx and load correctly.
   if (requestMode === "navigate") {
@@ -477,7 +478,7 @@ function lookupArchive(
   return null;
 }
 
-/** Inject sandbox checker script into HTML (SW context — inline the script). */
+/** Inject the sandbox checker script into HTML, inlined for the SW context. */
 function injectSandboxScript(html: string): string {
   if (
     (import.meta.env.VITE_SANDBOX_CHECKER as string | undefined) === undefined
@@ -513,8 +514,8 @@ var __wr=false;setTimeout(function(){__wr=true},3000);["injectedWeb3","polkadot"
 }
 
 /**
- * Response for the primary index.html — only sandbox checker injection,
- * no base href or prefix stripping (those are only for sub-pages).
+ * Response for the primary index.html, with only sandbox checker injection
+ * and no base href or prefix stripping (those are only for sub-pages).
  */
 function makePrimaryHtmlResponse(
   content: ArrayBuffer | Uint8Array,

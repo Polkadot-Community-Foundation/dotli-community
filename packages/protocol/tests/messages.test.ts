@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import {
   NETWORK_NAME_TO_SERVICES_CONFIG,

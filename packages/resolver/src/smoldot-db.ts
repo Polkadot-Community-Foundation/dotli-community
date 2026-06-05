@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Smoldot does not auto-persist. We pull each chain's finalized DB via the
 // undocumented `chainHead_unstable_finalizedDatabase` RPC and save to IDB.
 // `tapChain` demuxes our replies from external `getSmProvider` consumers
@@ -108,7 +111,7 @@ function readRaw(key: string): Promise<string | null> {
 // Returns `true` only when the blob was actually written. The
 // `MIN_VALID_DB_BYTES` floor is enforced on BOTH save and load so we never
 // persist a blob that the loader would later reject: a pre-warp-sync capture
-// is just genesis + bootnodes (tiny), while a usable DB carries the `:code`
+// is just genesis and bootnodes (tiny), while a usable DB carries the `:code`
 // runtime blob and is well over the floor. Keeping the gate symmetric avoids
 // wasted writes and a cache that can never warm.
 export async function saveChainDb(

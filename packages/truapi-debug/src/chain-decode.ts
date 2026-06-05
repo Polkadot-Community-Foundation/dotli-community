@@ -1,4 +1,7 @@
-// dot.li — TrUAPI chain message decoder
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// TrUAPI chain message decoder
 //
 // Pure function that takes a TrUAPI payload tag (e.g.
 // `remote_chain_head_body_request`) plus its already-decoded value and
@@ -7,14 +10,13 @@
 // and (for follow receive events) the ChainHeadEvent variant tag.
 //
 // The hook in @novasamatech/host-container delivers payloads in
-// already-decoded form (scale-ts conventions: Hex → hex string,
-// Option → T|undefined, Nullable → T|null, Enum → {tag, value},
-// Result → {success, value}), so this module is a shape-matching
-// walk, not a SCALE decode.
+// already-decoded form (scale-ts conventions: Hex becomes a hex string,
+// Option becomes T|undefined, Nullable becomes T|null, Enum becomes
+// {tag, value}, Result becomes {success, value}), so this module is a
+// shape-matching walk, not a SCALE decode.
 //
-// Reference: packages/host-api/src/protocol/v1/chainInteraction.ts in
-// the triangle-js-sdks repo. The JSON-RPC spec itself lives at
-// https://paritytech.github.io/json-rpc-interface-spec/.
+// Shapes mirror packages/host-api/src/protocol/v1/chainInteraction.ts
+// in the triangle-js-sdks repo.
 
 /** High-level categorisation of a chain message. Direction (request vs
  *  response vs subscription start/receive) is already known from the
@@ -65,7 +67,7 @@ export interface ChainAnnotations {
   genesisHash?: string;
   /** For operation requests: which follow subscription the op targets. */
   followSubscriptionId?: string;
-  /** Operation-level correlation id — set by the node for body/storage/call
+  /** Operation-level correlation id. Set by the node for body/storage/call
    *  starts, echoed in their result events, and reused in continue/stop.
    *  Also the tracking id for transaction broadcast/stop. */
   operationId?: string;
@@ -96,7 +98,7 @@ type ResultValue<T, E> =
  * which wrap each method's payload in a version envelope
  * (`{tag: "v1", value: <inner>}`). The event store already peels the
  * outer method envelope (`{tag: "remote_chain_*", value: <versioned>}`),
- * but the version envelope is still present — we peel it here so the
+ * but the version envelope is still present. We peel it here so the
  * decoder body sees the real shape (Result, ChainHeadEvent, etc.).
  */
 export function decodeChainAnnotations(
@@ -105,7 +107,7 @@ export function decodeChainAnnotations(
 ): ChainAnnotations | null {
   const payload = peelVersion(rawPayload);
   switch (tag) {
-    // ── chainHead.follow subscription ──────────────────────
+    // chainHead.follow subscription
     case "remote_chain_head_follow_start": {
       const p = asObj(payload);
       return {
@@ -125,13 +127,13 @@ export function decodeChainAnnotations(
       };
     }
 
-    // ── chainHead.header ───────────────────────────────────
+    // chainHead.header
     case "remote_chain_head_header_request":
       return opRequest("head-header-request", payload);
     case "remote_chain_head_header_response":
       return simpleResponse("head-header-response", payload);
 
-    // ── chainHead.body / storage / call (operation-starting) ──
+    // chainHead.body / storage / call (operation-starting)
     case "remote_chain_head_body_request":
       return opRequest("head-body-request", payload);
     case "remote_chain_head_body_response":
@@ -147,7 +149,7 @@ export function decodeChainAnnotations(
     case "remote_chain_head_call_response":
       return operationStarterResponse("head-call-response", payload);
 
-    // ── chainHead.unpin / continue / stopOperation ─────────
+    // chainHead.unpin / continue / stopOperation
     case "remote_chain_head_unpin_request":
       return opRequest("head-unpin-request", payload);
     case "remote_chain_head_unpin_response":
@@ -177,7 +179,7 @@ export function decodeChainAnnotations(
     case "remote_chain_head_stop_operation_response":
       return simpleResponse("head-stop-op-response", payload);
 
-    // ── chainSpec.* (payload is the genesisHash string directly) ──
+    // chainSpec.* (payload is the genesisHash string directly)
     case "remote_chain_spec_genesis_hash_request":
       return {
         kind: "spec-genesis-hash-request",
@@ -202,7 +204,7 @@ export function decodeChainAnnotations(
     case "remote_chain_spec_properties_response":
       return simpleResponse("spec-properties-response", payload);
 
-    // ── transaction.broadcast / stop ───────────────────────
+    // transaction.broadcast / stop
     case "remote_chain_transaction_broadcast_request": {
       const p = asObj(payload);
       return {
@@ -212,9 +214,9 @@ export function decodeChainAnnotations(
     }
     case "remote_chain_transaction_broadcast_response": {
       // Result<Option<str>, GenericError>.
-      // Ok(Some(id)) → started with operationId=id
-      // Ok(None)     → limit-reached
-      // Err(e)       → error
+      // Ok(Some(id)) is "started" with operationId=id.
+      // Ok(None) is "limit-reached".
+      // Err(e) is "error".
       const r = payload as ResultValue<string | null, unknown>;
       if (r.success) {
         if (typeof r.value === "string") {
@@ -253,7 +255,7 @@ export function decodeChainAnnotations(
 
 /**
  * Human-readable label for a row, derived from the annotations. The
- * original TrUAPI method tag stays available on the event — this label
+ * original TrUAPI method tag stays available on the event, so this label
  * is for scannable display. Direction is conveyed separately by the
  * row's arrow, so the label focuses on what the call *is*.
  */
@@ -304,8 +306,6 @@ export function formatChainLabel(ann: ChainAnnotations): string {
   }
 }
 
-// ── internal helpers ──────────────────────────────────────
-
 /** Common shape for header/body/storage/call/unpin requests. */
 function opRequest(kind: ChainKind, payload: unknown): ChainAnnotations {
   const p = asObj(payload);
@@ -313,8 +313,8 @@ function opRequest(kind: ChainKind, payload: unknown): ChainAnnotations {
     kind,
     genesisHash: asString(p?.genesisHash),
     followSubscriptionId: asString(p?.followSubscriptionId),
-    // unpin has `hashes` (plural) rather than a single `hash`; we leave
-    // blockHash undefined there — unpin typically covers many blocks and
+    // unpin has `hashes` (plural) rather than a single `hash`. We leave
+    // blockHash undefined there. unpin typically covers many blocks and
     // a single-slot display would misrepresent that.
     blockHash: asString(p?.hash),
   };
@@ -360,7 +360,7 @@ function operationStarterResponse(
   if (inner.tag === "LimitReached") {
     return { kind, outcome: "limit-reached" };
   }
-  // Unknown variant — still note it as ok so we don't swallow the fact
+  // Unknown variant. Still note it as ok so we don't swallow the fact
   // that we decoded a successful response.
   return { kind, outcome: "ok" };
 }
@@ -409,7 +409,7 @@ function extractErrorReason(v: unknown): string | undefined {
     return undefined;
   }
   // `Err()` from @novasamatech/scale wraps struct data in an Error
-  // instance whose payload holds the struct — `.payload.reason` is the
+  // instance whose payload holds the struct, so `.payload.reason` is the
   // canonical location. Top-level `.reason` is kept as a fallback in
   // case a future error shape skips the Error wrapper, and the Error's
   // `.message` is the last resort so we never render "err: ?" when

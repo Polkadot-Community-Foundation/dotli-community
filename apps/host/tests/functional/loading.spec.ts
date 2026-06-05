@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { HOST_ERRORS } from "../../src/errors";
@@ -42,7 +45,7 @@ const READY = `window.parent.postMessage({namespace:"dotli:protocol",kind:"ready
 // Post init-failed AFTER the iframe's load event fires, then retry with
 // exponential backoff until the parent acks via `resetProtocolFrameState` (which
 // blanks the iframe). A single fixed delay races the parent's `ensureProtocolFrame`
-// resolver-registration window; retries cover the worst case where the first
+// resolver-registration window. Retries cover the worst case where the first
 // post lands before any waiter is queued.
 const initFailed = (message: string): string => `
   window.addEventListener("load", function() {

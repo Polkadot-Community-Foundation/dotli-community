@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Snapshot of the currently loaded product's manifest values, exposed so
 // surfaces outside the resolver can read what the host shell pulled
 // without re-issuing the network reads.

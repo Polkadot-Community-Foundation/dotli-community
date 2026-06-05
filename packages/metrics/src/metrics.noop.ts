@@ -1,6 +1,9 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Prod no-op shim for `@dotli/metrics/metrics`, aliased in
 // `apps/*/vite.config.ts`. Return contracts must match `metrics.ts`:
-// `span(name, fn)` returns `fn(undefined)` (sync and async); `timer`
+// `span(name, fn)` returns `fn(undefined)` (sync and async), and `timer`
 // returns a stop fn.
 
 type SpanArg =

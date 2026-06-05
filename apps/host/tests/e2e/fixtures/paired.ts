@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { test as base, type Page, type Frame } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { STATE_FILE } from "./paths";
@@ -12,11 +15,6 @@ const HOST = process.env.E2E_HOST ?? "host-playground";
 const USER_BADGE_TIMEOUT_MS = 15_000;
 const PRODUCT_IFRAME_TIMEOUT_MS = 20_000;
 
-/**
- * Wait until the host-playground product iframe has mounted and rendered.
- * Identified by its `<h1>` heading rather than URL because the frame URL
- * lives on a per-CID subdomain that varies between builds.
- */
 /**
  * Background poller that dismisses the host's "Permission Request" modal
  * by clicking its "Allow" button as soon as one appears. Idempotent: a
@@ -53,6 +51,11 @@ function startAutoAllow(page: Page): () => void {
   };
 }
 
+/**
+ * Wait until the host-playground product iframe has mounted and rendered.
+ * Identified by its `<h1>` heading rather than URL because the frame URL
+ * lives on a per-CID subdomain that varies between builds.
+ */
 async function waitForHostPlaygroundFrame(
   page: Page,
   timeoutMs: number,
@@ -81,7 +84,7 @@ async function waitForHostPlaygroundFrame(
  * Worker-scoped fixtures: open a fresh page that inherits the
  * once-per-run bot pairing via `storageState` written by globalSetup.
  * No QR scan, no bot pair API call here. If the badge doesn't appear
- * inside 15 s the worker fails fast — the bot is either down or the
+ * inside 15 s the worker fails fast. The bot is either down or the
  * host can't restore auth from the saved state.
  *
  * State sharing: every worker reads the same `.auth/state.json`, so all
@@ -107,7 +110,7 @@ export const test = base.extend<
       const ctx = await browser.newContext({ storageState: STATE_FILE });
       const page = await ctx.newPage();
 
-      // Surface host + iframe console noise filtered to dotli internals so
+      // Surface host and iframe console noise filtered to dotli internals so
       // we can diagnose SDK calls that never resolve without flooding logs.
       page.on("console", (msg) => {
         const text = msg.text();
@@ -145,7 +148,7 @@ export const test = base.extend<
         }
       });
 
-      // WebSocket frames — statement_submit / broadcast traffic for
+      // WebSocket frames: statement_submit / broadcast traffic for
       // diagnosing the signing tests. Filtered to avoid chain-head spam.
       try {
         const cdp = await ctx.newCDPSession(page);

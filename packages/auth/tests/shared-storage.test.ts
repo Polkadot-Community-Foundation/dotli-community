@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSharedAuthStorageAdapter } from "@dotli/auth/shared-storage";
 import {
@@ -58,7 +61,7 @@ describe("createSharedAuthStorageAdapter", () => {
     await adapter.write("SsoSessions", "next-value");
     // Wait for the detached read-back chain scheduled by `.map()` to land
     // its result in the subscriber. Polling on observable state is
-    // deterministic across event-loop schedulers; a fixed setTimeout(0)
+    // deterministic across event-loop schedulers. A fixed setTimeout(0)
     // race-loses on slower JS engines.
     await vi.waitFor(() => expect(seen).toContain("next-value"));
     await adapter.clear("SsoSessions");
@@ -86,7 +89,7 @@ describe("createSharedAuthStorageAdapter", () => {
     const adapter = createSharedAuthStorageAdapter("dot.li");
 
     // No protocol-level subscription should happen until the adapter's
-    // subscribe() is called — we don't want to warm up the host iframe for
+    // subscribe() is called. We don't want to warm up the host iframe for
     // read-only callers.
     expect(subscribeSharedAuthStorage).not.toHaveBeenCalled();
 
@@ -97,7 +100,7 @@ describe("createSharedAuthStorageAdapter", () => {
       /* noop */
     });
 
-    // The adapter should only subscribe to the protocol client once — it
+    // The adapter should only subscribe to the protocol client once. It
     // multiplexes the single cross-tab listener across all key subscribers.
     expect(subscribeSharedAuthStorage).toHaveBeenCalledTimes(1);
   });
@@ -148,7 +151,7 @@ describe("createSharedAuthStorageAdapter", () => {
     if (relay === null) {
       throw new Error("relay not captured");
     }
-    // A broadcast scoped to a different root domain — must not fire
+    // A broadcast scoped to a different root domain must not fire
     (relay as SharedAuthStorageListener)({
       siteId: "paseo.li",
       key: "SsoSessions",

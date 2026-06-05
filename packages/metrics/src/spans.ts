@@ -1,8 +1,11 @@
-// Pre-defined metric names
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Predefined metric names.
 //
-// Metric name constants so instrumentation is consistent
-// and discoverable. All names are prefixed with "dotli." automatically
-// by the metrics API — these are the suffixes.
+// Metric name constants keep instrumentation consistent and discoverable. The
+// metrics API prefixes all names with "dotli." automatically, so these are the
+// bare suffixes.
 
 /** Time to create smoldot instance (start() or startFromWorker()) */
 export const SMOLDOT_CREATE = "smoldot.create";
@@ -25,11 +28,9 @@ export const SMOLDOT_FINALIZED_BLOCK = "smoldot.finalized_block";
 /** Total presync duration (create + relay + asset hub + finalized block) */
 export const SMOLDOT_PRESYNC = "smoldot.presync";
 
-/**
- * Presync outcome — same series as `SMOLDOT_PRESYNC`. Callers emit
- * `m.count(SMOLDOT_PRESYNC, { outcome: "error", reason })` instead of a
- * parallel `_FAILURE` name so dashboards can chart one line per event.
- */
+// Presync failures reuse the `SMOLDOT_PRESYNC` series. Callers emit
+// `m.count(SMOLDOT_PRESYNC, { outcome: "error", reason })` instead of a
+// parallel `_FAILURE` name so dashboards can chart one line per event.
 
 /** Total protocol iframe init (mode detection + engine start) */
 export const PROTOCOL_INIT = "protocol.init";
@@ -56,10 +57,10 @@ export const RESOLVE_STORAGE_READ = "resolve.storage_read";
  */
 export const RESOLVE_MANIFEST_READ = "resolve.manifest_read";
 
-/** CID cache hit — page loads from cache (fast path) */
+/** CID cache hit, page loads from cache (fast path). */
 export const CACHE_HIT = "cache.hit";
 
-/** CID cache miss — full resolution required (slow path) */
+/** CID cache miss, full resolution required (slow path). */
 export const CACHE_MISS = "cache.miss";
 
 /** Time to fetch content via P2P. Timeouts emit `{ outcome: "timeout" }`. */
@@ -74,7 +75,7 @@ export const CONTENT_FETCH = "content.fetch";
 /** Fast path: CID cache hit to content rendered */
 export const E2E_FAST = "e2e.fast_path";
 
-/** Slow path: CID cache miss → resolve → fetch → render */
+/** Slow path: CID cache miss, then resolve, fetch, and render. */
 export const E2E_SLOW = "e2e.slow_path";
 
 /** Bootnode WebSocket connection failure */
@@ -82,7 +83,7 @@ export const BOOTNODE_ERROR = "bootnode.error";
 
 /**
  * One `bitswap_v1_get` round-trip via the protocol bridge.
- * Tag `outcome ∈ {ok, retry, backoff, not-found, invalid-cid, timeout}`.
+ * Tag `outcome` with one of `ok, retry, backoff, not-found, invalid-cid, timeout`.
  */
 export const CONTENT_BITSWAP_RPC = "content.bitswap_rpc";
 
@@ -104,7 +105,7 @@ export const CACHE_REVALIDATE_MATCH = "cache.revalidate_match";
 /** SWR revalidate: fresh CID differs, user gets a reload notice. */
 export const CACHE_REVALIDATE_UPDATE = "cache.revalidate_update";
 
-/** SWR revalidate: on-chain pointer cleared, cache evicted and page reloaded. */
+/** SWR revalidate: network pointer cleared, cache evicted and page reloaded. */
 export const CACHE_REVALIDATE_CLEARED = "cache.revalidate_cleared";
 
 /** SWR revalidate failed (resolver threw). Cache entry left intact. */

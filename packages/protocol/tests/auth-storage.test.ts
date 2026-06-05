@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { describe, expect, it } from "vitest";
 import { SITE_ID } from "@dotli/config/config";
 import {
@@ -38,7 +41,7 @@ describe("shared auth storage helpers", () => {
   it("accepts only the current shell's SITE_ID", () => {
     // In the vitest happy-dom environment, `self.location.hostname` is
     // "localhost", so `SITE_ID` is "local.li". The allowlist is runtime-
-    // driven, not a hard-coded list — this guarantees a host running on
+    // driven, not a hard-coded list. This guarantees a host running on
     // `host.paseoli.dev` would accept `"paseoli.dev"` and reject `"dot.li"`,
     // and vice versa.
     expect(SITE_ID).toBe("local.li");
@@ -46,9 +49,9 @@ describe("shared auth storage helpers", () => {
   });
 
   it("rejects siteIds belonging to unrelated root domains", () => {
-    // These would be `true` under the previous hard-coded allowlist — they
-    // must all be `false` now because cross-root-domain session sharing is
-    // explicitly disallowed (dot.li ↔ paseo.li ↔ paseoli.dev).
+    // A hard-coded allowlist would treat these as `true`. They must all be
+    // `false` because cross-root-domain session sharing is explicitly
+    // disallowed across dot.li, paseo.li, and paseoli.dev.
     expect(isSharedAuthSiteId("dot.li")).toBe(false);
     expect(isSharedAuthSiteId("paseo.li")).toBe(false);
     expect(isSharedAuthSiteId("paseoli.dev")).toBe(false);

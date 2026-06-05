@@ -1,6 +1,9 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Prod no-op shim for `@sentry/browser`, aliased in
 // `apps/*/vite.config.ts`. Only mirrors what app/package code calls
-// directly — `sentry.ts`'s internal calls are unreachable because that
+// directly. The internal calls in `sentry.ts` are unreachable because that
 // file is itself aliased to `sentry.noop.ts` in prod.
 
 const noop = (): void => {

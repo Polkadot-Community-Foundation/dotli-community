@@ -1,6 +1,9 @@
-// dot.li — Shared mode-preferences bootstrap
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li Shared mode-preferences bootstrap
 //
-// Mode preferences (chain backend + cache settings) live behind a
+// Mode preferences (chain backend and cache settings) live behind a
 // single source of truth that every `*.<BASE_DOMAIN>` subdomain can
 // hit. The transport differs by environment:
 //
@@ -11,10 +14,10 @@
 //     same backing store.
 //   * Localhost dev: `localhost` is on the Public Suffix List, so
 //     every `*.localhost` subdomain is its own site and browsers
-//     partition the iframe's localStorage per embedder — writes from
+//     partition the iframe's localStorage per embedder. Writes from
 //     `browse.localhost` aren't visible to the iframe embedded under
 //     `host-playground.localhost`. The preview server exposes a
-//     `/__dotli-mode/<key>` HTTP store that all subdomains hit; that
+//     `/__dotli-mode/<key>` HTTP store that all subdomains hit. That
 //     bypasses partitioning entirely.
 //
 // The bootstrap detects which channel applies, hydrates an in-memory
@@ -114,7 +117,7 @@ export async function bootstrapSharedMode(): Promise<void> {
 
   // Run legacy migration against `localStorage` *before* we swap the
   // adapter. After the swap, the cache-only adapter only sees the two
-  // SHARED_KEYS — so `dotli:mode` / `dotli:content-backend` would be
+  // SHARED_KEYS, so `dotli:mode` and `dotli:content-backend` would be
   // invisible to `migrateLegacy`, and a user whose only prior signal was
   // a legacy key would silently get the default backend.
   migrateLegacyOn(localStorageAdapter);
@@ -135,9 +138,9 @@ export async function bootstrapSharedMode(): Promise<void> {
     SHARED_KEYS.map((key) => [key, localStorageAdapter.getItem(key)]),
   );
 
-  // On unreachable shared store (preview down / iframe blocked) we leave
+  // On unreachable shared store (preview down or iframe blocked) we leave
   // the cache as already hydrated from localStorage and never install
-  // the cache-only adapter — the host shell keeps booting on the
+  // the cache-only adapter. The host shell keeps booting on the
   // per-origin path.
   let sharedReads: readonly (string | null)[];
   try {
@@ -169,9 +172,9 @@ export async function bootstrapSharedMode(): Promise<void> {
     // Localhost dev prefers the per-origin seed over the shared store.
     // The browser already partitions storage per `*.localhost` (PSL), so
     // the shared HTTP store is a wire-level simulation, not a physical
-    // fact — and treating localStorage as authoritative is what isolates
+    // fact. Treating localStorage as authoritative is what isolates
     // parallel Playwright workers from each other's bootstrap writes.
-    // Production keeps shared > local below (real eTLD+1 sharing).
+    // Production keeps shared over local below (real eTLD+1 sharing).
     if (isLocalhost && seed !== null) {
       if (shared !== seed) {
         mirrorUp(key, seed, "Localhost mirror-up");
@@ -231,7 +234,7 @@ export async function bootstrapSharedMode(): Promise<void> {
   // before we swapped the adapter. If the shared store had a different
   // backend, force a fresh iframe so chain operations don't run against
   // a worker mode the user didn't pick. (Only relevant on the iframe
-  // path — the dev HTTP channel doesn't load an iframe during reads.)
+  // path. The dev HTTP channel doesn't load an iframe during reads.)
   if (!isLocalhost && getBackend() !== localBackendBeforeBootstrap) {
     resetProtocolFrame();
   }

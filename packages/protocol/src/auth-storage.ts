@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { BASE_DOMAIN, SITE_ID, type SiteId } from "@dotli/config/config";
 import type { ProtocolRequestMethod } from "./messages";
 
@@ -14,16 +17,16 @@ export type SharedModeRequestMethod =
 
 export const SHARED_AUTH_SESSION_KEY = "SsoSessions";
 
-// SCALE-encoded empty `Vec<Session>` from `@novasamatech/host-papp` — a single
+// SCALE-encoded empty `Vec<Session>` from `@novasamatech/host-papp`, a single
 // length byte of 0. If host-papp ever changes the session list encoding (e.g.
 // wraps it in an `Option<>`), this sentinel must be updated or the probe will
 // return true for empty payloads and trigger `ensureAuth()` on every load.
 const EMPTY_SHARED_AUTH_SESSION_LIST = "0x00";
 
-// Both the shared-auth and shared-mode stores accept the same key shape —
-// an alphanumeric token with dots, underscores, colons and dashes. Keep
-// the regex shared so the validation contract is one thing; if a future
-// store needs a different shape, give it its own constant.
+// Both the shared-auth and shared-mode stores accept the same key shape, an
+// alphanumeric token with dots, underscores, colons and dashes. Keep the
+// regex shared so the validation contract is one thing. A future store
+// needing a different shape should get its own constant.
 const SHARED_STORAGE_KEY_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const SHARED_AUTH_METHODS = new Set<ProtocolRequestMethod>([
   "authHasSession",
@@ -53,13 +56,13 @@ export function isSharedModeRequestMethod(
  * Shared auth sessions are scoped to the registrable root domain the shell is
  * running on. Each host iframe only accepts requests whose siteId equals its
  * own `SITE_ID`, so:
- *   - `host.dot.li`         → only siteId `"dot.li"`
- *   - `host.paseo.li`       → only siteId `"paseo.li"`
- *   - `host.paseoli.dev`    → only siteId `"paseoli.dev"`
- *   - `host.localhost:5173` → only siteId `"local.li"`
+ *   - `host.dot.li` accepts only siteId `"dot.li"`
+ *   - `host.paseo.li` accepts only siteId `"paseo.li"`
+ *   - `host.paseoli.dev` accepts only siteId `"paseoli.dev"`
+ *   - `host.localhost:5173` accepts only siteId `"local.li"`
  *
  * This guarantees sessions are never shared across unrelated root domains
- * (e.g. dot.li ↔ paseo.li) and trivially tolerates new deployment domains
+ * (e.g. dot.li and paseo.li) and trivially tolerates new deployment domains
  * without hard-coding an allowlist.
  */
 export function isSharedAuthSiteId(value: string): value is SiteId {
@@ -68,7 +71,7 @@ export function isSharedAuthSiteId(value: string): value is SiteId {
 
 /**
  * Validate a caller-supplied shared-auth key (e.g. `SsoSessions`). This is
- * the *raw* key — the namespaced form produced by `buildSharedAuthStorageKey`
+ * the *raw* key. The namespaced form produced by `buildSharedAuthStorageKey`
  * is for use against `localStorage`, not for this check.
  */
 export function isValidSharedAuthKey(key: string): boolean {
@@ -81,7 +84,7 @@ export function buildSharedAuthStorageKey(siteId: SiteId, key: string): string {
 
 /**
  * Shared mode-storage keys use a separate prefix from auth so the two stores
- * cannot collide. The validation pattern is identical — caller-supplied keys
+ * cannot collide. The validation pattern is identical. Caller-supplied keys
  * are caller-controlled but always namespaced under the prefix here.
  */
 export function buildSharedModeStorageKey(siteId: SiteId, key: string): string {

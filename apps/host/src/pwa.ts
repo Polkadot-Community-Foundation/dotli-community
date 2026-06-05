@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // PWA registration for the host shell.
 //
 // Uses workbox-window so updates are prompted, not auto-applied:
@@ -7,7 +10,7 @@
 //      once the new SW takes control
 //   4. Poll for updates every 15 min and whenever a hidden tab returns
 //
-// Scope is the host origin only — the protocol iframe (host.dot.li) and
+// Scope is the host origin only. The protocol iframe (host.dot.li) and
 // the app iframe (*.app.dot.li) are cross-origin and untouched.
 
 import { Workbox } from "workbox-window";

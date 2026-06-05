@@ -1,10 +1,13 @@
 #!/usr/bin/env bun
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //
 // Unified preview server for perf tests.
 // Routes by hostname to serve all builds from a single port:
-//   host.localhost:PORT   →  dist/protocol/
-//   *.app.localhost:PORT  →  dist/app/
-//   *.localhost:PORT      →  dist/host/
+//   host.localhost:PORT   ->  dist/protocol/
+//   *.app.localhost:PORT  ->  dist/app/
+//   *.localhost:PORT      ->  dist/host/
 //
 // This mirrors production nginx routing where host.dot.li, *.app.dot.li,
 // and *.dot.li are served from separate builds.
@@ -19,7 +22,7 @@ const HOST_DIR = join(ROOT, "apps/host/dist");
 const APP_DIR = join(ROOT, "apps/sandbox/dist");
 const PROTOCOL_DIR = join(ROOT, "apps/protocol/dist");
 
-// Verify builds exist — warn for optional builds, exit for required ones
+// Verify builds exist. Warn for optional builds, exit for required ones.
 const REQUIRED_BUILDS = ["Host", "App (sandbox)"] as const;
 for (const [label, dir] of [
   ["Host", HOST_DIR],
@@ -90,7 +93,7 @@ function serveFile(filePath: string, coep: boolean): Response | null {
 // its own site (the PSL lists `localhost`), so Chrome partitions the
 // iframe's localStorage per embedder and cross-subdomain sharing
 // breaks. This in-memory map gives the host shell a uniform store the
-// preview can hit from any subdomain — no PSL, no partitioning.
+// preview can hit from any subdomain, with no PSL and no partitioning.
 const modeStore = new Map<string, string>();
 const MODE_SYNC_PREFIX = "/__dotli-mode/";
 const MODE_SYNC_CORS: Record<string, string> = {
@@ -110,10 +113,10 @@ const MODE_SYNC_CORS: Record<string, string> = {
   "Cache-Control": "no-store",
 };
 
-// Both directions speak raw text; "no value" is HTTP 204 (not a JSON
-// `null` body, which would force GET to disagree with PUT on encoding).
-// Bare URL (`/__dotli-mode/`) DELETE wipes everything — the per-test
-// reset used by Playwright fixtures.
+// Both directions speak raw text. "No value" is HTTP 204, not a JSON
+// `null` body, which would force GET to disagree with PUT on encoding.
+// Bare URL (`/__dotli-mode/`) DELETE wipes everything. This is the
+// per-test reset used by Playwright fixtures.
 async function handleModeSync(req: Request, key: string): Promise<Response> {
   const ok = (body: BodyInit | null, contentType?: string): Response => {
     const headers: Record<string, string> = { ...MODE_SYNC_CORS };
@@ -173,9 +176,9 @@ Bun.serve({
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === "/") pathname = `/${fallback}`;
 
-    // Mirror nginx: COEP applies to the app + protocol builds (iframeable
+    // Mirror nginx: COEP applies to the app and protocol builds (iframeable
     // origins) and to the /__preview location on the host build, but not
-    // to the rest of the host build — otherwise the /localhost:<port>
+    // to the rest of the host build. Otherwise the /localhost:<port>
     // proxy iframe gets blocked.
     const coep = isApp || isProtocol || pathname.startsWith("/__preview");
 

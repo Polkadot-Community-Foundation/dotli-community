@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type {
   JsonRpcConnection,
   JsonRpcMessage,
@@ -68,7 +71,7 @@ interface ReadyWaiter {
 let pendingReadyResolvers: ReadyWaiter[] = [];
 
 /** Sub-mode to pass to the protocol iframe. `null` means the iframe is
- *  only needed for shared auth — no chain provider at all.
+ *  only needed for shared auth, with no chain provider at all.
  *
  *  `"shared-worker"` and `"direct"` are P2P (smoldot-backed) submodes.
  *  `"rpc"` is the gateway submode: chain calls are bridged over trusted
@@ -90,7 +93,7 @@ function backendToSubMode(backend: Backend): ProtocolSubMode {
 }
 
 /** When true, ask the protocol iframe to purge its IDB caches before
- *  starting up — i.e. every cold start from scratch, no warm-start state. */
+ *  starting up, i.e. every cold start from scratch, no warm-start state. */
 let protocolSkipWorkerCache = false;
 
 /**
@@ -127,7 +130,7 @@ function resolveProtocolReady(): void {
 }
 
 /**
- * Tear down the cached iframe + ready state so the next request creates
+ * Tear down the cached iframe and ready state so the next request creates
  * a fresh one. Exposed for callers (e.g. the shared-mode bootstrap) that
  * may discover after the initial iframe load that the chosen sub-mode
  * was wrong and need a clean restart before chain operations run.
@@ -141,9 +144,9 @@ function resolveProtocolReady(): void {
  *     than waiting for `IFRAME_READY_TIMEOUT_MS`.
  *   - In `shared-worker` mode, removing the iframe drops its
  *     `SharedWorker` port too. The SharedWorker itself stays alive (it's
- *     shared across tabs), but this tab's connection cycles — its
- *     pre-sync progress is preserved on the worker side, but the local
- *     `port` is gone and the next iframe load reopens a fresh one.
+ *     shared across tabs), but this tab's connection cycles. Its pre-sync
+ *     progress is preserved on the worker side, while the local `port` is
+ *     gone and the next iframe load reopens a fresh one.
  */
 export function resetProtocolFrame(): void {
   resetProtocolFrameState();
@@ -156,7 +159,7 @@ function resetProtocolFrameState(reason?: Error): void {
   protocolReadyPromise = null;
   protocolReady = false;
   // Reject any callers blocked on `waitForProtocolReady()` before we drop the
-  // resolvers — otherwise their promises would hang until the 120s timeout.
+  // resolvers. Otherwise their promises would hang until the 120s timeout.
   const orphaned = pendingReadyResolvers;
   pendingReadyResolvers = [];
   if (orphaned.length > 0) {
@@ -214,7 +217,7 @@ function bindMessageListener(): void {
       }
       case "fatal":
       case "init-failed": {
-        // Smoldot (or the protocol iframe) has died — either crashed
+        // Smoldot (or the protocol iframe) has died, either crashed
         // mid-session (`fatal`) or failed to come up at all
         // (`init-failed`). Either way every in-flight request is
         // orphaned: the chain is gone, nothing will ever respond.
@@ -234,14 +237,14 @@ function bindMessageListener(): void {
         }
 
         // Route through the same reset path used by iframe load failures
-        // so that callers blocked on `waitForProtocolReady()`
-        // (`pendingReadyResolvers`) are also rejected immediately —
-        // previously they'd hang until `IFRAME_READY_TIMEOUT_MS` (120 s)
-        // even though the chain was already known dead. This also clears
-        // the iframe, `hostFramePromise`, and `protocolReadyPromise` so
-        // the next `ensureProtocolFrame()` call can attempt a clean
-        // re-boot (e.g. after the user switches settings) instead of
-        // being stuck on a poisoned cached rejection.
+        // so callers blocked on `waitForProtocolReady()`
+        // (`pendingReadyResolvers`) are rejected immediately rather than
+        // hanging until `IFRAME_READY_TIMEOUT_MS` even though the chain is
+        // already known dead. This also clears the iframe,
+        // `hostFramePromise`, and `protocolReadyPromise` so the next
+        // `ensureProtocolFrame()` call can attempt a clean re-boot (e.g.
+        // after the user switches settings) instead of being stuck on a
+        // poisoned cached rejection.
         resetProtocolFrameState(err);
         return;
       }
@@ -253,7 +256,7 @@ function bindMessageListener(): void {
           );
           return;
         }
-        // Envelope ships `message` as a string; the provider contract
+        // Envelope ships `message` as a string. The provider contract
         // wants the consumer to receive a parsed `JsonRpcMessage`.
         let parsed: JsonRpcMessage;
         try {
@@ -312,10 +315,10 @@ function createRequestId(): string {
 
 const IFRAME_LOAD_TIMEOUT_MS = 30_000;
 // The iframe signals "ready" only after the SharedWorker pre-syncs the
-// chain — must exceed `TIMEOUTS.SHARED_WORKER_READY` so the outer wait
+// chain. This must exceed `TIMEOUTS.SHARED_WORKER_READY` so the outer wait
 // doesn't race the inner presync.
 const IFRAME_READY_TIMEOUT_MS = 240_000;
-// NO automatic retries. The user picked this protocol path; if the iframe
+// NO automatic retries. The user picked this protocol path. If the iframe
 // load fails the cause must surface immediately so the user (or a
 // higher-level UI affordance) can decide whether to retry.
 
@@ -475,10 +478,10 @@ export async function ensureProtocolFrame(): Promise<void> {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-// Methods whose completion time depends on chain sync / user patience. No
-// per-request timeout — a smoldot panic emits a `fatal` envelope that
+// Methods whose completion time depends on chain sync or user patience.
+// No per-request timeout. A smoldot panic emits a `fatal` envelope that
 // rejects pending requests, and the user can abandon via the "Change
-// settings" affordance. Waiting longer than 5 min is fine; silently
+// settings" affordance. Waiting longer than 5 min is fine. Silently
 // killing the request is not.
 const UNTIMED_METHODS: ReadonlySet<ProtocolRequestMethod> =
   new Set<ProtocolRequestMethod>(["warmup"]);
@@ -665,7 +668,7 @@ export async function clearSharedModeStorage(
  *
  * Writes and clears performed by *sibling tabs* of the same root domain (e.g.
  * another `*.dot.li` tab) arrive here as notifications. The originating tab
- * does NOT receive its own writes via this channel — it already emits to local
+ * does NOT receive its own writes via this channel. It already emits to local
  * listeners inline when its own `write`/`clear` resolves.
  *
  * Ensures the host iframe is created so it can relay `BroadcastChannel`
@@ -676,7 +679,7 @@ export function subscribeSharedAuthStorage(
 ): () => void {
   sharedAuthListeners.add(listener);
   // Best-effort iframe warm-up so the relay path is live. We intentionally
-  // don't await or surface errors — the caller's subscribe contract is
+  // don't await or surface errors. The caller's subscribe contract is
   // synchronous, and the iframe will be lazily (re)created on the next
   // explicit request if this warm-up fails.
   void ensureHostFrame().catch((error: unknown) => {
@@ -695,7 +698,7 @@ export function isRemoteChainSupported(genesisHash: string): boolean {
 }
 
 /**
- * Notification-style requests (no `id`) get `null` — nothing to respond to.
+ * Notification-style requests (no `id`) get `null`, nothing to respond to.
  */
 function buildJsonRpcError(
   request: JsonRpcRequest,
@@ -741,7 +744,7 @@ export function createRemoteChainProvider(
         remote.pendingMessages = [];
       })
       .catch((error: unknown) => {
-        // Connection failed — send JSON-RPC error responses for all
+        // Connection failed. Send JSON-RPC error responses for all
         // pending messages so polkadot-api's client knows the connection
         // died instead of hanging on "Not connected" forever.
         const reason = serializeError(error);

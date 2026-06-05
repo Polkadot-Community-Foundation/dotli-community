@@ -1,6 +1,7 @@
-// IPFS gateway utilities
-//
-// Same API as polkadot-bulletin-chain/console-ui/src/lib/ipfs.ts
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// IPFS gateway utilities.
 
 import { getActiveServicesConfig } from "@dotli/config/network";
 

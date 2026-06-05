@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Raw chainHead-backed contract-storage API.
 //
 // Reads a Revive contract slot via direct `chainHead_v1_storage` queries,

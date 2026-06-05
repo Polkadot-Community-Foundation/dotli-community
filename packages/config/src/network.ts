@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Network Configuration
 
 export const NetworkName = {
@@ -185,9 +188,9 @@ export function getNetwork(): Network {
     const computed = defaultNetwork();
     localStorage.setItem(NETWORK_KEY, computed);
     return computed;
-    // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable (private mode, quota, disabled cookies). Non-fatal by design: readers fall back to defaults, writers drop silently. No metric — noisy on every page load.
+    // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable (private mode, quota, disabled cookies). Non-fatal by design: readers fall back to defaults, writers drop silently. No metric, noisy on every page load.
   } catch {
-    /* localStorage unavailable — intentionally non-fatal. */
+    /* localStorage unavailable. Intentionally non-fatal. */
   }
   return defaultNetwork();
 }

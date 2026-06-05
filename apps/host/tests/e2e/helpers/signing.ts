@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { expect, type Page, type Frame, type Locator } from "@playwright/test";
 
 type PageLike = Page | Frame;
@@ -5,7 +8,7 @@ type PageLike = Page | Frame;
 /**
  * Click run-<testId>, click through dot.li's host-side dialogs (Allow/Sign),
  * wait for the log entry to resolve. The bot signs automatically once the
- * SignRequest hits the Statement Store — no per-tx approval flow needed.
+ * SignRequest hits the Statement Store, so no per-tx approval flow is needed.
  */
 export async function runWebSignedTest(
   hostPage: Page,
@@ -44,7 +47,7 @@ export async function runWebSignedTest(
     timeoutMs,
   );
   if (result === "error") {
-    // On failure, dump the visible buttons on the host page — invaluable for
+    // On failure, dump the visible buttons on the host page. Invaluable for
     // diagnosing modal selector mismatches when the bot signs but Playwright
     // can't find the Allow/Sign button to click.
     const visibleButtons = await hostPage
@@ -90,7 +93,7 @@ async function clickHostDialogs(
   while (Date.now() < deadline) {
     if (Date.now() - lastSeenAt > idleStopMs && seen.size > 0) {
       // We've handled at least one dialog and nothing new has shown for a
-      // while — assume the flow has moved past the modal phase.
+      // while, so assume the flow has moved past the modal phase.
       return;
     }
 

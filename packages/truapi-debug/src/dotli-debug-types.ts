@@ -1,13 +1,16 @@
-// dot.li — dotli-internal debug events
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dotli-internal debug events
 //
 // Events emitted by dotli host-side logic that is independent of the
 // TrUAPI transport: boot orchestration, resolver phases, render +
 // bridge-setup lifecycles, and backend failover decisions. These
 // complement the host-papp SSO/session events (which come from the
-// SDK) and the TrUAPI host↔product message events (from
+// SDK) and the TrUAPI host-to-product message events (from
 // `@novasamatech/host-container`).
 //
-// Events are point-in-time OR paired start/end — the consumer decides
+// Events are point-in-time OR paired start/end. The consumer decides
 // rendering: multi-event flows (same `flowId`) become boxes, single-
 // event flows become pills.
 
@@ -29,7 +32,7 @@ export type DotliDebugEvent =
  *  product to finish loading and start talking over the TrUAPI bridge.
  *  Typical "host is silent for 15 seconds" windows are actually the
  *  sandbox fetching the CID's archive from the bulletin chain and
- *  staging it in the service worker — fully invisible from the host
+ *  staging it in the service worker, fully invisible from the host
  *  unless these events are surfaced. */
 export type SandboxEvent =
   | {
@@ -186,7 +189,7 @@ export type MainEvent =
       flowId: string;
       timestamp: number;
       payload: {
-        /** Seconds since the monitor started — useful for visualising
+        /** Seconds since the monitor started. Useful for visualising
          *  "we got this far without stalling". */
         uptimeSec: number;
       };
@@ -280,7 +283,7 @@ export type BootEvent =
       };
     };
 
-/** Dot-name resolution — covers both smoldot (P2P) and RPC paths. */
+/** Dot-name resolution. Covers both smoldot (P2P) and RPC paths. */
 export type ResolveEvent =
   | {
       layer: "resolve";

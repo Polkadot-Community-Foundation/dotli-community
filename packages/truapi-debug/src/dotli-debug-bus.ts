@@ -1,4 +1,7 @@
-// dot.li — dotli-internal debug event bus
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dotli-internal debug event bus
 //
 // Module-global pub/sub for boot / resolve / render / bridge / failover
 // events. Mirrors the lazy-subscription pattern used by
@@ -9,7 +12,7 @@
 //
 // Runtime gate: the bus stays `null` until `enableDotliDebugBuffering()`
 // flips it on. That call is made by `resolveTruapiDebugMode()` in
-// `apps/host/src/main.ts` when the panel is going to mount — either
+// `apps/host/src/main.ts` when the panel is going to mount, either
 // because the user opted in (`?debug=true` / sessionStorage) or
 // because the build flag `VITE_APP_DEBUG=true` auto-enables it in
 // dev environments. Before that point every emit/subscribe
@@ -29,7 +32,7 @@ let listenerCount = 0;
 
 /**
  * Early-event buffer. The debug panel is dynamically imported from
- * `apps/host/src/main.ts` and takes tens to hundreds of ms to load —
+ * `apps/host/src/main.ts` and takes tens to hundreds of ms to load,
  * during which the boot-phase emit sites fire. Without buffering,
  * those events are dropped, producing the "sometimes I see more boot
  * events than other times" flake.
@@ -38,7 +41,7 @@ let listenerCount = 0;
  * explicitly via `enableDotliDebugBuffering()` (called early by
  * `resolveTruapiDebugMode()` in main.ts), events are retained until
  * the first subscriber attaches, then replayed and buffering is
- * switched off. One-shot — subsequent unsub/resub cycles don't
+ * switched off. One-shot. Subsequent unsub/resub cycles don't
  * accumulate.
  */
 const BUFFER_MAX = 512;
@@ -51,7 +54,7 @@ function noopUnsubscribe(): void {
 
 /**
  * Opt into retaining events emitted before the first subscriber
- * attaches. Call this as early as possible — ideally right after the
+ * attaches. Call this as early as possible, ideally right after the
  * decision to enable the debug panel, before any emit site runs.
  */
 export function enableDotliDebugBuffering(): void {

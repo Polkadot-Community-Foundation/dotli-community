@@ -1,4 +1,7 @@
-// dot.li — TrUAPI timeline layout engine
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// TrUAPI timeline layout engine
 //
 // Pure function that takes the visible event list and produces a
 // geometry description: rails (chainHead follow subscriptions), boxes
@@ -12,7 +15,7 @@
 //      transport-level id (request+response, or subscription start+
 //      receives+stop).
 //   2. chainHead follow subscriptions become rails, ordered per
-//      (productId, genesisHash) — the Nth follow-start for a pair
+//      (productId, genesisHash). The Nth follow-start for a pair
 //      corresponds to synthetic id `follow_N` produced by the
 //      SDK's papiProvider.
 //   3. chainHead operations (body/storage/call) correlate to their
@@ -35,9 +38,7 @@ import type {
   StoredTruapiEvent,
 } from "./event-store.ts";
 
-// ── Visual constants ─────────────────────────────────────────
-
-/** Vertical pixels each event occupies. Intentionally small — box
+/** Vertical pixels each event occupies. Intentionally small: box
  *  labels moved to the hover tooltip so the timeline can be vertically
  *  dense and show hundreds of events without scrolling. */
 export const ROW_HEIGHT = 7;
@@ -51,8 +52,8 @@ export const RAIL_COL_WIDTH = 8;
 /** Gap between the rightmost rail and the first lane. */
 export const LANE_GUTTER = 8;
 
-/** Width of a single lane (and of the box drawn in it). Very narrow —
- *  identification is through the hover tooltip (method name + details)
+/** Width of a single lane (and of the box drawn in it). Very narrow:
+ *  identification is through the hover tooltip (method name and details)
  *  plus the requestId-hash colour, not inline text. */
 export const LANE_WIDTH = 28;
 
@@ -86,11 +87,9 @@ const LIFECYCLE_COLORS: Record<string, string> = {
   Stop: "#f87171", // red
 };
 
-// ── Output types ─────────────────────────────────────────────
-
 export interface SegmentEntry {
   kind: "segment";
-  /** Selection anchor — typically the start (request/_start) event. */
+  /** Selection anchor, typically the start (request/_start) event. */
   seqAnchor: EventSeq;
   /** Every event this segment represents, for click hit-testing. */
   memberSeqs: EventSeq[];
@@ -117,7 +116,7 @@ export interface RailEntry {
   /** 0-based column in the rails strip. */
   railIdx: number;
   color: string;
-  /** "0x12ab…cdef #0" — genesis short hash plus ordinal for multi-follow cases. */
+  /** Genesis short hash plus ordinal for multi-follow cases, e.g. "0x12ab…cdef #0". */
   label: string;
   pending: boolean;
 }
@@ -139,11 +138,9 @@ export interface Layout {
   laneCount: number;
   railCount: number;
   totalHeight: number;
-  /** Maps any member seq → index into `entries` for O(1) seq-based lookups. */
+  /** Maps any member seq to its index into `entries` for O(1) seq-based lookups. */
   seqToEntryIdx: Map<EventSeq, number>;
 }
-
-// ── Internal types ───────────────────────────────────────────
 
 interface WorkingSegment {
   seqAnchor: EventSeq;
@@ -159,8 +156,6 @@ interface WorkingSegment {
   /** endAt = null for open-ended (pending) segments. */
   endAt: number | null;
 }
-
-// ── Main ─────────────────────────────────────────────────────
 
 export interface LayoutOptions {
   /**
@@ -199,7 +194,7 @@ export interface SwimlanePartition {
 /**
  * Split the visible event list into swimlanes. A chain swimlane only
  * appears for a genesisHash that has at least one
- * `remote_chain_head_follow_start` in the buffer — a follow is what
+ * `remote_chain_head_follow_start` in the buffer. A follow is what
  * signals the product is actively interacting with that chain, not
  * just looking up a chainSpec. Chain events for genesis hashes
  * without a follow (and chain events we can't associate with a
@@ -213,7 +208,7 @@ export interface SwimlanePartition {
 export function partitionIntoSwimlanes(
   events: readonly StoredEvent[],
 ): SwimlanePartition[] {
-  // First pass: map truapi requestId → genesisHash wherever any event
+  // First pass: map truapi requestId to genesisHash wherever any event
   // in the group carries it, AND collect the set of genesisHashes for
   // which a follow subscription has been observed. System events don't
   // contribute here; they all funnel into the dedicated System swimlane.
@@ -328,11 +323,11 @@ export function computeLayout(
     }
   }
 
-  // ── Phase A: rails (follow subscriptions) ──
+  // Phase A: rails (follow subscriptions).
   // For each (productId, genesisHash) pair, order follow-starts by time
-  // and assign ordinal → rail index. This lets us resolve
+  // and assign an ordinal to each rail index. This lets us resolve
   // "followSubscriptionId = follow_N" references later. Only truapi
-  // events are candidates — system events never become rails.
+  // events are candidates. System events never become rails.
   const followKeyToRails = new Map<string, RailEntry[]>();
   const rails: RailEntry[] = [];
   const railByTruapiReqId = new Map<string, RailEntry>();
@@ -383,14 +378,14 @@ export function computeLayout(
     followKeyToRails.set(key, existing);
   }
 
-  // ── Phase B: build segments + ticks ──
+  // Phase B: build segments and ticks.
   // Walk groups once. Each TrUAPI requestId yields either (a) a
   // segment (request/response, subscription), or (b) is the follow
   // subscription itself which is already materialised as a rail and
   // whose receives are ticks / attached operation terminals.
   const working: WorkingSegment[] = [];
   const ticks: TickEntry[] = [];
-  /** Maps operationId → terminal event (on a follow subscription), so
+  /** Maps operationId to its terminal event (on a follow subscription), so
    *  chainHead.body/storage/call request/response pairs can extend
    *  their segment to the terminal event. Only populated from truapi
    *  follow-receive events. */
@@ -417,7 +412,7 @@ export function computeLayout(
   }
 
   for (const [correlationKey, group] of groups) {
-    // Already materialised as a rail (truapi follow subscription) — its
+    // Already materialised as a rail (truapi follow subscription). Its
     // receives need to be dispatched into ticks (lifecycle) or attached
     // operation events (handled below via terminalByOpId).
     const rail = railByTruapiReqId.get(correlationKey);
@@ -447,14 +442,14 @@ export function computeLayout(
       continue;
     }
 
-    // System group → always produce a segment (flow box or singleton pill).
+    // System group always produces a segment (flow box or singleton pill).
     if (group.length > 0 && group[0].kind === "system") {
       const seg = systemSegmentForGroup(group as StoredSystemEvent[], seqToY);
       working.push(seg);
       continue;
     }
 
-    // TrUAPI non-rail group → existing segment logic (request/response,
+    // TrUAPI non-rail group uses the segment logic (request/response,
     // chain operation spanning to terminal event on follow, etc.).
     const truapiGroup = group.filter(
       (e): e is StoredTruapiEvent => e.kind === "truapi",
@@ -477,10 +472,10 @@ export function computeLayout(
   // Sort segments by topY for deterministic lane assignment.
   working.sort((a, b) => a.topY - b.topY || a.seqAnchor - b.seqAnchor);
 
-  // ── Phase C: lane-pack ──
+  // Phase C: lane-pack.
   // Greedy leftmost assignment. A lane is "free" from the Y-coordinate
   // where its last segment ended. Pending segments block their lane
-  // until the terminal event arrives — modelled by using `nowY` as
+  // until the terminal event arrives, modelled by using `nowY` as
   // their occupied-until boundary.
   const laneOccupiedUntil: number[] = [];
   const segmentsOut: SegmentEntry[] = [];
@@ -515,7 +510,7 @@ export function computeLayout(
     });
   }
 
-  // ── Assemble final layout ──
+  // Assemble final layout.
   const entries: TimelineEntry[] = [...rails, ...segmentsOut, ...ticks];
   const seqToEntryIdx = new Map<EventSeq, number>();
   entries.forEach((entry, idx) => {
@@ -537,8 +532,6 @@ export function computeLayout(
   };
 }
 
-// ── Segment builder ──────────────────────────────────────────
-
 function segmentForGroup(
   group: StoredTruapiEvent[],
   seqToY: Map<EventSeq, number>,
@@ -556,7 +549,7 @@ function segmentForGroup(
   // The timeline only draws boxes for request/response-shaped flows.
   // Subscriptions (anything whose first observed event is `_start`, or
   // whose group carries `_receive`/`_stop`/`_interrupt` without a
-  // `_request`) are intentionally invisible here — they have no
+  // `_request`) are intentionally invisible here. They have no
   // bounded "response time" to visualise. chainHead.follow is the
   // important exception, materialised as a rail in an earlier phase.
   const hasRequest = sorted.some((e) => e.tag.endsWith("_request"));
@@ -575,8 +568,8 @@ function segmentForGroup(
   // not to the TrUAPI response. The response just conveys the
   // operationId needed to correlate.
   //
-  // Direction note: `incoming` = product → host, `outgoing` = host →
-  // product. So a `_request` is incoming and its `_response` is
+  // Direction note: `incoming` is product-to-host, `outgoing` is
+  // host-to-product. So a `_request` is incoming and its `_response` is
   // outgoing.
   if (isOperationStarter) {
     const response = sorted.find(
@@ -621,9 +614,9 @@ function segmentForGroup(
   }
 
   // Any other group: plain request/response, simple chain call, or
-  // generic subscription. Span from first to last member; pending if
+  // generic subscription. Span from first to last member, pending if
   // we never saw a terminating message. Matching by suffix because
-  // response/interrupt are outgoing and stop is incoming — checking
+  // response/interrupt are outgoing and stop is incoming. Checking
   // direction here would drop legitimate terminators.
   const hasTerminator = sorted.some(
     (e) =>
@@ -654,12 +647,12 @@ function segmentForGroup(
 
 /**
  * Build a WorkingSegment from a system-event flow group. Multi-event
- * flows render as boxes spanning first → last. Single-event flows
- * become pills — a one-row-tall box with no pending marker, so that
+ * flows render as boxes spanning first to last. Single-event flows
+ * become pills, a one-row-tall box with no pending marker, so that
  * point-in-time system events (boot phases, failover decisions, etc.)
  * still occupy a lane position at the right Y. `pending` is true for
  * flows whose first event is a "start" kind without a matching end
- * event in the buffer — see SYSTEM_FLOW_TERMINATORS.
+ * event in the buffer. See SYSTEM_TERMINATOR_SUFFIXES.
  */
 function systemSegmentForGroup(
   group: StoredSystemEvent[],
@@ -706,11 +699,11 @@ const SYSTEM_TERMINATOR_SUFFIXES: readonly string[] = [
   "pairing_failed",
   "terminated",
   "iframe_ready",
-  // `setup_ready` used to close the bridge flow, but it only means the
-  // host is listening — the product can stay silent for many seconds
-  // after that (iframe still loading, sandbox relay not ready). We
-  // now keep the bridge flow open until we've actually observed
-  // bidirectional traffic via `first_outbound`.
+  // `setup_ready` does not close the bridge flow. It only means the
+  // host is listening, and the product can stay silent for many seconds
+  // after that (iframe still loading, sandbox relay not ready). The
+  // bridge flow stays open until bidirectional traffic is observed via
+  // `first_outbound`.
   "first_outbound",
   "document_written",
   "peer_action_processed",
@@ -777,12 +770,10 @@ function linkRail(
   const ordinal = Number(match[1]);
   // Clamp to the buffer: if the original follow-start was evicted we can't
   // resolve. Fall back to the last rail for this (product, genesis) as a
-  // best-effort guess — better than nothing for a debug overlay.
+  // best-effort guess, better than nothing for a debug overlay.
   const rail = rails[ordinal] ?? rails[rails.length - 1];
   return rail.railIdx;
 }
-
-// ── Helpers ──────────────────────────────────────────────────
 
 function followKey(
   productId: string | undefined,
@@ -808,7 +799,7 @@ function railLabel(genesisHash: string | undefined, ordinal: number): string {
 
 function shortHex(v: string): string {
   // Compact form suitable for a narrow box detail line. The detail
-  // pane shows the full value — this is just for at-a-glance scanning.
+  // pane shows the full value, so this is just for at-a-glance scanning.
   if (v.startsWith("0x") && v.length > 8) {
     return `${v.slice(0, 6)}…`;
   }
@@ -819,7 +810,7 @@ function shortHex(v: string): string {
 }
 
 function prettyTagLabel(tag: string): string {
-  // Box labels are narrow — strip the `host_` / `remote_` family
+  // Box labels are narrow. Strip the `host_` / `remote_` family
   // prefix and the direction suffix, and turn remaining underscores
   // into dots so the label splits cleanly across two lines in the
   // renderer (matching the `chainHead.follow` style used by chain

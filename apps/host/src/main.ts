@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Host entry point.
 //
 // Parses the URL, then either renders a direct preview or local target, or
@@ -98,7 +101,7 @@ window.addEventListener("vite:preloadError", (event) => {
   });
 });
 
-// Respect the user's dismissal unconditionally — once dismissed, never
+// Respect the user's dismissal unconditionally. Once dismissed, never
 // resurface unless the dismissal flag is cleared from localStorage.
 if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
   const dismissed = localStorage.getItem("desktop-banner-dismissed");
@@ -149,10 +152,10 @@ const T0 = performance.now();
  * Parse a localhost proxy URL from the path.
  *
  * Examples:
- *   "/localhost:5000"          → "http://localhost:5000"
- *   "/localhost:5000/foo/bar"  → "http://localhost:5000/foo/bar"
- *   "/localhost"               → "http://localhost"
- *   "/starter-template.dot"    → null (not a localhost URL)
+ *   "/localhost:5000"          yields "http://localhost:5000"
+ *   "/localhost:5000/foo/bar"  yields "http://localhost:5000/foo/bar"
+ *   "/localhost"               yields "http://localhost"
+ *   "/starter-template.dot"    yields null (not a localhost URL)
  */
 function parseLocalhostUrl(): string | null {
   const path = window.location.pathname;
@@ -224,8 +227,9 @@ function parseDotLabel(): string | null {
 
 /**
  * Set the verification shield state in the URL pill.
- *   "verified"   — green: P2P mode, data independently verified by light client
- *   "validating" — yellow: gateway mode, data from trusted source
+ *
+ *   "verified": green, P2P mode, data independently verified by light client.
+ *   "validating": yellow, gateway mode, data from trusted source.
  */
 let topbarHideTimer: ReturnType<typeof setTimeout> | null = null;
 let topbarHoverBound = false;
@@ -280,7 +284,7 @@ function setupTopbarAutoHide(): void {
   if (!topbarHoverBound) {
     topbarHoverBound = true;
 
-    // Invisible trigger zone at the very top — catches hover even over the iframe
+    // Invisible trigger zone at the very top. Catches hover even over the iframe.
     const trigger = document.createElement("div");
     trigger.style.cssText =
       "position:fixed;top:0;left:0;right:0;height:6px;z-index:999;";
@@ -400,17 +404,17 @@ type RenderChunk = typeof RenderModule;
  *
  *   - `enabled`: whether to mount the panel.
  *   - `explicit`: whether the user opted in (URL or sessionStorage).
- *     Drives the initial collapsed state — explicit opt-ins start
+ *     Drives the initial collapsed state. Explicit opt-ins start
  *     expanded, dev-environment auto-enables start collapsed so the
  *     panel doesn't cover content unsolicited.
  *
- * Precedence (highest → lowest):
- *   1. `?debug=true` / `?debug=off` in the URL — persisted to
+ * Precedence, from highest to lowest:
+ *   1. `?debug=true` / `?debug=off` in the URL. Persisted to
  *      sessionStorage and stripped from `history` (so the param doesn't
  *      leak into the sandbox iframe's strict URL validator).
- *   2. Existing `sessionStorage["dotli:truapi-debug"]` — `"1"` enables,
+ *   2. Existing `sessionStorage["dotli:truapi-debug"]`. `"1"` enables,
  *      `"0"` disables.
- *   3. Build-time `DEBUG` (from `VITE_APP_DEBUG`) — on in `dev-paseo` /
+ *   3. Build-time `DEBUG` (from `VITE_APP_DEBUG`). On in `dev-paseo` /
  *      `dev-polkadot` / `bun run preview:debug`, off in staging / prod.
  */
 function resolveTruapiDebugMode(): { enabled: boolean; explicit: boolean } {
@@ -443,14 +447,13 @@ function resolveTruapiDebugMode(): { enabled: boolean; explicit: boolean } {
   return { enabled: DEBUG, explicit: false };
 }
 
+// Tracks two things the system swimlane would otherwise miss.
 //
-// Tracks two things the system swimlane would otherwise miss:
-//
-//   1. Stalls. setInterval fires every TICK_MS; if the actual delta
-//      to the previous tick is more than TICK_MS + STALL_THRESHOLD_MS
-//      the event loop was blocked for the excess. Emits
-//      `main:stall_detected` with the stall duration — one event
-//      per stall, regardless of how long the thread was frozen.
+//   1. Stalls. setInterval fires every TICK_MS. When the actual delta
+//      to the previous tick exceeds TICK_MS + STALL_THRESHOLD_MS the
+//      event loop was blocked for the excess. Emits
+//      `main:stall_detected` with the stall duration, one event
+//      per stall regardless of how long the thread was frozen.
 //
 //   2. Heartbeats. Every HEARTBEAT_INTERVAL_MS we emit a low-cost
 //      `main:heartbeat` marker so the swimlane shows a steady
@@ -459,7 +462,7 @@ function resolveTruapiDebugMode(): { enabled: boolean; explicit: boolean } {
 //
 // Scope: only runs while debug is enabled, and only for the first
 // MAX_MONITOR_MS (120 s by default) or until the primary bridge
-// has exchanged traffic in both directions — whichever comes first.
+// has exchanged traffic in both directions, whichever comes first.
 // After that the monitor emits `main:monitor_stopped` and clears
 // itself so it doesn't burn cycles for the rest of the session.
 type EmitFn = (e: DotliDebugEvent) => void;
@@ -543,7 +546,7 @@ function startMainThreadMonitor(flowId: string, emit: EmitFn): void {
  * The sandbox lives on a different origin and can't touch the host's
  * `emitDotliDebugEvent` directly, so it posts messages instead. We
  * validate the envelope (must be an object with a `sandbox` layer) and
- * ignore anything else — this listener sees the full `window.message`
+ * ignore anything else. This listener sees the full `window.message`
  * stream, so non-debug TrUAPI and loading-status messages must pass
  * through cleanly.
  */
@@ -577,7 +580,7 @@ function listenForSandboxDebugEvents(emit: EmitFn): void {
       emit(payload);
       // eslint-disable-next-line no-restricted-syntax -- best-effort forwarder; a malformed event from the sandbox must never break the host.
     } catch {
-      /* ignore — a malformed event shouldn't kill the host */
+      /* ignore: a malformed event shouldn't kill the host */
     }
   });
 }
@@ -617,7 +620,7 @@ async function runBackgroundRevalidate(
         },
       });
     } else if (outcome.kind === "cleared") {
-      // Owner unset the pointer. Cache is already evicted; reload to show the cold-path error.
+      // Owner unset the pointer. Cache is already evicted, so reload to show the cold-path error.
       log.warn(
         `[dot.li cid-cache] revalidate: ${label} cleared on-chain, reloading`,
       );
@@ -696,7 +699,7 @@ async function runAuthSubscribeHook(chainBackend: string): Promise<void> {
   document.title = "dotli-auth-subscribe-ready";
 }
 
-/** Best-effort `localStorage.getItem`; null on Safari-private-mode failure. */
+/** Best-effort `localStorage.getItem`, returning null on Safari-private-mode failure. */
 function readRawLocalStorage(key: string): string | null {
   try {
     return localStorage.getItem(key);
@@ -707,8 +710,8 @@ function readRawLocalStorage(key: string): string | null {
 
 /**
  * Reconcile URL > shared > localStorage > default per axis, persist back
- * to URL + localStorage + (for shared axes) the cross-subdomain store,
- * and wipe + reload (matching the modal Save flow) when a URL value
+ * to URL, localStorage, and (for shared axes) the cross-subdomain store,
+ * then wipe and reload (matching the modal Save flow) when a URL value
  * displaces a prior persisted choice.
  */
 async function applyUrlSettings(): Promise<void> {
@@ -716,7 +719,7 @@ async function applyUrlSettings(): Promise<void> {
   const parsed = parseSettingsFromSearch(search);
 
   // Snapshot raw localStorage before bootstrap (and before `getNetwork`/
-  // `getBackend`/`getCacheSettings` below) — those calls auto-seed defaults
+  // `getBackend`/`getCacheSettings` below). Those calls auto-seed defaults
   // on first read, which would make every fresh-subdomain visit look like a
   // "change" and trigger an unnecessary wipe.
   const hadPriorPersisted =
@@ -793,7 +796,7 @@ async function applyUrlSettings(): Promise<void> {
     next.cache.skipWorkerCache !== prior.cache.skipWorkerCache;
 
   // On production, bootstrap loaded the protocol iframe with `prior.chain`
-  // before applyUrlSettings switched it to `next.chain` — tear it down so
+  // before applyUrlSettings switched it to `next.chain`, so tear it down so
   // the next `ensureProtocolFrame()` rebuilds it in the new sub-mode.
   // (No-op on localhost, where the HTTP channel never loaded an iframe.)
   if (prior.chain !== next.chain) {
@@ -820,7 +823,7 @@ async function applyUrlSettings(): Promise<void> {
 
   // Wipe host origin and signal the other two origins to purge themselves
   // on their next boot. wipeOriginState clears localStorage, so capture
-  // the theme + the just-written settings and re-persist them.
+  // the theme and the just-written settings and re-persist them.
   const theme = readRawLocalStorage("dotli-theme");
   await wipeOriginState();
   setNetwork(next.network);
@@ -876,7 +879,6 @@ async function main(): Promise<void> {
   performance.mark("dotli:main:start");
   log.warn(`[dot.li perf] main() started (${elapsed(T0)})`);
 
-  //
   // Runtime-gated: the panel ships in every build but the heavy chunk
   // is only fetched when the user opts in via `?debug=true` (set by the
   // "Open in debug mode" Settings button) or a persisted sessionStorage
@@ -898,7 +900,7 @@ async function main(): Promise<void> {
     );
   }
 
-  // Per-tab boot flow id — every boot/resolve/render/bridge event from
+  // Per-tab boot flow id. Every boot/resolve/render/bridge event from
   // this page load carries the same id so the debug panel can group
   // them into one box.
   const bootFlowId =
@@ -906,12 +908,12 @@ async function main(): Promise<void> {
       ? crypto.randomUUID()
       : `boot-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`;
 
-  // Main-thread monitor. Polls at 50ms; any delta > 200ms means the
+  // Main-thread monitor. Polls at 50ms, and any delta > 200ms means the
   // event loop was blocked for `durationMs - 50ms`. Heartbeats land
   // every 2 seconds so the system swimlane shows "host still alive"
   // even when nothing else is happening. The monitor stops once the
   // bridge has exchanged traffic in both directions (first outbound
-  // response posted) or after MAX_MAIN_MONITOR_MS, whichever comes
+  // response posted) or after MAX_MONITOR_MS, whichever comes
   // first.
   if (debugMode.enabled) {
     startMainThreadMonitor(bootFlowId, emitDotliDebugEvent);
@@ -926,8 +928,8 @@ async function main(): Promise<void> {
   // protocol pre-warm and downstream getters see the resolved values.
   // `applyUrlSettings` also runs the shared-mode bootstrap (so prior values
   // pick up cross-subdomain state and URL writes mirror to the shared
-  // store). The await blocks if a URL-driven change forces a wipe +
-  // reload; the reload then replaces the page, so anything below it never
+  // store). The await blocks if a URL-driven change forces a wipe and
+  // reload. The reload then replaces the page, so anything below it never
   // runs.
   await applyUrlSettings();
 
@@ -954,9 +956,9 @@ async function main(): Promise<void> {
   // Pre-warm the protocol iframe for every chain backend so sandboxed apps
   // that call `chainConnect` have a handler waiting on the other side. The
   // submode mapping is 1:1 with the chain backend.
-  //   smoldot-shared-worker → "shared-worker"
-  //   smoldot-direct        → "direct"
-  //   rpc-gateway           → "rpc"
+  //   smoldot-shared-worker maps to "shared-worker"
+  //   smoldot-direct        maps to "direct"
+  //   rpc-gateway           maps to "rpc"
   {
     const subMode: "shared-worker" | "direct" | "rpc" =
       chainBackend === "smoldot-shared-worker"
@@ -976,7 +978,7 @@ async function main(): Promise<void> {
       }
       // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); reset flag falls back to false which is the safe default.
     } catch {
-      /* sessionStorage unavailable — skip pending-reset pick up */
+      /* sessionStorage unavailable: skip pending-reset pick up */
     }
     const protocolChunkPromise = import("@dotli/protocol/client");
     void protocolChunkPromise.then(
@@ -1074,7 +1076,7 @@ async function main(): Promise<void> {
 
     const { renderIframe } = await import("@dotli/ui/bridge");
     await renderIframe(localhostUrl, host);
-    // Deep path was forwarded to the product iframe — strip it so the URL bar doesn't show a stale path
+    // Deep path was forwarded to the product iframe, so strip it so the URL bar doesn't show a stale path
     history.replaceState(null, "", "/" + host);
     document.title = `${host} — ${SITE_ID}`;
     performance.mark("dotli:main:end");
@@ -1134,7 +1136,7 @@ async function main(): Promise<void> {
 
   // The topbar DOM nodes are required-by-contract invariants of
   // `index.html`. Their absence is a build/deploy bug, not a recoverable
-  // runtime branch — fail loud so monitoring catches it instead of silently
+  // runtime branch, so fail loud so monitoring catches it instead of silently
   // leaving the page in its initial loading state.
   const urlBar = document.getElementById("topbar-url");
   if (urlBar === null) {
@@ -1390,8 +1392,8 @@ async function main(): Promise<void> {
     performance.mark("dotli:main:end");
     // Report before rendering so monitoring always sees the root cause, even
     // if `showError()` itself throws (e.g. a DOM node is missing). The global
-    // unhandled-rejection handler doesn't catch this — the try/catch here
-    // already has. Carry the active dependency as a tag so Sentry + the
+    // unhandled-rejection handler doesn't catch this, because the try/catch
+    // here already has. Carry the active dependency as a tag so Sentry and the
     // user-visible error both attribute the failure to the specific
     // dependency the chosen mode dialed.
     const dependency =

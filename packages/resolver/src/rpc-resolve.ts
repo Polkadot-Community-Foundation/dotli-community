@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Trusted RPC-based dotNS resolver.
 //
 // Reads the dotNS contract storage directly from a public Asset Hub Paseo

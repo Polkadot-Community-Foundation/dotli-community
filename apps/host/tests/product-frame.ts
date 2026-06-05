@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Test helpers for probing the product Frame inside the sandbox iframe.
  *
@@ -29,7 +32,7 @@ export async function findAppFrame(
   // `page.frames()` checks the live frame tree which catches an iframe
   // whose URL was set via `contentWindow.location` (not the DOM `src`
   // attribute). The locator-based wait misses that case. Bounded poll
-  // with a short interval; Playwright's framework events fire between
+  // with a short interval. Playwright's framework events fire between
   // iterations.
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

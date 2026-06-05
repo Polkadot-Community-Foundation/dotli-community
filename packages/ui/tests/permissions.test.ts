@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   ALL_PERMISSIONS,
@@ -163,7 +166,7 @@ describe("buildAllowAttribute", () => {
     setPermissionStatus("myapp", "Camera", "granted");
     setPermissionStatus("myapp", "Microphone", "granted");
 
-    // Order follows JSON insertion order; assert on the directive set.
+    // Order follows JSON insertion order, so assert on the directive set.
     const directives = buildAllowAttribute("myapp").split("; ").sort();
     expect(directives).toEqual(["camera", "clipboard-write", "microphone"]);
   });

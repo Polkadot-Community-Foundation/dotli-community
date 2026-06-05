@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, build as viteBuild, type Plugin } from "vite";
 import { execSync } from "node:child_process";
@@ -17,14 +20,14 @@ if (!process.env.VITE_COMMIT_SHA) {
       .toString()
       .trim();
   } catch {
-    // Not a git checkout — leave unset.
+    // Not a git checkout, leave unset.
   }
 }
 
 const OUT_DIR = "dist";
 
 /**
- * Sentry sourcemap upload — skipped on prod (runtime SDK is aliased to a
+ * Sentry sourcemap upload, skipped on prod (runtime SDK is aliased to a
  * no-op, nothing to attribute) and locally without SENTRY_AUTH_TOKEN
  * (preserves source maps for debugging).
  */
@@ -51,7 +54,7 @@ function buildServiceWorker(): Plugin {
     async closeBundle() {
       // Stamp the SW bundle with the commit SHA (falls back to a dev marker).
       // The page checks this at runtime to detect a stale SW and force an
-      // update — see `apps/sandbox/src/main.ts` registerAppServiceWorker.
+      // update (see `apps/sandbox/src/main.ts` registerAppServiceWorker).
       // Using `define` guarantees the SHA is inlined as a literal, so the SW
       // bytes actually change between releases (otherwise the browser might
       // skip updating a byte-identical script).

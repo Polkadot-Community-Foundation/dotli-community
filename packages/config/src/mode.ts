@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Backend selection and cache settings.
 //
 //   smoldot-direct: smoldot runs in the protocol iframe. Chain access
@@ -90,7 +93,7 @@ let storage: ModeStorage = localStorageAdapter;
  * Replace the storage backend used by every accessor below. Call once
  * during host shell boot, before any reader runs. Swapping at runtime is
  * allowed but stale values already returned to callers are NOT
- * invalidated — readers see the new adapter only on their next call.
+ * invalidated. Readers see the new adapter only on their next call.
  */
 export function configureModeStorage(adapter: ModeStorage): void {
   storage = adapter;
@@ -147,8 +150,8 @@ export function defaultBackend(): Backend {
  * Map any legacy stored value to a canonical `Backend`, clearing the
  * legacy keys on success. Pre-collapse `dotli:mode` and
  * `dotli:content-backend` carried the content axis that no longer
- * exists; `chain-backend = "rpc"` becomes `"rpc-gateway"`. The caller
- * decides whether to write the result back at `BACKEND_KEY`.
+ * exists. A stored `chain-backend = "rpc"` becomes `"rpc-gateway"`. The
+ * caller decides whether to write the result back at `BACKEND_KEY`.
  */
 function readAndClearLegacy(target: ModeStorage): Backend | null {
   const chain = target.getItem(BACKEND_KEY);
@@ -222,7 +225,7 @@ export function getCacheSettings(): CacheSettings {
       };
       // eslint-disable-next-line no-restricted-syntax -- malformed JSON from an older build; defaults are the safe fallback.
     } catch {
-      /* malformed JSON — fall back to defaults */
+      /* malformed JSON. Fall back to defaults. */
     }
   }
   return { ...DEFAULT_CACHE };

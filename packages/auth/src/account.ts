@@ -1,4 +1,7 @@
-// dot.li — Product account derivation
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Product account derivation for dot.li.
 //
 // Derives a product-specific public key from the user's root public key
 // using HDKD soft derivation through junctions ['product', dotDomain, derivationIndex].
@@ -49,7 +52,7 @@ const ss58Codec = AccountId();
 export const productPublicKeyToAddress = (publicKey: Uint8Array): string =>
   ss58Codec.dec(publicKey);
 
-// NOTE: Uncomment when derived product accounts get their own on-chain
+// NOTE: Uncomment when derived product accounts get their own network
 // allowance (quota) on People Chain. Currently only the root session account
 // has allowance, so createProof signs with the root ssSecret directly.
 // Once per-product allowance is supported, use this in handleStatementStoreCreateProof

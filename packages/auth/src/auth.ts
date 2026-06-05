@@ -1,4 +1,7 @@
-// dot.li — Authentication via Polkadot App (host-papp)
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Authentication for dot.li via the Polkadot App (host-papp).
 //
 // Wraps @novasamatech/host-papp for QR-code-based pairing with the Polkadot App.
 // Provides a simple pub-sub interface for the top bar UI.
@@ -123,14 +126,14 @@ function createLoggingStatementStore(
 ): StatementStoreAdapter {
   return {
     queryStatements(filter) {
-      // sdk-statement's getStatements implements "query" as subscribe + wait
-      // for an event with `data.remaining === 0`. Smoldot only emits the
+      // sdk-statement's getStatements implements "query" as a subscribe that
+      // waits for an event with `data.remaining === 0`. Smoldot only emits the
       // statement_statement notification when fresh statements arrive via
       // gossip, never as an empty-initial-page sentinel, so for a topic
-      // with no statements the query hangs forever — which leaves
+      // with no statements the query hangs forever. That leaves
       // session.init() stuck in 'initialization' and silently queues every
       // subsequent submitRequestMessage. Race against a short timeout
-      // resolving to [] so init can proceed; the parallel subscribe still
+      // resolving to [] so init can proceed. The parallel subscribe still
       // delivers new statements normally.
       const inner$: Promise<Result<Statement[], Error>> = Promise.resolve(
         inner.queryStatements(filter),
@@ -201,12 +204,12 @@ export function initAuth(): void {
   const siteId = SITE_ID;
   const storage = createSharedAuthStorageAdapter(siteId);
   // Statement-store transport tracks the main Backend. smoldot variants
-  // route through the protocol bridge; `rpc-gateway` uses the WS provider
+  // route through the protocol bridge. `rpc-gateway` uses the WS provider
   // directly.
   const useSmoldotForAuth = getBackend() !== "rpc-gateway";
   // Auth people chain endpoint resolved against the active network's services
-  // config. The smoldot path routes through the protocol bridge by genesis;
-  // the WS path dials the first RPC endpoint configured for the active people chain.
+  // config. The smoldot path routes through the protocol bridge by genesis.
+  // The WS path dials the first RPC endpoint configured for the active people chain.
   const people = getActiveServicesConfig().people;
   let peopleProvider;
   let peopleRpcEndpoint: string | null = null;
@@ -226,7 +229,7 @@ export function initAuth(): void {
     }
     peopleRpcEndpoint = people.rpcs[0];
     peopleProvider = getWsProvider([peopleRpcEndpoint], {
-      heartbeatTimeout: 120_000, // 2 minutes — default 40s is too aggressive through tunnels
+      heartbeatTimeout: 120_000, // the default 40s is too aggressive through tunnels
     });
   }
   const lazyClient = createLazyClient(peopleProvider);
@@ -351,7 +354,7 @@ export function startPairing(): void {
           setState({ status: "pairing", payload: status.payload });
           break;
         case "pending":
-          // Setup work in progress (attestation etc.) — show spinner.
+          // Setup work in progress (attestation etc.). Show the spinner.
           if (currentState.status !== "authenticated") {
             setState({ status: "attesting" });
           }
@@ -360,7 +363,7 @@ export function startPairing(): void {
           setState({ status: "error", message: status.message });
           break;
         case "finished":
-          // Pairing + attestation both done; session is persisted.
+          // Pairing and attestation both done, session is persisted.
           // sessions.subscribe() is the primary pickup path, but call
           // pickUpSession() here as a fallback.
           if (currentState.status !== "authenticated") {
@@ -378,7 +381,7 @@ export function startPairing(): void {
     (result) => {
       log.warn("[dot.li auth] authenticate() resolved:", result);
       if (result.isOk() && result.value) {
-        // authenticate() resolved successfully — session is now persisted.
+        // authenticate() resolved successfully, session is now persisted.
         // Pick up via sessions subscription or fallback here.
         pickUpSession();
       } else if (result.isErr()) {
@@ -426,15 +429,16 @@ export async function disconnect(): Promise<void> {
   setState({ status: "idle" });
 }
 
-// Host-API wire codec (`LoginResult`) is `"success" | "alreadyConnected"
-// | "rejected"` — keep this union aligned with it.
+// Keep this union aligned with the host-API wire codec (`LoginResult`),
+// which is `"success" | "alreadyConnected" | "rejected"`.
 export type LoginFlowResult = "success" | "alreadyConnected" | "rejected";
 
 /**
- * RFC-0009 bridge — products call this through `handleRequestLogin`
- * in the container. We dispatch a DOM event so the topbar (which
- * owns the QR pairing modal) can open the UI without this module
- * pulling in any DOM, and resolve once the auth state settles.
+ * Open the login flow on behalf of a product and resolve once auth settles.
+ *
+ * Products reach this through `handleRequestLogin` in the container. We
+ * dispatch a DOM event so the topbar (which owns the QR pairing modal) can
+ * open the UI without this module pulling in any DOM.
  */
 export function requestLogin(
   reason: string | undefined,
@@ -446,7 +450,7 @@ export function requestLogin(
 
   return new Promise((resolve) => {
     // Dispatch first so the topbar transitions us out of `idle` before
-    // the subscription is installed — that way any post-subscribe
+    // the subscription is installed. That way any post-subscribe
     // `idle` callback is unambiguously a user cancellation.
     window.dispatchEvent(
       new CustomEvent("dotli:request-login", { detail: { reason, label } }),
@@ -463,8 +467,6 @@ export function requestLogin(
     });
   });
 }
-
-// ── Helpers ────────────────────────────────────────────────
 
 export function shortenName(identity: Identity): string {
   if (identity.fullUsername !== null && identity.fullUsername.length > 0) {

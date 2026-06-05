@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // App context entry point.
 //
 // Runs on `<label>.app.dot.li` (the human dotns name). The resolved CID
@@ -71,7 +74,7 @@ function notifyLoadingDone(): void {
 }
 
 /**
- * Remove host→sandbox contract keys from `window.location` so the dApp
+ * Remove host-to-sandbox contract keys from `window.location` so the dApp
  * has only the user's own query params.
  */
 function stripContractParamsFromUrl(): void {
@@ -86,8 +89,8 @@ function stripContractParamsFromUrl(): void {
  * Render the sandbox-local error page AND tell the host shell its loading
  * overlay is finished. Without the parent notify, the host's `.loading`
  * stays visible (the host keeps it around as a sibling of the sandbox
- * iframe so progress updates can land) and the two screens stack visibly
- * — error title plus the still-ticking progress bar from above.
+ * iframe so progress updates can land) and the two screens stack visibly:
+ * the error title plus the still-ticking progress bar from above.
  */
 function failLoading(...args: Parameters<typeof showError>): void {
   notifyLoadingDone();
@@ -203,9 +206,9 @@ function querySwVersion(sw: ServiceWorker): Promise<string | null> {
 
 /**
  * Check whether the active SW's build matches the page's build. On mismatch
- * surface a notification with a "Reload" action — the user decides whether
- * to take it. NO automatic reload: silently triggering `update()` +
- * `controllerchange → reload` would override the user's current session
+ * surface a notification with a "Reload" action, and the user decides whether
+ * to take it. NO automatic reload: silently triggering `update()` followed by
+ * a reload on `controllerchange` would override the user's current session
  * without consent.
  */
 async function ensureFreshServiceWorker(
@@ -233,8 +236,8 @@ async function ensureFreshServiceWorker(
     action: {
       label: "Reload",
       onClick: () => {
-        // User-driven update + reload. The SW self-promotes via
-        // `skipWaiting()` + `clients.claim()`; when the controller flips,
+        // User-driven update then reload. The SW self-promotes via
+        // `skipWaiting()` and `clients.claim()`. When the controller flips,
         // reload to pick up fresh assets.
         navigator.serviceWorker.addEventListener(
           "controllerchange",
@@ -295,8 +298,8 @@ async function registerAppServiceWorker({
         resolve();
       });
       void navigator.serviceWorker.ready.then((readyRegistration) => {
-        // In the reset path we explicitly ignore the current controller —
-        // only a `controllerchange` counts as "fresh". Prod the new SW to
+        // In the reset path we explicitly ignore the current controller.
+        // Only a `controllerchange` counts as "fresh". Prod the new SW to
         // claim clients so the controllerchange arrives quickly.
         if (!waitForFreshController && navigator.serviceWorker.controller) {
           clearTimeout(timeout);
@@ -348,7 +351,7 @@ async function storeArchiveInSW(
       } else if (msg?.type === "ARCHIVE_ERROR") {
         // The SW rejected the payload (malformed index or IDB persist
         // failure). Surface the real cause instead of waiting for the
-        // timeout — the page retry flow then has something to act on.
+        // timeout, so the page retry flow has something to act on.
         clearTimeout(timer);
         navigator.serviceWorker.removeEventListener("message", handler);
         reject(
@@ -374,7 +377,7 @@ async function storeArchiveInSW(
 /**
  * Optionally inject the sandbox checker script into HTML for relay mode.
  * In relay mode, document.write() replaces the page, so we must inject
- * the checker inline — the render.ts injection path is not used.
+ * the checker inline. The render.ts injection path is not used.
  */
 async function maybeInjectSandboxChecker(html: string): Promise<string> {
   if (
@@ -413,8 +416,8 @@ async function decryptIfNeeded(
   let error: string | undefined;
 
   // Only treat ChaCha20-Poly1305 auth-tag mismatch as "wrong password". Any
-  // other decryption error (corrupted ciphertext, library bug) is fatal —
-  // surface the real cause instead of looping infinitely with a misleading
+  // other decryption error (corrupted ciphertext, library bug) is fatal.
+  // Surface the real cause instead of looping infinitely with a misleading
   // "Wrong password" prompt.
   for (;;) {
     password ??= await showPasswordPrompt({ error });
@@ -448,13 +451,13 @@ async function decryptIfNeeded(
  *   - localStorage / sessionStorage (cleared to the empty object)
  *   - JS-visible cookies (expired on path=/ and on the current path)
  *
- * Best-effort across the board — some surfaces cannot be wiped from a
+ * Best-effort across the board. Some surfaces cannot be wiped from a
  * page context:
- *   - Firefox < 126 / Safari < 17 don't expose `indexedDB.databases()`,
+ *   - Firefox < 126 and Safari < 17 don't expose `indexedDB.databases()`,
  *     so IDB stores opened before this page load cannot be enumerated.
  *   - `HttpOnly` cookies are invisible to `document.cookie` and therefore
- *     unreachable from JS; clearing those requires server-side headers.
- * The user still gets a near-clean baseline; surviving state is logged
+ *     unreachable from JS. Clearing those requires server-side headers.
+ * The user still gets a near-clean baseline. Surviving state is logged
  * as a warning, not treated as fatal, because the reset is opt-in and
  * the worst case is a partial wipe.
  */
@@ -491,7 +494,7 @@ async function purgeSandboxOriginState(): Promise<void> {
   } catch (err) {
     log.warn("[dot.li app] IDB purge failed:", err);
   }
-  // CacheStorage (Cache API — not the SW archive which lives in IDB)
+  // CacheStorage (the Cache API, not the SW archive which lives in IDB)
   try {
     if (typeof caches !== "undefined") {
       const keys = await caches.keys();
@@ -510,9 +513,9 @@ async function purgeSandboxOriginState(): Promise<void> {
   } catch (err) {
     log.warn("[dot.li app] SW unregister failed:", err);
   }
-  // localStorage / sessionStorage. Previously omitted — the `purge…State`
-  // name promised a full wipe but the implementation left these alive, so
-  // a dApp that stashed preferences / tokens here survived the reset.
+  // localStorage and sessionStorage. The `purge…State` name promises a full
+  // wipe, so these must be cleared too. Otherwise a dApp that stashed
+  // preferences or tokens here would survive the reset.
   try {
     if (typeof localStorage !== "undefined") {
       localStorage.clear();
@@ -528,7 +531,7 @@ async function purgeSandboxOriginState(): Promise<void> {
     log.warn("[dot.li app] sessionStorage purge failed:", err);
   }
   // Cookies visible to `document.cookie`. `HttpOnly` cookies are out of
-  // reach from JS — documented above. Expire on both `/` and the current
+  // reach from JS, as documented above. Expire on both `/` and the current
   // path since a dApp may have set the cookie on either.
   try {
     if (document.cookie.length > 0) {
@@ -552,7 +555,7 @@ async function main(): Promise<void> {
   performance.mark("dotli:app:start");
   log.warn(`[dot.li app] main() started (${elapsed(T0)})`);
 
-  // The sandbox is host-managed only — it must run as an iframe child of
+  // The sandbox is host-managed only. It must run as an iframe child of
   // the dot.li shell. A top-level load here has no bridge to answer
   // account/signing/storage calls, no shield/topbar context, and no
   // unified loading UI. Fail loudly instead of degrading into a broken
@@ -618,9 +621,9 @@ async function main(): Promise<void> {
     network,
   });
 
-  // Register SW + pre-load chunks in parallel.
+  // Register the SW and pre-load chunks in parallel.
   // After a fullReset the existing `navigator.serviceWorker.controller`
-  // is the SW we just unregistered; force the registration path to wait
+  // is the SW we just unregistered, so force the registration path to wait
   // for a fresh controller rather than adopting that stale one.
   const stopSw = m.timer(S.APP_SW_REGISTER);
   const swReady = registerAppServiceWorker({
@@ -649,8 +652,8 @@ async function main(): Promise<void> {
     log.warn(`[dot.li app] SW archive cache HIT (${elapsed(T0)})`);
 
     // Extract index.html and write it directly into this window so it
-    // occupies the APP iframe. An archive without index.html is invalid
-    // — surface it instead of silently falling through to a no-op render.
+    // occupies the APP iframe. An archive without index.html is invalid,
+    // so surface it instead of silently falling through to a no-op render.
     const indexHtml = cachedFiles["index.html"] as Uint8Array | undefined;
     if (indexHtml === undefined) {
       throw new Error(
@@ -722,7 +725,7 @@ async function main(): Promise<void> {
 
   // Write the dApp content directly into this window so it occupies the
   // APP iframe. The HOST's container bridge communicates with this iframe
-  // via window.top ↔ iframe.contentWindow.
+  // through window.top and iframe.contentWindow.
   let html: string;
   if (result.type === "single") {
     html = new TextDecoder().decode(result.content);
@@ -755,7 +758,7 @@ async function main(): Promise<void> {
 
 // The retry button exists so a user can re-trigger a failed init after
 // fixing something out-of-band (e.g. toggling a flag). It is NOT an
-// automatic retry — only a click path. We still guard against runaway
+// automatic retry, only a click path. We still guard against runaway
 // recursion if the user mashes the button and against overlapping
 // `main()` calls (two invocations would race on each other).
 let runInFlight = false;

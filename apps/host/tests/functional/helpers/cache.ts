@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Probes for the dotli host caching layers.
  */
@@ -74,7 +77,7 @@ export async function waitForCachedCid(
  * to the sandbox SW) bumps `window.__dotliArchiveCacheLookups`. The
  * patch lives on the prototype, so it covers any controller the page
  * later acquires. Must be called on the context before the first
- * navigation; the counter resets on every fresh document.
+ * navigation. The counter resets on every fresh document.
  */
 export async function trackArchiveCacheLookups(
   context: BrowserContext,

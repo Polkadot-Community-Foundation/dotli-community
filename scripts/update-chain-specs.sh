@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Parity Technologies (UK) Ltd.
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Refresh the committed smoldot chain specs from their live chains.
 #
 # Each spec's genesis.stateRootHash is set from the chain's block 0, so the spec keeps matching the

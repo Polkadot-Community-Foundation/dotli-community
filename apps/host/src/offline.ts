@@ -1,9 +1,12 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Surfaces a banner when the browser reports offline status.
 //
 // As a PWA the host shell boots entirely from the service worker cache, so
 // losing connectivity is otherwise invisible to the user. The banner is
-// parented to the topbar so it rides the auto-hide transform; we also
-// listen for the topbar:visibility event from main.ts so the banner does
+// parented to the topbar so it rides the auto-hide transform. It also
+// listens for the topbar:visibility event from main.ts so the banner does
 // not dangle into the viewport once the topbar has slid off screen.
 
 let banner: HTMLElement | null = null;

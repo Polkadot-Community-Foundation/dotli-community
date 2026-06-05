@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { describe, expect, it, vi } from "vitest";
 import type {
   JsonRpcConnection,
@@ -373,7 +376,7 @@ describe("createChainBrokerManager", () => {
 
     expect(localProvider).not.toBeNull();
 
-    // `getLocalProvider` uses the object wire; `connectRemote` the string wire.
+    // `getLocalProvider` uses the object wire. `connectRemote` uses the string wire.
     const localMessages: JsonRpcMessage[] = [];
     const localConnection = localProvider?.((message) => {
       localMessages.push(message);

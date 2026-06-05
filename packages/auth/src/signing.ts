@@ -1,11 +1,14 @@
-// dot.li — Signing confirmation modals (vanilla DOM)
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Signing confirmation modals for dot.li (vanilla DOM).
 //
 // Bridges host-container's `{ account, payload }` request to host-papp's
 // `{ productAccountId, ...payload }` shape (host-api 0.7.6+). host-papp
 // derives the signing secret on the wallet side from the product account
-// tuple, so the host only forwards the tuple — no address conversion or
+// tuple, so the host only forwards the tuple, with no address conversion or
 // local derivation. The modal displays the tuple itself ("my-app.dot / 0")
-// rather than a derived address; computing the address would mean
+// rather than a derived address. Computing the address would mean
 // duplicating the wallet's derivation logic for display only.
 
 import {
@@ -157,10 +160,12 @@ function removeModal(backdrop: HTMLDivElement): void {
 }
 
 /**
- * Sign-payload modal. Receives the calling product's `[dotNsIdentifier,
- * derivationIndex]` tuple — that's what host-papp requires. The modal
- * displays the tuple as the "Signer" line; the wallet derives and signs
- * with the matching secret on its side.
+ * Sign-payload modal.
+ *
+ * Receives the calling product's `[dotNsIdentifier, derivationIndex]` tuple,
+ * which is what host-papp requires. The modal displays the tuple as the
+ * "Signer" line. The wallet derives and signs with the matching secret on
+ * its side.
  */
 export function showSignPayloadModal(
   session: UserSession,

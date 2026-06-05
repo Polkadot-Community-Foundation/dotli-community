@@ -1,4 +1,7 @@
-// dot.li — Host container bridge
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li Host container bridge
 //
 // Bridges the host (dot.li) and the SPA loaded in the iframe using
 // @novasamatech/host-container's postMessage-based protocol.
@@ -112,8 +115,8 @@ function subscribeSession(
   });
 }
 
-// localhost proxy + webcontainer previews — developer affordances for running a
-// `.dot` app before it's deployed.
+// localhost proxy and webcontainer previews are developer affordances for
+// running a `.dot` app before it's deployed.
 function isDevPreviewLabel(label: string): boolean {
   return (
     label.startsWith("localhost:") || dotNsUrl.isWebcontainerPreviewHost(label)
@@ -121,9 +124,9 @@ function isDevPreviewLabel(label: string): boolean {
 }
 
 /**
- * Derivation product-id from an iframe label.
+ * Derive the product-id from an iframe label.
  *
- * Dev previews (localhost proxy, webcontainer) keep the bare host label, dotNs
+ * Dev previews (localhost proxy, webcontainer) keep the bare host label. dotNs
  * products get the `.dot` suffix appended. Same rule encoded in
  * `isProductAccountValid`.
  */
@@ -137,7 +140,7 @@ function labelAcceptsIdentifier(label: string, id: string): boolean {
   );
 }
 
-// Dev previews are permissive; a deployed `.dot` must sign as its own identifier.
+// Dev previews are permissive. A deployed `.dot` must sign as its own identifier.
 function isProductAccountValid(label: string, accountId: string): boolean {
   if (isDevPreviewLabel(label)) {
     return labelAcceptsIdentifier(label, accountId);
@@ -236,10 +239,10 @@ function wireContainerHandlers(
   // only HDKD-derived product accounts.
   container.handleGetLegacyAccounts((_, { ok }) => ok([]));
 
-  // RFC-0015 — return the user's DotNS username. Disclosing it requires
-  // consent, gated by the per-product `GetUserId` permission. Returns
-  // `NotConnected` if no account is signed in, and `PermissionDenied` if the
-  // permission has not been granted explicitly.
+  // Return the user's DotNS username. Disclosing it requires consent, gated by
+  // the per-product `GetUserId` permission. Returns `NotConnected` if no
+  // account is signed in, and `PermissionDenied` if the permission has not been
+  // granted explicitly.
   container.handleGetUserId((_, { ok, err }) => {
     const state = getAuthState();
     if (state.status !== "authenticated") {
@@ -262,9 +265,9 @@ function wireContainerHandlers(
     );
   });
 
-  // RFC-0009 — products can trigger the host login flow. `requestLogin`
-  // dispatches a DOM event that the topbar listens for (it owns the QR
-  // modal), and resolves once the auth state settles.
+  // Products can trigger the host login flow. `requestLogin` dispatches a DOM
+  // event that the topbar listens for (it owns the QR modal), and resolves once
+  // the auth state settles.
   container.handleRequestLogin((reason, { ok }) => {
     return fromPromise(
       requestLogin(reason, label),
@@ -761,11 +764,10 @@ function wireContainerHandlers(
     }
   });
 
-  //
   // Deterministic 32-byte entropy scoped to the calling product and a
-  // caller-chosen key. Uses the wallet-provided `rootEntropySource` (RFC-0007
-  // layer 1) so the output stays stable across re-pairings instead of churning
-  // with each session's statement-account secret.
+  // caller-chosen key. Uses the wallet-provided `rootEntropySource` so the
+  // output stays stable across re-pairings instead of churning with each
+  // session's statement-account secret.
   container.handleDeriveEntropy((key, { ok, err }) => {
     const session = getSession();
     if (!session) {
@@ -802,7 +804,7 @@ function wireContainerHandlers(
     } else {
       const localhostUrl = dotNsUrl.parseLocalhostUrl(url);
       if (localhostUrl) {
-        // localhost product → wrap in host URL
+        // localhost product: wrap in host URL
         const suffix = localhostUrl.pathname ? "/" + localhostUrl.pathname : "";
         window.open(
           `${getHostOrigin()}/${localhostUrl.host}${suffix}`,
@@ -821,7 +823,7 @@ function wireContainerHandlers(
       // Notifications: tri-state, no iframe reload, silent on denied.
       // (No Permissions Policy directive maps to Notifications, so granting
       // it doesn't change the iframe `allow` attribute. And a denied user
-      // explicitly chose silence — surfacing a "your notifications are
+      // explicitly chose silence. Surfacing a "your notifications are
       // blocked" toast would defeat the point.)
       if (permission === "Notifications") {
         const status = getPermissionStatus(label, "Notifications");
@@ -846,7 +848,7 @@ function wireContainerHandlers(
       }
 
       // OpenUrl has no host-level enforcement point on the web (cross-origin
-      // navigation happens via anchor / window.open). Auto-grant rather than
+      // navigation happens via anchor or window.open). Auto-grant rather than
       // show a modal whose "Deny" button can't be honoured.
       if (!isEnforceableDevicePermission(permission)) {
         return ok(true);
@@ -868,7 +870,7 @@ function wireContainerHandlers(
         return ok(false);
       }
 
-      // status === 'ask' — show consent modal
+      // status === 'ask': show consent modal
       return fromPromise(
         showPermissionRequestModal(label, permission).then(() => {
           setPermissionStatus(label, permission, "granted");
@@ -887,7 +889,7 @@ function wireContainerHandlers(
         () => "denied" as const,
       )
         .map(() => {
-          // User allowed — but iframe reloads, so return false for now
+          // User allowed, but the iframe reloads, so return false for now
           return false;
         })
         .orElse(() => {
@@ -1035,9 +1037,9 @@ function wireContainerHandlers(
     }),
   );
 
-  // NOTE: ProductAccountId ([dotNsIdentifier, derivationIndex]) is intentionally
-  // unused — the proof is always signed with the root session key because only
-  // the session account has an on-chain allowance (quota) on People Chain.
+  // ProductAccountId ([dotNsIdentifier, derivationIndex]) is intentionally
+  // unused. The proof is always signed with the root session key because only
+  // the session account has a network allowance (quota) on People Chain.
   // Derived product accounts are not registered and cannot submit statements.
   container.handleStatementStoreCreateProof(([, statement], { err }) => {
     const session = getSession();
@@ -1065,7 +1067,6 @@ function wireContainerHandlers(
       .map((signed) => mapSdkProof(signed.proof));
   });
 
-  //
   // Submit stores data on Bulletin Paseo via TransactionStorage.store()
   // using smoldot, returns the Blake2b-256 hash key.
   // Lookup retrieves data by hash via Helia P2P (IPFS gateway fallback).
@@ -1092,7 +1093,7 @@ function wireContainerHandlers(
           });
         })
         .mapErr((reason) => {
-          // Surface the real failure reason on the host console — the
+          // Surface the real failure reason on the host console. The
           // product-side only receives the opaque `PreimageSubmitErr.Unknown`
           // class, so without this log there is no way to diagnose why a
           // submit got rejected.
@@ -1104,7 +1105,7 @@ function wireContainerHandlers(
 
   // Preimage lookup subscribe contract:
   //   - Caller (sandboxed app) requests a preimage by key. The lookup runs
-  //     against the user's chosen content backend EXCLUSIVELY — no crossover.
+  //     against the user's chosen content backend exclusively, no crossover.
   //   - We poll at POLL_INTERVAL_MS until cached or the caller drops the
   //     subscription.
   //   - A miss ("not found yet") and a backend throw (Helia/gateway error)
@@ -1112,8 +1113,8 @@ function wireContainerHandlers(
   //     self-interrupts: the propagation time for a valid preimage can be
   //     arbitrary, and cutting the subscription on "a few misses" made slow
   //     but healthy chains look like transport failure to the caller.
-  //   - This is NOT a silent retry across providers. The user-selected
-  //     backend is the only backend dialed; failures stay attributable.
+  //   - This is not a silent retry across providers. The user-selected
+  //     backend is the only backend dialed. Failures stay attributable.
   container.handlePreimageLookupSubscribe((key, send, _interrupt) => {
     log.warn(`[${label}] Preimage lookup subscribe, key: ${key}`);
 
@@ -1143,7 +1144,7 @@ function wireContainerHandlers(
       const cid = hashToCid(key);
       const cidString = cid.toString();
 
-      // Honor the user's backend choice. No silent smoldot→gateway
+      // Honor the user's backend choice. No silent smoldot-to-gateway
       // crossover. A bitswap lookup failure is a bitswap failure. A
       // gateway failure is a gateway failure. We log and keep polling.
       // The caller unsubscribes when it's done waiting.
@@ -1207,7 +1208,6 @@ function wireContainerHandlers(
     };
   });
 
-  //
   // dot.li does not own a payment rail yet. Register explicit
   // "not implemented" responses so products see a specific reason
   // rather than a generic transport error, and subscription starts
@@ -1247,12 +1247,11 @@ function wireContainerHandlers(
 const PAYMENTS_NOT_IMPLEMENTED = "Payments are not supported in dot.li";
 const NOOP: VoidFunction = () => undefined;
 
-//
 // Each submit-style wire tag caches a per-product decision in
 // localStorage under the `storageKey` below, prompting once via
 // `showPermissionRequestModal` when the cache is empty. `Remote`
 // intentionally prompts every call (the domain-pattern list is
-// dynamic); `WebRTC` is auto-granted (browser gates it via the
+// dynamic). `WebRTC` is auto-granted (browser gates it via the
 // iframe `allow` attribute).
 
 const CACHED_SUBMIT_PERMISSIONS = {
@@ -1305,7 +1304,7 @@ function promptCachedSubmitPermission(
     });
 }
 
-/** Strip the `.dot` suffix to get the bare label (e.g. "mytestapp.dot" → "mytestapp"). */
+/** Strip the `.dot` suffix to get the bare label (e.g. "mytestapp.dot" becomes "mytestapp"). */
 function identifierToLabel(identifier: string): string {
   return identifier.slice(0, -".dot".length);
 }
@@ -1341,7 +1340,6 @@ function isUint8ArrayLike(data: unknown): data is Uint8Array {
   );
 }
 
-//
 // Implements the same Provider interface as createIframeProvider
 // but targets a captured Window reference (from event.source)
 // instead of an HTMLIFrameElement.
@@ -1394,7 +1392,6 @@ function createWindowProvider(sourceWindow: Window): Provider {
   };
 }
 
-//
 // Listens for Uint8Array postMessage events from windows other
 // than the primary iframe. When a new source is detected, creates
 // a full bridge (Provider + Container + handlers) for that window.
@@ -1431,7 +1428,7 @@ export function setupNestedBridgeDetector(
       return;
     }
 
-    // Validate origin — only allow *.dot.li and *.localhost origins
+    // Validate origin: only allow *.dot.li and *.localhost origins
     try {
       const url = new URL(event.origin);
       const h = url.hostname;
@@ -1531,7 +1528,7 @@ export function setupContainer(
  * messages emit debug events. These anchor the often-long window
  * between `bridge:setup_ready` (handler registered) and the moment
  * the product iframe actually starts exchanging messages with the
- * host — during which the TrUAPI swimlane typically shows dozens to
+ * host, during which the TrUAPI swimlane typically shows dozens to
  * hundreds of `host_handshake_request` retries with no corresponding
  * system-layer activity.
  */
@@ -1554,13 +1551,13 @@ function instrumentProvider(
           timestamp: Date.now(),
           payload: { label, productId: label },
         });
-        // Signal the main-thread monitor that it can stop — the
+        // Signal the main-thread monitor that it can stop. The
         // bridge is fully established.
         try {
           window.dispatchEvent(new CustomEvent("dotli:debug:bridge-ready"));
           // eslint-disable-next-line no-restricted-syntax -- dispatchEvent may throw in exotic environments; the debug monitor is best-effort.
         } catch {
-          /* ignore — monitor just falls back to its duration cap */
+          /* ignore: monitor just falls back to its duration cap */
         }
       }
       base.postMessage(message);

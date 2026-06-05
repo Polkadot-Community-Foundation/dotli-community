@@ -1,10 +1,13 @@
-// Protocol host entry point
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Protocol host entry point.
 //
-// Three modes, selected explicitly via `?mode=` URL parameter:
-//   1. "shared-worker" — smoldot runs in a SharedWorker shared across tabs
-//   2. "direct"        — smoldot runs in this iframe with no cross-tab coordination
-//   3. "rpc"           — trusted WSS JSON-RPC to a public node (no smoldot),
-//                        used by gateway mode to bridge sandboxed-app chain calls
+// Three modes, selected explicitly via the `?mode=` URL parameter:
+//   1. "shared-worker": smoldot runs in a SharedWorker shared across tabs.
+//   2. "direct": smoldot runs in this iframe with no cross-tab coordination.
+//   3. "rpc": trusted WSS JSON-RPC to a public node (no smoldot), used by
+//      gateway mode to bridge sandboxed-app chain calls.
 
 import {
   initSentry,
@@ -58,10 +61,10 @@ import {
   setNetworkOverride,
   type Network,
 } from "@dotli/config/network";
-// Smoldot / relay-chain / dot-name resolver imports live behind
+// Smoldot, relay-chain, and dot-name resolver imports live behind
 // `initDirectMode()` (dynamic) so `rpc` mode doesn't drag smoldot into the
 // protocol iframe's initial chunk. The SharedWorker path doesn't import
-// these either — smoldot for shared-worker mode lives inside
+// these either. Smoldot for shared-worker mode lives inside
 // `./protocol-shared-worker.ts`, which is already a separate bundle.
 import {
   createRpcChainProvider,
@@ -96,9 +99,9 @@ installGlobalErrorHandlers("host");
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 
-// Same trust set as shared auth: host shell + non-sandbox *.<BASE>, but NOT
+// Same trust set as shared auth: host shell plus non-sandbox *.<BASE>, but NOT
 // app.<BASE> or *.app.<BASE>. A user-uploaded CID app must never drive the
-// chain bridge directly — it goes through the host shell, which relays on
+// chain bridge directly. It goes through the host shell, which relays on
 // its behalf. Centralizing on `isSharedAuthOriginAllowed` keeps the two
 // allowlists in lockstep.
 function isAllowedOrigin(origin: string): boolean {
@@ -116,9 +119,8 @@ function postToSource(
   (source as Window).postMessage(message, origin);
 }
 
-//
 // The shared-auth path is intentionally handled on the host window (not in the
-// SharedWorker) because it only needs `localStorage` — no smoldot, no chain.
+// SharedWorker) because it only needs `localStorage`, no smoldot and no chain.
 // Each tab embeds its own host iframe, so when tab A writes a session, tab B's
 // adapter subscribers need to be notified. We bridge tabs with a
 // `BroadcastChannel` scoped to the host origin:
@@ -132,9 +134,9 @@ function postToSource(
 //      an `auth-storage-changed` envelope.
 //   4. The parent window's protocol client dispatches to local subscribers.
 //
-// The originating tab does NOT receive its own BroadcastChannel message (per
-// spec), so tab A's local subscribers fire via the in-process `emit` in
-// `createSharedAuthStorageAdapter`'s `.map(() => emit(...))` chain — there is
+// The originating tab does NOT receive its own BroadcastChannel message, so
+// tab A's local subscribers fire via the in-process `emit` in
+// `createSharedAuthStorageAdapter`'s `.map(() => emit(...))` chain. There is
 // no double-dispatch.
 
 const SHARED_AUTH_BROADCAST_CHANNEL = "dotli:shared-auth";
@@ -151,7 +153,7 @@ const sharedAuthChannel: BroadcastChannel | null =
     : null;
 
 // The origin of the parent window embedding this host iframe. Populated from
-// `document.referrer` at module load (best-effort — may be blank under strict
+// `document.referrer` at module load (best-effort, may be blank under strict
 // referrer policies) and refreshed on every validated shared-auth request.
 // Broadcasts are only forwarded to the parent when we know its origin, so
 // unrelated embedders never receive a shared-auth change notification.
@@ -215,7 +217,7 @@ function bindSharedAuthBroadcastRelay(): void {
     }
     // Only the current host's SiteId is valid (see `isSharedAuthSiteId`). We
     // still defensively filter here so stale broadcasts from a different
-    // root domain (which shouldn't happen — the channel is origin-scoped)
+    // root domain (which shouldn't happen, the channel is origin-scoped)
     // cannot leak across trust boundaries.
     if (data.siteId !== SITE_ID) {
       return;
@@ -263,9 +265,9 @@ function bindSharedAuthListener(): void {
     ) {
       return;
     }
-    // First gate: the broad protocol origin allowlist (`*.<BASE_DOMAIN>` +
-    // localhost). The narrower shared-auth allowlist — which additionally
-    // rejects `app.<BASE_DOMAIN>` and sandboxed SPA subdomains — runs inside
+    // First gate: the broad protocol origin allowlist (`*.<BASE_DOMAIN>` plus
+    // localhost). The narrower shared-auth allowlist, which additionally
+    // rejects `app.<BASE_DOMAIN>` and sandboxed SPA subdomains, runs inside
     // `handleSharedAuthRequest` via `assertSharedAuthOrigin`.
     if (!isAllowedOrigin(event.origin)) {
       log.warn(
@@ -309,8 +311,8 @@ function signalReady(): void {
 type RequestedMode = "shared-worker" | "direct" | "rpc" | null;
 
 /**
- * Distinguish "no mode requested" (auth-only iframe — legitimate) from
- * "mode requested but unrecognised" (host bug or URL-tampering — must
+ * Distinguish "no mode requested" (auth-only iframe, legitimate) from
+ * "mode requested but unrecognized" (host bug or URL-tampering, which must
  * surface to the parent so the user sees a real error instead of a silent
  * downgrade to auth-only behavior).
  */
@@ -366,13 +368,13 @@ function getRequestedNetwork(): RequestedNetwork {
 
 /**
  * Purge every IndexedDB on this origin that isn't one of ours. Covers
- * smoldot's internal chain DB + polkadot-api's caches — anything persisted
+ * smoldot's internal chain DB and polkadot-api's caches, anything persisted
  * across page loads that could warm-start the runtime. The dot.li-owned
  * stores (`dotli`, `dotli-sw`) are preserved because they hold user state
  * (CID cache, shared auth), which is orthogonal to worker bootstrapping.
  *
  * Best-effort: some browsers don't expose `indexedDB.databases()` (Firefox
- * historically, Safari pre-17); on those, the skip still takes effect for
+ * historically, Safari pre-17). On those, the skip still takes effect for
  * future writes but we can't proactively clear prior state.
  */
 async function purgeWorkerCaches(): Promise<void> {
@@ -431,7 +433,7 @@ async function init(): Promise<void> {
       raw = new URLSearchParams(window.location.search).get("mode");
       // eslint-disable-next-line no-restricted-syntax -- best-effort extraction of the offending mode value for the error message; the error is already signalled below regardless.
     } catch {
-      /* URL parse failed — fall through with raw=null */
+      /* URL parse failed, fall through with raw=null */
     }
     const message = `Unknown protocol mode: ${raw === null ? "<unparseable>" : `"${raw}"`}`;
     log.error(`[dot.li protocol] ${message}`);
@@ -470,7 +472,7 @@ async function init(): Promise<void> {
 
   // Worker-cache purge runs *before* any broker/smoldot init so the clean
   // state is what the chain client opens against. A purge failure when the
-  // user explicitly requested skipWorkerCache MUST abort init — proceeding
+  // user explicitly requested skipWorkerCache MUST abort init. Proceeding
   // against a stale DB would silently violate the user's setting.
   if (getSkipWorkerCache()) {
     try {
@@ -496,8 +498,8 @@ async function init(): Promise<void> {
     }
     // Register protocol_mode as a session default before any further metrics
     // so bootnode errors, chain-connect failures etc. all carry the mode tag.
-    // Values are kebab-case to match `DotliMode` + the `?mode=` URL convention
-    // (see M-5: one naming convention across host + protocol).
+    // Values are kebab-case to match `DotliMode` and the `?mode=` URL
+    // convention, keeping one naming scheme across host and protocol.
     m.setDefaults({ protocol_mode: "shared-worker" });
     await initSharedWorkerMode(requestedNetwork.network);
     m.count(S.PROTOCOL_MODE, { mode: "shared-worker" });
@@ -515,9 +517,9 @@ async function init(): Promise<void> {
 }
 
 function signalError(message: string): void {
-  // `init-failed` is a dedicated envelope — it has no `id` because no
+  // `init-failed` is a dedicated envelope. It has no `id` because no
   // request was in flight when init died. The client listens for this
-  // alongside `fatal` and rejects every pending request + blocks new
+  // alongside `fatal`, rejects every pending request, and blocks new
   // work until the user reloads. The old `id: "__init__"` sentinel was
   // a collision hazard (any real request using that id would alias).
   if (window.parent !== window) {
@@ -537,7 +539,7 @@ async function initSharedWorkerMode(network: Network): Promise<void> {
 
   // Vite statically rewrites `new SharedWorker(new URL("./worker.ts",
   // import.meta.url), ...)` to point at the bundled chunk. The `new URL`
-  // MUST be a literal argument to the SharedWorker constructor — assigning
+  // MUST be a literal argument to the SharedWorker constructor. Assigning
   // it to a variable (even briefly to set a query param) breaks the
   // rewrite and the browser ends up fetching the unresolved `.ts` path,
   // which 404s in production. Network is therefore propagated via the
@@ -595,7 +597,7 @@ async function initSharedWorkerMode(network: Network): Promise<void> {
     "[dot.li protocol] Smoldot runs in SharedWorker, persists across navigations",
   );
 
-  // Relay: parent postMessage → SharedWorker
+  // Relay parent postMessage requests into the SharedWorker.
   window.addEventListener("message", (event: MessageEvent) => {
     const data: unknown = event.data;
     if (!isProtocolEnvelope(data) || data.kind !== "request") {
@@ -622,7 +624,7 @@ async function initSharedWorkerMode(network: Network): Promise<void> {
     port.postMessage(msg);
   });
 
-  // Relay: SharedWorker → parent
+  // Relay SharedWorker responses back up to the parent.
   port.addEventListener("message", (event: MessageEvent) => {
     const data = event.data as SWOutbound | null;
     if (data?.type === "relay-response" && window.parent !== window) {
@@ -640,7 +642,7 @@ async function initSharedWorkerMode(network: Network): Promise<void> {
       port.postMessage({ type: "disconnect" });
       // eslint-disable-next-line no-restricted-syntax -- best-effort unload signal to the SharedWorker; the port may already be closed (browser tab unloading), which is the expected terminal state.
     } catch {
-      /* port already closed on unload — safe */
+      /* port already closed on unload, safe */
     }
     port.close();
   });
@@ -676,8 +678,9 @@ async function initDirectMode(): Promise<void> {
   const { terminateSmoldot, onSmoldotFatal } = smoldotMod;
   const { submitPreimageTransaction, getTestSigner } = bulletin;
 
-  // Smoldot panic → broadcast fatal to parent. Direct mode has no
-  // SharedWorker in the loop, so we post straight up to the host shell.
+  // On a smoldot panic, broadcast a fatal envelope to the parent. Direct
+  // mode has no SharedWorker in the loop, so we post straight up to the
+  // host shell.
   onSmoldotFatal((message) => {
     log.error("[dot.li protocol] Smoldot panic detected, signaling fatal");
     if (window.parent !== window) {
@@ -721,12 +724,11 @@ async function initDirectMode(): Promise<void> {
   });
 }
 
-//
 // No smoldot. Sandboxed app chain requests are bridged to a trusted WSS
 // JSON-RPC endpoint via the shared broker. Name resolution in gateway mode
 // happens in the host process (see `@dotli/resolver/rpc-resolve`), not via
-// this iframe, so `resolveDotName` / `resolveOwner` requests aren't wired
-// up here — the host never sends them when gateway is active.
+// this iframe, so `resolveDotName` and `resolveOwner` requests aren't wired
+// up here. The host never sends them when gateway is active.
 
 function initRpcMode(): void {
   log.warn("[dot.li protocol] === RPC MODE ===");
@@ -1025,7 +1027,7 @@ interface EngineOptions {
   createChainProvider: (genesisHash: string) => JsonRpcProvider | null;
   /** Whether the given genesis hash is handled by this engine. */
   isChainSupported: (genesisHash: string) => boolean;
-  /** Called once at engine creation — e.g. to kick off smoldot pre-sync. */
+  /** Called once at engine creation, e.g. to kick off smoldot pre-sync. */
   onInit?: () => void;
   /** Called at cleanup time after broker teardown. */
   onCleanup?: () => void;

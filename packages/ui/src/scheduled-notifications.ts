@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Scheduled notifications runtime: a polling loop plus cross-tab
  * coordination on top of the IDB-backed queue in

@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { chromium, type FullConfig } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -10,19 +13,19 @@ import {
 import { extractQrPayload } from "./helpers/extract-qr-payload";
 import { STATE_FILE, SESSION_FILE } from "./fixtures/paths";
 
-// External-service config. Required, no defaults — a wrong/missing
+// External-service config. Required, with no defaults. A wrong or missing
 // value silently breaks pairing (e.g. bot attesting on a different
 // chain than the host listens on). Set in CI via the workflow env
 // block and in local `.env`.
 const SVC_TOKEN = requiredEnv("SIGNER_BOT_SVC_TOKEN");
 const BOT_BASE = requiredEnv("SIGNER_BOT_BASE_URL");
 // Must equal the host's default network (`packages/config/src/network.ts`
-// `defaultNetwork()` → "paseo-next-v2" at time of writing). The bot's
-// `/api/networks` lists supported IDs; mismatch surfaces as "pair OK,
+// `defaultNetwork()`, "paseo-next-v2" at time of writing). The bot's
+// `/api/networks` lists supported IDs. A mismatch surfaces as "pair OK,
 // user-badge never appears" because the chain-side handshake never
 // reaches the host's protocol iframe.
 const BOT_NETWORK = requiredEnv("SIGNER_BOT_NETWORK");
-// Local-dev knobs — defaults are fine because they don't depend on
+// Local-dev knobs. Defaults are fine because they don't depend on
 // external services.
 const PORT = process.env.PORT ?? "5173";
 const HOST = process.env.E2E_HOST ?? "host-playground";
@@ -40,9 +43,10 @@ function requiredEnv(name: string): string {
 
 const PAIR_ATTEMPTS = 3;
 const PAIR_ATTEMPT_BACKOFF_MS = 3_000;
-// One-time setup: the bot has to create the user + attest on-chain, so
-// a more generous ceiling than the per-test restore. If this trips, the
-// bot or chain is in trouble and the whole run should fail fast.
+// One-time setup: the bot has to create the user and attest on the
+// network, so the ceiling is more generous than the per-test restore.
+// If this trips, the bot or chain is in trouble and the whole run
+// should fail fast.
 const USER_BADGE_TIMEOUT_MS = 60_000;
 
 // Distinct exit code so CI workflow / reviewers can tell "Nova is down"
@@ -163,7 +167,7 @@ async function pairOnce(
       .locator("#auth-button .user-badge")
       .waitFor({ state: "visible", timeout: USER_BADGE_TIMEOUT_MS });
 
-    // Persist cookies + localStorage from every origin this context has
+    // Persist cookies and localStorage from every origin this context has
     // touched (including the cross-origin shared-auth iframe on `host.<root>`).
     // This is what lets worker fixtures skip the QR/pair flow entirely.
     await ctx.storageState({ path: STATE_FILE });

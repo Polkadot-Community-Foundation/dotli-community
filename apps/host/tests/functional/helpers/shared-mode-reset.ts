@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { test as base } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 
@@ -8,12 +11,12 @@ const PORT = process.env.COMBO_PORT ?? "5173";
  * `scripts/preview-server.ts`). Required between tests: a sibling spec's
  * `rpc-gateway` write shadows this test's per-context `localStorage` seed
  * during bootstrap, silently rerouting the host through the RPC path
- * (where mocked iframes are never queried — the 10s-timeout failure shape).
+ * (where mocked iframes are never queried, the 10s-timeout failure shape).
  *
- * Hits `127.0.0.1` directly: Chromium resolves `*.localhost` to 127.0.0.1
- * per RFC 6761, but Node's default DNS resolver on Linux (the CI runner)
- * does not — so `host.localhost:PORT` here would ECONNREFUSED on CI.
- * The mode-sync endpoint gates on path, not hostname, so this is safe.
+ * Hits `127.0.0.1` directly: Chromium resolves `*.localhost` to 127.0.0.1,
+ * but Node's default DNS resolver on Linux (the CI runner) does not, so
+ * `host.localhost:PORT` here would ECONNREFUSED on CI. The mode-sync
+ * endpoint gates on path, not hostname, so this is safe.
  */
 export async function resetSharedMode(
   request: APIRequestContext,

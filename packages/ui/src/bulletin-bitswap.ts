@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { isResponse } from "@polkadot-api/json-rpc-provider";
 import type {
   JsonRpcConnection,
@@ -13,7 +16,8 @@ import { getActiveServicesConfig } from "@dotli/config/network";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
 
-// https://github.com/paritytech/json-rpc-interface-spec/blob/main/src/api/bitswap_v1_get.md
+// JSON-RPC error codes returned by `bitswap_v1_get`. RETRY and BACKOFF are
+// transient and retryable. INVALID_PARAMS and FAIL are terminal.
 const ERR_INVALID_PARAMS = -32602;
 const ERR_FAIL = -32810;
 const ERR_FAIL_RETRY = -32811;

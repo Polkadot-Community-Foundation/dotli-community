@@ -1,4 +1,7 @@
-// dot.li — Smoldot lifecycle management
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li Smoldot lifecycle management.
 //
 // Single shared smoldot instance plus a small set of provider factories.
 // The protocol host can override the resolver's Asset Hub provider so
@@ -37,7 +40,6 @@ export type SmoldotClient = ReturnType<typeof startFromWorker>;
 
 export type SmoldotChain = Awaited<ReturnType<SmoldotClient["addChain"]>>;
 
-//
 // Smoldot's logCallback fires for all internal events. We watch for
 // connection-related errors/warnings and notify subscribers so the UI
 // can surface bootnode issues to the user.
@@ -56,9 +58,8 @@ export function onConnectionIssue(cb: ConnectionIssueCallback): () => void {
   };
 }
 
-//
 // Smoldot's WASM can panic (e.g. the "Option::unwrap() on a None value"
-// crash during relay-chain sync). A panic leaves every chain dead — any
+// crash during relay-chain sync). A panic leaves every chain dead and any
 // in-flight request would hang forever. The log callback catches the
 // panic line so the surrounding layers can broadcast a fatal signal out
 // to the host client and reject pending requests immediately instead of
@@ -77,7 +78,7 @@ export function onSmoldotFatal(cb: FatalCallback): () => void {
       cb(smoldotFatalMessage);
       // eslint-disable-next-line no-restricted-syntax -- defensive multicast replay: one buggy late subscriber must not prevent the caller from registering.
     } catch {
-      /* listener threw — safe to ignore on replay */
+      /* listener threw, safe to ignore on replay */
     }
   }
   return () => {
@@ -95,7 +96,7 @@ function markSmoldotFatal(message: string): void {
       cb(message);
       // eslint-disable-next-line no-restricted-syntax -- defensive multicast: one buggy subscriber must not block the fatal broadcast to all others.
     } catch {
-      /* listener threw — don't let one listener break the broadcast */
+      /* listener threw, do not let one listener break the broadcast */
     }
   }
 }
@@ -123,8 +124,8 @@ function smoldotLogCallback(
     log.debug(`[smoldot:${target}] ${message}`);
   }
 
-  // Panic — terminal, no recovery. Smoldot's log message starts with
-  // "Smoldot has panicked while executing task …". Surface as fatal.
+  // A panic is terminal with no recovery. Smoldot's log message starts
+  // with "Smoldot has panicked while executing task …". Surface as fatal.
   if (
     message.includes("Smoldot has panicked") ||
     message.includes("panicked at")
@@ -244,7 +245,7 @@ function attachPersistence(
 }
 
 /**
- * Create smoldot using `start()` — runs on the current thread.
+ * Create smoldot using `start()`, which runs on the current thread.
  *
  * Used in SharedWorker context where the `Worker` constructor is unavailable.
  * Smoldot networking (WebSocket) is async; occasional CPU bursts for block
@@ -260,8 +261,8 @@ export function getSmoldotDirect(): SmoldotClient {
     logCallback: smoldotLogCallback,
     // Smoldot's own auto-detection (no-auto-bytecode-browser.js) is buggy
     // and never sets this in browsers, so peer-gossipped `ws://[ip]` addrs
-    // get attempted and tripped by the browser's mixed-content rules —
-    // either blocked (public) or surfaced as deprecation warnings
+    // get attempted and tripped by the browser's mixed-content rules. They
+    // are either blocked (public) or surfaced as deprecation warnings
     // (link-local), and either way the page is demoted from secure context
     // (which breaks SW registration).
     forbidNonLocalWs: true,
@@ -290,7 +291,7 @@ export function getSmoldot(): SmoldotClient {
  * broadcast, etc.) every chain promise we had cached is pointing at a
  * dead `SmoldotChain`. If any of them survive, the next call to e.g.
  * `getBulletinChain()` would return a promise that resolves to a chain
- * whose `sendJsonRpc` is a no-op — the user would see a silent hang.
+ * whose `sendJsonRpc` is a no-op, and the user would see a silent hang.
  * Clear them all atomically so the next access re-creates against the
  * freshly booted smoldot.
  */
@@ -303,7 +304,7 @@ export function terminateSmoldot(): void {
     void smoldotInstance.terminate();
     // eslint-disable-next-line no-restricted-syntax -- best-effort teardown: smoldot may already be dead (panic or prior terminate); surfacing the error would block the subsequent promise cleanup which is the important step here.
   } catch {
-    /* already destroyed or crashed — safe to ignore */
+    /* already destroyed or crashed, safe to ignore */
   }
   teardownAllPersistence();
   smoldotInstance = null;
@@ -344,7 +345,7 @@ export function getRelayChain(): Promise<SmoldotChain> {
   return relayChainPromise;
 }
 
-// Long-lived singleton — no mutex conflict with Asset Hub.
+// Long-lived singleton with no mutex conflict with Asset Hub.
 
 let bulletinChainPromise: Promise<SmoldotChain> | null = null;
 
@@ -382,7 +383,6 @@ export function getBulletinChain(): Promise<SmoldotChain> {
   return bulletinChainPromise;
 }
 
-// Created lazily after the resolver releases the mutex.
 /**
  * Wrap a chain so `.remove()` is a no-op.
  * Used for shared singletons (e.g. bulletin chain) where a polkadot-api
@@ -415,7 +415,7 @@ let peopleChainPromise: Promise<SmoldotChain> | null = null;
  *
  * Both the custom-relay and people-chain promises clear themselves on
  * rejection so the failure isn't permanently cached across a live
- * session — the next access rebuilds against a fresh smoldot chain.
+ * session. The next access rebuilds against a fresh smoldot chain.
  */
 export function getPeopleChain(): Promise<SmoldotChain> {
   if (peopleChainPromise !== null) {
@@ -525,7 +525,6 @@ export function getResolverAssetHubProvider(): JsonRpcProvider {
   return assetHubProvider;
 }
 
-//
 // After the resolver finishes dotNS resolution, its chain can be released.
 // dApp connections then use a FRESH chain that has no "announced blocks"
 // history, avoiding smoldot's per-connection block deduplication.
@@ -559,12 +558,12 @@ export function releaseResolverAssetHubChain(): void {
  * Get or create a fresh Asset Hub chain for dApp connections.
  *
  * This chain is separate from the resolver's chain and has no
- * "announced blocks" history — smoldot will send complete newBlock
+ * "announced blocks" history. Smoldot will send complete newBlock
  * events for all non-finalized blocks on new subscriptions.
  *
  * The returned chain wraps `remove()` to clear the cached promise,
  * so the next call creates a fresh chain. This is necessary because
- * `getSmProvider` calls `chain.remove()` on disconnect — without
+ * `getSmProvider` calls `chain.remove()` on disconnect. Without
  * cache invalidation, subsequent providers would reference a
  * destroyed chain.
  */

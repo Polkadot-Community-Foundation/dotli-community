@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, type Plugin } from "vite";
 import { readFileSync, readdirSync, copyFileSync } from "node:fs";
@@ -8,8 +11,9 @@ import { VitePWA } from "vite-plugin-pwa";
 import { prodNoAnalyticsAliases } from "../../packages/metrics/src/prod-no-analytics-aliases";
 
 // Local builds don't get `VITE_COMMIT_SHA` injected by CI. Fall back to the
-// git HEAD so Diagnostics shows a real commit identifier in dev too — "dev"
-// is only used when we're not in a git checkout at all (e.g. a tarball).
+// git HEAD so Diagnostics shows a real commit identifier in dev too. The
+// literal "dev" is only used when we're not in a git checkout at all (e.g. a
+// tarball).
 if (!process.env.VITE_COMMIT_SHA) {
   try {
     process.env.VITE_COMMIT_SHA = execSync("git rev-parse HEAD", {
@@ -19,7 +23,7 @@ if (!process.env.VITE_COMMIT_SHA) {
       .toString()
       .trim();
   } catch {
-    // Not a git checkout — leave unset; topbar.ts treats that as "dev".
+    // Not a git checkout, so leave it unset. topbar.ts treats that as "dev".
   }
 }
 
@@ -27,10 +31,10 @@ const OUT_DIR = "dist";
 
 /**
  * Walk every workspace member's `package.json` and collect its direct
- * `dependencies` entries (devDependencies + peerDependencies are ignored —
- * only what dot.li code actually imports should appear in Diagnostics).
- * Returns a map keyed by package name whose value is the set of workspace
- * directories that depend on it.
+ * `dependencies` entries. devDependencies and peerDependencies are ignored, so
+ * only what dot.li code actually imports appears in Diagnostics. Returns a map
+ * keyed by package name whose value is the set of workspace directories that
+ * depend on it.
  */
 function collectWorkspaceDependencies(): Map<string, Set<string>> {
   const deps = new Map<string, Set<string>>();
@@ -71,8 +75,8 @@ function collectWorkspaceDependencies(): Map<string, Set<string>> {
 /**
  * For every direct dependency whose name starts with `scope`, resolve the
  * actually-installed version via the depending workspace's own
- * `node_modules/<name>/package.json`. Ignores transitive dependencies (that's
- * what made the previous `.bun`-scan version lists explode to 80+ rows).
+ * `node_modules/<name>/package.json`. Ignores transitive dependencies, which
+ * would otherwise balloon the version list to 80+ rows.
  */
 function collectDirectScopedDeps(
   scope: string,
@@ -96,7 +100,7 @@ function collectDirectScopedDeps(
           break;
         }
       } catch {
-        // Not hoisted into this workspace's node_modules — try next one.
+        // Not hoisted into this workspace's node_modules, so try the next one.
       }
     }
   }
@@ -129,14 +133,13 @@ function readHostVersion(): string {
 /**
  * Look up the paritytech/smoldot commit SHA for the npm-published `smoldot`
  * version we bundle. Smoldot's git repo tags its JS releases with the
- * `light-js-deno-v<version>` prefix (verified via GitHub's refs API), and
- * the JS binding's published version tracks that tag directly — so the
- * commit behind `light-js-deno-v3.0.0` is the commit that produced
- * `smoldot@3.0.0` on npm.
+ * `light-js-deno-v<version>` prefix, and the JS binding's published version
+ * tracks that tag directly, so the commit behind `light-js-deno-v3.0.0` is the
+ * commit that produced `smoldot@3.0.0` on npm.
  *
- * Neither `bun.lock` nor smoldot's package.json carries a commit; the
+ * Neither `bun.lock` nor smoldot's package.json carries a commit. The
  * lockfile only stores the tarball integrity hash, so the GitHub API is
- * the only build-time source of truth. Failures are silent — if the build
+ * the only build-time source of truth. Failures are silent: if the build
  * host can't reach github.com (offline dev, locked-down CI), the
  * Diagnostics row degrades to just `<version>` instead of `<version>
  * (sha)` rather than failing the build.
@@ -285,7 +288,7 @@ function preloadCriticalAssets(): Plugin {
 }
 
 /**
- * GitHub Pages SPA fallback: copy index.html -> 404.html.
+ * GitHub Pages SPA fallback: copy index.html to 404.html.
  */
 function githubPages404(): Plugin {
   return {
@@ -324,7 +327,7 @@ function previewCoepHeaders(): Plugin {
 }
 
 /**
- * Sentry sourcemap upload — skipped on prod (runtime SDK is aliased to a
+ * Sentry sourcemap upload. Skipped on prod (runtime SDK is aliased to a
  * no-op, nothing to attribute) and locally without SENTRY_AUTH_TOKEN
  * (preserves source maps for debugging).
  */
@@ -355,7 +358,7 @@ export default defineConfig({
     githubPages404(),
     previewCoepHeaders(),
     sentry(),
-    // Host shell PWA. Scope-locked to the host origin (myapp.dot.li) — the
+    // Host shell PWA. Scope-locked to the host origin (myapp.dot.li). The
     // protocol iframe on host.dot.li and the app iframe on *.app.dot.li are
     // cross-origin and outside this SW's reach by design. Smoldot.wasm lives
     // in the protocol build; browser HTTP cache (immutable, hashed filename)
@@ -416,7 +419,7 @@ export default defineConfig({
   },
   define: {
     __BUILD_TARGET__: JSON.stringify("host"),
-    // Baked once at build time — read lazily at declaration site so a
+    // Baked once at build time, read lazily at the declaration site so a
     // missing package (shouldn't happen given the monorepo overrides)
     // falls back to empty/"unknown" rather than failing the build.
     __DOTLI_VERSION__: JSON.stringify(readHostVersion()),

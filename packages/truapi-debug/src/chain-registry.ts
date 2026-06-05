@@ -1,4 +1,7 @@
-// dot.li — Known-chain name registry
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Known-chain name registry
 //
 // Maps well-known genesis hashes to human-readable names so the
 // timeline can label swimlanes and the detail-pane summary can

@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Diffs perf runs and ranks deltas with statistical significance.
  *

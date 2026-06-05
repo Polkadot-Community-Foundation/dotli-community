@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Cold-start performance harness for the host shell.
  *
@@ -35,7 +38,7 @@ export interface PhaseStats {
   p99: number;
   mean: number;
   stddev: number;
-  cv: number; // coefficient of variation (stddev/mean) — >0.3 = noisy
+  cv: number; // coefficient of variation (stddev/mean), >0.3 = noisy
   min: number;
   max: number;
   values: number[];
@@ -75,9 +78,9 @@ const PERF_VERBOSE = process.env.PERF_VERBOSE === "1";
 const ITERATION_TIMEOUT = 3 * 60_000; // 3 minutes per iteration
 
 const PHASE_PAIRS: [string, string, string][] = [
-  // Cross-layer: host start → app end (wall-clock end-to-end)
+  // Cross-layer: host start through app end (wall-clock end-to-end)
   ["End-to-end", "dotli:main:start", "dotli:app:end"],
-  // Host phases (name.localhost — resolution + iframe creation)
+  // Host phases (name.localhost: resolution and iframe creation)
   ["Host total", "dotli:main:start", "dotli:main:end"],
   ["SW registration", "dotli:sw:start", "dotli:sw:end"],
   ["Name resolution", "dotli:resolve:start", "dotli:resolve:end"],
@@ -99,7 +102,7 @@ const PHASE_PAIRS: [string, string, string][] = [
 
 /**
  * Discard outlier values that exceed 2x the best (minimum) time.
- * P2P connections are inherently noisy — slow iterations where peers are
+ * P2P connections are inherently noisy. Slow iterations where peers are
  * unreachable skew all metrics. Filtering before stats gives a more
  * representative picture of actual performance.
  */
@@ -144,7 +147,7 @@ function computeStats(rawValues: number[]): PhaseStats {
 }
 
 async function collectMarks(page: Page): Promise<PerfMark[]> {
-  // Collect host-side marks + timeOrigin for cross-frame normalization
+  // Collect host-side marks and timeOrigin for cross-frame normalization
   const hostData = await page.evaluate(() => ({
     marks: performance
       .getEntriesByType("mark")
@@ -170,9 +173,9 @@ async function collectMarks(page: Page): Promise<PerfMark[]> {
       timeOrigin: performance.timeOrigin,
     }));
 
-    // Normalize app marks onto the host performance timeline.
-    // offset = appTimeOrigin - hostTimeOrigin; adding it converts app
-    // mark timestamps to be relative to the host's timeOrigin.
+    // Normalize app marks onto the host performance timeline. The offset is
+    // appTimeOrigin minus hostTimeOrigin. Adding it converts app mark
+    // timestamps to be relative to the host's timeOrigin.
     const offset = appData.timeOrigin - hostData.timeOrigin;
     const normalizedAppMarks = appData.marks.map((m) => ({
       name: m.name,
@@ -208,7 +211,7 @@ function computePhases(marks: PerfMark[]): PhaseResult[] {
 }
 
 async function waitForPipeline(page: Page): Promise<void> {
-  // 1. Wait for host to finish (CID resolution + app iframe creation)
+  // 1. Wait for host to finish (CID resolution and app iframe creation)
   await page.waitForFunction(
     () =>
       performance
@@ -565,7 +568,7 @@ async function runWarmIterations(
   });
   const page = await context.newPage();
 
-  // First load — populate caches (SW registration, IndexedDB archive, etc.)
+  // First load populates caches (SW registration, IndexedDB archive, etc.)
   console.log(`  Warm: initial load (populating caches)...`);
   await page.goto(`http://${DOMAIN_A}.localhost:${PORT}/`, {
     waitUntil: "commit",
@@ -614,11 +617,11 @@ async function runWarmIterations(
 /**
  * Run lukewarm iterations: prime with DOMAIN_A, then measure DOMAIN_B.
  *
- * "Lukewarm" = a different .dot site in the same browser session. The browser
- * has already compiled WASM, cached JS chunks (HTTP cache), and warmed up
- * network stacks — but DOMAIN_B has no CID cache, no SW archive, and a
- * separate SW/IDB origin. This measures the benefit of infrastructure reuse
- * across different .dot sites.
+ * "Lukewarm" means a different .dot site in the same browser session. The
+ * browser has already compiled WASM, cached JS chunks (HTTP cache), and
+ * warmed up network stacks, but DOMAIN_B has no CID cache, no SW archive,
+ * and a separate SW/IDB origin. This measures the benefit of infrastructure
+ * reuse across different .dot sites.
  */
 async function runLukewarmIterations(
   browser: Browser,
@@ -691,7 +694,7 @@ async function runLukewarmIterations(
   return runs;
 }
 
-// 3 tests × N iterations: cold (~15s each), warm (~5s each), lukewarm (~30s each = prime + measure)
+// 3 tests, N iterations each: cold (~15s each), warm (~5s each), lukewarm (~30s each, prime then measure)
 test.setTimeout(NUM_RUNS * 300_000 + 30_000);
 
 test.describe("Cold Start Performance", () => {

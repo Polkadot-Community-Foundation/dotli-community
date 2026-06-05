@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Sandbox-side bitswap bridge: postMessages the host parent which proxies
 // the request to the protocol iframe's smoldot.
 

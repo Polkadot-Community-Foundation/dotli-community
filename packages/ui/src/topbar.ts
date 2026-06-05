@@ -1,9 +1,12 @@
-// dot.li — Top bar UI
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li Top bar UI
 //
 // Manages the auth button, QR pairing modal, and user popover.
-// All plain DOM manipulation — no framework.
+// All plain DOM manipulation, no framework.
 //
-// Auth module is lazy-loaded — the heavy host-papp, statement-store, and
+// Auth module is lazy-loaded. The heavy host-papp, statement-store, and
 // polkadot-api WS deps only load when a persisted session exists or the
 // user clicks the auth button.
 
@@ -77,7 +80,6 @@ let currentProductLabel: string | null = null;
 /** True once the host has rendered an error page; no product will load. */
 let productErrored = false;
 
-// Hexagon SVG for the logged-out state
 // User icon for the logged-out state
 const USER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
 
@@ -169,10 +171,10 @@ export function initTopBar(): void {
   // Disconnect button
   userPopoverDisconnect.addEventListener("click", handleDisconnect);
 
-  // RFC-0009 — products can trigger the login flow via
-  // `handleRequestLogin`. `requestLogin()` in @dotli/auth dispatches
-  // this event after checking the already-connected fast path; the
-  // topbar owns the QR modal so we open it here and kick off pairing.
+  // Products can trigger the login flow via `handleRequestLogin`.
+  // `requestLogin()` in @dotli/auth dispatches this event after checking
+  // the already-connected fast path. The topbar owns the QR modal so we
+  // open it here and kick off pairing.
   window.addEventListener("dotli:request-login", (e: Event) => {
     const detail = (e as CustomEvent<{ reason?: string; label?: string }>)
       .detail;
@@ -358,7 +360,7 @@ function renderPairing(payload: string): void {
   currentQrPayload = payload;
 
   if (!payload) {
-    // Initial state — show spinner
+    // Initial state, show spinner
     modalQr.innerHTML = `<div class="spinner"></div>`;
     return;
   }
@@ -463,7 +465,7 @@ function handleAuthButtonClick(): void {
       // Toggle user popover
       userPopover.classList.toggle("open");
     } else if (state.status === "attesting") {
-      // Attestation still running in background — just reshow the modal
+      // Attestation still running in background, just reshow the modal
       modalBackdrop.classList.add("open");
     } else {
       // Open modal and start pairing
@@ -471,7 +473,7 @@ function handleAuthButtonClick(): void {
       authMod.startPairing();
     }
   } else {
-    // Auth not loaded yet — load it and start pairing
+    // Auth not loaded yet, load it and start pairing
     openModal();
     void ensureAuth().then(() => {
       authMod?.startPairing();
@@ -518,7 +520,7 @@ function initPermissions(): void {
   permissionsButton = getElement("permissions-button");
   permissionsPopover = getElement("permissions-popover");
   permissionsPopoverList = getElement("permissions-popover-list");
-  // Backdrop is optional — older host shells that haven't added the element
+  // Backdrop is optional. Older host shells that haven't added the element
   // still work, the popover just doesn't get a modal overlay there.
   permissionsPopoverBackdrop = document.getElementById(
     "permissions-popover-backdrop",
@@ -547,7 +549,7 @@ function initPermissions(): void {
 
   // Re-render the popover hint when the host swaps in an error page.
   // Clear the label too so any previously loaded product's grants stop
-  // showing — the error page means no product is mounted.
+  // showing. The error page means no product is mounted.
   window.addEventListener("dotli:product-error", () => {
     productErrored = true;
     currentProductLabel = null;
@@ -763,12 +765,12 @@ function initModeToggle(): void {
   modeButton = getElement("mode-button");
   modePopover = getElement("mode-popover");
   modePopoverContent = getElement("mode-popover-content");
-  // Backdrop is optional — older host shells that haven't added the element
+  // Backdrop is optional. Older host shells that haven't added the element
   // still work, the popover just doesn't get a modal overlay there.
   modePopoverBackdrop = document.getElementById("mode-popover-backdrop");
 
   // Show the "trusted provider" indicator on the settings button whenever
-  // the session is not fully verified — i.e. chain=rpc or content=gateway
+  // the session is not fully verified, i.e. chain=rpc or content=gateway
   // on either axis. The rule is owned by `isVerifiedSession` so this
   // button and the host shield can never disagree on trust posture.
   modeButton.classList.toggle("gateway-mode", !isVerifiedSession(getBackend()));
@@ -818,7 +820,7 @@ function setPermissionsPopoverOpen(open: boolean): void {
 /**
  * Open the resolution-mode popover programmatically, e.g. from a slow-path
  * "Adjust mode" affordance instead of silently swapping modes behind the
- * user's back. Safe to call before `initTopBar()` — falls through silently
+ * user's back. Safe to call before `initTopBar()`. Falls through silently
  * if the DOM isn't ready yet.
  */
 export function openModePopover(): void {
@@ -835,14 +837,14 @@ export function openModePopover(): void {
     }
     // eslint-disable-next-line no-restricted-syntax -- DOM not available (SSR / test harness); caller is just asking to open a popover, there's nothing to do.
   } catch {
-    /* no DOM — nothing to open */
+    /* no DOM: nothing to open */
   }
 }
 
 /**
- * Draft of everything the popover can change. Controls mutate this; nothing
+ * Draft of everything the popover can change. Controls mutate this. Nothing
  * touches localStorage or reloads the page until the user clicks Save &
- * Apply. Closing the popover throws the draft away — the next open re-reads
+ * Apply. Closing the popover throws the draft away. The next open re-reads
  * persisted state from scratch, so partial changes never leak.
  */
 interface ModeDraft {
@@ -978,7 +980,7 @@ function renderModePopover(): void {
     },
   );
   // Worker cache: when off, the protocol iframe purges its IDB state
-  // (smoldot chain DB + polkadot-api caches) before initialisation — i.e.
+  // (smoldot chain DB and polkadot-api caches) before initialisation, so
   // every cold start boots from scratch. Trades startup time for a
   // deterministic baseline.
   renderCacheToggle(
@@ -994,7 +996,7 @@ function renderModePopover(): void {
   // Manual "clear everything" escape hatch. Reuses the same full-reset
   // pipeline as Save & Apply so users don't have to toggle a setting back
   // and forth just to wipe state. Kept here (bottom of the Cache section)
-  // because conceptually it's the same capability as the cache toggles —
+  // because conceptually it's the same capability as the cache toggles,
   // just "all of them, now, regardless of the current choice".
   const clearRow = document.createElement("div");
   clearRow.className = "mode-cache-row mode-clear-all-row";
@@ -1064,19 +1066,19 @@ function renderModePopover(): void {
  * Apply the pending draft, then reload. Cache deletion is scoped to what
  * actually changed:
  *
- *   - Backend / network changes delete nothing — the cached CID, archive,
+ *   - Backend or network changes delete nothing. The cached CID, archive,
  *     and worker state stay warm.
  *   - Turning a cache toggle off clears that cache's origin:
- *       dotNS   → clear the host-origin CID store here, directly.
- *       Archive → flag the sandbox iframe to purge its origin on next boot
- *                 (reuses the existing `pending-reset:sandbox` signal the
- *                 bridge already consumes).
- *       Worker  → no signal needed; the persisted `skipWorkerCache` flag
- *                 makes the protocol iframe purge on its next boot.
+ *       dotNS clears the host-origin CID store here, directly.
+ *       Archive flags the sandbox iframe to purge its origin on next boot
+ *               (reuses the existing `pending-reset:sandbox` signal the
+ *               bridge already consumes).
+ *       Worker needs no signal. The persisted `skipWorkerCache` flag
+ *              makes the protocol iframe purge on its next boot.
  *
  * `forceFullWipe` (the "Clear all caches" button) bypasses the diff and
  * wipes every origin via the original full-reset pipeline: wipe host state,
- * re-apply settings, and flag the protocol + sandbox iframes to purge
+ * re-apply settings, and flag the protocol and sandbox iframes to purge
  * themselves regardless of their persisted prefs.
  *
  * Order matters: persist settings first (so the reload boots with them),
@@ -1105,11 +1107,11 @@ async function applyAndReset(
         sessionStorage.setItem("dotli:pending-reset:sandbox", "1");
         // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); cross-origin purges are best-effort, reload below is unconditional.
       } catch {
-        /* sessionStorage unavailable — cross-origin purges skipped */
+        /* sessionStorage unavailable: cross-origin purges skipped */
       }
     } else {
       // No origin wipe. Persist the new choices, then delete only the caches
-      // the user just turned off (skip flag flipped false -> true).
+      // the user just turned off (skip flag flipped from false to true).
       setBackend(draft.chain);
       setNetwork(draft.network);
       setCacheSettings(draft.cache);
@@ -1130,7 +1132,7 @@ async function applyAndReset(
           sessionStorage.setItem("dotli:pending-reset:sandbox", "1");
           // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); the sandbox purge is best-effort, reload below is unconditional.
         } catch {
-          /* sessionStorage unavailable — sandbox purge skipped */
+          /* sessionStorage unavailable: sandbox purge skipped */
         }
       }
     }
@@ -1252,7 +1254,7 @@ function appendSectionHeader(parent: HTMLElement, text: string): void {
 
 // Baked at build time by `apps/host/vite.config.ts` (`define.*`). The
 // topbar only ever renders in the host shell so these will always be
-// present in practice; `undefined` fallbacks are defensive for tests and
+// present in practice. `undefined` fallbacks are defensive for tests and
 // for any future caller that imports this module from a different bundle.
 declare const __DOTLI_VERSION__: string | undefined;
 declare const __SMOLDOT_VERSION__: string | undefined;
@@ -1267,11 +1269,11 @@ declare const __NOVASAMATECH_VERSIONS__:
 
 /**
  * Render the Diagnostics block at the bottom of the settings popover. Rows
- * are static (no click-to-copy) — the "Share diagnostic" button at the end
+ * are static (no click-to-copy). The "Share diagnostic" button at the end
  * exports the whole block at once, so individual-row copy would be noise.
  *
  * Values come from places that are cheap to read synchronously so the
- * popover doesn't pop open with a spinner. "unknown" is a valid value;
+ * popover doesn't pop open with a spinner. "unknown" is a valid value, so
  * don't over-engineer fallbacks.
  */
 function renderDiagnostics(parent: HTMLElement): void {
@@ -1293,11 +1295,11 @@ function renderDiagnostics(parent: HTMLElement): void {
   }
 
   // When running in RPC chain mode, ask the live ws-provider which URI
-  // it actually connected to — polkadot-api rotates across the curated
+  // it actually connected to. polkadot-api rotates across the curated
   // candidate list on failure, so the first entry of the config array
   // may not be the node currently answering. Lazy-imported so the
-  // resolver bundle (polkadot-api + ws-provider) isn't pulled into the
-  // popover's own chunk; by the time the popover opens under RPC mode,
+  // resolver bundle (polkadot-api and ws-provider) isn't pulled into the
+  // popover's own chunk. By the time the popover opens under RPC mode,
   // `@dotli/resolver/rpc-resolve` is already warm because host main
   // imported it to resolve the name. Both the DOM row and the base
   // snapshot are updated so the Share-diagnostic export stays honest.
@@ -1317,10 +1319,10 @@ function renderDiagnostics(parent: HTMLElement): void {
     );
   }
 
-  // Version is static + cheap; block numbers are async so the rows start
+  // Version is static and cheap. Block numbers are async so the rows start
   // with an ellipsis placeholder and get swapped in when `chainConnect`
   // rounds-trip back with a finalized-block header. When the user is on
-  // the RPC chain backend, smoldot isn't running — hide the per-chain
+  // the RPC chain backend, smoldot isn't running, so hide the per-chain
   // block rows entirely (the endpoints already appear under Chain) and
   // keep only the smoldot version so the dependency is still visible.
   const smoldotInfo: SmoldotInfo = {
@@ -1334,7 +1336,7 @@ function renderDiagnostics(parent: HTMLElement): void {
     const relayRow = renderInfoRow(parent, "Relay Chain", "…");
     const assetHubRow = renderInfoRow(parent, "Asset Hub", "…");
 
-    // Fire both queries; they update their own rows + the shared snapshot
+    // Fire both queries. They update their own rows and the shared snapshot
     // (so the "Share diagnostic" button captures whatever resolved in time).
     const cfg = getActiveServicesConfig();
     void queryFinalizedBlock(cfg.relay.genesis).then((n) => {
@@ -1355,7 +1357,7 @@ function renderDiagnostics(parent: HTMLElement): void {
   }
 
   // The unscoped `polkadot-api` package lives in the same visual section as
-  // `@polkadot-api/*` — same ecosystem, same release cadence, users expect
+  // `@polkadot-api/*`. Same ecosystem, same release cadence, users expect
   // to see it with its siblings rather than at the top of the popover.
   const polkadotApi: { name: string; version: string }[] = [];
   if (typeof __POLKADOT_API_VERSION__ === "string") {
@@ -1368,7 +1370,7 @@ function renderDiagnostics(parent: HTMLElement): void {
     polkadotApi.push(...__POLKADOT_API_VERSIONS__);
   }
 
-  // @novasamatech/* versions move in lockstep — showing every single
+  // @novasamatech/* versions move in lockstep, so showing every single
   // package is noise. Keep only the two that are independently meaningful:
   // host-api (the host runtime) and sdk-statement (the statement store
   // client). Everything else in the scope tracks host-api's version.
@@ -1449,7 +1451,7 @@ function isTruapiDebugEnabled(): boolean {
     return sessionStorage.getItem("dotli:truapi-debug") === "1";
   } catch {
     // sessionStorage may be unavailable in exotic environments (Safari
-    // private mode); default to "not in debug mode".
+    // private mode). Default to "not in debug mode".
     return false;
   }
 }
@@ -1459,14 +1461,14 @@ function isTruapiDebugEnabled(): boolean {
  *
  *  Structure (one blank line between sections):
  *    1. Base rows (Site, Build, Chain[, Worker|RPC Node], Content, Browser)
- *    2. Cache   — every toggle as on/off. Sourced from persisted settings
- *                 so the snapshot matches what's actually live right now.
- *    3. Permissions — per-product; omitted on landing where we don't have
- *                     a scoped label to query.
- *    4. Packages — flat list: smoldot + polkadot-api + novasamatech. The
- *                   live block heights from the @smoldot popover section
- *                   aren't included here because they're noise in a bug
- *                   report; the popover already shows them live. */
+ *    2. Cache: every toggle as on/off. Sourced from persisted settings
+ *              so the snapshot matches what's actually live right now.
+ *    3. Permissions: per-product, omitted on landing where we don't have
+ *                    a scoped label to query.
+ *    4. Packages: flat list of smoldot, polkadot-api, and novasamatech. The
+ *                 live block heights from the @smoldot popover section
+ *                 aren't included here because they're noise in a bug
+ *                 report. The popover already shows them live. */
 function formatDiagnosticsReport(
   base: [label: string, value: string][],
   smoldot: SmoldotInfo,
@@ -1488,7 +1490,7 @@ function formatDiagnosticsReport(
     `  Worker cache: ${cache.skipWorkerCache ? "off" : "on"}`,
   );
 
-  // Permissions — only when we know which product label to scope against.
+  // Permissions, only when we know which product label to scope against.
   if (currentProductLabel !== null) {
     lines.push("", "Permissions:");
     for (const perm of ALL_PERMISSIONS) {
@@ -1497,7 +1499,7 @@ function formatDiagnosticsReport(
     }
   }
 
-  // Packages — one flat list. smoldot leads because it's the heaviest
+  // Packages, one flat list. smoldot leads because it's the heaviest
   // dependency and the one most issues are ultimately about.
   lines.push("", "Packages:", `  smoldot: ${smoldot.version}`);
   for (const p of polkadotApi) {
@@ -1518,7 +1520,7 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
   const network = getNetwork();
 
   const rows: [string, string][] = [
-    // `location.host` includes the port when non-default — useful on
+    // `location.host` includes the port when non-default. Useful on
     // localhost (`hackme3.localhost:5173`), transparent on production
     // (`hackme3.dot.li`).
     ["Site", window.location.host],
@@ -1528,14 +1530,14 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
   ];
 
   // Sub-row attached to the Backend row:
-  //   - smoldot-shared-worker: "Worker" + build SHA. The SharedWorker is a cached
-  //     script. If it's running an older bundle than the current page,
-  //     this SHA diverges from Build, which is the tell-tale for a stale
+  //   - smoldot-shared-worker: "Worker" label and build SHA. The SharedWorker
+  //     is a cached script. If it's running an older bundle than the current
+  //     page, this SHA diverges from Build, which is the tell-tale for a stale
   //     worker. (Today the Worker ships embedded in the same bundle, so
   //     the two match. The row still lets us spot a divergence in the
   //     field.)
   //   - smoldot-direct: no sub-row. smoldot is torn down every page load.
-  //   - rpc-gateway: both WSS endpoints (Relay + Asset Hub). The curated
+  //   - rpc-gateway: both WSS endpoints (Relay and Asset Hub). The curated
   //     lists are candidate endpoints. polkadot-api's ws-provider rotates
   //     on failure, so `renderDiagnostics` later replaces the Asset Hub
   //     entry with the one the provider is actually connected to. Relay
@@ -1668,8 +1670,8 @@ function shortSha(sha: string): string {
 
 /**
  * Turn a long `navigator.userAgent` string into something compact like
- * "Chrome 147 (macOS)". Heuristic — not a replacement for a real UA parser,
- * good enough for a debug row that the user can still click-to-copy the
+ * "Chrome 147 (macOS)". Heuristic, not a replacement for a real UA parser.
+ * Good enough for a debug row that the user can still click-to-copy the
  * full value (the row shows the short version but the UA is stable enough
  * that engineers can recognize the brand without the full payload).
  */
@@ -1706,8 +1708,8 @@ function summarizeUserAgent(ua: string): string {
 }
 
 /**
- * Static label/value row used by the Diagnostics block. No click-to-copy —
- * the "Share diagnostic" button at the bottom exports the full report at
+ * Static label/value row used by the Diagnostics block. No click-to-copy.
+ * The "Share diagnostic" button at the bottom exports the full report at
  * once, so per-row copy would just be noise.
  *
  * Returns an `update(value)` handle so callers can fill the row later when
@@ -1881,9 +1883,9 @@ function renderCacheToggle(
   track.appendChild(knob);
   toggle.appendChild(track);
 
-  // The toggle owns its own on/off state locally — the `renderModePopover`
+  // The toggle owns its own on/off state locally. The `renderModePopover`
   // caller doesn't re-render the cache section on change (only chain/content
-  // groups re-render), so the button has to flip its own class + aria
+  // groups re-render), so the button has to flip its own class and aria
   // attribute or the UI stays stuck on its initial value.
   let current = checked;
   const paint = (): void => {
@@ -1906,7 +1908,7 @@ function openModal(reason?: string, label?: string): void {
   modalQr.innerHTML = `<div class="spinner"></div>`;
   // A bare "localhost:<port>" label means dotli is in localhost-proxy
   // mode rendering a local dev server directly (apps/host/src/main.ts
-  // localhost-proxy branch) — show it as-is. Deployed dotNs products
+  // localhost-proxy branch). Show it as-is. Deployed dotNs products
   // served via `<label>.localhost:<port>` still pass through as the bare
   // label and get the ".dot" suffix.
   let productLabel = "";
@@ -1932,7 +1934,7 @@ function closeModal(): void {
 
   if (authMod) {
     const state = authMod.getAuthState();
-    // Only abort during pairing or error — let attestation continue in background
+    // Only abort during pairing or error. Let attestation continue in background
     if (state.status === "pairing" || state.status === "error") {
       authMod.abortPairing();
     }

@@ -1,12 +1,15 @@
-// dot.li — Long-form explanations for every system event.
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Long-form explanations for every system event.
 //
 // The one-line `summariseSystemEvent` strings tell the reader *what*
-// an event captures; these entries tell them *what is happening in the
-// system* at that moment — which subsystem is active, what state just
+// an event captures. These entries tell them *what is happening in the
+// system* at that moment: which subsystem is active, what state just
 // changed, and what the downstream dependencies are. Surfaced in the
 // detail pane via a collapsible "What is this?" section.
 //
-// Keyed by `layer:event`. Every emit site must have an entry — the
+// Keyed by `layer:event`. Every emit site must have an entry. The
 // test below (and the fallback) catches any drift.
 
 interface SystemExplanation {
@@ -20,7 +23,7 @@ interface SystemExplanation {
 }
 
 const EXPLANATIONS: Record<string, SystemExplanation> = {
-  // ── boot ───────────────────────────────────────────────
+  // boot
 
   "boot:started": {
     title: "Host boot started",
@@ -82,7 +85,7 @@ After this event, the TrUAPI bus starts producing traffic and the product is dri
 \`dependency\` identifies which subsystem failed: \`smoldot\` for light-client issues (bootnode connectivity, chain sync timeout, panics) or \`asset-hub-rpc\` for RPC endpoint failures (DNS, 502, read timeout).`,
   },
 
-  // ── resolve ────────────────────────────────────────────
+  // resolve
 
   "resolve:started": {
     title: "Name resolution started",
@@ -126,7 +129,7 @@ These events drive the loading UI's phase bar and ship to this panel so you can 
 The host catches this and emits a \`boot:failed\` event (or a user-facing error with a failover button).`,
   },
 
-  // ── render ─────────────────────────────────────────────
+  // render
 
   "render:iframe_begin": {
     title: "Product iframe creation starting",
@@ -143,7 +146,7 @@ The iframe's \`sandbox\` and \`allow\` attributes are configured here based on t
     body: `The iframe element is in the DOM and has started navigating to its URL. The product itself has not executed yet — that happens asynchronously as the browser loads the iframe content. Next up is the container bridge setup, which runs in parallel.`,
   },
 
-  // ── bridge ─────────────────────────────────────────────
+  // bridge
 
   "bridge:setup_begin": {
     title: "TrUAPI bridge wiring",
@@ -191,7 +194,7 @@ The inner product gets its own \`productId\` (\`parent:nested-N\`) and its own s
 There's a cap (\`MAX_NESTED_BRIDGES\` in config) to prevent runaway iframe trees from exhausting resources.`,
   },
 
-  // ── failover ───────────────────────────────────────────
+  // failover
 
   "failover:chain_backend": {
     title: "Chain backend failover",
@@ -200,7 +203,7 @@ There's a cap (\`MAX_NESTED_BRIDGES\` in config) to prevent runaway iframe trees
 Tiered failover order: any smoldot variant → RPC; RPC → smoldot-shared-worker. The \`reason\` field captures the preceding error message so you can see *why* the failover was offered.`,
   },
 
-  // ── main-thread monitor ────────────────────────────────
+  // main-thread monitor
 
   "main:stall_detected": {
     title: "Main-thread stall",
@@ -307,7 +310,7 @@ This **must** complete before \`document.write\` for multi-file archives — oth
     body: `Something in the fetch / decrypt / store pipeline threw. The sandbox has captured the exception to Sentry with the relevant \`dependency\` tag (\`ipfs-gateway\` / \`helia-bulletin\` / \`unknown\`) and rendered its error UI with a retry button. \`reason\` is the error message from whichever stage threw.`,
   },
 
-  // ── SSO (host-papp) ────────────────────────────────────
+  // SSO (host-papp)
 
   "sso:pairing_started": {
     title: "Wallet pairing started",
@@ -356,7 +359,7 @@ After this event, the product can obtain signed payloads, request ring-VRF alias
 The UI shows the error message and resets so the user can try again.`,
   },
 
-  // ── attestation (host-papp) ────────────────────────────
+  // attestation (host-papp)
 
   "attestation:started": {
     title: "Guest identity attestation started",
@@ -407,7 +410,7 @@ The call bundles the candidate signature, the ring-VRF key + proof, and a \`cons
 The parallel pairing flow is torn down too. No session is stored.`,
   },
 
-  // ── session (host-papp) ────────────────────────────────
+  // session (host-papp)
 
   "session:opened": {
     title: "Session opened",
@@ -479,7 +482,7 @@ After this event, no further peer-actions or host-actions are delivered on this 
 
 /**
  * Look up the long-form explanation for a system event. Returns
- * `undefined` for any key that's not registered — callers should
+ * `undefined` for any key that's not registered. Callers should
  * fall back to the summary line plus raw payload.
  */
 export function getSystemExplanation(

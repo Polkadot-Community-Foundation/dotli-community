@@ -1,4 +1,7 @@
-// dot.li — Local chain specifications
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li Local chain specifications.
 //
 // Fresh chain specs fetched as separate static files at runtime.
 // Using ?url lets Vite hash them for cache-busting while keeping
@@ -8,7 +11,7 @@
 // running in parallel with smoldot worker initialization.
 //
 // Paseo Next runs two co-existing testnets (V1 = current "next", V2 =
-// newer "next" system chains). The relay is shared between them; the
+// newer "next" system chains). The relay is shared between them. The
 // system parachains diverge. The active getter routes to the right URL
 // based on the user-selected `Network` from `@dotli/config/mode`.
 //
@@ -101,10 +104,10 @@ async function fetchChainSpec(url: string): Promise<string> {
   return r.text();
 }
 
-// Cached promises. Rejections are NOT cleared — a failure is sticky until
+// Cached promises. Rejections are NOT cleared. A failure is sticky until
 // `resetChainSpecCaches()` is invoked explicitly. The network selection
 // is stable for the lifetime of a page load (switching it triggers a
-// wipe + reload), so we don't key these caches by network.
+// wipe and reload), so we don't key these caches by network.
 let paseoPromise: Promise<string> | null = null;
 let assetHubPromise: Promise<string> | null = null;
 let bulletinPaseoPromise: Promise<string> | null = null;
@@ -170,7 +173,7 @@ export function getCustomRelayChainSpec(): Promise<string> {
 
 /**
  * Clear all cached chain-spec promises so the next getter call performs a
- * fresh fetch. Call this from explicit user-driven retry paths only — never
+ * fresh fetch. Call this from explicit user-driven retry paths only, never
  * from automatic recovery code.
  */
 export function resetChainSpecCaches(): void {

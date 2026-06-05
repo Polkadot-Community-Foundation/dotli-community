@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { test, expect } from "./fixtures/paired";
 import {
   waitForPlaygroundReady,
@@ -5,9 +8,9 @@ import {
 } from "./helpers/run-test";
 import { runWebSignedTest } from "./helpers/signing";
 
-// Note: Playwright destroys the worker process after a test failure, so the
+// Playwright destroys the worker process after a test failure, so the
 // worker-scoped pairing fixture re-pairs from scratch on every failed test
-// (~10-30s extra). Acceptable trade-off — preferred over `describe.serial`
+// (~10-30s extra). Acceptable trade-off, preferred over `describe.serial`
 // which would skip every test after the first failure.
 
 test.describe("dot.li > host-playground.dot", () => {

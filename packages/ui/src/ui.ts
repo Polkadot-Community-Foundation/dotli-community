@@ -1,7 +1,10 @@
-// dot.li — Pure DOM UI helpers
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li Pure DOM UI helpers
 //
 // Status messages, error states, and landing page.
-// No heavy dependencies — kept in the eager bundle.
+// No heavy dependencies, kept in the eager bundle.
 
 import { getRecentLabels, addRecentLabel } from "@dotli/storage/cid-cache";
 import { BASE_DOMAIN } from "@dotli/config/config";
@@ -25,8 +28,7 @@ function dotUrl(label: string): string {
   return `https://${label}.${BASE_DOMAIN}`;
 }
 
-// ── Phase-based loading indicator ────────────────────────
-
+// Phase-based loading indicator.
 let phaseLabels: string[] = [];
 let currentPhase = -1;
 
@@ -177,9 +179,8 @@ export function showGatewayEscape(
   };
 }
 
-// ── Single-line status ───────────────────────────────────
-// Updates #status in place. Shows a slow-step hint when a step
-// exceeds its time threshold.
+// Single-line status. Updates #status in place. Shows a slow-step
+// hint when a step exceeds its time threshold.
 
 // Per-step timeout thresholds (seconds). If a step exceeds its
 // limit, a contextual hint fades in below the status line.
@@ -267,7 +268,7 @@ function clearSlowWarning(): void {
 
 /**
  * Update the single status line below the progress bar.
- * Replaces the previous message in place — no new DOM elements are created.
+ * Replaces the previous message in place. No new DOM elements are created.
  * Schedules a slow-step hint if the step exceeds its time threshold.
  */
 export function showStatus(message: string): void {
@@ -355,10 +356,10 @@ export interface ErrorAction {
 /**
  * Show an error state with an optional action link.
  *
- * `detail` is an optional paragraph below the title; omit for a
- * title-only screen (e.g. the generic "Domain can't be reached" + backend
- * switch). `action` renders a text+arrow link — label is free-form so
- * the same slot serves retry, reload, backend-switch, etc.
+ * `detail` is an optional paragraph below the title. Omit it for a
+ * title-only screen (e.g. the generic "Domain can't be reached" with a
+ * backend switch). `action` renders a link with a trailing arrow. The
+ * label is free-form so the same slot serves retry, reload, backend-switch, etc.
  */
 export function showError(
   title: string,
@@ -390,7 +391,7 @@ export function showError(
 /**
  * Show the "no content set" error in a Chrome-style "site can't be reached"
  * layout. The domain is highlighted so the user can immediately scan for a
- * typo, and a secondary hint explains the on-chain reason without burying it.
+ * typo, and a secondary hint explains the network reason without burying it.
  */
 export function showNoContentError(label: string): void {
   const safeLabel = escapeHtml(label);
@@ -465,7 +466,7 @@ function animateLandingPlaceholder(input: HTMLInputElement): void {
       }
     }
   };
-  // Resume the cycle when the user clears the input; pause is implicit
+  // Resume the cycle when the user clears the input. Pause is implicit
   // because tick early-returns and never reschedules while value is set.
   input.addEventListener("input", () => {
     if (input.value === "" && timer === null && input.isConnected) {

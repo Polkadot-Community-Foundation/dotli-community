@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { SiteId } from "@dotli/config/config";
 import {
   clearSharedAuthStorage,
@@ -66,7 +69,7 @@ export function createSharedAuthStorageAdapter(siteId: SiteId): StorageAdapter {
       // local `emit`. Trusting the local `value` we just tried to write
       // would let a same-tab subscriber observe an update that the
       // upstream storage quietly rejected (quota, validation, etc.). The
-      // cross-tab BroadcastChannel listener handles other tabs; here we
+      // cross-tab BroadcastChannel listener handles other tabs. Here we
       // reconcile this tab against the source of truth.
       return fromPromise(
         writeSharedAuthStorage(siteId, key, value),
@@ -77,7 +80,7 @@ export function createSharedAuthStorageAdapter(siteId: SiteId): StorageAdapter {
             emit(key, actual);
           },
           () => {
-            // Read-back failed — fall back to the value we intended.
+            // Read-back failed, so fall back to the value we intended.
             // The subsequent write or subscription tick will reconcile.
             emit(key, value);
           },

@@ -1,8 +1,11 @@
-// dot.li — Chain provider factory
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// dot.li Chain provider factory.
 //
 // Maps well-known genesis hashes to smoldot chain specs and creates
 // JsonRpcProviders on demand. For Asset Hub Paseo and the Paseo relay
-// chain, providers are shared with the resolver via the broker — this
+// chain, providers are shared with the resolver via the broker. This
 // avoids spinning up duplicate parachain instances in smoldot and
 // ensures dApp connections are immediately usable (the resolver's
 // chain is already synced by the time a dApp loads).
@@ -44,7 +47,7 @@ export function isResolverAssetHubGenesis(genesisHash: string): boolean {
 /**
  * Create a JsonRpcProvider for a given genesis hash.
  *
- * Reuses the resolver's shared chains — the ChainBroker provides session
+ * Reuses the resolver's shared chains. The ChainBroker provides session
  * isolation so dApp connections cannot interfere with the resolver.
  * This means no duplicate parachain sync: the resolver's Asset Hub is
  * already synced by the time a dApp loads, so chain queries work immediately.

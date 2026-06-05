@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Pins URL/navigation behaviour: deep-path/query/hash forwarding, host
  * URL-bar preservation across render and reload, sandbox URL hygiene
@@ -71,7 +74,7 @@ test.describe("URL parameters are forwarded into the product", () => {
 
   // TODO: flip to `test(...)` once a `sub.<LABEL>.dot` fixture is published.
   // The host's path-form regex extracts `sub.host-playground` as the label
-  // and tries to resolve it on chain — without a fixture this would flake.
+  // and tries to resolve it on the network. Without a fixture this would flake.
   test.skip("when I open http://dot.li/sub.<label>.dot/foo, the multi-level label resolves and I land on /foo inside the product", async ({
     page,
   }) => {
@@ -135,7 +138,7 @@ test.describe("URL parameters are forwarded into the product", () => {
 
 test.describe("Host URL bar preserves the entered URL after render", () => {
   // `applyUrlSettings` canonicalises the URL on every load so non-default
-  // settings axes (rpc-gateway here) get re-inserted — assert the user's
+  // settings axes (rpc-gateway here) get re-inserted. Assert the user's
   // own params survive, not that canonicalisation is a no-op.
   test("after the product renders from http://<label>.dot.li/foo?a=b#h, the URL bar still shows /foo?a=b#h", async ({
     page,
@@ -262,8 +265,8 @@ test.describe("Validator regression guards", () => {
       localStorage.setItem("dotli:chain-backend", "rpc-gateway");
     });
     // Inject a bogus contract value into the sandbox frame's URL BEFORE its
-    // main.ts runs. `route.continue({ url })` only changes the fetch URL —
-    // the frame's window.location stays as the original, so the validator
+    // main.ts runs. `route.continue({ url })` only changes the fetch URL.
+    // The frame's window.location stays as the original, so the validator
     // still sees the host-written value. addInitScript runs in every newly
     // attached child frame before any of its own scripts, so a targeted
     // history.replaceState here is the only reliable way to corrupt the
@@ -301,7 +304,7 @@ test.describe("Validator regression guards", () => {
     // Then
     const product = await getProductFrame(page, TIMEOUT_MS);
     // The pre-PR validator would have rejected `ref` as an unknown contract
-    // key and rendered the error page; assert no error page is showing.
+    // key and rendered the error page. Assert no error page is showing.
     const errorVisible = await page
       .locator(".error-page-title")
       .first()
@@ -381,9 +384,9 @@ test.describe("Sandbox side-effects from URL contract keys", () => {
       }, PURGE_MARKER_DB);
 
       // When
-      // Visit 2: user-supplied `?fullReset=1` flows through getDeepPath →
-      // iframe URL → validator (accepts) → purgeSandboxOriginState fires.
-      // This is the documented footgun: anyone can wipe a visitor's
+      // Visit 2: user-supplied `?fullReset=1` flows from getDeepPath into the
+      // iframe URL, the validator accepts it, then purgeSandboxOriginState
+      // fires. This is the documented footgun: anyone can wipe a visitor's
       // sandbox-origin state by linking `acme.dot.li?fullReset=1`.
       await page.goto(`${HOST_BY_LABEL}/?fullReset=1`);
       product = await getProductFrame(page, TIMEOUT_MS);

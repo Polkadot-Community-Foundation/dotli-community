@@ -1,3 +1,6 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Resolver error types.
 //
 // One class per failure mode. Each class extends `ResolverError` so a
