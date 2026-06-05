@@ -443,7 +443,6 @@ function resolveTruapiDebugMode(): { enabled: boolean; explicit: boolean } {
   return { enabled: DEBUG, explicit: false };
 }
 
-// ── Main-thread liveness monitor ─────────────────────────────
 //
 // Tracks two things the system swimlane would otherwise miss:
 //
@@ -632,7 +631,6 @@ async function runBackgroundRevalidate(
   }
 }
 
-// ── Main ─────────────────────────────────────────────────────
 interface AuthSubscribeApi {
   backend: string;
   subscribeAll: (
@@ -803,6 +801,17 @@ async function applyUrlSettings(): Promise<void> {
     resetProtocolFrame();
   }
 
+  // Same logic for the trusted-RPC path's cached `chainHead_v1_follow`.
+  if (prior.chain !== next.chain || prior.network !== next.network) {
+    try {
+      const r = await import("@dotli/resolver/rpc-resolve");
+      r.destroyRpcClient();
+      // eslint-disable-next-line no-restricted-syntax -- defensive teardown: the rpc-resolve module may not have been imported yet on this boot, in which case there is nothing to destroy.
+    } catch {
+      /* not loaded yet */
+    }
+  }
+
   // Fresh origins have nothing to be stale about, and no-op URLs (match
   // localStorage) leave existing state intact.
   if (!changed || !hadPriorPersisted) {
@@ -867,7 +876,6 @@ async function main(): Promise<void> {
   performance.mark("dotli:main:start");
   log.warn(`[dot.li perf] main() started (${elapsed(T0)})`);
 
-  // ── TrUAPI debug panel ───────────────────────────────────
   //
   // Runtime-gated: the panel ships in every build but the heavy chunk
   // is only fetched when the user opts in via `?debug=true` (set by the

@@ -5,7 +5,7 @@
     "": {
       "name": "dotli",
       "dependencies": {
-        "smoldot": "^3.1.4",
+        "smoldot": "3.2.0",
       },
       "devDependencies": {
         "prettier": "^3.8.3",
@@ -15,7 +15,7 @@
     },
     "apps/host": {
       "name": "@dotli/host",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -47,7 +47,7 @@
     },
     "apps/protocol": {
       "name": "@dotli/protocol-app",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -71,7 +71,7 @@
     },
     "apps/sandbox": {
       "name": "@dotli/sandbox",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/content": "workspace:*",
@@ -96,7 +96,7 @@
     },
     "packages/auth": {
       "name": "@dotli/auth",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -127,7 +127,7 @@
     },
     "packages/config": {
       "name": "@dotli/config",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "devDependencies": {
         "@dotli/eslint-config": "workspace:*",
         "@dotli/typescript-config": "workspace:*",
@@ -140,7 +140,7 @@
     },
     "packages/content": {
       "name": "@dotli/content",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -164,7 +164,7 @@
     },
     "packages/eslint-config": {
       "name": "@dotli/eslint-config",
-      "version": "0.0.0",
+      "version": "0.5.0",
       "devDependencies": {
         "@eslint/js": "^10.0.1",
         "eslint": "^10.4.0",
@@ -176,7 +176,7 @@
     },
     "packages/metrics": {
       "name": "@dotli/metrics",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/shared": "workspace:*",
       },
@@ -198,7 +198,7 @@
     },
     "packages/protocol": {
       "name": "@dotli/protocol",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -217,7 +217,7 @@
     },
     "packages/resolver": {
       "name": "@dotli/resolver",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -228,6 +228,9 @@
         "@polkadot-api/json-rpc-provider": "^0.2.0",
         "@polkadot-api/json-rpc-provider-proxy": "^0.4.0",
         "@polkadot-api/signer": "^0.3.3",
+        "@polkadot-api/substrate-bindings": "0.20.3",
+        "@polkadot-api/substrate-client": "0.7.0",
+        "@polkadot-api/utils": "0.4.0",
         "@polkadot-labs/hdkd": "^0.0.28",
         "@polkadot-labs/hdkd-helpers": "^0.0.30",
         "polkadot-api": "^2.1.4",
@@ -246,7 +249,7 @@
     },
     "packages/sandbox-checker": {
       "name": "@dotli/sandbox-checker",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "devDependencies": {
         "@dotli/eslint-config": "workspace:*",
         "@dotli/typescript-config": "workspace:*",
@@ -257,7 +260,7 @@
     },
     "packages/shared": {
       "name": "@dotli/shared",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/config": "workspace:*",
       },
@@ -273,7 +276,7 @@
     },
     "packages/storage": {
       "name": "@dotli/storage",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -292,7 +295,7 @@
     },
     "packages/truapi-debug": {
       "name": "@dotli/truapi-debug",
-      "version": "0.2.2",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/shared": "workspace:*",
         "@novasamatech/host-api": "0.8.5",
@@ -310,11 +313,11 @@
     },
     "packages/typescript-config": {
       "name": "@dotli/typescript-config",
-      "version": "0.0.0",
+      "version": "0.5.0",
     },
     "packages/ui": {
       "name": "@dotli/ui",
-      "version": "0.3.3",
+      "version": "0.5.0",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/content": "workspace:*",
@@ -359,7 +362,7 @@
     "@novasamatech/host-papp@0.8.5": "patches/@novasamatech%2Fhost-papp@0.8.5.patch",
   },
   "overrides": {
-    "smoldot": "3.1.4",
+    "smoldot": "3.2.0",
   },
   "packages": {
     "@apideck/better-ajv-errors": ["@apideck/better-ajv-errors@0.3.7", "", { "dependencies": { "jsonpointer": "^5.0.1", "leven": "^3.1.0" }, "peerDependencies": { "ajv": ">=8" } }, "sha512-TajUJwGWbDwkCx/CZi7tRE8PVB7simCvKJfHUsSdvps+aTM/PDPP4gkLmKnc+x3CE//y9i/nj74GqdL/hwk7Iw=="],
@@ -752,7 +755,7 @@
 
     "@polkadot-api/smoldot": ["@polkadot-api/smoldot@0.4.3", "", { "dependencies": { "@types/node": "^25.6.2", "smoldot": "~3.1.2" } }, "sha512-M2LpGG0XOeHDIGre2aUr5W3kCz9MjQ8kGlQa1h7aS2XJwlPrjbJe/MCo12FgZKb1TD/ACpqQi9TgO1B2+8F98w=="],
 
-    "@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.1", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.0.0", "scale-ts": "^1.6.1" } }, "sha512-AU7uUqSFt6nH8wrD7DJZkmrFs1QjLeA/Z4Qmf03ExUqsKDQ893pPjbQU2qAaPvWzDmaJotT8B8DENRqEUt8ruw=="],
+    "@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
 
     "@polkadot-api/substrate-client": ["@polkadot-api/substrate-client@0.7.0", "", { "dependencies": { "@polkadot-api/json-rpc-provider": "0.2.0", "@polkadot-api/raw-client": "0.3.0", "@polkadot-api/utils": "0.4.0" } }, "sha512-TWCc4MAMa5SLVQXmomLHknbj+bztQ/Yclgwm8ENBhz8hR7c9rw9FBAkCa02jMBMCAygPhp3ayGRq+UFcF8KIxQ=="],
 
@@ -1564,7 +1567,7 @@
 
     "smob": ["smob@1.6.2", "", {}, "sha512-RQsvleCbF8cVHEv+xuDGaA4pOizFqJ0GgjtMSRo6oP8pnN7WsigHgVGey6aILRBKv4W2YOMHLqbKdnB6hpB9fw=="],
 
-    "smoldot": ["smoldot@3.1.4", "", { "dependencies": { "ws": "^8.8.1" } }, "sha512-RmqzA09GuluKwa5spSbAQ0t+ph2hY0BViKt/VBHBmLO/kbLk8fsQ+5NqQnxzpxJKYoYsROBscsumOxYUxW4hmQ=="],
+    "smoldot": ["smoldot@3.2.0", "", { "dependencies": { "ws": "^8.8.1" } }, "sha512-FO332bGlKO1UE0Io0B30omzaHSLjmlN61h6F4MtbwZMdy4XPetphmwVhzv4VUXN7l7prIvRTGrgeqKepL8kNuw=="],
 
     "sort-keys": ["sort-keys@5.1.0", "", { "dependencies": { "is-plain-obj": "^4.0.0" } }, "sha512-aSbHV0DaBcr7u0PVHXzM6NbZNAtrr9sF6+Qfs9UUVG7Ll3jQ6hHi8F/xqIIcn2rvIVbr0v/2zyjSdwSV47AgLQ=="],
 
@@ -1792,31 +1795,9 @@
 
     "@multiformats/sha3/multiformats": ["multiformats@9.9.0", "", {}, "sha512-HoMUjhH9T8DDBNT+6xzkrd9ga/XiBI4xLr58LJACwK6G3HTOPeMz4nB4KJs33L2BelrIJa7P0VuNaVF3hMYfjg=="],
 
-    "@novasamatech/statement-store/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
-
-    "@polkadot-api/cli/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
+    "@novasamatech/sdk-statement/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.1", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.0.0", "scale-ts": "^1.6.1" } }, "sha512-AU7uUqSFt6nH8wrD7DJZkmrFs1QjLeA/Z4Qmf03ExUqsKDQ893pPjbQU2qAaPvWzDmaJotT8B8DENRqEUt8ruw=="],
 
     "@polkadot-api/cli/commander": ["commander@14.0.3", "", {}, "sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw=="],
-
-    "@polkadot-api/codegen/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
-
-    "@polkadot-api/ink-contracts/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
-
-    "@polkadot-api/merkleize-metadata/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
-
-    "@polkadot-api/metadata-builders/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
-
-    "@polkadot-api/metadata-compatibility/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
-
-    "@polkadot-api/observable-client/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
-
-    "@polkadot-api/pjs-signer/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
-
-    "@polkadot-api/signer/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
-
-    "@polkadot-api/signers-common/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
-
-    "@polkadot-api/ws-middleware/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
 
     "@polkadot-labs/hdkd-helpers/@scure/sr25519": ["@scure/sr25519@1.0.0", "", { "dependencies": { "@noble/curves": "~2.0.0", "@noble/hashes": "~2.0.0" } }, "sha512-b+uhK5akMINXZP95F3gJGcb5CMKYxf+q55fwMl0GoBwZDbWolmGNi1FrBSwuaZX5AhqS2byHiAueZgtDNpot2A=="],
 
@@ -1847,8 +1828,6 @@
     "path-scurry/lru-cache": ["lru-cache@11.4.0", "", {}, "sha512-W+R+kFL4HgVxONq2bhXPi3bGpzGe/yEhVOp233qw9wCRtgncJ15P3bC+e4zZMu4Cq7d+WAJjXGW0uUkifhcatA=="],
 
     "playwright/fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
-
-    "polkadot-api/@polkadot-api/substrate-bindings": ["@polkadot-api/substrate-bindings@0.20.3", "", { "dependencies": { "@noble/hashes": "^2.2.0", "@polkadot-api/utils": "0.4.0", "@scure/base": "^2.2.0", "scale-ts": "^1.6.1" } }, "sha512-9iqC71fx1ee9ld1NZV8PFime5vryi0kt1bKCSlvNgO6dqMc06sMZuZ8WPjOzWLCHiKHLuphdMs3rVBBaeCP3yg=="],
 
     "postcss/nanoid": ["nanoid@3.3.12", "", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-ZB9RH/39qpq5Vu6Y+NmUaFhQR6pp+M2Xt76XBnEwDaGcVAqhlvxrl3B2bKS5D3NH3QR76v3aSrKaF/Kiy7lEtQ=="],
 

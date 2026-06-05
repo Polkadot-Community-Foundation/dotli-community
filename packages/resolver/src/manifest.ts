@@ -6,7 +6,7 @@
 // validated against `./manifest-types.ts`. These calls are read-only and
 // never sign or write.
 //
-// The entry points take an `UnsafeApi` rather than reaching for the
+// The entry points take an `Api` rather than reaching for the
 // resolver's cached client, so both the smoldot and gateway paths can
 // share the same code.
 
@@ -15,8 +15,8 @@ import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import type { DotnsContracts } from "@dotli/config/network";
 import { namehash } from "./abi";
-import { readNestedMappingString } from "./storage";
-import type { UnsafeApi } from "./storage";
+import { readNestedMappingString } from "./access-raw-storage";
+import type { Api } from "./api";
 import {
   parseExecutableManifest,
   parseRootManifest,
@@ -48,7 +48,7 @@ export type ManifestResult<T> =
  * missing record, so the loading flow falls back to the legacy contenthash.
  */
 export async function readRootManifest(
-  api: UnsafeApi,
+  api: Api,
   dotns: DotnsContracts,
   label: string,
 ): Promise<ManifestResult<RootManifest>> {
@@ -76,7 +76,7 @@ export async function readRootManifest(
  * from, so a manifest tagged `kind: "worker"` cannot pose as the app.
  */
 export async function readExecutableManifest(
-  api: UnsafeApi,
+  api: Api,
   dotns: DotnsContracts,
   label: string,
   kind: ExecutableKind,
@@ -106,7 +106,7 @@ export async function readExecutableManifest(
 }
 
 async function readManifestText<T>(
-  api: UnsafeApi,
+  api: Api,
   dotns: DotnsContracts,
   node: `0x${string}`,
   key: string,

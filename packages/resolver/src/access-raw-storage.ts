@@ -1,10 +1,12 @@
 // Shared contract storage reading utilities
 //
 // Low-level functions for reading Solidity storage slots from a Revive
-// (EVM-on-Polkadot) contract via polkadot-api's UnsafeApi. Used by both
-// the smoldot-based resolver and the trusted RPC resolver.
+// (EVM-on-Polkadot) contract via a `Api`. Both the smoldot and the
+// trusted RPC resolvers use the same raw `chainHead_v1_storage` reader from
+// `storage-api.ts`. Multi-slot reads pin both the chain-head hash and the
+// contract's `trie_id` once at entry so that a `bestBlockChanged` mid-loop
+// cannot return torn bytes spanning two blocks.
 
-import type { PolkadotClient } from "polkadot-api";
 import {
   computeMappingSlot,
   computeNestedStringMappingSlot,
@@ -13,15 +15,16 @@ import {
   decodeBytesSlot,
 } from "./abi";
 import { PartialStorageReadError } from "./errors";
+import type { Api } from "./api";
+import { ApiStoppedError } from "./api";
 
 export type StatusCallback = (status: string) => void;
-export type UnsafeApi = ReturnType<PolkadotClient["getUnsafeApi"]>;
 
 /**
  * Structured resolver phase events. Callers that want to advance a
  * multi-step loading indicator should listen to these instead of
- * parsing status strings with regex — the string formats are for
- * humans and change freely, the phase tokens are a stable contract.
+ * parsing status strings with regex. The string formats are for
+ * humans and change freely, and the phase tokens are a stable contract.
  */
 export type ResolvePhase =
   | "light-client-starting"
@@ -75,58 +78,55 @@ export function statusToPhase(message: string): ResolvePhase | null {
   return null;
 }
 
-// ── Storage reads ────────────────────────────────────────────
-
-export function extractBytes(result: unknown): Uint8Array | null {
-  if (result === null || result === undefined) {
+/**
+ * Pin a single block hash and the contract's `trie_id` for a logical
+ * multi-slot read. Throws `ApiStoppedError` if the underlying follow
+ * has died. Returns `null` if the contract doesn't exist (no AccountInfoOf
+ * or wrong enum tag).
+ */
+async function pinContract(
+  api: Api,
+  contractAddress: string,
+): Promise<{ hash: string; trieId: Uint8Array } | null> {
+  const hash = api.bestHash();
+  if (hash === null) {
+    throw new ApiStoppedError();
+  }
+  const trieId = await api.resolveTrieId(contractAddress, hash);
+  if (trieId === null) {
     return null;
   }
-  if (result instanceof Uint8Array) {
-    return result;
-  }
-  if (typeof result !== "object") {
-    return null;
-  }
-  const obj = result as Record<string, unknown>;
-  if ("success" in obj) {
-    if (obj.success !== true) {
-      return null;
-    }
-    return extractBytes(obj.value);
-  }
-  if ("value" in obj) {
-    return extractBytes(obj.value);
-  }
-  return null;
+  return { hash, trieId };
 }
 
 export async function readStorageSlot(
-  api: UnsafeApi,
+  api: Api,
   contractAddress: string,
   slotKey: `0x${string}`,
 ): Promise<Uint8Array | null> {
-  // `at: "best"` reads from the chain tip — during cold sync the
-  // finalized block can lag far behind.
-  //
-  // H160/H256 runtime call args must be `SizedHex<N>` strings; passing
-  // `Uint8Array` (from `Binary.fromHex`) fails the runtime-entry
-  // compatibility check as "Incompatible runtime entry RuntimeCall(…)".
-  const result: unknown = await api.apis.ReviveApi.get_storage(
-    contractAddress,
-    slotKey,
-    { at: "best" },
-  );
-  return extractBytes(result);
+  // Single-slot path. Multi-slot callers (`readMappingBytes`,
+  // `readNestedMappingString`) pin hash and trie_id themselves via
+  // `pinContract` and pass them through `readSlot` to avoid torn reads.
+  return api.readSlot(contractAddress, slotKey);
 }
 
 export async function readMappingBytes(
-  api: UnsafeApi,
+  api: Api,
   contractAddress: string,
   mappingKey: `0x${string}`,
   mappingSlot: number,
 ): Promise<Uint8Array | null> {
+  const pin = await pinContract(api, contractAddress);
+  if (pin === null) {
+    return null;
+  }
   const baseSlotKey = computeMappingSlot(mappingKey, mappingSlot);
-  const baseData = await readStorageSlot(api, contractAddress, baseSlotKey);
+  const baseData = await api.readSlot(
+    contractAddress,
+    baseSlotKey,
+    pin.hash,
+    pin.trieId,
+  );
   if (baseData === null) {
     return null;
   }
@@ -141,7 +141,12 @@ export async function readMappingBytes(
   const result = new Uint8Array(decoded.length);
   for (let i = 0; i < slotsNeeded; i++) {
     const slotKey = addToSlot(decoded.dataSlot, i);
-    const slotData = await readStorageSlot(api, contractAddress, slotKey);
+    const slotData = await api.readSlot(
+      contractAddress,
+      slotKey,
+      pin.hash,
+      pin.trieId,
+    );
     // If any slot read returns null mid-way, throw. Silently zero-padding
     // the gap would return a corrupted contenthash that reads upstream as
     // "name not found", masking the actual RPC failure.
@@ -168,18 +173,27 @@ export async function readMappingBytes(
  * aborts partway, mirroring [`readMappingBytes`](./storage.ts).
  */
 export async function readNestedMappingString(
-  api: UnsafeApi,
+  api: Api,
   contractAddress: string,
   outerKey: `0x${string}`,
   innerKey: string,
   outerSlot: number,
 ): Promise<string | null> {
+  const pin = await pinContract(api, contractAddress);
+  if (pin === null) {
+    return null;
+  }
   const baseSlotKey = computeNestedStringMappingSlot(
     outerKey,
     innerKey,
     outerSlot,
   );
-  const baseData = await readStorageSlot(api, contractAddress, baseSlotKey);
+  const baseData = await api.readSlot(
+    contractAddress,
+    baseSlotKey,
+    pin.hash,
+    pin.trieId,
+  );
   if (baseData === null) {
     return null;
   }
@@ -195,7 +209,12 @@ export async function readNestedMappingString(
   const result = new Uint8Array(decoded.length);
   for (let i = 0; i < slotsNeeded; i++) {
     const slotKey = addToSlot(decoded.dataSlot, i);
-    const slotData = await readStorageSlot(api, contractAddress, slotKey);
+    const slotData = await api.readSlot(
+      contractAddress,
+      slotKey,
+      pin.hash,
+      pin.trieId,
+    );
     if (slotData === null) {
       throw new PartialStorageReadError(contractAddress, i, slotsNeeded, {
         mappingKind: "nested string mapping",
@@ -210,13 +229,14 @@ export async function readNestedMappingString(
 }
 
 export async function readMappingAddress(
-  api: UnsafeApi,
+  api: Api,
   contractAddress: string,
   mappingKey: `0x${string}`,
   mappingSlot: number,
 ): Promise<string | null> {
+  // Single-slot read, no torn-read risk so no need to pin.
   const slotKey = computeMappingSlot(mappingKey, mappingSlot);
-  const data = await readStorageSlot(api, contractAddress, slotKey);
+  const data = await api.readSlot(contractAddress, slotKey);
   if (data === null) {
     return null;
   }
