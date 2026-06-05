@@ -87,7 +87,7 @@ const USER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" st
 let currentQrPayload: string | null = null;
 
 interface AuthModule {
-  initAuth: () => void;
+  initAuth: () => Promise<void>;
   getAuthState: () => AuthState;
   onAuthStateChange: (fn: (state: AuthState) => void) => () => void;
   startPairing: () => void;
@@ -107,7 +107,7 @@ async function ensureAuth(): Promise<AuthModule> {
     return authMod;
   }
   authMod = await import("@dotli/auth/auth");
-  authMod.initAuth();
+  await authMod.initAuth();
   authMod.onAuthStateChange(renderAuthState);
   renderAuthState(authMod.getAuthState());
   return authMod;

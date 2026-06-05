@@ -195,7 +195,50 @@ function createLoggingStatementStore(
   };
 }
 
-export function initAuth(): void {
+interface NavigatorUAData {
+  getHighEntropyValues(
+    hints: string[],
+  ): Promise<{ platform?: string; platformVersion?: string }>;
+}
+
+function getPlatformTypeFromUserAgent(): string {
+  const agent = navigator.userAgent;
+  if (agent.includes("Win")) {
+    return "Windows";
+  }
+  if (agent.includes("Mac")) {
+    return "macOS";
+  }
+  if (agent.includes("Linux")) {
+    return "Linux";
+  }
+  return "Unknown";
+}
+
+async function getPlatformInfo(): Promise<{
+  platformType: string;
+  platformVersion?: string;
+}> {
+  const ua = (navigator as { userAgentData?: NavigatorUAData }).userAgentData;
+  if (ua === undefined) {
+    return { platformType: getPlatformTypeFromUserAgent() };
+  }
+  try {
+    const hints = await ua.getHighEntropyValues([
+      "platform",
+      "platformVersion",
+    ]);
+    return {
+      platformType: hints.platform ?? getPlatformTypeFromUserAgent(),
+      platformVersion: hints.platformVersion ?? undefined,
+    };
+  } catch (err: unknown) {
+    log.warn("[dot.li auth] Failed to read platform hints:", err);
+    return { platformType: getPlatformTypeFromUserAgent() };
+  }
+}
+
+export async function initAuth(): Promise<void> {
   if (initialized) {
     return;
   }
@@ -251,6 +294,8 @@ export function initAuth(): void {
   }
   storeReadyResolvers = [];
 
+  const platformInfo = await getPlatformInfo();
+
   adapter = createPappAdapter({
     appId: siteId,
     hostMetadata: {
@@ -258,6 +303,7 @@ export function initAuth(): void {
       hostIcon: "https://dot.li/dotli.png",
       hostVersion:
         typeof __DOTLI_VERSION__ === "string" ? __DOTLI_VERSION__ : undefined,
+      ...platformInfo,
     },
     adapters: { lazyClient, statementStore, storage },
   });

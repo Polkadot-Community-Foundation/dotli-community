@@ -658,7 +658,7 @@ function hexToBytes(s: string): Uint8Array {
 async function runAuthSubscribeHook(chainBackend: string): Promise<void> {
   log.warn("[dot.li auth-subscribe] init auth + statement store");
   const authMod = await import("@dotli/auth/auth");
-  authMod.initAuth();
+  await authMod.initAuth();
   const store = await authMod.onStatementStoreReady();
 
   type Filter = { matchAll: Uint8Array[] } | { matchAny: Uint8Array[] };
