@@ -27,48 +27,7 @@
                   "/": "/*"
                 }
              ]
-           },
-           {
-             "appIDs": ["P2PX3JU8FT.io.parity.polkadot"],
-             "paths": [ "*" ],
-             "components": [
-                {
-                  "/": "/*"
-                }
-             ]
-           },
-           {
-             "appIDs": ["P2PX3JU8FT.io.parity.polkadot.stg"],
-             "paths": [ "*" ],
-             "components": [
-                {
-                  "/": "/*"
-                }
-             ]
-           },
-           {
-             "appIDs": ["P2PX3JU8FT.io.parity.polkadot.dev"],
-             "paths": [ "*" ],
-             "components": [
-                {
-                  "/": "/*"
-                }
-             ]
            }
        ]
-   },
-   "webcredentials": {
-      "apps": [
-        "P2PX3JU8FT.io.parity.polkadot",
-        "P2PX3JU8FT.io.parity.polkadot.stg",
-        "P2PX3JU8FT.io.parity.polkadot.dev"
-      ]
-   },
-   "appclips": {
-      "apps": [
-        "P2PX3JU8FT.io.parity.polkadot.clip",
-        "P2PX3JU8FT.io.parity.polkadot.stg.clip",
-        "P2PX3JU8FT.io.parity.polkadot.dev.clip"
-      ]
    }
 }
