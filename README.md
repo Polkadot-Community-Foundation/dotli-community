@@ -19,9 +19,6 @@ A decentralized web browser that runs in your browser. Visit any Polkadot applic
 
 ---
 
-> [!IMPORTANT]
-> dot.li is open-sourced as a proof-of-concept from Parity's Product Engineering team, provided for reference and educational use. Read it, fork it, and deploy your own version to whatever network and name you choose. It has not undergone a formal security audit. See [Security](#security) before relying on it.
-
 ## How to access apps
 
 dot.li resolves apps by **subdomain** — the `.dot` name is the host:
