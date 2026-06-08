@@ -30,6 +30,7 @@ import { getBackend } from "@dotli/config/mode";
 import { log } from "@dotli/shared/log";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
+import { SHARED_AUTH_SESSION_KEY } from "@dotli/protocol/auth-storage";
 
 declare const __DOTLI_VERSION__: string | undefined;
 
@@ -43,6 +44,8 @@ export type AuthState =
 type AuthListener = (state: AuthState) => void;
 
 let adapter: PappAdapter | null = null;
+let sharedStorage: ReturnType<typeof createSharedAuthStorageAdapter> | null =
+  null;
 let statementStoreInstance: StatementStoreAdapter | null = null;
 let storeReadyResolvers: ((store: StatementStoreAdapter) => void)[] = [];
 let currentState: AuthState = { status: "idle" };
@@ -246,6 +249,7 @@ export async function initAuth(): Promise<void> {
 
   const siteId = SITE_ID;
   const storage = createSharedAuthStorageAdapter(siteId);
+  sharedStorage = storage;
   // Statement-store transport tracks the main Backend. smoldot variants
   // route through the protocol bridge. `rpc-gateway` uses the WS provider
   // directly.
@@ -317,21 +321,33 @@ export async function initAuth(): Promise<void> {
   stopRestore();
   m.breadcrumb("Auth module loaded");
 
-  // Subscribe to session changes (handles reconnects)
+  // Subscribe to session changes (handles reconnects). When an authenticated
+  // session disappears — whether from the Log Out button or a phone-initiated
+  // disconnect — this is the single place that runs the local teardown, so both
+  // paths reset identically.
   adapter.sessions.sessions.subscribe((sessions: UserSession[]) => {
-    log.warn(
-      "[dot.li auth] sessions subscription fired, count:",
-      sessions.length,
-    );
     if (sessions.length > 0 && currentState.status !== "authenticated") {
       void resolveIdentityAndSetAuth(sessions[0]);
     } else if (
       sessions.length === 0 &&
       currentState.status === "authenticated"
     ) {
+      const { session } = currentState;
       setState({ status: "idle" });
+      void teardownAfterDisconnect(session);
     }
   });
+}
+
+async function teardownAfterDisconnect(session: UserSession): Promise<void> {
+  if (sharedStorage) {
+    await Promise.all([
+      sharedStorage.clear(`UserSecretsV2_${session.id}`),
+      sharedStorage.clear(`AllowanceKeys_${session.id}`),
+      sharedStorage.clear("DeviceIdentity"),
+    ]);
+  }
+  adapter?.sso.abortAuthentication();
 }
 
 async function resolveIdentityAndSetAuth(session: UserSession): Promise<void> {
@@ -471,8 +487,14 @@ export async function disconnect(): Promise<void> {
   }
 
   const session = currentState.session;
+
+  // Notify the peer and let host-papp tear down its own session state,
+  // best-effort. Removing the session drives the sessions subscription, which
+  // runs the shared local teardown (secrets, allowance, device-identity
+  // rotation, in-memory reset) — the same path a phone-initiated disconnect
+  // takes.
   await adapter.sessions.disconnect(session);
-  setState({ status: "idle" });
+  await sharedStorage?.clear(SHARED_AUTH_SESSION_KEY);
 }
 
 // Keep this union aligned with the host-API wire codec (`LoginResult`),
