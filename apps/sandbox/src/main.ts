@@ -377,7 +377,7 @@ async function storeArchiveInSW(
 /**
  * Optionally inject the sandbox checker script into HTML for relay mode.
  * In relay mode, document.write() replaces the page, so we must inject
- * the checker inline. The render.ts injection path is not used.
+ * the checker inline.
  */
 async function maybeInjectSandboxChecker(html: string): Promise<string> {
   if (

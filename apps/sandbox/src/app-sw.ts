@@ -456,13 +456,7 @@ function lookupArchive(
             content.byteOffset + content.byteLength,
           ) as ArrayBuffer)
         : content;
-    return new Response(body, {
-      status: 200,
-      headers: {
-        "Content-Type": mime,
-        "Cache-Control": "no-cache",
-      },
-    });
+    return new Response(body, archiveResponseInit(mime));
   }
 
   // SPA fallback, only for top-level navigations. Other requests fall
@@ -514,6 +508,22 @@ var __wr=false;setTimeout(function(){__wr=true},3000);["injectedWeb3","polkadot"
 }
 
 /**
+ * Shared `ResponseInit` for SW-served archive content: 200 plus the security
+ * header set. Single-sourced so any future header (e.g. CSP) lands on every
+ * served body rather than a subset of the response builders.
+ */
+function archiveResponseInit(mime: string): ResponseInit {
+  return {
+    status: 200,
+    headers: {
+      "Content-Type": mime,
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "no-cache",
+    },
+  };
+}
+
+/**
  * Response for the primary index.html, with only sandbox checker injection
  * and no base href or prefix stripping (those are only for sub-pages).
  */
@@ -523,13 +533,10 @@ function makePrimaryHtmlResponse(
 ): Response {
   let html = new TextDecoder().decode(content);
   html = injectSandboxScript(html);
-  return new Response(new TextEncoder().encode(html), {
-    status: 200,
-    headers: {
-      "Content-Type": mime,
-      "Cache-Control": "no-cache",
-    },
-  });
+  return new Response(
+    new TextEncoder().encode(html),
+    archiveResponseInit(mime),
+  );
 }
 
 function makeHtmlResponse(
@@ -545,11 +552,8 @@ function makeHtmlResponse(
     `<head><base href="${DOTLI_APP_PREFIX}">${stripPrefix}`,
   );
   html = injectSandboxScript(html);
-  return new Response(new TextEncoder().encode(html), {
-    status: 200,
-    headers: {
-      "Content-Type": mime,
-      "Cache-Control": "no-cache",
-    },
-  });
+  return new Response(
+    new TextEncoder().encode(html),
+    archiveResponseInit(mime),
+  );
 }

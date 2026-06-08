@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect } from "vitest";
-import { DOT_NODE, TIMEOUTS, SW_ARCHIVE_CACHE_MAX } from "@dotli/config/config";
+import {
+  DOT_NODE,
+  TIMEOUTS,
+  SW_ARCHIVE_CACHE_MAX,
+  BASE_DOMAIN,
+  isSandboxOrigin,
+} from "@dotli/config/config";
 import {
   NETWORK_NAME_TO_SERVICES_CONFIG,
   NetworkName,
@@ -80,6 +86,54 @@ describe("config constants", () => {
   describe("SW_ARCHIVE_CACHE_MAX", () => {
     it("is a positive number", () => {
       expect(SW_ARCHIVE_CACHE_MAX).toBeGreaterThan(0);
+    });
+  });
+
+  // Gates postMessage traffic the host shell accepts from the sandbox iframe
+  // (loading status, bitswap relay). Only `<label>.app.<root>` origins — over
+  // https in production, or *.app.localhost in dev — may drive host services.
+  describe("isSandboxOrigin", () => {
+    it("accepts a label app-subdomain over https", () => {
+      expect(isSandboxOrigin(`https://name.app.${BASE_DOMAIN}`)).toBe(true);
+      expect(isSandboxOrigin(`https://my-app.app.${BASE_DOMAIN}`)).toBe(true);
+    });
+
+    it("rejects the bare host (non-app) subdomain", () => {
+      // The product's own `<label>.<root>` shell origin must NOT count as a
+      // sandbox — only the cross-origin `<label>.app.<root>` sandbox does.
+      expect(isSandboxOrigin(`https://name.${BASE_DOMAIN}`)).toBe(false);
+      expect(isSandboxOrigin(`https://app.${BASE_DOMAIN}`)).toBe(false);
+      expect(isSandboxOrigin(`https://${BASE_DOMAIN}`)).toBe(false);
+    });
+
+    it("rejects a non-TLS production origin", () => {
+      expect(isSandboxOrigin(`http://name.app.${BASE_DOMAIN}`)).toBe(false);
+    });
+
+    it("rejects unrelated and lookalike origins", () => {
+      expect(isSandboxOrigin("https://evil.com")).toBe(false);
+      // Leading-dot anchoring prevents `*.app.<root>.evil.com` and
+      // `evilapp.<root>` style suffix tricks.
+      expect(isSandboxOrigin(`https://name.app.${BASE_DOMAIN}.evil.com`)).toBe(
+        false,
+      );
+      expect(isSandboxOrigin(`https://evil-app.${BASE_DOMAIN}`)).toBe(false);
+    });
+
+    it("accepts *.app.localhost (and bare app.localhost) in dev", () => {
+      expect(isSandboxOrigin("http://name.app.localhost:5174")).toBe(true);
+      expect(isSandboxOrigin("http://app.localhost")).toBe(true);
+    });
+
+    it("rejects non-app localhost origins", () => {
+      expect(isSandboxOrigin("http://name.localhost:5174")).toBe(false);
+      expect(isSandboxOrigin("http://localhost:5174")).toBe(false);
+    });
+
+    it("rejects malformed origin strings without throwing", () => {
+      expect(isSandboxOrigin("garbage")).toBe(false);
+      expect(isSandboxOrigin("")).toBe(false);
+      expect(isSandboxOrigin(`name.app.${BASE_DOMAIN}`)).toBe(false);
     });
   });
 });

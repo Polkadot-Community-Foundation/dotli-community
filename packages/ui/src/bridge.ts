@@ -27,9 +27,6 @@ function newFlowId(prefix: string): string {
   return `${prefix}-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`;
 }
 
-// Re-export sandbox-safe rendering functions
-export { renderContent, renderArchive, prepareIframe } from "./render";
-
 // Eagerly load the container bridge chunk. Starts downloading when
 // this module is imported, so it's ready by the time we need it.
 const chunkLoadStart = performance.now();

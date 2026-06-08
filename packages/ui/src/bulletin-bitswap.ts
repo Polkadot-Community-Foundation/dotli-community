@@ -11,7 +11,7 @@ import {
   createRemoteChainProvider,
   isRemoteChainSupported,
 } from "@dotli/protocol/client";
-import { BASE_DOMAIN } from "@dotli/config/config";
+import { isSandboxOrigin } from "@dotli/config/config";
 import { getActiveServicesConfig } from "@dotli/config/network";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
@@ -182,24 +182,6 @@ interface BitswapResultErr {
   id: string;
   ok: false;
   error: string;
-}
-
-function isSandboxOrigin(origin: string): boolean {
-  try {
-    const url = new URL(origin);
-    const { hostname, protocol } = url;
-    if (hostname === "localhost" || hostname.endsWith(".localhost")) {
-      return (
-        hostname.endsWith(".app.localhost") || hostname === "app.localhost"
-      );
-    }
-    if (protocol !== "https:") {
-      return false;
-    }
-    return hostname.endsWith(`.app.${BASE_DOMAIN}`);
-  } catch {
-    return false;
-  }
 }
 
 function isBitswapGetMessage(value: unknown): value is BitswapGetMessage {

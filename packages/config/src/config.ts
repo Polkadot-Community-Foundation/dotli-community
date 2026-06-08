@@ -49,6 +49,31 @@ export const isLocalhost = isLocalEnv;
 export const SITE_ID: SiteId = isLocalhost ? "local.li" : BASE_DOMAIN;
 
 /**
+ * True when `origin` is a dApp sandbox origin (`<label>.app.<BASE_DOMAIN>`
+ * over https, or `<label>.app.localhost` in dev). The host shell uses this
+ * to gate postMessage traffic it receives from the sandbox iframe (loading
+ * status, bitswap relay requests) so that only the embedded sandbox — not
+ * an arbitrary frame — can drive host-side UI or services.
+ */
+export function isSandboxOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    const { hostname, protocol } = url;
+    if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+      return (
+        hostname.endsWith(".app.localhost") || hostname === "app.localhost"
+      );
+    }
+    if (protocol !== "https:") {
+      return false;
+    }
+    return hostname.endsWith(`.app.${BASE_DOMAIN}`);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Use the smoldot light client for the statement store chain.
  *
  * Set VITE_SS_USE_SMOLDOT=true to enable. Defaults to false until

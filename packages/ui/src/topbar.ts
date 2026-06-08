@@ -126,7 +126,8 @@ function getStoredTheme(): "light" | "dark" {
 
 function applyTheme(theme: "light" | "dark"): void {
   document.documentElement.setAttribute("data-theme", theme);
-  // Notify render.ts to re-resolve scheme-specific theme-color
+  // Notify the container bridge (container.ts) to forward the new theme to the
+  // embedded dApp.
   window.dispatchEvent(new Event("dotli:theme-changed"));
 }
 
@@ -1847,7 +1848,13 @@ function buildRadioRow(
 
   const text = document.createElement("span");
   text.className = "mode-radio-text";
-  text.innerHTML = `<span class="mode-radio-label">${opts.label}</span><span class="mode-radio-desc">${opts.description}</span>`;
+  const labelEl = document.createElement("span");
+  labelEl.className = "mode-radio-label";
+  labelEl.textContent = opts.label;
+  const descEl = document.createElement("span");
+  descEl.className = "mode-radio-desc";
+  descEl.textContent = opts.description;
+  text.append(labelEl, descEl);
   row.appendChild(text);
 
   return row;

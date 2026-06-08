@@ -7,7 +7,7 @@
 // No heavy dependencies, kept in the eager bundle.
 
 import { getRecentLabels, addRecentLabel } from "@dotli/storage/cid-cache";
-import { BASE_DOMAIN } from "@dotli/config/config";
+import { BASE_DOMAIN, isSandboxOrigin } from "@dotli/config/config";
 import { getBackend } from "@dotli/config/mode";
 import { escapeHtml, isValidDotLabel } from "@dotli/shared/html";
 
@@ -322,21 +322,34 @@ export function dismissLoading(): void {
 /**
  * Listen for status messages from the sandbox iframe.
  * The sandbox posts { type: "dotli:loading-status", message } in relay mode.
+ *
+ * Only messages from a sandbox origin (`<label>.app.<root>`) may drive the
+ * host loading overlay. Without this gate any frame on the page (e.g. a
+ * nested cross-origin frame or browser extension) could spoof the status
+ * text or prematurely dismiss the overlay while content is still loading.
  */
 export function listenForSandboxStatus(): void {
   window.addEventListener("message", (event: MessageEvent) => {
+    // Cheap shape check first — `message` fires for all postMessage traffic
+    // (bridge, bitswap relay, extensions); only parse the origin once a message
+    // is actually a loading-status candidate. The origin gate still runs before
+    // any side effect. Mirrors `listenForSandboxBitswap`'s check ordering.
     const data = event.data as Record<string, unknown> | null;
     if (
-      data !== null &&
-      typeof data === "object" &&
-      data.type === "dotli:loading-status"
+      data === null ||
+      typeof data !== "object" ||
+      data.type !== "dotli:loading-status"
     ) {
-      if (typeof data.message === "string") {
-        showStatus(data.message);
-      }
-      if (data.done === true) {
-        dismissLoading();
-      }
+      return;
+    }
+    if (!isSandboxOrigin(event.origin)) {
+      return;
+    }
+    if (typeof data.message === "string") {
+      showStatus(data.message);
+    }
+    if (data.done === true) {
+      dismissLoading();
     }
   });
 }

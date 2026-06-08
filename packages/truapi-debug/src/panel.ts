@@ -205,7 +205,7 @@ function adjustIframeForPanel(panel: HTMLElement, state: PanelState): void {
       ? "100%"
       : `calc(100vw - ${String(panel.offsetWidth)}px)`;
   } else {
-    // Host's prepareIframe / renderIframe sets inline width:100%. Restore
+    // Host's renderIframe sets inline width:100%. Restore
     // that explicitly. Clearing to "" falls back to the HTML iframe
     // default of 300px and breaks the layout.
     iframe.style.width = "100%";

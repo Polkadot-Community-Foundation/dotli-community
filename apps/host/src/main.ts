@@ -58,7 +58,7 @@ import type {
 import { BASE_DOMAIN, DEBUG, isLocalhost, SITE_ID } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
-import { escapeHtml } from "@dotli/shared/html";
+import { escapeHtml, isValidDotLabel } from "@dotli/shared/html";
 import { showNotification } from "@dotli/ui/notification";
 import { initScheduledNotifications } from "@dotli/ui/scheduled-notifications";
 import {
@@ -200,6 +200,12 @@ const RESERVED_HOST_PARAMS = [
  * Returns `"myapp"` for `myapp.dot.li` or `myapp.localhost`. Returns `null`
  * for the bare landing pages (`dot.li`, `localhost`) and for sandbox origins
  * (`*.app.dot.li`, `*.app.localhost`), which are handled by `app-main.ts`.
+ *
+ * The parsed label is validated against the closed `.dot` label charset as
+ * defense-in-depth before it is threaded into key derivation, origin
+ * construction (`<label>.app.<root>`), and host-shell sinks. A malformed
+ * label can never be a registered `.dot` name, so returning `null` (which
+ * routes to the landing/preview path) is the safe outcome.
  */
 function parseDotLabel(): string | null {
   const hostname = window.location.hostname;
@@ -210,7 +216,7 @@ function parseDotLabel(): string | null {
       return null;
     }
     const label = hostname.slice(0, -(BASE_DOMAIN.length + 1));
-    return label || null;
+    return isValidDotLabel(label) ? label : null;
   }
 
   // Local dev: name.localhost (but NOT *.app.localhost)
@@ -219,7 +225,7 @@ function parseDotLabel(): string | null {
       return null;
     }
     const label = hostname.slice(0, -".localhost".length);
-    return label || null;
+    return isValidDotLabel(label) ? label : null;
   }
 
   return null;
