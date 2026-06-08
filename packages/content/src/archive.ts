@@ -10,6 +10,11 @@ import * as dagPb from "@ipld/dag-pb";
 import { UnixFS } from "ipfs-unixfs";
 import type { CID } from "multiformats/cid";
 import { concatBytes } from "@noble/hashes/utils.js";
+import {
+  assertBlockMatchesCid,
+  assertSameContentId,
+  verifyingBlockSource,
+} from "./verify";
 
 export type ArchiveFiles = Record<string, Uint8Array>;
 
@@ -225,7 +230,19 @@ export async function walkUnixFsDag(
   return files;
 }
 
-export async function parseCarFile(buffer: Uint8Array): Promise<ArchiveFiles> {
+/**
+ * Parse a CAR archive into a file map.
+ *
+ * When `expectedRoot` is supplied (untrusted gateway transport), the CAR's
+ * declared root is asserted to match it and every block is hash-verified
+ * against the CID that addressed it, so a malicious gateway cannot inject
+ * content. Omit it only when the bytes are already trusted to address
+ * themselves correctly (e.g. a CAR re-packed under a smoldot-verified CID).
+ */
+export async function parseCarFile(
+  buffer: Uint8Array,
+  expectedRoot?: CID,
+): Promise<ArchiveFiles> {
   const reader = await CarReader.fromBytes(buffer);
   const roots = await reader.getRoots();
   const rootCid = roots[0] as
@@ -236,23 +253,41 @@ export async function parseCarFile(buffer: Uint8Array): Promise<ArchiveFiles> {
     throw new Error("CAR file has no roots");
   }
 
-  return walkUnixFsDag(rootCid, async (cid: CID) => {
-    const block = await reader.get(cid);
-    if (!block) {
-      throw new Error(`CAR is missing block for ${cid.toString()}`);
-    }
-    return block.bytes;
-  });
+  if (expectedRoot !== undefined) {
+    assertSameContentId(rootCid, expectedRoot);
+  }
+
+  return walkUnixFsDag(
+    rootCid,
+    verifyingBlockSource(async (cid: CID) => {
+      const block = await reader.get(cid);
+      if (!block) {
+        throw new Error(`CAR is missing block for ${cid.toString()}`);
+      }
+      return block.bytes;
+    }),
+  );
 }
 
 /**
  * Parse an IPFS response. If it's a CAR file, extract the archive,
  * otherwise treat the raw bytes as a single index.html.
+ *
+ * `expectedRoot`, when supplied, binds the response to the requested CID:
+ * the CAR root must match and every block is hash-verified (or, for a
+ * non-CAR single block, the bytes themselves are hash-verified).
  */
 export async function parseIpfsResponse(
   buffer: Uint8Array,
+  expectedRoot?: CID,
 ): Promise<ArchiveFiles> {
-  return isCarFile(buffer) ? parseCarFile(buffer) : { "index.html": buffer };
+  if (isCarFile(buffer)) {
+    return parseCarFile(buffer, expectedRoot);
+  }
+  if (expectedRoot !== undefined) {
+    assertBlockMatchesCid(expectedRoot, buffer);
+  }
+  return { "index.html": buffer };
 }
 
 export interface PackedArchive {

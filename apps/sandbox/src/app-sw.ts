@@ -15,6 +15,7 @@ declare const self: ServiceWorkerGlobalScope;
 declare const __SW_VERSION__: string;
 
 import { getMimeType } from "@dotli/shared/mime";
+import { computeArchiveDigest } from "@dotli/shared/archive-digest";
 import { SW_ARCHIVE_CACHE_MAX } from "@dotli/config/config";
 
 // Base path, derived at runtime from the SW script location.
@@ -43,6 +44,14 @@ interface ArchiveEntry {
    * that lack this field are treated as misses.
    */
   contentBackend?: string;
+  /**
+   * Integrity tag over `files`, recomputed on cache read so a corrupted or
+   * tampered IndexedDB entry is discarded instead of served. Defends against
+   * storage corruption and passive tampering (an active same-origin attacker
+   * who can rewrite the store can also rewrite this tag). Entries persisted
+   * before this field existed lack it and are treated as misses.
+   */
+  digest?: string;
 }
 
 let archiveDbPromise: Promise<IDBDatabase> | null = null;
@@ -81,9 +90,10 @@ async function saveArchiveToDB(entry: {
   contentBackend?: string;
 }): Promise<void> {
   try {
+    const digest = await computeArchiveDigest(entry.files);
     const db = await getArchiveDB();
     const tx = db.transaction(ARCHIVE_STORE, "readwrite");
-    tx.objectStore(ARCHIVE_STORE).put(entry);
+    tx.objectStore(ARCHIVE_STORE).put({ ...entry, digest });
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => {
         resolve();
@@ -104,7 +114,7 @@ async function loadArchiveFromDBByDomain(
     const db = await getArchiveDB();
     const tx = db.transaction(ARCHIVE_STORE, "readonly");
     const request = tx.objectStore(ARCHIVE_STORE).get(domain);
-    return await new Promise<ArchiveEntry | null>((resolve, reject) => {
+    const entry = await new Promise<ArchiveEntry | null>((resolve, reject) => {
       request.onsuccess = () => {
         resolve((request.result as ArchiveEntry | undefined) ?? null);
       };
@@ -112,6 +122,20 @@ async function loadArchiveFromDBByDomain(
         reject(new Error("Failed to load archive"));
       };
     });
+
+    if (entry?.files === undefined) {
+      return entry;
+    }
+
+    // Discard entries whose persisted bytes don't match their integrity tag
+    // (corruption / tampering), and legacy entries that predate the tag. A
+    // miss makes the page re-fetch (and re-persist with a digest), which is
+    // the safe outcome — never serve unverifiable persisted content.
+    const actual = await computeArchiveDigest(entry.files);
+    if (entry.digest === undefined || entry.digest !== actual) {
+      return null;
+    }
+    return entry;
   } catch (error) {
     console.error("Failed to load archive from IndexedDB:", error);
     return null;

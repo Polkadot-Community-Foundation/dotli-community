@@ -37,7 +37,9 @@ import { isValidNetwork, type Network } from "./network";
 export const SANDBOX_SCHEMA_VERSION = 3;
 
 // Cheap CID charset gate (base32 cidv1 / base58btc cidv0 are alphanumeric).
-// The sandbox does the authoritative CID.parse plus per-block hash verify.
+// The sandbox does the authoritative CID.parse, then hash-verifies fetched
+// content against this CID: every block on the gateway path, and the root
+// block (on top of smoldot's own per-block check) on the bitswap path.
 const CID_PATTERN = /^[a-zA-Z0-9]+$/;
 
 /** Known chain backends. The only values the sandbox accepts. */

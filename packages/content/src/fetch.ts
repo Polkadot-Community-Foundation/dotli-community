@@ -35,6 +35,7 @@ import {
   type BlockSource,
 } from "./archive";
 import { fetchFromIpfs, fetchCarFromIpfs } from "./ipfs";
+import { assertBlockMatchesCid, rootVerifyingBlockSource } from "./verify";
 
 // CID codec constants
 const CODEC_DAG_PB = 0x70;
@@ -72,9 +73,16 @@ async function fetchViaBitswapRpc(
     }
   };
 
+  // Defense-in-depth: don't trust smoldot's bitswap_v1_get verification
+  // blindly — re-check that the root block hashes to the on-chain root CID.
+  // Interior blocks are left to smoldot to avoid re-hashing the whole DAG on
+  // this default path (the root check alone anchors the rest of the DAG,
+  // since every link is followed by CID).
+  const rootVerifyingSource = rootVerifyingBlockSource(rootCid, tracedSource);
+
   if (rootCid.code === CODEC_RAW) {
     onStatus?.("Fetching block via bitswap...");
-    const bytes = await tracedSource(rootCid);
+    const bytes = await rootVerifyingSource(rootCid);
     if (isCarFile(bytes)) {
       // Some uploaders pack a CAR archive under a raw-codec CID. Honor that
       // and unpack into a multi-file archive instead of presenting the raw
@@ -89,7 +97,7 @@ async function fetchViaBitswapRpc(
 
   if (rootCid.code === CODEC_DAG_PB) {
     onStatus?.("Walking dag-pb via bitswap...");
-    const files = await walkUnixFsDag(rootCid, tracedSource);
+    const files = await walkUnixFsDag(rootCid, rootVerifyingSource);
     m.count(S.CONTENT_BITSWAP_BLOCKS, { count: String(blockCount) });
     return toFetchResult(files);
   }
@@ -146,7 +154,9 @@ async function fetchViaGateway(
         `[dot.li fetch] Gateway CAR: fetched ${String(Math.round(carBuffer.length / 1024))} KB in ${dur(gatewayStart)}`,
       );
       onStatus?.("Parsing content...");
-      const files = await parseIpfsResponse(carBuffer);
+      // Untrusted transport: bind the CAR to the on-chain CID — its declared
+      // root must match `cid` and every block is hash-verified.
+      const files = await parseIpfsResponse(carBuffer, cid);
       return toFetchResult(files);
     }
     if (cid.code === CODEC_RAW) {
@@ -157,6 +167,8 @@ async function fetchViaGateway(
       log.warn(
         `[dot.li fetch] Gateway: fetched ${String(Math.round(data.length / 1024))} KB in ${dur(gatewayStart)}`,
       );
+      // Untrusted transport: the bytes must hash to the requested raw CID.
+      assertBlockMatchesCid(cid, data);
       return { type: "single", content: data };
     }
     throw new Error(
