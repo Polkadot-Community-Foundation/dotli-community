@@ -25,7 +25,7 @@ dot.li resolves apps by **subdomain** — the `.dot` name is the host:
 
 | Format        | Example                     |
 | ------------- | --------------------------- |
-| **Subdomain** | `https://testingout.dot.li` |
+| **Subdomain** | `https://host-playground.dot.li` |
 
 ### Landing page
 
@@ -52,20 +52,20 @@ name.app.dot.li          App build (CID from URL contract, content fetch, render
 
 | URL                     | Role         | What happens                                                                |
 | ----------------------- | ------------ | --------------------------------------------------------------------------- |
-| `testingout.dot.li`     | Host shell   | Resolves `testingout` via dotns, iframes `testingout.app.dot.li?cid=bafy..` |
-| `testingout.app.dot.li` | App content  | Reads CID from URL contract, fetches content, renders                       |
+| `host-playground.dot.li`     | Host shell   | Resolves `host-playground` via dotns, iframes `host-playground.app.dot.li?cid=bafy..` |
+| `host-playground.app.dot.li` | App content  | Reads CID from URL contract, fetches content, renders                       |
 | `dot.li`                | Landing page | Search bar, recent apps                                                     |
 
 Each product gets its own `<label>.app.dot.li` origin, so versions of the same product share an origin while different products stay isolated for SW/storage/security purposes.
 
 ### What it does
 
-1. **Resolves** `.dot` names via an in-browser [smoldot](https://github.com/paritytech/smoldot) light client connected to Asset Hub Paseo, querying dotNS contracts through the Revive EVM pallet.
-2. **Fetches** content from the [Bulletin Chain](https://github.com/paritytech/polkadot-bulletin-chain) via smoldot `bitswap_v1_get` JSON-RPC or an IPFS gateway according to what the user picks.
-3. **Renders** the content in a sandboxed iframe with a full host-container bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage — all through postMessage.
+1. **Resolves** `.dot` names via an in-browser [smoldot](https://github.com/paritytech/smoldot) light client connected to Asset Hub Paseo, querying dotNS contracts.
+2. **Fetches** content from the [Bulletin Chain](https://github.com/paritytech/polkadot-bulletin-chain) via smoldot `bitswap_v1_get` JSON-RPC or an IPFS gateway.
+3. **Renders** the content in a sandboxed iframe with a full host-container bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage.
 
 ```
-testingout.dot.li
+host-playground.dot.li
     -> Host: smoldot resolves dotNS -> IPFS CID
     -> Host: iframes <label>.app.dot.li with cid in URL contract
     -> App:  fetches content via smoldot bitswap_v1_get or IPFS gateway
@@ -77,15 +77,15 @@ Single-file apps are served as blob URLs. Multi-file SPAs (directories) are fetc
 ### What it doesn't do
 
 - It is **not** a wallet or key custodian. Per-app keys are derived on demand via HDKD soft derivation, and signing is delegated to the connected Polkadot App session.
-- It does **not** run its own RPC servers or backends. Chain access is through an in-browser smoldot light client, and dotNS records are read directly from the Revive pallet's contract storage (read-only).
+- It does **not** run its own RPC servers or backends. Chain access is through an in-browser smoldot light client, and dotNS records are read directly from the contract storage.
 - It does **not** pin or host content. Content is fetched from the Bulletin Chain or an IPFS gateway and served locally per session.
 - It is **not** a production-hardened product. Treat it as a reference blueprint (see [Security](#security)).
 
 ## How resolution works
 
-1. Parse the label from the subdomain (`testingout.dot.li` -> `testingout`)
+1. Parse the label from the subdomain (`host-playground.dot.li` -> `host-playground`)
 2. Compute the ENS-style namehash (`node`) of the name — the resolver tries `app.<label>.dot` first and falls back to `<label>.dot`
-3. Read the `contenthash` bytes for `node` directly from the dotNS ContentResolver contract storage — the resolver computes the Solidity mapping slot and reads it via `chainHead_v1_storage` (no contract method call, no dry-run)
+3. Read the `contenthash` bytes for `node` directly from the dotNS ContentResolver contract storage
 4. Decode the contenthash bytes to an IPFS CID (using `@ensdomains/content-hash`)
 5. Create an iframe to `<label>.app.dot.li?cid=<cid>` which fetches and renders the content
 
@@ -144,10 +144,9 @@ The app context uses `document.write()` to eliminate extra iframe nesting: when 
 
 ### Prerequisites
 
-- A recent Chromium- or Firefox-based browser with SharedWorker and Service Worker support.
 - [Bun](https://bun.sh) 1.3+ and Node 22+ to build locally.
-- **No funded account is required** to browse and resolve `.dot` names — resolution is trustless, client-side, and read-only.
-- A Polkadot wallet/extension is only needed to log in via the Polkadot App and sign transactions inside a loaded dApp.
+- **No funded account is required** to browse and resolve `.dot` names - resolution is trustless, client-side, and read-only.
+- The Polkadot App is only needed to log in and sign transactions inside a loaded dApp.
 - The app targets **Paseo testnet** out of the box (see [Network configuration](#network-configuration)); point it at another chain by editing `packages/config`.
 
 The project uses [Bun](https://bun.sh) and [Turborepo](https://turbo.build).
@@ -160,8 +159,7 @@ bun run preview          # Build + serve both apps on localhost:5173
 
 Local development uses wildcard subdomains:
 
-- `testingout.localhost:5173` — resolves `testingout.dot` via the host
-- `bafyrei....app.localhost:5173` — fetches and renders CID content directly
+- `host-playground.localhost:5173` — resolves `host-playground.dot` via the host
 
 ### Running an approved build
 
