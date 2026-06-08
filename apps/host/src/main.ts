@@ -55,7 +55,7 @@ import type {
   ManifestResult,
   RootManifest,
 } from "@dotli/resolver/manifest";
-import { BASE_DOMAIN, DEBUG, SITE_ID } from "@dotli/config/config";
+import { BASE_DOMAIN, DEBUG, isLocalhost, SITE_ID } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
 import { escapeHtml } from "@dotli/shared/html";
@@ -151,13 +151,20 @@ const T0 = performance.now();
 /**
  * Parse a localhost proxy URL from the path.
  *
- * Examples:
+ * Local-dev-only affordance: a deployed origin (dot.li, paseo.li, ...) must
+ * never proxy a visitor's localhost services into the trusted host origin, so
+ * this returns null unless the host shell is itself served from a local origin.
+ *
+ * Examples (only when served from a localhost origin):
  *   "/localhost:5000"          yields "http://localhost:5000"
  *   "/localhost:5000/foo/bar"  yields "http://localhost:5000/foo/bar"
  *   "/localhost"               yields "http://localhost"
  *   "/starter-template.dot"    yields null (not a localhost URL)
  */
 function parseLocalhostUrl(): string | null {
+  if (!isLocalhost) {
+    return null;
+  }
   const path = window.location.pathname;
   const match = /^\/(localhost(?::\d+)?)(.*)$/.exec(path);
   if (match === null) {
@@ -213,13 +220,6 @@ function parseDotLabel(): string | null {
     }
     const label = hostname.slice(0, -".localhost".length);
     return label || null;
-  }
-
-  // Path-based: /name.dot or /dotli/name.dot (GitHub Pages)
-  const path = window.location.pathname;
-  const match = /\/([^/]+)\.dot(?:\/|$)/.exec(path);
-  if (match !== null) {
-    return match[1] || null;
   }
 
   return null;

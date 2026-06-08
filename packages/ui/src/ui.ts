@@ -18,13 +18,6 @@ function dotUrl(label: string): string {
   if (host.endsWith(".localhost") || host === "localhost") {
     return `${window.location.protocol}//${label}.localhost:${window.location.port}`;
   }
-  // GitHub Pages or other non-matching hosts: use path-based routing
-  if (host !== BASE_DOMAIN && !host.endsWith(`.${BASE_DOMAIN}`)) {
-    const base = window.location.pathname
-      .replace(/\/[^/]+\.dot(?:\/.*)?$/, "")
-      .replace(/\/$/, "");
-    return `${window.location.origin}${base}/${label}.dot`;
-  }
   return `https://${label}.${BASE_DOMAIN}`;
 }
 

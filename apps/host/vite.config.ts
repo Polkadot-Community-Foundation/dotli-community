@@ -3,7 +3,7 @@
 
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig, type Plugin } from "vite";
-import { readFileSync, readdirSync, copyFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import wasm from "vite-plugin-wasm";
@@ -267,9 +267,9 @@ function preloadCriticalAssets(): Plugin {
           .join("");
         const script = [
           "(function(){",
-          "var h=location.hostname,p=location.pathname,l;",
+          "var h=location.hostname,l;",
           'if(h==="dot.li"||h==="localhost")return;',
-          'if(!h.endsWith(".dot.li")&&!h.endsWith(".localhost")&&!/\\/[^/]+\\.dot(?:\\/|$)/.test(p))return;',
+          'if(!h.endsWith(".dot.li")&&!h.endsWith(".localhost"))return;',
           fetchPreloads,
           preloadStatements,
           "})()",
@@ -283,23 +283,6 @@ function preloadCriticalAssets(): Plugin {
           },
         ];
       },
-    },
-  };
-}
-
-/**
- * GitHub Pages SPA fallback: copy index.html to 404.html.
- */
-function githubPages404(): Plugin {
-  return {
-    name: "github-pages-404",
-    apply: "build",
-    writeBundle() {
-      const dist = resolve(import.meta.dirname, OUT_DIR);
-      copyFileSync(resolve(dist, "index.html"), resolve(dist, "404.html"));
-      console.log(
-        "Copied index.html -> 404.html (GitHub Pages SPA fallback)\n",
-      );
     },
   };
 }
@@ -355,7 +338,6 @@ export default defineConfig({
     wasm(),
     preconnectBootnodes(),
     preloadCriticalAssets(),
-    githubPages404(),
     previewCoepHeaders(),
     sentry(),
     // Host shell PWA. Scope-locked to the host origin (myapp.dot.li). The

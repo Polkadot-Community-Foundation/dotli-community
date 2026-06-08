@@ -49,21 +49,20 @@ let currentBlobUrl: string | null = null;
  */
 function getDeepPath(): string {
   const { pathname, search, hash } = window.location;
-  // Strip the base path and .dot label segment from path-based URLs.
-  // e.g. /name.dot/foo/bar becomes /foo/bar, /dotli/name.dot/foo becomes /foo
+  // Strip the deploy base path (e.g. a subpath deploy at /dotli/) so only the
+  // in-app route is forwarded to the iframe.
   let p = pathname;
   const base = import.meta.env.BASE_URL;
   if (base !== "/" && p.startsWith(base)) {
     p = "/" + p.slice(base.length);
   }
-  const stripped = p.replace(/^\/[^/]+\.dot/, "");
-  const isRoot = stripped === "" || stripped === "/";
+  const isRoot = p === "" || p === "/";
   // Even when the path is root, forward hash and search params to the iframe
   // so hash-based routing (e.g. /#/events/create) works correctly.
   if (isRoot) {
     return search || hash ? search + hash : "";
   }
-  return stripped + search + hash;
+  return p + search + hash;
 }
 
 /**

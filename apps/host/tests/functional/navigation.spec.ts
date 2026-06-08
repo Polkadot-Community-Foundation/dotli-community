@@ -7,9 +7,7 @@
  * (host contract keys never reach the product), and validator/contract
  * side-effects.
  *
- * Two entry forms reach the same product page:
- *   - label.host:   http://acme.dot.li/foo?a=b#h
- *   - path-based:   http://dot.li/acme.dot/foo?a=b#h
+ * Apps are reached by subdomain only: http://acme.dot.li/foo?a=b#h
  *
  * Env overrides: COMBO_PORT, COMBO_TIMEOUT_MS.
  */
@@ -29,7 +27,6 @@ const PORT = process.env.COMBO_PORT ?? "5173";
 const TIMEOUT_MS = parseInt(process.env.COMBO_TIMEOUT_MS ?? "45000", 10);
 
 const HOST_BY_LABEL = `http://${LABEL}.localhost:${PORT}`;
-const HOST_BY_PATH = `http://localhost:${PORT}`;
 
 // Navigation behaviour is the same for every backend, so we pin
 // `rpc-gateway` (fastest/least-flaky) to keep the suite deterministic.
@@ -53,41 +50,6 @@ test.describe("URL parameters are forwarded into the product", () => {
     expect(loc.pathname).toBe("/foo");
     expect(loc.search).toBe("?a=b");
     expect(loc.hash).toBe("#h");
-  });
-
-  test("when I open http://dot.li/<label>.dot/foo?a=b#h, the .dot label is stripped and I land on /foo?a=b#h inside the product", async ({
-    page,
-  }) => {
-    // Given
-    await seedBackend(page);
-
-    // When
-    await page.goto(`${HOST_BY_PATH}/${LABEL}.dot/foo?a=b#h`);
-
-    // Then
-    const product = await getProductFrame(page, TIMEOUT_MS);
-    const loc = await getProductLocation(product);
-    expect(loc.pathname).toBe("/foo");
-    expect(loc.search).toBe("?a=b");
-    expect(loc.hash).toBe("#h");
-  });
-
-  // TODO: flip to `test(...)` once a `sub.<LABEL>.dot` fixture is published.
-  // The host's path-form regex extracts `sub.host-playground` as the label
-  // and tries to resolve it on the network. Without a fixture this would flake.
-  test.skip("when I open http://dot.li/sub.<label>.dot/foo, the multi-level label resolves and I land on /foo inside the product", async ({
-    page,
-  }) => {
-    // Given
-    await seedBackend(page);
-
-    // When
-    await page.goto(`${HOST_BY_PATH}/sub.${LABEL}.dot/foo`);
-
-    // Then
-    const product = await getProductFrame(page, TIMEOUT_MS);
-    const loc = await getProductLocation(product);
-    expect(loc.pathname).toBe("/foo");
   });
 
   test("when I open http://<label>.dot.li/foo%20bar, the percent-encoding survives into the product pathname", async ({
@@ -156,23 +118,6 @@ test.describe("Host URL bar preserves the entered URL after render", () => {
     expect(url.searchParams.get("a")).toBe("b");
     expect(url.hash).toBe("#h");
   });
-
-  test("after the product renders from http://dot.li/<label>.dot/foo?a=b#h, the URL bar still shows /<label>.dot/foo?a=b#h", async ({
-    page,
-  }) => {
-    // Given
-    await seedBackend(page);
-
-    // When
-    await page.goto(`${HOST_BY_PATH}/${LABEL}.dot/foo?a=b#h`);
-    await getProductFrame(page, TIMEOUT_MS);
-
-    // Then
-    const url = new URL(page.url());
-    expect(url.pathname).toBe(`/${LABEL}.dot/foo`);
-    expect(url.searchParams.get("a")).toBe("b");
-    expect(url.hash).toBe("#h");
-  });
 });
 
 test.describe("Reloading the page preserves the URL", () => {
@@ -193,24 +138,6 @@ test.describe("Reloading the page preserves the URL", () => {
     expect(loc.pathname).toBe("/foo");
     expect(loc.search).toBe("?a=b");
     expect(new URL(page.url()).pathname).toBe("/foo");
-  });
-
-  test("when I reload http://dot.li/<label>.dot/foo, the path-based form survives the reload", async ({
-    page,
-  }) => {
-    // Given
-    await seedBackend(page);
-    await page.goto(`${HOST_BY_PATH}/${LABEL}.dot/foo`);
-    await getProductFrame(page, TIMEOUT_MS);
-
-    // When
-    await page.reload();
-
-    // Then
-    const product = await getProductFrame(page, TIMEOUT_MS);
-    const loc = await getProductLocation(product);
-    expect(loc.pathname).toBe("/foo");
-    expect(new URL(page.url()).pathname).toBe(`/${LABEL}.dot/foo`);
   });
 });
 
