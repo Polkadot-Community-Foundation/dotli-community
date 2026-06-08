@@ -216,11 +216,14 @@ All addresses and endpoints live in `packages/config/src/network.ts` (`NETWORK_N
 
 ## Security
 
-dot.li is a **proof-of-concept reference implementation** and has **not** undergone a formal, independent security audit. Treat it accordingly:
+Before deploying it for real use cases, **you are responsible** for:
 
-- **Use as a reference, not a dependency.** The `@dotli/*` packages are workspace-internal (`private`) and are not published to npm. Copying or vendoring this code into another system means inheriting unaudited code — review it yourself and pin to a specific commit or tag.
-- **Trust model.** Name resolution and content verification run client-side against the configured chain. Content fetched via an IPFS gateway is marked gateway-resolved until the on-chain CID is confirmed (see [Caching and verification](#caching-and-verification)). Do not treat gateway-served content as chain-verified.
-- **Sandboxing.** Loaded dApps run in a cross-origin sandboxed iframe and must communicate through the postMessage container bridge. The optional [Sandbox API Checker](#sandbox-api-checker) helps catch dApps that reach for restricted web APIs directly.
+- **Reviewing** the code yourself, we publish a reference, not a hardened production build
+- **Checking** that the dependencies are up to date and free of known vulnerabilities
+- **Securing** your own fork or deployment environment (keys, secrets, network configuration)
+- **Tracking** the latest tagged release/commits for security fixes; older releases are not backported (exceptions might apply)
+
+For Parity's security disclosure process, and **Bug Bounty** program, feel free to visit: https://parity.io/bug-bounty
 
 ### Reporting a vulnerability
 
@@ -228,6 +231,6 @@ This repository inherits the organization-wide security policy. **Do not** open 
 
 ## License
 
-dot.li is licensed under the **GNU Affero General Public License v3.0** (`AGPL-3.0-only`). See [LICENSE](./LICENSE) for the full text. Each workspace package declares `AGPL-3.0-only` in its `package.json`.
+dot.li is licensed under the **GNU Affero General Public License v3.0** (`AGPL-3.0-only`). See [LICENSE](./LICENSE).
 
 Third-party dependencies are distributed under their own licenses; see [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
