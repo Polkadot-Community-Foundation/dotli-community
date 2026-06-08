@@ -1,4 +1,3 @@
-
 > [!WARNING]
 > The following is a prototype, reference implementation, and proof-of-concept. This open source code is provided for research, experimentation, and developer education only. This code has not been audited, is actively experimental, and may contain bugs, vulnerabilities, or incomplete features. Use at your own risk.
 
@@ -23,8 +22,8 @@ A decentralized web browser that runs in your browser. Visit any Polkadot applic
 
 dot.li resolves apps by **subdomain** — the `.dot` name is the host:
 
-| Format        | Example                     |
-| ------------- | --------------------------- |
+| Format        | Example                          |
+| ------------- | -------------------------------- |
 | **Subdomain** | `https://host-playground.dot.li` |
 
 ### Landing page
@@ -50,11 +49,11 @@ name.app.dot.li          App build (CID from URL contract, content fetch, render
                           Reads CID from URL, fetches via bitswap/gateway, renders
 ```
 
-| URL                     | Role         | What happens                                                                |
-| ----------------------- | ------------ | --------------------------------------------------------------------------- |
+| URL                          | Role         | What happens                                                                          |
+| ---------------------------- | ------------ | ------------------------------------------------------------------------------------- |
 | `host-playground.dot.li`     | Host shell   | Resolves `host-playground` via dotns, iframes `host-playground.app.dot.li?cid=bafy..` |
-| `host-playground.app.dot.li` | App content  | Reads CID from URL contract, fetches content, renders                       |
-| `dot.li`                | Landing page | Search bar, recent apps                                                     |
+| `host-playground.app.dot.li` | App content  | Reads CID from URL contract, fetches content, renders                                 |
+| `dot.li`                     | Landing page | Search bar, recent apps                                                               |
 
 Each product gets its own `<label>.app.dot.li` origin, so versions of the same product share an origin while different products stay isolated for SW/storage/security purposes.
 
