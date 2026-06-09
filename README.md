@@ -3,16 +3,16 @@
 
 <div align="center">
 
-# dot.li
+# dotli
 
-[![Website](https://img.shields.io/badge/dot.li-online-blue?style=flat-square)](https://dot.li)
+[![Website](https://img.shields.io/badge/paseo.li-online-blue?style=flat-square)](https://paseo.li)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](./LICENSE)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org)
 [![Polkadot](https://img.shields.io/badge/polkadot-ecosystem-E6007A?style=flat-square&logo=polkadot)](https://polkadot.com)
 
 A decentralized web browser that runs in your browser. Visit any Polkadot application with fully trustless, client-side resolution — no servers in the loop.
 
-[Website](https://dot.li) | [Report an Issue](https://github.com/paritytech/dotli/issues)
+[Website](https://paseo.li) | [Report an Issue](https://github.com/paritytech/dotli/issues)
 
 </div>
 
@@ -20,15 +20,15 @@ A decentralized web browser that runs in your browser. Visit any Polkadot applic
 
 ## How to access apps
 
-dot.li resolves apps by **subdomain** — the `.dot` name is the host:
+dotli resolves apps by **subdomain** — the `.dot` name is the host:
 
-| Format        | Example                          |
-| ------------- | -------------------------------- |
-| **Subdomain** | `https://host-playground.dot.li` |
+| Format        | Example                            |
+| ------------- | ---------------------------------- |
+| **Subdomain** | `https://host-playground.paseo.li` |
 
 ### Landing page
 
-When visiting the root (`dot.li`), a landing page is shown with:
+When visiting the root (`paseo.li`), a landing page is shown with:
 
 - A **search bar** where users type an app name (a `.dot` suffix label is shown next to the input) and navigate
 - **Recently visited** apps shown as pill-shaped shortcuts (persisted in localStorage)
@@ -38,24 +38,24 @@ The topbar is hidden on the landing page and only appears when viewing an app.
 
 ## Architecture
 
-dot.li uses a **two-build, per-product subdomain architecture** that separates concerns between the host shell and the app content layer:
+dotli uses a **two-build, per-product subdomain architecture** that separates concerns between the host shell and the app content layer:
 
 ```
-name.dot.li              Host build (topbar, dotns resolution, smoldot, bridge)
-                          Resolves name -> CID, iframes name.app.dot.li with the CID
+name.paseo.li            Host build (topbar, dotns resolution, smoldot, bridge)
+                          Resolves name -> CID, iframes name.app.paseo.li with the CID
                           threaded through the URL contract
 
-name.app.dot.li          App build (CID from URL contract, content fetch, render)
+name.app.paseo.li        App build (CID from URL contract, content fetch, render)
                           Reads CID from URL, fetches via bitswap/gateway, renders
 ```
 
-| URL                          | Role         | What happens                                                                          |
-| ---------------------------- | ------------ | ------------------------------------------------------------------------------------- |
-| `host-playground.dot.li`     | Host shell   | Resolves `host-playground` via dotns, iframes `host-playground.app.dot.li?cid=bafy..` |
-| `host-playground.app.dot.li` | App content  | Reads CID from URL contract, fetches content, renders                                 |
-| `dot.li`                     | Landing page | Search bar, recent apps                                                               |
+| URL                            | Role         | What happens                                                                            |
+| ------------------------------ | ------------ | --------------------------------------------------------------------------------------- |
+| `host-playground.paseo.li`     | Host shell   | Resolves `host-playground` via dotns, iframes `host-playground.app.paseo.li?cid=bafy..` |
+| `host-playground.app.paseo.li` | App content  | Reads CID from URL contract, fetches content, renders                                   |
+| `paseo.li`                     | Landing page | Search bar, recent apps                                                                 |
 
-Each product gets its own `<label>.app.dot.li` origin, so versions of the same product share an origin while different products stay isolated for SW/storage/security purposes.
+Each product gets its own `<label>.app.paseo.li` origin, so versions of the same product share an origin while different products stay isolated for SW/storage/security purposes.
 
 ### What it does
 
@@ -64,9 +64,9 @@ Each product gets its own `<label>.app.dot.li` origin, so versions of the same p
 3. **Renders** the content in a sandboxed iframe with a full host-container bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage.
 
 ```
-host-playground.dot.li
+host-playground.paseo.li
     -> Host: smoldot resolves dotNS -> IPFS CID
-    -> Host: iframes <label>.app.dot.li with cid in URL contract
+    -> Host: iframes <label>.app.paseo.li with cid in URL contract
     -> App:  fetches content via smoldot bitswap_v1_get or IPFS gateway
     -> App:  renders dApp in sandboxed iframe with container bridge
 ```
@@ -82,11 +82,11 @@ Single-file apps are served as blob URLs. Multi-file SPAs (directories) are fetc
 
 ## How resolution works
 
-1. Parse the label from the subdomain (`host-playground.dot.li` -> `host-playground`)
+1. Parse the label from the subdomain (`host-playground.paseo.li` -> `host-playground`)
 2. Compute the ENS-style namehash (`node`) of the name — the resolver tries `app.<label>.dot` first and falls back to `<label>.dot`
 3. Read the `contenthash` bytes for `node` directly from the dotNS ContentResolver contract storage
 4. Decode the contenthash bytes to an IPFS CID (using `@ensdomains/content-hash`)
-5. Create an iframe to `<label>.app.dot.li?cid=<cid>` which fetches and renders the content
+5. Create an iframe to `<label>.app.paseo.li?cid=<cid>` which fetches and renders the content
 
 All chain access is read-only storage reads through the smoldot light client — no RPC server needed. (An optional gateway backend reads the same storage over a public RPC node instead.)
 
@@ -102,7 +102,7 @@ When a CID points to an IPFS directory (not a single file):
 
 ## Caching and verification
 
-dot.li uses a two-layer cache for fast repeat visits:
+dotli uses a two-layer cache for fast repeat visits:
 
 1. **CID cache** (IndexedDB) — maps `.dot` labels to their last-known CID
 2. **Archive cache** (Service Worker) — stores fetched file maps keyed by domain; a cache hit additionally requires the stored CID (and content backend) to match
@@ -114,11 +114,11 @@ On repeat visits, content renders instantly from the cache while it is resolved 
 | Green (Verified) | Checked by your in-browser light client (the default smoldot backend)         |
 | Orange (Trusted) | Served by an external RPC provider or IPFS gateway, not light-client verified |
 
-If a background re-resolution finds the on-chain CID has changed, dot.li shows a **New version available** notification with a **Reload** action rather than swapping content silently.
+If a background re-resolution finds the on-chain CID has changed, dotli shows a **New version available** notification with a **Reload** action rather than swapping content silently.
 
 ## Host-container bridge
 
-Loaded SPAs communicate with dot.li through a postMessage-based protocol. The bridge exposes:
+Loaded SPAs communicate with dotli through a postMessage-based protocol. The bridge exposes:
 
 | Handler                        | What it does                                                           |
 | ------------------------------ | ---------------------------------------------------------------------- |
@@ -162,7 +162,7 @@ Local development uses wildcard subdomains:
 
 ### Running an approved build
 
-Releases are published as GitHub Releases tagged `vX.Y.Z` (the latest published tag is what the hosted dot.li deployment runs). To reproduce a specific approved version from a fresh checkout:
+Releases are published as GitHub Releases tagged `vX.Y.Z` (the latest published tag is what the hosted dotli deployment runs). To reproduce a specific approved version from a fresh checkout:
 
 ```bash
 git checkout v0.5.0       # any published release tag
@@ -174,7 +174,7 @@ The published tag on the [Releases page](https://github.com/paritytech/dotli/rel
 
 ## Debug panel
 
-dot.li ships a TrUAPI debug panel that aggregates host-side activity (boot/resolve/render/bridge events, TrUAPI host↔product messages, host-papp SSO/session events) into one time-aligned inspector. The panel chunk is dynamically imported, so users who never see it pay no download cost.
+dotli ships a TrUAPI debug panel that aggregates host-side activity (boot/resolve/render/bridge events, TrUAPI host↔product messages, host-papp SSO/session events) into one time-aligned inspector. The panel chunk is dynamically imported, so users who never see it pay no download cost.
 
 In builds compiled with `VITE_APP_DEBUG=true` (local `bun run preview:debug`, and the staging dev deploys at `paseoli.dev` / `dotli.dev`) the panel auto-mounts collapsed. In staging/production it's off until you click **Open in debug mode** in the host Settings menu (or append `?debug=true` to any URL). The choice is sessionStorage-scoped — closing the tab clears it. Use `?debug=off` to silence it explicitly within the same session.
 
@@ -182,7 +182,7 @@ See [packages/truapi-debug/DEBUG_PANEL.md](packages/truapi-debug/DEBUG_PANEL.md)
 
 ## Sandbox API Checker
 
-dApps rendered in dot.li's sandboxed iframe should communicate exclusively through the container bridge (postMessage), not use web APIs directly. The sandbox checker detects restricted API usage and reports violations in a UI panel.
+dApps rendered in dotli's sandboxed iframe should communicate exclusively through the container bridge (postMessage), not use web APIs directly. The sandbox checker detects restricted API usage and reports violations in a UI panel.
 
 The checker is activated by defining `VITE_SANDBOX_CHECKER` at build time (e.g. `=true`). When the env var is unset, the gated import is statically eliminated, so the checker is tree-shaken out of production builds entirely.
 
@@ -228,6 +228,6 @@ This repository inherits the organization-wide security policy. **Do not** open 
 
 ## License
 
-dot.li is licensed under the **GNU Affero General Public License v3.0** (`AGPL-3.0-only`). See [LICENSE](./LICENSE).
+dotli is licensed under the **GNU Affero General Public License v3.0** (`AGPL-3.0-only`). See [LICENSE](./LICENSE).
 
 Third-party dependencies are distributed under their own licenses; see [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
