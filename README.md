@@ -12,7 +12,7 @@
 
 A decentralized web browser that runs in your browser. Visit any Polkadot application with fully trustless, client-side resolution — no servers in the loop.
 
-[Website](https://paseo.li) | [Report an Issue](https://github.com/paritytech/dotli/issues)
+[Website](https://paseo.li) | [Report an Issue](https://github.com/paritytech/dotli-community/issues)
 
 </div>
 
