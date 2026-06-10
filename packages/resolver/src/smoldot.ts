@@ -309,8 +309,6 @@ export function terminateSmoldot(): void {
   teardownAllPersistence();
   smoldotInstance = null;
   relayChainPromise = null;
-  resolverAssetHubPromise = null;
-  assetHubProvider = null;
   dappAssetHubPromise = null;
   bulletinChainPromise = null;
   peopleChainPromise = null;
@@ -474,9 +472,6 @@ export function getPeopleChain(): Promise<SmoldotChain> {
   return peopleChainPromise;
 }
 
-let resolverAssetHubPromise: Promise<SmoldotChain> | null = null;
-let assetHubProvider: JsonRpcProvider | null = null;
-
 function createAssetHubChain(
   relay: Promise<SmoldotChain>,
 ): Promise<SmoldotChain> {
@@ -510,62 +505,16 @@ function createAssetHubChain(
     });
 }
 
-function getResolverAssetHubChain(): Promise<SmoldotChain> {
-  resolverAssetHubPromise ??= createAssetHubChain(getRelayChain()).catch(
-    (error: unknown) => {
-      resolverAssetHubPromise = null;
-      throw error;
-    },
-  );
-  return resolverAssetHubPromise;
-}
-
-export function getResolverAssetHubProvider(): JsonRpcProvider {
-  assetHubProvider ??= getSmProvider(() => getResolverAssetHubChain());
-  return assetHubProvider;
-}
-
-// After the resolver finishes dotNS resolution, its chain can be released.
-// dApp connections then use a FRESH chain that has no "announced blocks"
-// history, avoiding smoldot's per-connection block deduplication.
-
+// The single Asset Hub chain, shared by the resolver and all dApp sessions
+// via the broker (one follow, never removed mid-read).
 let dappAssetHubPromise: Promise<SmoldotChain> | null = null;
 
 /**
- * Release the resolver's Asset Hub chain so a fresh chain can be created
- * for dApp connections. After calling this, the resolver's polkadot-api
- * client is no longer usable (CID is already cached).
- */
-export function releaseResolverAssetHubChain(): void {
-  if (resolverAssetHubPromise === null) {
-    return;
-  }
-  log.warn("[dot.li smoldot] Releasing resolver Asset Hub chain");
-  teardownPersistence("asset-hub");
-  void resolverAssetHubPromise
-    .then((chain) => {
-      chain.remove();
-      log.warn("[dot.li smoldot] Resolver Asset Hub chain removed");
-    })
-    .catch(() => {
-      /* already dead or not yet created */
-    });
-  resolverAssetHubPromise = null;
-  assetHubProvider = null;
-}
-
-/**
- * Get or create a fresh Asset Hub chain for dApp connections.
+ * Get or create the shared Asset Hub chain.
  *
- * This chain is separate from the resolver's chain and has no
- * "announced blocks" history. Smoldot will send complete newBlock
- * events for all non-finalized blocks on new subscriptions.
- *
- * The returned chain wraps `remove()` to clear the cached promise,
- * so the next call creates a fresh chain. This is necessary because
- * `getSmProvider` calls `chain.remove()` on disconnect. Without
- * cache invalidation, subsequent providers would reference a
- * destroyed chain.
+ * The wrapped `remove()` clears the cached promise so the next call creates a
+ * fresh chain — `getSmProvider` calls `chain.remove()` on disconnect, and
+ * without this subsequent providers would reference a destroyed chain.
  */
 export function getDappAssetHubChain(): Promise<SmoldotChain> {
   dappAssetHubPromise ??= createAssetHubChain(getRelayChain())

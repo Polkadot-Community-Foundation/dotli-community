@@ -9,6 +9,7 @@ import {
   createClient,
   type SubstrateClient,
 } from "@polkadot-api/substrate-client";
+import type { JsonRpcProvider } from "polkadot-api";
 import { TIMEOUTS } from "@dotli/config/config";
 import { getActiveServicesConfig } from "@dotli/config/network";
 import { namehash, toHex, decodeIpfsContenthashResult } from "./abi";
@@ -22,7 +23,6 @@ import { log } from "@dotli/shared/log";
 import {
   getSmoldot,
   getRelayChain,
-  getResolverAssetHubProvider,
   onConnectionIssue,
   onSmoldotFatal,
 } from "./smoldot";
@@ -52,6 +52,17 @@ let clientInstance: SubstrateClient | null = null;
 let apiInstance: Api | null = null;
 let clientPromise: Promise<Api> | null = null;
 let fatalUnsubscribe: (() => void) | null = null;
+
+// Asset Hub provider used to read dotNS. The host injects a broker-backed
+// provider during bootstrap so the resolver shares the broker's single Asset
+// Hub follow instead of opening its own (see protocol-shared-worker).
+let resolverAssetHubProvider: (() => JsonRpcProvider) | null = null;
+
+export function setResolverAssetHubProvider(
+  factory: (() => JsonRpcProvider) | null,
+): void {
+  resolverAssetHubProvider = factory;
+}
 
 /**
  * Tear down the cached resolver client. Callers that hold a reference to
@@ -152,7 +163,12 @@ async function doCreateClient(
 
     onPhase?.("asset-hub-connecting");
     onStatus?.("Connecting to Asset Hub Paseo...");
-    const provider = getResolverAssetHubProvider();
+    if (resolverAssetHubProvider === null) {
+      throw new Error(
+        "Resolver Asset Hub provider not set — call setResolverAssetHubProvider() during bootstrap",
+      );
+    }
+    const provider = resolverAssetHubProvider();
     log.warn("[dot.li resolve] Creating substrate-client + storage API...");
     const client = createClient(provider);
     const api = createRawApi(client);

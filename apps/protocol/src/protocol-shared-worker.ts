@@ -15,12 +15,12 @@ declare const self: SharedWorkerGlobalScope;
 
 import type { StringJsonRpcConnection } from "@dotli/protocol/broker";
 import { MAX_CONNECTIONS_PER_ORIGIN } from "@dotli/config/config";
-import { isValidNetwork, setNetworkOverride } from "@dotli/config/network";
 import {
-  createChainProvider,
-  isChainSupported,
-  isResolverAssetHubGenesis,
-} from "@dotli/resolver/chains";
+  isValidNetwork,
+  setNetworkOverride,
+  getActiveServicesConfig,
+} from "@dotli/config/network";
+import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
 import {
   getTestSigner,
   submitPreimageTransaction,
@@ -32,16 +32,17 @@ import {
   resolveExecutableManifest,
   resolveOwner,
   resolveRootManifest,
+  setResolverAssetHubProvider,
   waitForAssetHubFinalized,
 } from "@dotli/resolver/resolve";
-import {
-  onSmoldotFatal,
-  releaseResolverAssetHubChain,
-} from "@dotli/resolver/smoldot";
+import { onSmoldotFatal } from "@dotli/resolver/smoldot";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { initSentry, installGlobalErrorHandlers } from "@dotli/metrics/sentry";
-import { createChainBrokerManager } from "@dotli/protocol/broker";
+import {
+  createChainBrokerManager,
+  requireBrokerLocalProvider,
+} from "@dotli/protocol/broker";
 import { serializeError } from "@dotli/shared/errors";
 
 /** Bridge-boundary allowlist for executable-manifest kinds. */
@@ -102,7 +103,6 @@ const connectionPorts = new Map<string, MessagePort>();
 const ports = new Set<MessagePort>();
 const pendingPorts: MessagePort[] = [];
 let engineReady = false;
-let resolverChainReleased = false;
 
 const NETWORK_NAME_PREFIX = "dotli-protocol-";
 let networkInitFailure: string | null = null;
@@ -183,9 +183,22 @@ async function presync(): Promise<void> {
       `Relay chain added (${String(Math.round(performance.now() - t0))}ms)`,
     );
 
-    // 3. Wait for Asset Hub to sync to a finalized block via the
+    // 3. Create the broker FIRST and route the resolver's Asset Hub reads
+    // through it as a local session, so there is one shared Asset Hub follow
+    // (never removed mid-read) instead of a separate resolver chain the first
+    // dApp connection would release — the `ChainHead disjointed` load failure.
+    chainBrokerManager = createChainBrokerManager(createChainProvider);
+    setResolverAssetHubProvider(() =>
+      requireBrokerLocalProvider(
+        chainBrokerManager,
+        getActiveServicesConfig().assethub.genesis,
+        "Asset Hub",
+      ),
+    );
+
+    // 4. Wait for Asset Hub to sync to a finalized block via the
     // explicit presync primitive (no more overloading `resolveDotName`
-    // with a sentinel label).
+    // with a sentinel label). This now syncs the broker's shared chain.
     swLog("Waiting for Asset Hub to reach finalized block...");
     await waitForAssetHubFinalized((msg) => {
       swLog(`Pre-sync status: ${msg}`);
@@ -194,11 +207,6 @@ async function presync(): Promise<void> {
     m.measure(S.SMOLDOT_PRESYNC, totalMs);
     m.distribution(S.SMOLDOT_PRESYNC, totalMs);
     swLog(`Asset Hub synced (${String(Math.round(totalMs))}ms total)`);
-
-    // 4. Create the broker. The resolver's Asset Hub chain is released
-    // lazily on the first dApp chainConnect (see handleRequest below),
-    // NOT here. The host still needs it for resolveDotName/resolveOwner.
-    chainBrokerManager = createChainBrokerManager(createChainProvider);
 
     // 5. Success: mark ready.
     swLog("Pre-sync complete, engine ready");
@@ -419,25 +427,9 @@ async function handleRequest(
       if (!isChainSupported(payload.genesisHash)) {
         throw new Error(`Unsupported chain: ${payload.genesisHash}`);
       }
-      // Release the resolver's Asset Hub chain on the first dApp Asset-Hub
-      // connection. By this point the host has already resolved the CID.
-      // Releasing frees the chain so the dApp gets a FRESH chain with no
-      // "announced blocks" history (avoids smoldot's per-connection block
-      // deduplication). Gate this on the Asset-Hub genesis set the resolver
-      // knows about. Other bridged chains (e.g. People for the
-      // statement-store) must not trigger an Asset-Hub teardown, and the
-      // set lives next to the Asset-Hub provider factory so adding another
-      // network (e.g. Westend Asset Hub) is a single edit there.
-      if (
-        !resolverChainReleased &&
-        isResolverAssetHubGenesis(payload.genesisHash)
-      ) {
-        resolverChainReleased = true;
-        swLog(
-          "First Asset Hub dApp connection — releasing resolver Asset Hub chain",
-        );
-        releaseResolverAssetHubChain();
-      }
+      // The resolver and all dApp sessions share one Asset Hub chain via the
+      // broker, so there is no resolver chain to release here; connect
+      // directly.
       let chainMsgCount = 0;
       const connection = chainBrokerManager.connectRemote(
         payload.genesisHash,

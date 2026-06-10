@@ -57,6 +57,7 @@ import {
   type SiteId,
 } from "@dotli/config/config";
 import {
+  getActiveServicesConfig,
   isValidNetwork,
   setNetworkOverride,
   type Network,
@@ -72,7 +73,11 @@ import {
 } from "@dotli/resolver/rpc-chain";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
-import { createChainBrokerManager } from "@dotli/protocol/broker";
+import {
+  createChainBrokerManager,
+  requireBrokerLocalProvider,
+  type ChainBrokerManager,
+} from "@dotli/protocol/broker";
 import {
   buildSharedAuthStorageKey,
   buildSharedModeStorageKey,
@@ -674,6 +679,7 @@ async function initDirectMode(): Promise<void> {
     resolveExecutableManifest,
     resolveOwner,
     resolveRootManifest,
+    setResolverAssetHubProvider,
   } = resolve;
   const { terminateSmoldot, onSmoldotFatal } = smoldotMod;
   const { submitPreimageTransaction, getTestSigner } = bulletin;
@@ -698,6 +704,17 @@ async function initDirectMode(): Promise<void> {
   const engine = createEngine({
     createChainProvider,
     isChainSupported,
+    onBrokerReady: (broker) => {
+      // Route the resolver's Asset Hub reads through the broker's shared
+      // follow (object-wire — see protocol-shared-worker for the rationale).
+      setResolverAssetHubProvider(() =>
+        requireBrokerLocalProvider(
+          broker,
+          getActiveServicesConfig().assethub.genesis,
+          "Asset Hub",
+        ),
+      );
+    },
     onInit: () => {
       getSmoldot();
     },
@@ -1029,6 +1046,11 @@ interface EngineOptions {
   isChainSupported: (genesisHash: string) => boolean;
   /** Called once at engine creation, e.g. to kick off smoldot pre-sync. */
   onInit?: () => void;
+  /**
+   * Called once right after the broker is created. Smoldot modes use this to
+   * route the resolver's Asset Hub reads through the broker's shared follow.
+   */
+  onBrokerReady?: (broker: ChainBrokerManager) => void;
   /** Called at cleanup time after broker teardown. */
   onCleanup?: () => void;
   /** Called on `warmup` requests. If omitted, `warmup` resolves immediately. */
@@ -1062,6 +1084,7 @@ function createEngine(options: EngineOptions): ProtocolEngine {
   const connections = new Map<string, StringJsonRpcConnection>();
   const originConns = new Map<string, Set<string>>();
   const broker = createChainBrokerManager(options.createChainProvider);
+  options.onBrokerReady?.(broker);
   options.onInit?.();
 
   function assertStr(value: unknown, name: string): asserts value is string {
