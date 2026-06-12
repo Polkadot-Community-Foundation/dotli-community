@@ -13,9 +13,11 @@ REMOTE_PRD ?=
 REMOTE_STG ?=
 REMOTE_SUMMIT ?=
 
-# PLACEHOLDER: the Summit public domain is not decided yet. Replace
-# summit.example here, in CERT_DOMAINS_summit, and in nginx/nginx.summit
-# (one find-replace) once the domain exists in Cloudflare.
+# NOTE: summit serves dot.li — the same domain as the legacy `polkadot` env.
+# This is deliberate (dot.li is being cut over to Summit): the two envs target
+# different boxes (REMOTE_PRD vs REMOTE_SUMMIT), so their cert/nginx file
+# names never collide on one machine. The `polkadot` rows describe the
+# pre-cutover box and remain for reference/rollback.
 
 # env tag → site filename in /etc/nginx/sites-available/
 SITE_polkadot      := dot.li
@@ -25,7 +27,7 @@ SITE_dev-paseo     := paseoli.dev
 SITE_dev-test      := testnet.li
 SITE_westend       := westend.li
 SITE_dev-westend   := westendli.dev
-SITE_summit        := summit.example
+SITE_summit        := dot.li
 
 # env tag → remote (only polkadot is prod; the rest share the staging box,
 # except summit which runs on its own dedicated public box)
@@ -58,7 +60,7 @@ CERT_DOMAINS_dev-paseo    := paseoli.dev *.paseoli.dev *.app.paseoli.dev
 CERT_DOMAINS_dev-test     := testnet.li *.testnet.li *.app.testnet.li
 CERT_DOMAINS_westend      := westend.li *.westend.li *.app.westend.li
 CERT_DOMAINS_dev-westend  := westendli.dev *.westendli.dev *.app.westendli.dev
-CERT_DOMAINS_summit       := summit.example *.summit.example *.app.summit.example
+CERT_DOMAINS_summit       := dot.li *.dot.li *.app.dot.li
 
 VALID_ENVS := polkadot dev-polkadot paseo dev-paseo dev-test westend dev-westend summit
 
