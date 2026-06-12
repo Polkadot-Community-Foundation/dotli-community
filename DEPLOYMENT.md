@@ -30,7 +30,7 @@ works for the first boot and for later top-ups.
 
 | Variable               | Required | Notes                                                                                                                                                                                               |
 | ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ENV`                  | no       | One of `polkadot`, `dev-polkadot`, `paseo`, `dev-paseo`, `dev-test`, `westend`, `dev-westend`. Defaults to `polkadot`                                                                               |
+| `ENV`                  | no       | One of `polkadot`, `dev-polkadot`, `paseo`, `dev-paseo`, `dev-test`, `westend`, `dev-westend`, `summit`. Defaults to `polkadot`                                                                     |
 | `ADMIN_EMAIL`          | yes      | Let's Encrypt contact email.                                                                                                                                                                        |
 | `CLOUDFLARE_API_TOKEN` | yes      | Cloudflare token with DNS edit on the zone.                                                                                                                                                         |
 | `REMOTE`               | no       | `user@host` override. When unset, the target resolves from `REMOTE_PRD` / `REMOTE_STG` (see [Configure deploy targets](#configure-deploy-targets)). Pass this to deploy a box not covered by those. |
@@ -69,8 +69,9 @@ Actions path reads `DEPLOY_HOST` / `DEPLOY_USER` from repository secrets via the
    makes re-runs cheap.
 6. `provision-renewal` — enables `certbot.timer` for auto-renewal.
 7. `deploy` — rsyncs the repo to `/tmp/dotli-build`, runs `bun install
---frozen-lockfile && bun run build` on the remote, then syncs the three
-   `dist/` outputs into the env's web root.
+--frozen-lockfile && bun run build:prod` on the remote (the same production
+   build CI deploys use: pre-compressed assets, no analytics markers), then
+   syncs the three `dist/` outputs into the env's web root.
 8. `deploy-nginx` — installs `nginx/snippets/` and `nginx/nginx.<env>` into
    `/etc/nginx/`, runs `nginx -t`, and reloads nginx.
 

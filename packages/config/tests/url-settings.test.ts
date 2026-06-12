@@ -1,12 +1,19 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import {
   parseSettingsFromSearch,
   writeSettingsToSearch,
 } from "@dotli/config/url-settings";
-import { NetworkName } from "@dotli/config/network";
+import { NetworkName, setNetworkOverride } from "@dotli/config/network";
+
+// The default network (Summit) is rpc-gateway-only, which would skew the
+// "matches detected default backend" assertions below. Pin a network with
+// published parachain specs so the smoldot defaults apply.
+beforeAll(() => {
+  setNetworkOverride(NetworkName.PASEO_NEXT_V2);
+});
 
 const globalAny = globalThis as { SharedWorker?: unknown };
 
@@ -147,7 +154,7 @@ describe("writeSettingsToSearch", () => {
     );
     const changed = writeSettingsToSearch(
       {
-        network: NetworkName.PASEO_NEXT_V2,
+        network: NetworkName.SUMMIT,
         chainBackend: "smoldot-direct",
         cache: {
           skipCidCache: false,

@@ -207,5 +207,10 @@ refresh_spec "paseo-asset-hub-next.smol.json"      false "https://paseo-asset-hu
 refresh_spec "paseo-bulletin-next.smol.json"       false "https://paseo-bulletin-next-rpc.polkadot.io"
 refresh_spec "paseo-people-next-system.smol.json"  false "https://paseo-people-next-system-rpc.polkadot.io"
 
+# Summit (relay only: the Summit parachains do not serve their chain specs,
+# so there are no committed parachain specs to refresh — Summit runs in
+# rpc-gateway mode until they are published)
+refresh_spec "summit.smol.json"                    true  "https://summit-rpc.polkadot.io"
+
 echo "Done. Chain specs updated in packages/resolver/src/chain-specs/"
 echo "Rebuild the app to use the new specs."

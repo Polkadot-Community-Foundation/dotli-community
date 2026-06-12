@@ -7,6 +7,7 @@ export const NetworkName = {
   PASEO_NEXT_V1: "paseo-next-v1",
   PASEO_NEXT_V2: "paseo-next-v2",
   PREVIEW_NET: "previewnet",
+  SUMMIT: "summit",
 } as const;
 
 export type NetworkName = (typeof NetworkName)[keyof typeof NetworkName];
@@ -148,6 +149,34 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
       storageSlots: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
     },
   },
+  [NetworkName.SUMMIT]: {
+    relay: {
+      genesis:
+        "0xb658399458ec6a1102fb65f86751be6fde9f123503cac81dbeeecd04f71a65c9",
+      rpcs: ["wss://summit-rpc.polkadot.io"],
+    },
+    assethub: {
+      genesis:
+        "0xf388dc6d6cdf6fb77eac3c4a91f31bc0c8642b142f1a757512ab7849f9f70660",
+      rpcs: ["wss://summit-asset-hub-rpc.polkadot.io"],
+    },
+    bulletin: {
+      genesis:
+        "0x147aae0d60625af72300d4d5ebd5dcb869f7ac4c6c1a326be1cbb14a4a65ae77",
+      rpcs: ["wss://summit-bulletin-rpc.polkadot.io"],
+      ipfsGateways: ["https://summit-ipfs.polkadot.io"],
+    },
+    people: {
+      genesis:
+        "0xbe5238f82c3553bc57ac3be43bef110bd58c49ad0744110814985195ca7d8c4e",
+      rpcs: ["wss://summit-people-rpc.polkadot.io"],
+    },
+    dotns: {
+      DOTNS_REGISTRY: "0xFb7AB7E142ED0248D77198CA8722D67C1930D783",
+      DOTNS_CONTENT_RESOLVER: "0xf110e5799c3f0adb8ED885C02c45Ecfe7fD86226",
+      storageSlots: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
+    },
+  },
 };
 
 export const NETWORK_KEY = "dotli:network";
@@ -156,10 +185,11 @@ const VALID_NETWORKS: ReadonlySet<string> = new Set<Network>([
   NetworkName.PASEO_NEXT_V1,
   NetworkName.PASEO_NEXT_V2,
   NetworkName.PREVIEW_NET,
+  NetworkName.SUMMIT,
 ]);
 
 export function defaultNetwork(): Network {
-  return NetworkName.PASEO_NEXT_V2;
+  return NetworkName.SUMMIT;
 }
 let networkOverride: Network | null = null;
 

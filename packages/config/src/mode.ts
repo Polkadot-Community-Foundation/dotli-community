@@ -30,11 +30,28 @@ export interface CacheSettings {
   skipWorkerCache: boolean;
 }
 
+import { getNetwork, type Network } from "./network";
+
 export const BACKEND_KEY = "dotli:chain-backend";
 export const CACHE_KEY = "dotli:cache-settings";
 
 export function isSharedWorkerAvailable(): boolean {
   return typeof SharedWorker !== "undefined";
+}
+
+/**
+ * Networks whose parachain chain specs are not published, so smoldot cannot
+ * sync them. On these networks the only working backend is `rpc-gateway`;
+ * `getBackend()` overrides (without clobbering) any stored smoldot
+ * preference, and the UI disables the smoldot choices. Remove a network from
+ * this set once its parachain specs land in `chain-specs/`.
+ */
+const RPC_GATEWAY_ONLY_NETWORKS: ReadonlySet<Network> = new Set<Network>([
+  "summit",
+]);
+
+export function isRpcGatewayOnly(network: Network = getNetwork()): boolean {
+  return RPC_GATEWAY_ONLY_NETWORKS.has(network);
 }
 
 // Pre-collapse keys. `rpc` chain backend maps to `rpc-gateway`. Legacy
@@ -117,6 +134,11 @@ export function migrateLegacyOn(target: ModeStorage): Backend | null {
 }
 
 export function getBackend(): Backend {
+  // Networks without parachain chain specs can only run via the RPC gateway.
+  // The stored preference is left untouched so it resumes if specs arrive.
+  if (isRpcGatewayOnly()) {
+    return "rpc-gateway";
+  }
   const stored = storage.getItem(BACKEND_KEY);
   if (stored !== null && VALID_BACKENDS.has(stored)) {
     if (stored === "smoldot-shared-worker" && !isSharedWorkerAvailable()) {
@@ -143,6 +165,9 @@ export function setBackend(chainBackend: Backend): void {
 }
 
 export function defaultBackend(): Backend {
+  if (isRpcGatewayOnly()) {
+    return "rpc-gateway";
+  }
   return isSharedWorkerAvailable() ? "smoldot-shared-worker" : "smoldot-direct";
 }
 
