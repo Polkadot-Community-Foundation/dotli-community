@@ -36,6 +36,9 @@ import assetHubPreviewnetUrl from "./previewnet-asset-hub.smol.json?url";
 import bulletinPreviewnetUrl from "./previewnet-bulletin-local.smol.json?url";
 import peoplePreviewnetUrl from "./previewnet-people.smol.json?url";
 import summitRelayUrl from "./summit.smol.json?url";
+import assetHubSummitUrl from "./summit-asset-hub.smol.json?url";
+import bulletinSummitUrl from "./summit-bulletin.smol.json?url";
+import peopleSummitUrl from "./summit-people.smol.json?url";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { SS_RELAY_CHAIN } from "@dotli/config/config";
@@ -52,19 +55,13 @@ const allChainSpecs = import.meta.glob<string>("./*.json", {
 // Paseo-next V1 and V2 share the Paseo relay. Previewnet runs its own Paseo
 // Local relay. Exhaustive so any new network must declare its relay rather
 // than silently inheriting Paseo.
-// Summit publishes only the relay spec (`sync_state_genSyncSpec`); its
-// parachains do not serve their specs, so the smoldot backend is unavailable
-// there — `getBackend()` forces `rpc-gateway` on Summit and these getters
-// must not be reached for its parachains. The throw is a tripwire, not a
-// user-facing path. Drop it once the parachain specs land.
-function summitParachainSpecsUnavailable(chain: string): never {
-  throw new Error(
-    `No committed chain spec for the Summit ${chain} chain — Summit parachain ` +
-      `specs are not published, so smoldot cannot sync them. Use the Trusted ` +
-      `Providers (rpc-gateway) backend on Summit.`,
-  );
-}
-
+// Summit's parachain specs are constructed, not operator-published: the
+// parachains don't serve `sync_state_genSyncSpec`, so each spec was built
+// from live probes (genesis stateRootHash from block 0; bootNodes = the
+// per-node `summit-<chain>-rpc-node-N.parity-chains.parity.io` WSS hosts
+// crossed with the peer-id pool enumerated via `system_localPeerId` on the
+// load-balanced RPC — smoldot keeps whichever pairings handshake). Verified
+// by live smoldot sync of all three chains, 2026-06-12.
 function relayUrlFor(network: Network): string {
   switch (network) {
     case "paseo-next-v1":
@@ -86,7 +83,7 @@ function assetHubUrlFor(network: Network): string {
     case "previewnet":
       return assetHubPreviewnetUrl;
     case "summit":
-      return summitParachainSpecsUnavailable("Asset Hub");
+      return assetHubSummitUrl;
   }
 }
 
@@ -99,7 +96,7 @@ function bulletinUrlFor(network: Network): string {
     case "previewnet":
       return bulletinPreviewnetUrl;
     case "summit":
-      return summitParachainSpecsUnavailable("Bulletin");
+      return bulletinSummitUrl;
   }
 }
 
@@ -112,7 +109,7 @@ function peopleUrlFor(network: Network): string {
     case "previewnet":
       return peoplePreviewnetUrl;
     case "summit":
-      return summitParachainSpecsUnavailable("People");
+      return peopleSummitUrl;
   }
 }
 

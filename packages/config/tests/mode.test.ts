@@ -174,7 +174,7 @@ describe("getBackend", () => {
   });
 });
 
-describe("rpc-gateway-only networks (summit)", () => {
+describe("rpc-gateway-only networks", () => {
   let storage: ReturnType<typeof makeMemoryStorage>;
 
   beforeEach(() => {
@@ -192,38 +192,27 @@ describe("rpc-gateway-only networks (summit)", () => {
     });
   });
 
-  it("reports summit as rpc-gateway-only", () => {
-    expect(isRpcGatewayOnly(NetworkName.SUMMIT)).toBe(true);
+  it("no current network is rpc-gateway-only (summit specs landed 2026-06-12)", () => {
+    expect(isRpcGatewayOnly(NetworkName.SUMMIT)).toBe(false);
     expect(isRpcGatewayOnly(NetworkName.PASEO_NEXT_V2)).toBe(false);
+    expect(isRpcGatewayOnly(NetworkName.PREVIEW_NET)).toBe(false);
   });
 
-  it("defaults to rpc-gateway even when SharedWorker is available", () => {
+  it("summit gets the smoldot default like any spec-capable network", () => {
     const restore = installSharedWorker();
     try {
-      expect(defaultBackend()).toBe("rpc-gateway");
+      expect(defaultBackend()).toBe("smoldot-shared-worker");
     } finally {
       restore();
     }
   });
 
-  it("forces rpc-gateway over a persisted smoldot preference without clobbering it", () => {
+  it("summit honors a persisted smoldot preference", () => {
     storage.setItem(BACKEND_KEY, "smoldot-shared-worker");
     const restore = installSharedWorker();
     try {
-      expect(getBackend()).toBe("rpc-gateway");
-      // The stored preference survives so it resumes if specs arrive.
-      expect(storage.dump()[BACKEND_KEY]).toBe("smoldot-shared-worker");
-    } finally {
-      restore();
-    }
-  });
-
-  it("resumes the stored smoldot preference on a spec-capable network", () => {
-    storage.setItem(BACKEND_KEY, "smoldot-shared-worker");
-    const restore = installSharedWorker();
-    try {
-      setNetworkOverride(NetworkName.PASEO_NEXT_V2);
       expect(getBackend()).toBe("smoldot-shared-worker");
+      expect(storage.dump()[BACKEND_KEY]).toBe("smoldot-shared-worker");
     } finally {
       restore();
     }
