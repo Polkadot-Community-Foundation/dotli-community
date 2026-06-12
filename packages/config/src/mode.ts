@@ -40,15 +40,15 @@ export function isSharedWorkerAvailable(): boolean {
 }
 
 /**
- * Networks whose parachain chain specs are not published, so smoldot cannot
- * sync them. On these networks the only working backend is `rpc-gateway`;
- * `getBackend()` overrides (without clobbering) any stored smoldot
- * preference, and the UI disables the smoldot choices. Remove a network from
- * this set once its parachain specs land in `chain-specs/`.
+ * Networks whose parachain chain specs are missing from `chain-specs/`, so
+ * smoldot cannot sync them. On these networks the only working backend is
+ * `rpc-gateway`; `getBackend()` overrides (without clobbering) any stored
+ * smoldot preference, and the UI disables the smoldot choices. Currently
+ * empty — Summit left the set 2026-06-12 when its constructed parachain
+ * specs landed (see `chain-specs/index.ts`). Add a network here if it ships
+ * before its specs do.
  */
-const RPC_GATEWAY_ONLY_NETWORKS: ReadonlySet<Network> = new Set<Network>([
-  "summit",
-]);
+const RPC_GATEWAY_ONLY_NETWORKS: ReadonlySet<Network> = new Set<Network>([]);
 
 export function isRpcGatewayOnly(network: Network = getNetwork()): boolean {
   return RPC_GATEWAY_ONLY_NETWORKS.has(network);
