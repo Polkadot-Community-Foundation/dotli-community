@@ -11,6 +11,11 @@ export LC_ALL := C.UTF-8
 
 REMOTE_PRD ?=
 REMOTE_STG ?=
+REMOTE_SUMMIT ?=
+
+# PLACEHOLDER: the Summit public domain is not decided yet. Replace
+# summit.example here, in CERT_DOMAINS_summit, and in nginx/nginx.summit
+# (one find-replace) once the domain exists in Cloudflare.
 
 # env tag → site filename in /etc/nginx/sites-available/
 SITE_polkadot      := dot.li
@@ -20,15 +25,18 @@ SITE_dev-paseo     := paseoli.dev
 SITE_dev-test      := testnet.li
 SITE_westend       := westend.li
 SITE_dev-westend   := westendli.dev
+SITE_summit        := summit.example
 
-# env tag → remote (only polkadot is prod; the rest share the staging box)
+# env tag → remote (only polkadot is prod; the rest share the staging box,
+# except summit which runs on its own dedicated public box)
 REMOTE_FOR_polkadot      := $(REMOTE_PRD)
 REMOTE_FOR_dev-polkadot  := $(REMOTE_STG)
 REMOTE_FOR_paseo         := $(REMOTE_STG)
 REMOTE_FOR_dev-paseo     := $(REMOTE_STG)
 REMOTE_FOR_dev-test      := $(REMOTE_STG)
-REMOTE_FOR_westend       := $(REMOTE_STG)
 REMOTE_FOR_dev-westend   := $(REMOTE_STG)
+REMOTE_FOR_westend       := $(REMOTE_STG)
+REMOTE_FOR_summit        := $(REMOTE_SUMMIT)
 
 # env tag → web root on the remote (matches the `root` directive in nginx.<env>)
 DEPLOY_PATH_polkadot      := /var/www/dotli
@@ -38,6 +46,7 @@ DEPLOY_PATH_dev-paseo     := /var/www/paseolidev
 DEPLOY_PATH_dev-test      := /var/www/testnetli
 DEPLOY_PATH_westend       := /var/www/westendli
 DEPLOY_PATH_dev-westend   := /var/www/westendlidev
+DEPLOY_PATH_summit        := /var/www/summitli
 
 # One cert per env covering <base>, *.<base>, and *.app.<base>. The cert
 # lands at /etc/letsencrypt/live/<base>/, matching ssl_certificate paths in
@@ -49,8 +58,9 @@ CERT_DOMAINS_dev-paseo    := paseoli.dev *.paseoli.dev *.app.paseoli.dev
 CERT_DOMAINS_dev-test     := testnet.li *.testnet.li *.app.testnet.li
 CERT_DOMAINS_westend      := westend.li *.westend.li *.app.westend.li
 CERT_DOMAINS_dev-westend  := westendli.dev *.westendli.dev *.app.westendli.dev
+CERT_DOMAINS_summit       := summit.example *.summit.example *.app.summit.example
 
-VALID_ENVS := polkadot dev-polkadot paseo dev-paseo dev-test westend dev-westend
+VALID_ENVS := polkadot dev-polkadot paseo dev-paseo dev-test westend dev-westend summit
 
 # Default env when none is passed on the command line.
 ENV ?= polkadot
@@ -158,7 +168,7 @@ deploy: _require-env provision-bun
 		--exclude='.DS_Store' \
 		--exclude='*.log' \
 		./ $(REMOTE_TARGET):$(REMOTE_BUILD_PATH)/
-	ssh $(REMOTE_TARGET) 'set -euo pipefail; cd $(REMOTE_BUILD_PATH) && bun install --frozen-lockfile && bun run build'
+	ssh $(REMOTE_TARGET) 'set -euo pipefail; cd $(REMOTE_BUILD_PATH) && bun install --frozen-lockfile && bun run build:prod'
 	ssh $(REMOTE_TARGET) "set -euo pipefail; \
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/host/dist/     $(REMOTE_PATH)/host/; \
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/sandbox/dist/  $(REMOTE_PATH)/app/; \

@@ -25,6 +25,7 @@ import {
   setCacheSettings,
   getBackend,
   setBackend,
+  isRpcGatewayOnly,
   isSharedWorkerAvailable,
   isVerifiedSession,
   type Backend,
@@ -889,6 +890,7 @@ function renderModePopover(): void {
 
   appendSectionHeader(leftCol, "Network");
   const networkChoices: [Network, string, string][] = [
+    ["summit", "Summit", "Web3 Summit network"],
     ["paseo-next-v2", "Paseo Next V2", "Upgraded Paseo Next system chains"],
     ["previewnet", "Previewnet", "Product Preview Network"],
   ];
@@ -905,13 +907,19 @@ function renderModePopover(): void {
         draft.network,
         (next) => {
           draft.network = next;
+          // Networks without published parachain chain specs can only run
+          // via the RPC gateway; coerce the draft so Apply never pairs a
+          // smoldot backend with such a network.
+          if (isRpcGatewayOnly(next)) {
+            draft.chain = "rpc-gateway";
+          }
           rerenderNetwork();
+          rerenderChain();
           syncApply();
         },
       );
     }
   };
-  rerenderNetwork();
 
   appendDivider(leftCol);
   appendSectionHeader(leftCol, "Backend");
@@ -937,12 +945,18 @@ function renderModePopover(): void {
   const sharedWorkerSupported = isSharedWorkerAvailable();
   const rerenderChain = (): void => {
     chainGroup.innerHTML = "";
+    const gatewayOnly = isRpcGatewayOnly(draft.network);
     for (const [value, label, desc] of chainChoices) {
+      const isSmoldot = value !== "rpc-gateway";
       const disabled =
-        value === "smoldot-shared-worker" && !sharedWorkerSupported;
-      const effectiveDesc = disabled
-        ? "Unavailable in this browser or private window"
-        : desc;
+        (value === "smoldot-shared-worker" && !sharedWorkerSupported) ||
+        (isSmoldot && gatewayOnly);
+      const effectiveDesc =
+        isSmoldot && gatewayOnly
+          ? "Unavailable: this network has not published its chain specs yet"
+          : disabled
+            ? "Unavailable in this browser or private window"
+            : desc;
       renderChainRadio(
         chainGroup,
         value,
@@ -958,6 +972,7 @@ function renderModePopover(): void {
       );
     }
   };
+  rerenderNetwork();
   rerenderChain();
 
   appendDivider(leftCol);
@@ -1590,6 +1605,8 @@ function networkLabel(n: Network): string {
       return "Paseo Next V2";
     case "previewnet":
       return "Previewnet";
+    case "summit":
+      return "Summit";
   }
 }
 

@@ -35,6 +35,7 @@ import previewnetRelayUrl from "./previewnet.smol.json?url";
 import assetHubPreviewnetUrl from "./previewnet-asset-hub.smol.json?url";
 import bulletinPreviewnetUrl from "./previewnet-bulletin-local.smol.json?url";
 import peoplePreviewnetUrl from "./previewnet-people.smol.json?url";
+import summitRelayUrl from "./summit.smol.json?url";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { SS_RELAY_CHAIN } from "@dotli/config/config";
@@ -51,6 +52,19 @@ const allChainSpecs = import.meta.glob<string>("./*.json", {
 // Paseo-next V1 and V2 share the Paseo relay. Previewnet runs its own Paseo
 // Local relay. Exhaustive so any new network must declare its relay rather
 // than silently inheriting Paseo.
+// Summit publishes only the relay spec (`sync_state_genSyncSpec`); its
+// parachains do not serve their specs, so the smoldot backend is unavailable
+// there — `getBackend()` forces `rpc-gateway` on Summit and these getters
+// must not be reached for its parachains. The throw is a tripwire, not a
+// user-facing path. Drop it once the parachain specs land.
+function summitParachainSpecsUnavailable(chain: string): never {
+  throw new Error(
+    `No committed chain spec for the Summit ${chain} chain — Summit parachain ` +
+      `specs are not published, so smoldot cannot sync them. Use the Trusted ` +
+      `Providers (rpc-gateway) backend on Summit.`,
+  );
+}
+
 function relayUrlFor(network: Network): string {
   switch (network) {
     case "paseo-next-v1":
@@ -58,6 +72,8 @@ function relayUrlFor(network: Network): string {
       return paseoUrl;
     case "previewnet":
       return previewnetRelayUrl;
+    case "summit":
+      return summitRelayUrl;
   }
 }
 
@@ -69,6 +85,8 @@ function assetHubUrlFor(network: Network): string {
       return assetHubPaseoV2Url;
     case "previewnet":
       return assetHubPreviewnetUrl;
+    case "summit":
+      return summitParachainSpecsUnavailable("Asset Hub");
   }
 }
 
@@ -80,6 +98,8 @@ function bulletinUrlFor(network: Network): string {
       return bulletinPaseoV2Url;
     case "previewnet":
       return bulletinPreviewnetUrl;
+    case "summit":
+      return summitParachainSpecsUnavailable("Bulletin");
   }
 }
 
@@ -91,6 +111,8 @@ function peopleUrlFor(network: Network): string {
       return peoplePaseoV2Url;
     case "previewnet":
       return peoplePreviewnetUrl;
+    case "summit":
+      return summitParachainSpecsUnavailable("People");
   }
 }
 
