@@ -13,6 +13,14 @@ REMOTE_PRD ?=
 REMOTE_STG ?=
 REMOTE_SUMMIT ?=
 
+# Scratch dir on the remote where the repo is rsynced and built (on-box build).
+REMOTE_BUILD_PATH := /tmp/dotli-build
+
+# Per-env build config injected into the on-box `build:prod`. VITE_NETWORKS is
+# required by the app (packages/config/src/network.ts throws without it). CI
+# passes the equivalent via the GitHub Environment `NETWORKS` var.
+VITE_NETWORKS_summit := summit
+
 # NOTE: summit serves dot.li — the same domain as the legacy `polkadot` env.
 # This is deliberate (dot.li is being cut over to Summit): the two envs target
 # different boxes (REMOTE_PRD vs REMOTE_SUMMIT), so their cert/nginx file
@@ -77,15 +85,10 @@ ENV ?= paseo
 # back certbot's API calls.
 APT_PACKAGES := nginx libnginx-mod-http-brotli-filter libnginx-mod-http-brotli-static certbot python3-certbot-dns-cloudflare rsync ufw curl ca-certificates
 
-.PHONY: build build-prod provision provision-prereqs provision-firewall provision-cloudflare-creds provision-cert provision-renewal deploy ci-deploy deploy-nginx render-nginx _require-env _require-env-name
+.PHONY: build provision provision-prereqs provision-bun provision-firewall provision-cloudflare-creds provision-cert provision-renewal deploy ci-deploy deploy-nginx render-nginx _require-env _require-env-name
 
 build:
 	bun run build
-
-# Production build (pre-compressed assets, no analytics markers) — the same
-# build CI ships. Used by `deploy` so a manual VM deploy matches CI output.
-build-prod:
-	bun run build:prod
 
 # ====================================================================
 # Fresh-server provisioning. Idempotent; safe to re-run.
@@ -135,16 +138,48 @@ provision-renewal: _require-env
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	ssh $(REMOTE_TARGET) 'sudo systemctl enable --now certbot.timer'
 
+# Ensure bun is present on the remote (the on-box build needs it).
+provision-bun: _require-env
+	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
+	ssh $(REMOTE_TARGET) 'set -euo pipefail; \
+		if ! command -v bun >/dev/null 2>&1; then \
+			curl -fsSL https://bun.sh/install | bash; \
+			sudo ln -sf "$$HOME/.bun/bin/bun" /usr/local/bin/bun; \
+			sudo ln -sf "$$HOME/.bun/bin/bunx" /usr/local/bin/bunx; \
+		fi; \
+		bun --version'
+
 # ====================================================================
-# Local-build deploy. The turbo build runs on this machine.
-# then only the resulting dist directories
-# are rsynced into the nginx-served paths on the remote.
+# On-box build deploy. The repo is rsynced to $(REMOTE_BUILD_PATH) on the
+# remote, `bun run build:prod` runs there (the box is sized for it), then
+# only the resulting dist directories are rsynced into the nginx-served
+# paths. Keeps the heavy build off this machine; VITE_NETWORKS is injected
+# per-env (see VITE_NETWORKS_<env>).
 # ====================================================================
-deploy: _require-env build-prod
+deploy: _require-env provision-bun
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	$(eval REMOTE_PATH   := $(DEPLOY_PATH_$(ENV)))
-	ssh $(REMOTE_TARGET) 'sudo install -d -m 0755 -o $$(whoami) -g $$(id -gn) $(REMOTE_PATH) $(REMOTE_PATH)/host $(REMOTE_PATH)/app $(REMOTE_PATH)/protocol'
-	$(call _rsync_dist,$(REMOTE_TARGET),$(REMOTE_PATH))
+	ssh $(REMOTE_TARGET) 'sudo install -d -m 0755 -o $$(whoami) -g $$(id -gn) $(REMOTE_BUILD_PATH) $(REMOTE_PATH) $(REMOTE_PATH)/host $(REMOTE_PATH)/app $(REMOTE_PATH)/protocol'
+	rsync -avz --delete \
+		--exclude='.git/' \
+		--exclude='node_modules/' \
+		--exclude='.turbo/' \
+		--exclude='apps/*/dist/' \
+		--exclude='packages/*/dist/' \
+		--exclude='test-results/' \
+		--exclude='.vite/' \
+		--exclude='.cache/' \
+		--exclude='coverage/' \
+		--exclude='.env' \
+		--exclude='.env.*' \
+		--exclude='.DS_Store' \
+		--exclude='*.log' \
+		./ $(REMOTE_TARGET):$(REMOTE_BUILD_PATH)/
+	ssh $(REMOTE_TARGET) 'set -euo pipefail; cd $(REMOTE_BUILD_PATH) && bun install --frozen-lockfile && VITE_NETWORKS=$(VITE_NETWORKS_$(ENV)) bun run build:prod'
+	ssh $(REMOTE_TARGET) "set -euo pipefail; \
+		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/host/dist/     $(REMOTE_PATH)/host/; \
+		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/sandbox/dist/  $(REMOTE_PATH)/app/; \
+		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/protocol/dist/ $(REMOTE_PATH)/protocol/"
 
 # env tag → envsubst tokens for nginx/nginx.conf.template. ZONE is a unique
 # per-domain limit_req zone name; RL is "" (rate-limiting on) for the

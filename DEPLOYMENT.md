@@ -70,9 +70,11 @@ Actions path reads `DEPLOY_HOST` / `DEPLOY_USER` from repository secrets via the
    apex, `*.<base>`, and `*.app.<base>`. `--keep-until-expiring --expand`
    makes re-runs cheap.
 6. `provision-renewal` — enables `certbot.timer` for auto-renewal.
-7. `deploy` — runs `bun run build:prod` on your machine (pre-compressed
-   assets, no analytics markers — the same build CI ships), then rsyncs the
-   three `dist/` outputs into the env's web root.
+7. `deploy` — ensures bun on the remote (`provision-bun`), rsyncs the repo to
+   `$(REMOTE_BUILD_PATH)` on the box, runs `bun install --frozen-lockfile &&
+   bun run build:prod` **on the remote** (the box is sized for the build;
+   `VITE_NETWORKS` is injected per-env via `VITE_NETWORKS_<env>`), then installs
+   the three `dist/` outputs into the env's web root.
 8. `deploy-nginx` — renders `nginx/nginx.conf.template` for the env (envsubst)
    and installs it plus `nginx/snippets/` into `/etc/nginx/`, runs `nginx -t`,
    and reloads nginx. Preview the result with `make render-nginx ENV=<env>`.
@@ -106,9 +108,10 @@ is deployed manually from a workstation with IAP access to the box:
   `polkadot-community-foundation`, reached over an IAP TCP tunnel (see the
   `pcf-summit-dotli` `Host` alias in your `~/.ssh/config`, which sets a
   `gcloud compute start-iap-tunnel` `ProxyCommand`). Requires `gcloud auth login`.
-- `deploy.env`: `REMOTE_SUMMIT := pcf-summit-dotli`
-- `.env` (build-time, gitignored): `VITE_NETWORKS=summit` is **required** (the build
-  throws without it) and `VITE_APP_URL=https://dot.li`. Leave metrics/Sentry unset.
+- `deploy.env`: `REMOTE_SUMMIT := pcf-summit-dotli` (or pass `REMOTE=pcf-summit-dotli`).
+- Build config: the on-box `build:prod` gets `VITE_NETWORKS=summit` injected by the
+  Makefile (`VITE_NETWORKS_summit`) — required or the app throws. No local `.env`
+  needed; the repo is rsynced to the box and built there.
 - Run: `make deploy ENV=summit` then `make deploy-nginx ENV=summit`.
 
 ### Automating Summit in CI (TODO — not yet wired)
