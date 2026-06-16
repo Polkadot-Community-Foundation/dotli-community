@@ -14,6 +14,7 @@ import type { AuthState } from "@dotli/auth/auth";
 import type { Identity } from "@novasamatech/host-papp";
 import { log } from "@dotli/shared/log";
 import { escapeHtml } from "@dotli/shared/html";
+import { isMobileDevice } from "@dotli/shared/device";
 import {
   formatAppVersion,
   getActiveAppManifest,
@@ -65,6 +66,7 @@ let modalBackdrop: HTMLElement;
 let modalTitle: HTMLElement;
 let modalQr: HTMLElement;
 let modalReason: HTMLElement;
+let modalHint: HTMLElement;
 let modalClose: HTMLElement;
 let userPopover: HTMLElement;
 let userPopoverUsername: HTMLElement;
@@ -157,6 +159,7 @@ export function initTopBar(): void {
   modalTitle = getElement("auth-modal-title");
   modalQr = getElement("auth-modal-qr");
   modalReason = getElement("auth-modal-reason");
+  modalHint = getElement("auth-modal-hint");
   modalClose = getElement("auth-modal-close");
   userPopover = getElement("user-popover");
   userPopoverUsername = getElement("user-popover-username");
@@ -389,7 +392,41 @@ function renderPairing(payload: string): void {
         return;
       }
       modalQr.innerHTML = "";
-      modalQr.appendChild(canvas);
+
+      if (isMobileDevice()) {
+        // No second device to scan with, so the deeplink button leads and the
+        // QR is opt-in behind "Show QR instead" for pairing from another device.
+        modalQr.classList.add("auth-modal-qr-mobile");
+
+        const qrLink = document.createElement("a");
+        qrLink.href = payload;
+        qrLink.className = "auth-modal-qr-link";
+        qrLink.appendChild(canvas);
+        qrLink.hidden = true;
+
+        const openApp = document.createElement("a");
+        openApp.href = payload;
+        openApp.className = "auth-modal-open-app";
+        openApp.textContent = "Login With Polkadot App";
+
+        const showQr = document.createElement("button");
+        showQr.type = "button";
+        showQr.className = "auth-modal-qr-toggle";
+        showQr.textContent = "Show QR instead";
+        showQr.addEventListener("click", () => {
+          qrLink.hidden = false;
+          openApp.classList.add("auth-modal-open-app-link");
+          showQr.hidden = true;
+          // Re-append to put the QR on top and the demoted deeplink below it.
+          modalQr.append(qrLink, openApp);
+          modalHint.textContent = "Scan with Polkadot Mobile to connect";
+        });
+
+        modalQr.append(openApp, showQr, qrLink);
+      } else {
+        modalQr.classList.remove("auth-modal-qr-mobile");
+        modalQr.appendChild(canvas);
+      }
     })
     .catch((err: unknown) => {
       log.error("[dot.li] QR render failed:", err);
@@ -1946,6 +1983,10 @@ function renderCacheToggle(
 
 function openModal(reason?: string, label?: string): void {
   modalQr.innerHTML = `<div class="spinner"></div>`;
+  // Mobile leads with the deeplink button. The QR toggle swaps this copy later.
+  modalHint.textContent = isMobileDevice()
+    ? "Sign in with the Polkadot app on this device"
+    : "Scan with Polkadot Mobile to connect";
   // A bare "localhost:<port>" label means dotli is in localhost-proxy
   // mode rendering a local dev server directly (apps/host/src/main.ts
   // localhost-proxy branch). Show it as-is. Deployed dotNs products
