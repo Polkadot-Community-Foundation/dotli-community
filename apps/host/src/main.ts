@@ -126,7 +126,7 @@ if (!isMobileDevice()) {
       text: "Full experience with native performance",
       deeplink:
         (import.meta.env.VITE_DESKTOP_DOWNLOAD_URL as string | undefined) ??
-        "https://polkadot.com/get-started/polkadot-for-desktop",
+        "https://www.polkadotcommunity.foundation/desktop",
       icon:
         '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
         '<rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>' +
