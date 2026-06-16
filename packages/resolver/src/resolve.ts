@@ -381,7 +381,7 @@ export async function resolveDotName(
   const node = namehash(domain);
 
   onPhase?.("resolving-content");
-  onStatus?.(`Resolving content for "${domain}"...`);
+  onStatus?.(`Resolving content for ${domain}...`);
   const contentStart = performance.now();
 
   const dotns = getActiveServicesConfig().dotns;
@@ -397,7 +397,7 @@ export async function resolveDotName(
   log.warn(`[dot.li resolve] get_storage contenthash: ${dur(contentStart)}`);
 
   if (contenthashBytes === null) {
-    onStatus?.(`Domain "${domain}" not found or no content set`);
+    onStatus?.(`Domain ${domain} not found or no content set`);
     return null;
   }
 
@@ -407,10 +407,9 @@ export async function resolveDotName(
   const decoded = decodeIpfsContenthashResult(toHex(contenthashBytes));
   switch (decoded.kind) {
     case "ok":
-      onStatus?.(`Resolved "${domain}" → ${decoded.cid}`);
       return decoded.cid;
     case "empty":
-      onStatus?.(`Domain "${domain}" not found or no content set`);
+      onStatus?.(`Domain ${domain} not found or no content set`);
       return null;
     case "unsupported-codec":
       throw new UnsupportedContenthashCodecError(domain, decoded.codec);

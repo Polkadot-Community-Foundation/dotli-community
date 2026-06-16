@@ -35,6 +35,7 @@ import {
   listenForSandboxStatus,
   showGatewayEscape,
 } from "@dotli/ui/ui";
+import type { LoadingPhase } from "@dotli/ui/ui";
 import { initTopBar, wipeOriginState } from "@dotli/ui/topbar";
 import {
   bitswapGet,
@@ -1185,13 +1186,39 @@ async function main(): Promise<void> {
     ? "verified"
     : "validating";
 
+  // Bands reflect where load time actually goes (measured per displayed step):
+  // the Asset Hub connect+sync and the post-resolve content fetch are the two
+  // giants and own most of the bar, while relay-add and the dotNS read are
+  // small. Sync is paced to ~6.5s (good-run median) and content fetch to ~10s.
+  // Their long tails (bootnode retries shown as connection issues, slow bitswap
+  // peers) cap at the band top and let the sheen carry motion rather than
+  // inflating the pace. Both smoldot backends share one model. See
+  // `advancePhase` mapping below.
+  const smoldotPhases = (startLabel: string): LoadingPhase[] => [
+    { label: startLabel, base: 2, target: 6, expectedMs: 650 },
+    { label: "Adding relay chain", base: 6, target: 10, expectedMs: 120 },
+    { label: "Syncing Asset Hub", base: 10, target: 55, expectedMs: 6500 },
+    { label: "Resolving", base: 55, target: 62, expectedMs: 1200 },
+    { label: "Fetching content", base: 62, target: 95, expectedMs: 10000 },
+  ];
   if (chainBackend === "smoldot-shared-worker") {
-    initPhases(["Starting Worker", "Syncing", "Resolving"]);
+    initPhases(smoldotPhases("Starting Worker"));
   } else if (chainBackend === "smoldot-direct") {
-    initPhases(["Starting", "Connecting", "Syncing", "Resolving"]);
+    initPhases(smoldotPhases("Starting"));
   } else {
-    initPhases(["Connecting", "Resolving"]);
+    // Gateway path resolves over RPC with no smoldot sync, then fetches
+    // content the same way every backend does.
+    initPhases([
+      { label: "Connecting", base: 5, target: 50, expectedMs: 1200 },
+      { label: "Resolving", base: 50, target: 62, expectedMs: 1200 },
+      { label: "Fetching content", base: 62, target: 95, expectedMs: 10000 },
+    ]);
   }
+  // Content fetch (bitswap/IPFS) runs in the sandbox after the CID resolves and
+  // was previously unrepresented, so the bar sat parked while a 20s+ fetch ran.
+  // It is always the last phase; advance to it just before handing off to the
+  // sandbox render.
+  const contentFetchPhase = chainBackend === "rpc-gateway" ? 2 : 4;
   advancePhase(0);
   showStatus(`Resolving ${label}.dot`);
 
@@ -1216,6 +1243,7 @@ async function main(): Promise<void> {
       await m.span(S.E2E_FAST, async () => {
         setShieldState(shieldState);
         const { renderAppSubdomain } = await renderChunkPromise;
+        advancePhase(contentFetchPhase);
         await renderAppSubdomain(cachedCid, label);
       });
       void applyProductBranding(label, chainBackend).catch((err: unknown) => {
@@ -1311,9 +1339,13 @@ async function main(): Promise<void> {
           // mapping from status text to ResolvePhase, so we defer to it
           // instead of maintaining a parallel regex here.
           const phase = statusToPhase(msg);
-          if (phase === "asset-hub-connecting") {
+          if (phase === "relay-chain-adding") {
             advancePhase(1);
           } else if (
+            // `asset-hub-connecting` is ~0ms (just createClient), so it shares
+            // the Syncing band rather than getting a slice that makes the bar
+            // jump for no work.
+            phase === "asset-hub-connecting" ||
             phase === "asset-hub-syncing" ||
             phase === "asset-hub-ready"
           ) {
@@ -1387,6 +1419,7 @@ async function main(): Promise<void> {
     setShieldState(shieldState);
 
     const { renderAppSubdomain } = await renderChunkPromise;
+    advancePhase(contentFetchPhase);
     await renderAppSubdomain(cid, label);
     void applyProductBranding(label, chainBackend).catch((err: unknown) => {
       log.warn(
