@@ -77,10 +77,15 @@ ENV ?= paseo
 # back certbot's API calls.
 APT_PACKAGES := nginx libnginx-mod-http-brotli-filter libnginx-mod-http-brotli-static certbot python3-certbot-dns-cloudflare rsync ufw curl ca-certificates
 
-.PHONY: build provision provision-prereqs provision-firewall provision-cloudflare-creds provision-cert provision-renewal deploy ci-deploy deploy-nginx render-nginx _require-env _require-env-name
+.PHONY: build build-prod provision provision-prereqs provision-firewall provision-cloudflare-creds provision-cert provision-renewal deploy ci-deploy deploy-nginx render-nginx _require-env _require-env-name
 
 build:
 	bun run build
+
+# Production build (pre-compressed assets, no analytics markers) — the same
+# build CI ships. Used by `deploy` so a manual VM deploy matches CI output.
+build-prod:
+	bun run build:prod
 
 # ====================================================================
 # Fresh-server provisioning. Idempotent; safe to re-run.
@@ -135,7 +140,7 @@ provision-renewal: _require-env
 # then only the resulting dist directories
 # are rsynced into the nginx-served paths on the remote.
 # ====================================================================
-deploy: _require-env build
+deploy: _require-env build-prod
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	$(eval REMOTE_PATH   := $(DEPLOY_PATH_$(ENV)))
 	ssh $(REMOTE_TARGET) 'sudo install -d -m 0755 -o $$(whoami) -g $$(id -gn) $(REMOTE_PATH) $(REMOTE_PATH)/host $(REMOTE_PATH)/app $(REMOTE_PATH)/protocol'

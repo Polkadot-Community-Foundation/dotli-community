@@ -70,8 +70,9 @@ Actions path reads `DEPLOY_HOST` / `DEPLOY_USER` from repository secrets via the
    apex, `*.<base>`, and `*.app.<base>`. `--keep-until-expiring --expand`
    makes re-runs cheap.
 6. `provision-renewal` — enables `certbot.timer` for auto-renewal.
-7. `deploy` — runs `bun run build` on your machine, then rsyncs the three
-   `dist/` outputs into the env's web root.
+7. `deploy` — runs `bun run build:prod` on your machine (pre-compressed
+   assets, no analytics markers — the same build CI ships), then rsyncs the
+   three `dist/` outputs into the env's web root.
 8. `deploy-nginx` — renders `nginx/nginx.conf.template` for the env (envsubst)
    and installs it plus `nginx/snippets/` into `/etc/nginx/`, runs `nginx -t`,
    and reloads nginx. Preview the result with `make render-nginx ENV=<env>`.
