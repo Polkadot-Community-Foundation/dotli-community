@@ -40,7 +40,7 @@ REMOTE_FOR_dev-westend   := $(REMOTE_STG)
 REMOTE_FOR_westend       := $(REMOTE_STG)
 REMOTE_FOR_summit        := $(REMOTE_SUMMIT)
 
-# env tag → web root on the remote (matches the `root` directive in nginx.<env>)
+# env tag → web root on the remote (rendered into the `root` directive)
 DEPLOY_PATH_polkadot      := /var/www/dotli
 DEPLOY_PATH_dev-polkadot  := /var/www/dotlidev
 DEPLOY_PATH_paseo         := /var/www/paseoli
@@ -51,8 +51,8 @@ DEPLOY_PATH_dev-westend   := /var/www/westendlidev
 DEPLOY_PATH_summit        := /var/www/summitli
 
 # One cert per env covering <base>, *.<base>, and *.app.<base>. The cert
-# lands at /etc/letsencrypt/live/<base>/, matching ssl_certificate paths in
-# every server block of nginx.<env>. host.<base> is covered by *.<base>.
+# lands at /etc/letsencrypt/live/<base>/, matching the ssl_certificate paths
+# rendered into every server block. host.<base> is covered by *.<base>.
 CERT_DOMAINS_polkadot     := dot.li *.dot.li *.app.dot.li
 CERT_DOMAINS_dev-polkadot := dotli.dev *.dotli.dev *.app.dotli.dev
 CERT_DOMAINS_paseo        := paseo.li *.paseo.li *.app.paseo.li
@@ -64,21 +64,20 @@ CERT_DOMAINS_summit       := dot.li *.dot.li *.app.dot.li
 
 VALID_ENVS := polkadot dev-polkadot paseo dev-paseo dev-test westend dev-westend summit
 
+# Production domains (env tags) that get nginx rate-limiting in the rendered
+# config; every other env renders with rate-limiting commented out.
+RATE_LIMITED_ENVS := paseo dev-test
+
 # Default env when none is passed on the command line.
-ENV ?= polkadot
+ENV ?= paseo
 
 # Packages required on a fresh Ubuntu 22.04+ box. The brotli module is split
 # across two packages on noble (filter + static) and both ship a drop-in in
-# /etc/nginx/modules-enabled/ so they auto-load. unzip is needed by bun's
-# installer; curl/ca-certificates by both bun and certbot interactions.
-APT_PACKAGES := nginx libnginx-mod-http-brotli-filter libnginx-mod-http-brotli-static certbot python3-certbot-dns-cloudflare rsync ufw unzip curl ca-certificates
+# /etc/nginx/modules-enabled/ so they auto-load. curl and ca-certificates
+# back certbot's API calls.
+APT_PACKAGES := nginx libnginx-mod-http-brotli-filter libnginx-mod-http-brotli-static certbot python3-certbot-dns-cloudflare rsync ufw curl ca-certificates
 
-# Remote working dir where source is rsynced and built. Outside DEPLOY_PATH
-# so a failed build never affects the live site; node_modules and dist are
-# preserved across runs for incremental rebuilds.
-REMOTE_BUILD_PATH := /tmp/dotli-build
-
-.PHONY: build provision provision-prereqs provision-firewall provision-bun provision-cloudflare-creds provision-cert provision-renewal deploy ci-deploy deploy-nginx _require-env
+.PHONY: build provision provision-prereqs provision-firewall provision-cloudflare-creds provision-cert provision-renewal deploy ci-deploy deploy-nginx render-nginx _require-env _require-env-name
 
 build:
 	bun run build
@@ -95,7 +94,7 @@ build:
 # a brand-new box. ADMIN_EMAIL is the Let's Encrypt contact; the Cloudflare
 # token needs DNS edit permission on the zone being certified.
 # ====================================================================
-provision: provision-prereqs provision-firewall provision-bun provision-cloudflare-creds provision-cert provision-renewal deploy deploy-nginx
+provision: provision-prereqs provision-firewall provision-cloudflare-creds provision-cert provision-renewal deploy deploy-nginx
 	@echo
 	@echo "Provisioning complete for ENV=$(ENV)."
 
@@ -131,56 +130,37 @@ provision-renewal: _require-env
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	ssh $(REMOTE_TARGET) 'sudo systemctl enable --now certbot.timer'
 
-# Installs bun for the SSH user only if missing, then symlinks the binaries
-# into /usr/local/bin so any user (including root, for systemd timers) can
-# invoke them. To force an upgrade later, ssh in and run `bun upgrade`.
-provision-bun: _require-env
-	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
-	ssh $(REMOTE_TARGET) 'set -euo pipefail; \
-		if ! command -v bun >/dev/null 2>&1; then \
-			curl -fsSL https://bun.sh/install | bash; \
-			sudo ln -sf "$$HOME/.bun/bin/bun" /usr/local/bin/bun; \
-			sudo ln -sf "$$HOME/.bun/bin/bunx" /usr/local/bin/bunx; \
-		fi; \
-		bun --version'
-
 # ====================================================================
-# Remote-build deploy. Source is rsynced to $(REMOTE_BUILD_PATH), bun
-# installs deps and runs the workspace build on the remote, then the
-# resulting dist directories are rsynced (still on the remote) into the
-# nginx-served paths. node_modules and turbo cache live under the build
-# path and persist across runs for incremental rebuilds.
+# Local-build deploy. The turbo build runs on this machine.
+# then only the resulting dist directories
+# are rsynced into the nginx-served paths on the remote.
 # ====================================================================
-deploy: _require-env provision-bun
+deploy: _require-env build
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	$(eval REMOTE_PATH   := $(DEPLOY_PATH_$(ENV)))
-	ssh $(REMOTE_TARGET) 'sudo install -d -m 0755 -o $$(whoami) -g $$(id -gn) $(REMOTE_BUILD_PATH) $(REMOTE_PATH) $(REMOTE_PATH)/host $(REMOTE_PATH)/app $(REMOTE_PATH)/protocol'
-	rsync -avz --delete \
-		--exclude='.git/' \
-		--exclude='node_modules/' \
-		--exclude='.turbo/' \
-		--exclude='apps/*/dist/' \
-		--exclude='packages/*/dist/' \
-		--exclude='test-results/' \
-		--exclude='.vite/' \
-		--exclude='.cache/' \
-		--exclude='coverage/' \
-		--exclude='.env' \
-		--exclude='.env.*' \
-		--exclude='.DS_Store' \
-		--exclude='*.log' \
-		./ $(REMOTE_TARGET):$(REMOTE_BUILD_PATH)/
-	ssh $(REMOTE_TARGET) 'set -euo pipefail; cd $(REMOTE_BUILD_PATH) && bun install --frozen-lockfile && bun run build:prod'
-	ssh $(REMOTE_TARGET) "set -euo pipefail; \
-		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/host/dist/     $(REMOTE_PATH)/host/; \
-		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/sandbox/dist/  $(REMOTE_PATH)/app/; \
-		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/protocol/dist/ $(REMOTE_PATH)/protocol/"
+	ssh $(REMOTE_TARGET) 'sudo install -d -m 0755 -o $$(whoami) -g $$(id -gn) $(REMOTE_PATH) $(REMOTE_PATH)/host $(REMOTE_PATH)/app $(REMOTE_PATH)/protocol'
+	$(call _rsync_dist,$(REMOTE_TARGET),$(REMOTE_PATH))
+
+# env tag → envsubst tokens for nginx/nginx.conf.template. ZONE is a unique
+# per-domain limit_req zone name; RL is "" (rate-limiting on) for the
+# RATE_LIMITED_ENVS and "#" (commented out) for everything else.
+_nginx_render = DOMAIN='$(SITE_$(ENV))' WEBROOT='$(DEPLOY_PATH_$(ENV))' \
+	ZONE='rl_$(subst .,_,$(SITE_$(ENV)))' \
+	RL='$(if $(filter $(ENV),$(RATE_LIMITED_ENVS)),,\#)' \
+	envsubst '$$DOMAIN $$WEBROOT $$ZONE $$RL' < nginx/nginx.conf.template
+
+# Preview the rendered nginx config for ENV on stdout (no remote changes).
+render-nginx: _require-env-name
+	@command -v envsubst >/dev/null || { echo "render-nginx needs 'envsubst' (gettext). Install: brew install gettext / apt-get install gettext-base"; exit 1; }
+	@$(_nginx_render)
 
 deploy-nginx: _require-env
+	@command -v envsubst >/dev/null || { echo "deploy-nginx needs 'envsubst' (gettext). Install: brew install gettext / apt-get install gettext-base"; exit 1; }
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	$(eval SITE := $(SITE_$(ENV)))
+	$(_nginx_render) > /tmp/$(SITE).nginx
 	rsync -avz --delete nginx/snippets/ $(REMOTE_TARGET):/tmp/dotli-nginx-snippets/
-	scp nginx/nginx.$(ENV) $(REMOTE_TARGET):/tmp/$(SITE).nginx
+	scp /tmp/$(SITE).nginx $(REMOTE_TARGET):/tmp/$(SITE).nginx
 	ssh $(REMOTE_TARGET) 'sudo install -d -m 0755 /etc/nginx/snippets && sudo rsync -av /tmp/dotli-nginx-snippets/ /etc/nginx/snippets/ && sudo cp /tmp/$(SITE).nginx /etc/nginx/sites-available/$(SITE) && sudo ln -sf /etc/nginx/sites-available/$(SITE) /etc/nginx/sites-enabled/$(SITE) && sudo nginx -t && sudo systemctl reload nginx'
 
 define _rsync_dist
@@ -197,7 +177,11 @@ ci-deploy:
 	$(call _rsync_dist,$(DEPLOY_USER)@$(DEPLOY_HOST),$(DEPLOY_PATH))
 	ssh $(DEPLOY_USER)@$(DEPLOY_HOST) 'find $(DEPLOY_PATH)/*/assets/ -type f -mtime +7 -delete 2>/dev/null || true'
 
-_require-env:
+# Validates ENV is a known tag. No remote required, so render-nginx can use it.
+_require-env-name:
 	@test -n "$(ENV)" || (echo "ENV not set. Use ENV=<$(subst $() ,|,$(VALID_ENVS))>"; exit 1)
 	@test -n "$(DEPLOY_PATH_$(ENV))" || (echo "Unknown ENV: $(ENV). Valid: $(VALID_ENVS)"; exit 1)
+
+# Adds the remote-target requirement for targets that touch a box.
+_require-env: _require-env-name
 	@test -n "$(or $(REMOTE),$(REMOTE_FOR_$(ENV)))" || (echo "No deploy target for ENV=$(ENV). Set REMOTE_PRD/REMOTE_STG in deploy.env (copy deploy.env.example) or pass REMOTE=user@host."; exit 1)

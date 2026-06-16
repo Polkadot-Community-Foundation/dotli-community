@@ -35,11 +35,21 @@ import {
   listenForSandboxStatus,
   showGatewayEscape,
 } from "@dotli/ui/ui";
+import type { LoadingPhase } from "@dotli/ui/ui";
 import { initTopBar, wipeOriginState } from "@dotli/ui/topbar";
 import {
   bitswapGet,
   listenForSandboxBitswap,
 } from "@dotli/ui/bulletin-bitswap";
+import {
+  ensureProtocolFrame,
+  resetProtocolFrame,
+  resolveDotNameRemote,
+  resolveExecutableManifestRemote,
+  resolveRootManifestRemote,
+  setProtocolSubMode,
+  warmupProtocol,
+} from "@dotli/protocol/client";
 import {
   getCachedCid,
   setCachedCid,
@@ -55,10 +65,11 @@ import type {
   ManifestResult,
   RootManifest,
 } from "@dotli/resolver/manifest";
-import { BASE_DOMAIN, DEBUG, isLocalhost, SITE_ID } from "@dotli/config/config";
+import { BASE_DOMAIN, DEBUG, SITE_ID } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
 import { escapeHtml, isValidDotLabel } from "@dotli/shared/html";
+import { isMobileDevice } from "@dotli/shared/device";
 import { showNotification } from "@dotli/ui/notification";
 import { initScheduledNotifications } from "@dotli/ui/scheduled-notifications";
 import {
@@ -78,7 +89,11 @@ import {
   writeSettingsToSearch,
 } from "@dotli/config/url-settings";
 import type { DotliDebugEvent } from "@dotli/truapi-debug/dotli-debug-types";
-import { describeError } from "./errors";
+import {
+  describeError,
+  FAILOVER_BTN_LABELS,
+  REFRESH_BTN_LABEL,
+} from "./errors";
 import { parsePreviewTargetUrl } from "./preview-route";
 
 // Surface chunk-load failures explicitly: capture the original cause to
@@ -103,13 +118,15 @@ window.addEventListener("vite:preloadError", (event) => {
 
 // Respect the user's dismissal unconditionally. Once dismissed, never
 // resurface unless the dismissal flag is cleared from localStorage.
-if (!/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+if (!isMobileDevice()) {
   const dismissed = localStorage.getItem("desktop-banner-dismissed");
   if (dismissed === null) {
     showNotification({
       label: "Get Polkadot Desktop",
       text: "Full experience with native performance",
-      deeplink: "https://polkadot.com/get-started/polkadot-for-desktop",
+      deeplink:
+        (import.meta.env.VITE_DESKTOP_DOWNLOAD_URL as string | undefined) ??
+        "https://polkadot.com/get-started/polkadot-for-desktop",
       icon:
         '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
         '<rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>' +
@@ -151,18 +168,21 @@ const T0 = performance.now();
 /**
  * Parse a localhost proxy URL from the path.
  *
- * Local-dev-only affordance: a deployed origin (dot.li, paseo.li, ...) must
- * never proxy a visitor's localhost services into the trusted host origin, so
- * this returns null unless the host shell is itself served from a local origin.
+ * Debug-build-only affordance: proxying a visitor's localhost services into the
+ * trusted host origin is dangerous on a production deploy, so it is gated behind
+ * the build-time `VITE_APP_DEBUG` flag (`DEBUG`). Production builds (flag unset)
+ * always return null; only debug builds — local `bun run preview:debug` and the
+ * `*.dev` staging deploys — honour a `/localhost:<port>` path. The flag is a
+ * compile-time constant, so production never even ships this code path.
  *
- * Examples (only when served from a localhost origin):
+ * Examples (only in debug builds):
  *   "/localhost:5000"          yields "http://localhost:5000"
  *   "/localhost:5000/foo/bar"  yields "http://localhost:5000/foo/bar"
  *   "/localhost"               yields "http://localhost"
  *   "/starter-template.dot"    yields null (not a localhost URL)
  */
 function parseLocalhostUrl(): string | null {
-  if (!isLocalhost) {
+  if (!DEBUG) {
     return null;
   }
   const path = window.location.pathname;
@@ -274,6 +294,10 @@ function scheduleTopbarHide(): void {
 }
 
 function setupTopbarAutoHide(): void {
+  // No hover on touch devices to bring the bar back, so keep it pinned.
+  if (isMobileDevice()) {
+    return;
+  }
   const topbar = document.getElementById("topbar");
   if (!topbar) {
     return;
@@ -316,6 +340,23 @@ function setupTopbarAutoHide(): void {
   }
 }
 
+// Wire auth-state changes to topbar auto-hide. Login starts the hide timer
+// once the shield is verified, logout pins the topbar visible.
+function bindTopbarAutoHide(): void {
+  window.addEventListener("dotli:authenticated", () => {
+    if (shieldVerified) {
+      setupTopbarAutoHide();
+    }
+  });
+  window.addEventListener("dotli:logged-out", () => {
+    if (topbarHideTimer !== null) {
+      clearTimeout(topbarHideTimer);
+      topbarHideTimer = null;
+    }
+    setTopbarVisible(true);
+  });
+}
+
 function setShieldState(state: "validating" | "verified"): void {
   const shield = document.getElementById("verification-shield");
   if (shield !== null) {
@@ -354,10 +395,9 @@ async function applyProductBranding(
       mod.resolveExecutableManifestViaRpc(label, "app"),
     ]);
   } else {
-    const mod = await import("@dotli/protocol/client");
     [rootResult, appResult] = await Promise.all([
-      mod.resolveRootManifestRemote(label),
-      mod.resolveExecutableManifestRemote(label, "app"),
+      resolveRootManifestRemote(label),
+      resolveExecutableManifestRemote(label, "app"),
     ]);
   }
   if (rootResult.kind === "ok") {
@@ -601,7 +641,6 @@ async function runBackgroundRevalidate(
   try {
     let freshCid: string | null;
     if (chainBackend !== "rpc-gateway") {
-      const { resolveDotNameRemote } = await import("@dotli/protocol/client");
       freshCid = await resolveDotNameRemote(label);
     } else {
       const { resolveDotNameViaRpc } =
@@ -806,7 +845,6 @@ async function applyUrlSettings(): Promise<void> {
   // the next `ensureProtocolFrame()` rebuilds it in the new sub-mode.
   // (No-op on localhost, where the HTTP channel never loaded an iframe.)
   if (prior.chain !== next.chain) {
-    const { resetProtocolFrame } = await import("@dotli/protocol/client");
     resetProtocolFrame();
   }
 
@@ -986,17 +1024,11 @@ async function main(): Promise<void> {
     } catch {
       /* sessionStorage unavailable: skip pending-reset pick up */
     }
-    const protocolChunkPromise = import("@dotli/protocol/client");
-    void protocolChunkPromise.then(
-      ({ ensureProtocolFrame, warmupProtocol, setProtocolSubMode }) => {
-        setProtocolSubMode(subMode, {
-          skipWorkerCache:
-            pendingProtocolReset || cacheSettings.skipWorkerCache,
-        });
-        void ensureProtocolFrame();
-        void warmupProtocol();
-      },
-    );
+    setProtocolSubMode(subMode, {
+      skipWorkerCache: pendingProtocolReset || cacheSettings.skipWorkerCache,
+    });
+    void ensureProtocolFrame();
+    void warmupProtocol();
     emitDotliDebugEvent({
       layer: "boot",
       event: "protocol_warmup_started",
@@ -1082,6 +1114,11 @@ async function main(): Promise<void> {
 
     const { renderIframe } = await import("@dotli/ui/bridge");
     await renderIframe(localhostUrl, host);
+
+    shieldVerified = true;
+    bindTopbarAutoHide();
+    setupTopbarAutoHide();
+
     // Deep path was forwarded to the product iframe, so strip it so the URL bar doesn't show a stale path
     history.replaceState(null, "", "/" + host);
     document.title = `${host} — ${SITE_ID}`;
@@ -1114,21 +1151,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // If the user logs in after the shield is already verified, start auto-hide
-  window.addEventListener("dotli:authenticated", () => {
-    if (shieldVerified) {
-      setupTopbarAutoHide();
-    }
-  });
-
-  // If the user logs out, cancel auto-hide and keep the topbar visible
-  window.addEventListener("dotli:logged-out", () => {
-    if (topbarHideTimer !== null) {
-      clearTimeout(topbarHideTimer);
-      topbarHideTimer = null;
-    }
-    setTopbarVisible(true);
-  });
+  bindTopbarAutoHide();
 
   log.warn(`[dot.li perf] Subdomain detected: "${label}" (${elapsed(T0)})`);
 
@@ -1168,13 +1191,39 @@ async function main(): Promise<void> {
     ? "verified"
     : "validating";
 
+  // Bands reflect where load time actually goes (measured per displayed step):
+  // the Asset Hub connect+sync and the post-resolve content fetch are the two
+  // giants and own most of the bar, while relay-add and the dotNS read are
+  // small. Sync is paced to ~6.5s (good-run median) and content fetch to ~10s.
+  // Their long tails (bootnode retries shown as connection issues, slow bitswap
+  // peers) cap at the band top and let the sheen carry motion rather than
+  // inflating the pace. Both smoldot backends share one model. See
+  // `advancePhase` mapping below.
+  const smoldotPhases = (startLabel: string): LoadingPhase[] => [
+    { label: startLabel, base: 2, target: 6, expectedMs: 650 },
+    { label: "Adding relay chain", base: 6, target: 10, expectedMs: 120 },
+    { label: "Syncing Asset Hub", base: 10, target: 55, expectedMs: 6500 },
+    { label: "Resolving", base: 55, target: 62, expectedMs: 1200 },
+    { label: "Fetching content", base: 62, target: 95, expectedMs: 10000 },
+  ];
   if (chainBackend === "smoldot-shared-worker") {
-    initPhases(["Starting Worker", "Syncing", "Resolving"]);
+    initPhases(smoldotPhases("Starting Worker"));
   } else if (chainBackend === "smoldot-direct") {
-    initPhases(["Starting", "Connecting", "Syncing", "Resolving"]);
+    initPhases(smoldotPhases("Starting"));
   } else {
-    initPhases(["Connecting", "Resolving"]);
+    // Gateway path resolves over RPC with no smoldot sync, then fetches
+    // content the same way every backend does.
+    initPhases([
+      { label: "Connecting", base: 5, target: 50, expectedMs: 1200 },
+      { label: "Resolving", base: 50, target: 62, expectedMs: 1200 },
+      { label: "Fetching content", base: 62, target: 95, expectedMs: 10000 },
+    ]);
   }
+  // Content fetch (bitswap/IPFS) runs in the sandbox after the CID resolves and
+  // was previously unrepresented, so the bar sat parked while a 20s+ fetch ran.
+  // It is always the last phase; advance to it just before handing off to the
+  // sandbox render.
+  const contentFetchPhase = chainBackend === "rpc-gateway" ? 2 : 4;
   advancePhase(0);
   showStatus(`Resolving ${label}.dot`);
 
@@ -1199,6 +1248,7 @@ async function main(): Promise<void> {
       await m.span(S.E2E_FAST, async () => {
         setShieldState(shieldState);
         const { renderAppSubdomain } = await renderChunkPromise;
+        advancePhase(contentFetchPhase);
         await renderAppSubdomain(cachedCid, label);
       });
       void applyProductBranding(label, chainBackend).catch((err: unknown) => {
@@ -1286,7 +1336,6 @@ async function main(): Promise<void> {
       });
 
       try {
-        const { resolveDotNameRemote } = await import("@dotli/protocol/client");
         const { statusToPhase } = await import("@dotli/resolver/resolve");
         const onResolveProgress = (msg: string): void => {
           // Progress events arrive as opaque strings across the iframe
@@ -1294,9 +1343,13 @@ async function main(): Promise<void> {
           // mapping from status text to ResolvePhase, so we defer to it
           // instead of maintaining a parallel regex here.
           const phase = statusToPhase(msg);
-          if (phase === "asset-hub-connecting") {
+          if (phase === "relay-chain-adding") {
             advancePhase(1);
           } else if (
+            // `asset-hub-connecting` is ~0ms (just createClient), so it shares
+            // the Syncing band rather than getting a slice that makes the bar
+            // jump for no work.
+            phase === "asset-hub-connecting" ||
             phase === "asset-hub-syncing" ||
             phase === "asset-hub-ready"
           ) {
@@ -1370,6 +1423,7 @@ async function main(): Promise<void> {
     setShieldState(shieldState);
 
     const { renderAppSubdomain } = await renderChunkPromise;
+    advancePhase(contentFetchPhase);
     await renderAppSubdomain(cid, label);
     void applyProductBranding(label, chainBackend).catch((err: unknown) => {
       log.warn(
@@ -1442,30 +1496,46 @@ async function main(): Promise<void> {
     // Tiered failover: any smoldot becomes rpc-gateway, rpc-gateway becomes smoldot-shared-worker.
     const nextBackend =
       chainBackend === "rpc-gateway" ? "smoldot-shared-worker" : "rpc-gateway";
-    const btnLabel =
+    const btnLabel = FAILOVER_BTN_LABELS[nextBackend];
+    const svg = (paths: string): string =>
+      `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+    const refreshIcon = svg(
+      '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+    );
+    const switchIcon =
       nextBackend === "rpc-gateway"
-        ? "Try Trusted Providers"
-        : "Try Light Client Shared";
-    showError("Domain can't be reached", error.message, {
-      label: btnLabel,
-      onClick: () => {
-        emitDotliDebugEvent({
-          layer: "failover",
-          event: "chain_backend",
-          flowId:
-            typeof crypto !== "undefined" && "randomUUID" in crypto
-              ? crypto.randomUUID()
-              : `fail-${String(Date.now())}`,
-          timestamp: Date.now(),
-          payload: {
-            from: chainBackend,
-            to: nextBackend,
-            reason: err instanceof Error ? err.message : "resolution failed",
-          },
-        });
-        switchBackendAndReload(nextBackend);
+        ? svg('<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>')
+        : svg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>');
+    showError("Domain can't be reached", error.message, [
+      {
+        label: REFRESH_BTN_LABEL,
+        icon: refreshIcon,
+        onClick: () => {
+          window.location.reload();
+        },
       },
-    });
+      {
+        label: btnLabel,
+        icon: switchIcon,
+        onClick: () => {
+          emitDotliDebugEvent({
+            layer: "failover",
+            event: "chain_backend",
+            flowId:
+              typeof crypto !== "undefined" && "randomUUID" in crypto
+                ? crypto.randomUUID()
+                : `fail-${String(Date.now())}`,
+            timestamp: Date.now(),
+            payload: {
+              from: chainBackend,
+              to: nextBackend,
+              reason: err instanceof Error ? err.message : "resolution failed",
+            },
+          });
+          switchBackendAndReload(nextBackend);
+        },
+      },
+    ]);
   }
 }
 

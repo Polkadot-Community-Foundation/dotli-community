@@ -14,12 +14,18 @@ import type { AuthState } from "@dotli/auth/auth";
 import type { Identity } from "@novasamatech/host-papp";
 import { log } from "@dotli/shared/log";
 import { escapeHtml } from "@dotli/shared/html";
+import { isMobileDevice } from "@dotli/shared/device";
 import {
   formatAppVersion,
   getActiveAppManifest,
   getActiveRootManifest,
 } from "@dotli/shared/active-manifest";
 import { SITE_ID } from "@dotli/config/config";
+import {
+  createRemoteChainProvider,
+  hasSharedAuthSession,
+  isRemoteChainSupported,
+} from "@dotli/protocol/client";
 import {
   getCacheSettings,
   setCacheSettings,
@@ -32,7 +38,12 @@ import {
   type CacheSettings,
 } from "@dotli/config/mode";
 import { clearCidCache } from "@dotli/storage/cid-cache";
-import { getNetwork, setNetwork, type Network } from "@dotli/config/network";
+import {
+  getNetwork,
+  setNetwork,
+  NETWORK_NAME_TO_SERVICES_CONFIG,
+  type Network,
+} from "@dotli/config/network";
 import { getActiveServicesConfig } from "@dotli/config/network";
 import { writeSettingsToSearch } from "@dotli/config/url-settings";
 import {
@@ -60,6 +71,7 @@ let modalBackdrop: HTMLElement;
 let modalTitle: HTMLElement;
 let modalQr: HTMLElement;
 let modalReason: HTMLElement;
+let modalHint: HTMLElement;
 let modalClose: HTMLElement;
 let userPopover: HTMLElement;
 let userPopoverUsername: HTMLElement;
@@ -152,6 +164,7 @@ export function initTopBar(): void {
   modalTitle = getElement("auth-modal-title");
   modalQr = getElement("auth-modal-qr");
   modalReason = getElement("auth-modal-reason");
+  modalHint = getElement("auth-modal-hint");
   modalClose = getElement("auth-modal-close");
   userPopover = getElement("user-popover");
   userPopoverUsername = getElement("user-popover-username");
@@ -294,7 +307,6 @@ export function initTopBar(): void {
   requestIdleCallback(() => {
     void (async () => {
       try {
-        const { hasSharedAuthSession } = await import("@dotli/protocol/client");
         if (await hasSharedAuthSession(SITE_ID)) {
           await ensureAuth();
         }
@@ -384,7 +396,41 @@ function renderPairing(payload: string): void {
         return;
       }
       modalQr.innerHTML = "";
-      modalQr.appendChild(canvas);
+
+      if (isMobileDevice()) {
+        // No second device to scan with, so the deeplink button leads and the
+        // QR is opt-in behind "Show QR instead" for pairing from another device.
+        modalQr.classList.add("auth-modal-qr-mobile");
+
+        const qrLink = document.createElement("a");
+        qrLink.href = payload;
+        qrLink.className = "auth-modal-qr-link";
+        qrLink.appendChild(canvas);
+        qrLink.hidden = true;
+
+        const openApp = document.createElement("a");
+        openApp.href = payload;
+        openApp.className = "auth-modal-open-app";
+        openApp.textContent = "Login With Polkadot App";
+
+        const showQr = document.createElement("button");
+        showQr.type = "button";
+        showQr.className = "auth-modal-qr-toggle";
+        showQr.textContent = "Show QR instead";
+        showQr.addEventListener("click", () => {
+          qrLink.hidden = false;
+          openApp.classList.add("auth-modal-open-app-link");
+          showQr.hidden = true;
+          // Re-append to put the QR on top and the demoted deeplink below it.
+          modalQr.append(qrLink, openApp);
+          modalHint.textContent = "Scan with Polkadot Mobile to connect";
+        });
+
+        modalQr.append(openApp, showQr, qrLink);
+      } else {
+        modalQr.classList.remove("auth-modal-qr-mobile");
+        modalQr.appendChild(canvas);
+      }
     })
     .catch((err: unknown) => {
       log.error("[dot.li] QR render failed:", err);
@@ -820,30 +866,6 @@ function setPermissionsPopoverOpen(open: boolean): void {
 }
 
 /**
- * Open the resolution-mode popover programmatically, e.g. from a slow-path
- * "Adjust mode" affordance instead of silently swapping modes behind the
- * user's back. Safe to call before `initTopBar()`. Falls through silently
- * if the DOM isn't ready yet.
- */
-export function openModePopover(): void {
-  try {
-    const popover = document.getElementById("mode-popover");
-    if (popover === null) {
-      return;
-    }
-    if (!popover.classList.contains("open")) {
-      popover.classList.add("open");
-      const backdrop = document.getElementById("mode-popover-backdrop");
-      backdrop?.classList.add("open");
-      renderModePopover();
-    }
-    // eslint-disable-next-line no-restricted-syntax -- DOM not available (SSR / test harness); caller is just asking to open a popover, there's nothing to do.
-  } catch {
-    /* no DOM: nothing to open */
-  }
-}
-
-/**
  * Draft of everything the popover can change. Controls mutate this. Nothing
  * touches localStorage or reloads the page until the user clicks Save &
  * Apply. Closing the popover throws the draft away. The next open re-reads
@@ -857,11 +879,30 @@ interface ModeDraft {
 
 function renderModePopover(): void {
   // Two-column grid. Left: backend / cache. Right: endpoints / diagnostics.
-  // Save & Apply and the footer span both columns at the bottom. Collapses
+  // Save & Apply and the footer spans both columns at the bottom. Collapses
   // to a single column on narrow viewports (CSS media query on
   // `.mode-popover-columns`).
   const parent = modePopoverContent;
   parent.innerHTML = "";
+
+  // Mobile-only sheet header. On phones the popover becomes a full-screen
+  // sheet (CSS), which has no tappable backdrop to dismiss it, so it needs an
+  // explicit title and close control. Hidden on desktop, where the backdrop
+  // still handles dismissal.
+  const sheetHeader = document.createElement("div");
+  sheetHeader.className = "mode-popover-sheet-header";
+  const sheetTitle = document.createElement("span");
+  sheetTitle.className = "mode-popover-sheet-title";
+  sheetTitle.textContent = "Settings";
+  const sheetClose = document.createElement("button");
+  sheetClose.className = "mode-popover-sheet-close";
+  sheetClose.setAttribute("aria-label", "Close settings");
+  sheetClose.textContent = "✕";
+  sheetClose.addEventListener("click", () => {
+    setModePopoverOpen(false);
+  });
+  sheetHeader.append(sheetTitle, sheetClose);
+  parent.appendChild(sheetHeader);
 
   const persisted: ModeDraft = {
     chain: getBackend(),
@@ -921,7 +962,6 @@ function renderModePopover(): void {
     }
   };
 
-  appendDivider(leftCol);
   appendSectionHeader(leftCol, "Backend");
   const chainChoices: [Backend, string, string][] = [
     [
@@ -1037,13 +1077,20 @@ function renderModePopover(): void {
   appendSectionHeader(rightCol, "Diagnostics");
   renderDiagnostics(rightCol);
 
-  appendDivider();
+  // Footer wraps the divider, Save & Apply, and the warning as one unit so it
+  // can pin to the bottom of the full-screen sheet on mobile (CSS), keeping
+  // the primary action reachable. On desktop it is plain in-flow content.
+  const footer = document.createElement("div");
+  footer.className = "mode-apply-footer";
+  parent.appendChild(footer);
+
+  appendDivider(footer);
   const applyRow = document.createElement("div");
   applyRow.className = "mode-cache-row mode-apply-row";
   const applyBtn = document.createElement("button");
   applyBtn.className = "mode-clear-btn";
   applyRow.appendChild(applyBtn);
-  parent.appendChild(applyRow);
+  footer.appendChild(applyRow);
 
   // Warning text: applying reloads the app. Backend/network changes keep
   // caches warm; only caches the user turns off get cleared. Shown only
@@ -1052,7 +1099,7 @@ function renderModePopover(): void {
   resetWarning.className = "mode-apply-warning";
   resetWarning.textContent =
     "Applying reloads the app. Caches you turn off are cleared.";
-  parent.appendChild(resetWarning);
+  footer.appendChild(resetWarning);
 
   syncApply = (): void => {
     const dirty =
@@ -1343,7 +1390,7 @@ function renderDiagnostics(parent: HTMLElement): void {
   // keep only the smoldot version so the dependency is still visible.
   const smoldotInfo: SmoldotInfo = {
     version: buildSmoldotVersionLabel(),
-    blocks: { relay: "…", assetHub: "…" },
+    blocks: { relay: "…", assetHub: "…", people: "…" },
   };
   const smoldotActive = getBackend() !== "rpc-gateway";
   appendSectionHeader(parent, "@smoldot");
@@ -1351,8 +1398,9 @@ function renderDiagnostics(parent: HTMLElement): void {
   if (smoldotActive) {
     const relayRow = renderInfoRow(parent, "Relay Chain", "…");
     const assetHubRow = renderInfoRow(parent, "Asset Hub", "…");
+    const peopleRow = renderInfoRow(parent, "People Chain", "…");
 
-    // Fire both queries. They update their own rows and the shared snapshot
+    // Fire all queries. They update their own rows and the shared snapshot
     // (so the "Share diagnostic" button captures whatever resolved in time).
     const cfg = getActiveServicesConfig();
     void queryFinalizedBlock(cfg.relay.genesis).then((n) => {
@@ -1365,11 +1413,17 @@ function renderDiagnostics(parent: HTMLElement): void {
       assetHubRow.update(v);
       smoldotInfo.blocks.assetHub = v;
     });
+    void queryFinalizedBlock(cfg.people.genesis).then((n) => {
+      const v = formatBlock(n);
+      peopleRow.update(v);
+      smoldotInfo.blocks.people = v;
+    });
   } else {
     // Keep the snapshot tagged as n/a so the Share-diagnostic report is
     // coherent: smoldot wasn't consulted, don't claim a block height.
     smoldotInfo.blocks.relay = "n/a";
     smoldotInfo.blocks.assetHub = "n/a";
+    smoldotInfo.blocks.people = "n/a";
   }
 
   // The unscoped `polkadot-api` package lives in the same visual section as
@@ -1541,7 +1595,7 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
     // (`hackme3.dot.li`).
     ["Site", window.location.host],
     ["Build", `${version} (${shortSha(sha)})`],
-    ["Network", networkLabel(network)],
+    ["Network", NETWORK_NAME_TO_SERVICES_CONFIG[network].label],
     ["Backend", backendLabel(backend)],
   ];
 
@@ -1597,24 +1651,11 @@ function backendLabel(b: Backend): string {
   }
 }
 
-function networkLabel(n: Network): string {
-  switch (n) {
-    case "paseo-next-v1":
-      return "Paseo Next V1";
-    case "paseo-next-v2":
-      return "Paseo Next V2";
-    case "previewnet":
-      return "Previewnet";
-    case "summit":
-      return "Summit";
-  }
-}
-
 interface SmoldotInfo {
   /** Human-facing version label, e.g. "3.0.0 (c33c647)". */
   version: string;
   /** Mutable block readouts for the share report. */
-  blocks: { relay: string; assetHub: string };
+  blocks: { relay: string; assetHub: string; people: string };
 }
 
 function buildSmoldotVersionLabel(): string {
@@ -1638,24 +1679,22 @@ function buildSmoldotVersionLabel(): string {
  *
  * Returns `null` if the chain isn't supported by the active backend (e.g.
  * asking for relay in rpc mode, which only supports Asset Hub) or if the
- * query doesn't resolve within the timeout. All imports are dynamic so
- * opening the popover is cheap when the user doesn't care about blocks.
+ * query doesn't resolve within the timeout. The heavy `polkadot-api` import
+ * stays dynamic so opening the popover is cheap when the user doesn't care
+ * about blocks.
  */
 async function queryFinalizedBlock(
   genesisHash: string,
 ): Promise<number | null> {
   try {
-    const [protocolClient, papi] = await Promise.all([
-      import("@dotli/protocol/client"),
-      import("polkadot-api"),
-    ]);
-    if (!protocolClient.isRemoteChainSupported(genesisHash)) {
+    if (!isRemoteChainSupported(genesisHash)) {
       return null;
     }
-    const provider = protocolClient.createRemoteChainProvider(genesisHash);
+    const provider = createRemoteChainProvider(genesisHash);
     if (provider === null) {
       return null;
     }
+    const papi = await import("polkadot-api");
     const client = papi.createClient(provider);
     try {
       const block = await Promise.race([
@@ -1930,6 +1969,10 @@ function renderCacheToggle(
 
 function openModal(reason?: string, label?: string): void {
   modalQr.innerHTML = `<div class="spinner"></div>`;
+  // Mobile leads with the deeplink button. The QR toggle swaps this copy later.
+  modalHint.textContent = isMobileDevice()
+    ? "Sign in with the Polkadot app on this device"
+    : "Scan with Polkadot Mobile to connect";
   // A bare "localhost:<port>" label means dotli is in localhost-proxy
   // mode rendering a local dev server directly (apps/host/src/main.ts
   // localhost-proxy branch). Show it as-is. Deployed dotNs products

@@ -22,7 +22,25 @@ function dotUrl(label: string): string {
 }
 
 // Phase-based loading indicator.
-let phaseLabels: string[] = [];
+//
+// Each phase owns a `[base, target]` band of the bar plus an `expectedMs`:
+// how long that step typically takes. Two things follow from `expectedMs`,
+// and together they make the bar track real work instead of an arbitrary
+// easing curve (the Asset Hub finalized-block sync dwarfs every other step,
+// so callers size their bands and durations accordingly):
+//   - Band WIDTH is sized to the step's share of total load time, so the
+//     one dominant sync step owns most of the bar.
+//   - Crawl SPEED is paced so the band is crossed in roughly `expectedMs`,
+//     advancing steadily across the whole step rather than decelerating and
+//     parking near the top (the old asymptotic crawl barely moved during a
+//     30s sync, which is exactly the symptom we are fixing).
+export interface LoadingPhase {
+  label: string;
+  base: number;
+  target: number;
+  expectedMs: number;
+}
+let phases: LoadingPhase[] = [];
 let currentPhase = -1;
 
 // Progress bar state
@@ -30,16 +48,10 @@ let progressFillEl: HTMLElement | null = null;
 let progressPctEl: HTMLElement | null = null;
 let currentProgress = 0;
 let targetProgress = 0;
+let crawlStep = 0;
 let progressInterval: ReturnType<typeof setInterval> | null = null;
 
-// Simulated percentage ranges per phase: [base, target].
-// The bar jumps to `base` on phase entry, then crawls toward `target`.
-const PHASE_PROGRESS: [number, number][] = [
-  [2, 15], // Starting
-  [18, 35], // Connecting
-  [38, 68], // Syncing
-  [72, 92], // Resolving
-];
+const CRAWL_TICK_MS = 200;
 
 function setProgress(pct: number): void {
   currentProgress = pct;
@@ -55,11 +67,9 @@ function startProgressCrawl(): void {
   stopProgressCrawl();
   progressInterval = setInterval(() => {
     if (currentProgress < targetProgress) {
-      const remaining = targetProgress - currentProgress;
-      const increment = Math.max(0.1, remaining * 0.04);
-      setProgress(Math.min(currentProgress + increment, targetProgress));
+      setProgress(Math.min(currentProgress + crawlStep, targetProgress));
     }
-  }, 200);
+  }, CRAWL_TICK_MS);
 }
 
 function stopProgressCrawl(): void {
@@ -82,9 +92,11 @@ export function completeProgress(): void {
  * Initialize the loading progress bar.
  * Call once before resolution/fetching begins.
  */
-export function initPhases(labels: string[]): void {
-  phaseLabels = labels;
+export function initPhases(phaseList: LoadingPhase[]): void {
+  phases = phaseList;
   currentPhase = -1;
+  currentProgress = 0;
+  targetProgress = 0;
 
   progressFillEl = document.getElementById("loading-progress-fill");
   progressPctEl = document.getElementById("loading-progress-pct");
@@ -97,28 +109,29 @@ export function initPhases(labels: string[]): void {
  * No-ops if the phase is already active or past.
  */
 export function advancePhase(index: number): void {
-  if (
-    index <= currentPhase ||
-    index >= phaseLabels.length ||
-    index >= PHASE_PROGRESS.length
-  ) {
+  if (index <= currentPhase || index >= phases.length) {
     return;
   }
   currentPhase = index;
 
   // Update progress bar
-  const range = PHASE_PROGRESS[index];
-  const [base, target] = range;
+  const { base, target, label, expectedMs } = phases[index];
   if (base > currentProgress) {
     setProgress(base);
   }
   targetProgress = target;
+  // Pace the crawl so the band is traversed over the step's typical
+  // duration: each tick advances a constant slice sized to cross from
+  // `base` to `target` in `expectedMs`. This is what makes the bar move
+  // steadily through a long sync instead of stalling near the top.
+  crawlStep =
+    ((target - base) * CRAWL_TICK_MS) / Math.max(expectedMs, CRAWL_TICK_MS);
   startProgressCrawl();
 
   // Update headline
   const status = document.getElementById("status");
   if (status !== null) {
-    status.textContent = phaseLabels[index] ?? "Loading...";
+    status.textContent = label;
   }
 }
 
@@ -357,39 +370,53 @@ export function listenForSandboxStatus(): void {
 export interface ErrorAction {
   label: string;
   onClick: () => void;
+  // Inline SVG markup for a leading icon. Constant only, never user input.
+  icon?: string;
 }
 
 /**
- * Show an error state with an optional action link.
+ * Show an error state with optional action buttons.
  *
  * `detail` is an optional paragraph below the title. Omit it for a
  * title-only screen (e.g. the generic "Domain can't be reached" with a
- * backend switch). `action` renders a link with a trailing arrow. The
- * label is free-form so the same slot serves retry, reload, backend-switch, etc.
+ * backend switch). `action` renders one button per entry; pass an `icon` for a
+ * leading glyph, otherwise the label gets a trailing arrow. Pass an array to
+ * offer several choices; the first keeps `#error-retry-btn`.
  */
 export function showError(
   title: string,
   detail?: string,
-  action?: ErrorAction | (() => void),
+  action?: ErrorAction | ErrorAction[] | (() => void),
 ): void {
   if (typeof action === "function") {
     action = { label: "Retry", onClick: action };
   }
+  const actions =
+    action === undefined ? [] : Array.isArray(action) ? action : [action];
+  const idFor = (i: number): string =>
+    i === 0 ? "error-retry-btn" : `error-retry-btn-${String(i)}`;
+  const renderAction = (a: ErrorAction, i: number): string => {
+    const leading =
+      a.icon !== undefined
+        ? `<span class="error-page-retry-icon" aria-hidden="true">${a.icon}</span>`
+        : "";
+    const trailing =
+      a.icon === undefined ? ` <span aria-hidden="true">→</span>` : "";
+    return `<button class="error-page-retry" id="${idFor(i)}">${leading}<span class="error-page-retry-label">${escapeHtml(a.label)}</span>${trailing}</button>`;
+  };
   app.innerHTML = `
     <div class="error-page">
       <div class="error-page-inner">
         <h1 class="error-page-title">${escapeHtml(title)}</h1>
         ${detail !== undefined ? `<p class="error-page-detail">${escapeHtml(detail)}</p>` : ""}
-        ${action !== undefined ? `<button class="error-page-retry" id="error-retry-btn">${escapeHtml(action.label)} <span aria-hidden="true">→</span></button>` : ""}
+        ${actions.map((a, i) => renderAction(a, i)).join("")}
       </div>
     </div>
   `;
 
-  if (action !== undefined) {
-    document
-      .getElementById("error-retry-btn")
-      ?.addEventListener("click", action.onClick);
-  }
+  actions.forEach((a, i) => {
+    document.getElementById(idFor(i))?.addEventListener("click", a.onClick);
+  });
 
   window.dispatchEvent(new CustomEvent("dotli:product-error"));
 }

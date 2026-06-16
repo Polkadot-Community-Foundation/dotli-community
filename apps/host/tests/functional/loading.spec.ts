@@ -3,7 +3,11 @@
 
 import { expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { HOST_ERRORS } from "../../src/errors";
+import {
+  HOST_ERRORS,
+  FAILOVER_BTN_LABELS,
+  REFRESH_BTN_LABEL,
+} from "../../src/errors";
 import { test } from "./helpers/shared-mode-reset";
 import { findAppFrame } from "../product-frame";
 import { seedBackend, type Backend } from "./fixtures/settings";
@@ -12,7 +16,7 @@ const DOMAIN = process.env.COMBO_DOMAIN ?? "host-playground";
 const PORT = process.env.COMBO_PORT ?? "5173";
 const HOST_URL = `http://${DOMAIN}.localhost:${PORT}/`;
 
-const RETRY_LABEL_FROM_SMOLDOT = "Try Trusted Providers";
+const RETRY_LABEL_FROM_SMOLDOT = FAILOVER_BTN_LABELS["rpc-gateway"];
 
 // Preserve the post-retry backend that the in-page button just flipped.
 async function setBackend(page: Page, backend: Backend): Promise<void> {
@@ -170,6 +174,9 @@ test("As a user using smoldot directly, when the light client panics mid-resolut
     HOST_ERRORS.FATAL_PANIC,
   );
   await expect(page.locator("#error-retry-btn")).toContainText(
+    REFRESH_BTN_LABEL,
+  );
+  await expect(page.locator("#error-retry-btn-1")).toContainText(
     RETRY_LABEL_FROM_SMOLDOT,
   );
 });
@@ -193,6 +200,9 @@ test("As a user using smoldot in shared worker, when the light client panics mid
     HOST_ERRORS.FATAL_PANIC,
   );
   await expect(page.locator("#error-retry-btn")).toContainText(
+    REFRESH_BTN_LABEL,
+  );
+  await expect(page.locator("#error-retry-btn-1")).toContainText(
     RETRY_LABEL_FROM_SMOLDOT,
   );
 });
@@ -219,6 +229,9 @@ test("As a user using smoldot in shared worker, when the browser can't create a 
     HOST_ERRORS.SW_FAILED_TO_START,
   );
   await expect(page.locator("#error-retry-btn")).toContainText(
+    REFRESH_BTN_LABEL,
+  );
+  await expect(page.locator("#error-retry-btn-1")).toContainText(
     RETRY_LABEL_FROM_SMOLDOT,
   );
 });
@@ -245,6 +258,9 @@ test("As a user using smoldot in shared worker, when the worker dies silently, I
     HOST_ERRORS.SW_TIMED_OUT,
   );
   await expect(page.locator("#error-retry-btn")).toContainText(
+    REFRESH_BTN_LABEL,
+  );
+  await expect(page.locator("#error-retry-btn-1")).toContainText(
     RETRY_LABEL_FROM_SMOLDOT,
   );
 });
@@ -279,6 +295,9 @@ test("As a user using smoldot directly, when loading is slow (>10s) I see a one-
     HOST_ERRORS.AH_SYNC_TIMEOUT,
   );
   await expect(page.locator("#error-retry-btn")).toContainText(
+    REFRESH_BTN_LABEL,
+  );
+  await expect(page.locator("#error-retry-btn-1")).toContainText(
     RETRY_LABEL_FROM_SMOLDOT,
   );
 });
@@ -313,6 +332,9 @@ test("As a user using smoldot in shared worker, when loading is slow (>10s) I se
     HOST_ERRORS.AH_SYNC_TIMEOUT,
   );
   await expect(page.locator("#error-retry-btn")).toContainText(
+    REFRESH_BTN_LABEL,
+  );
+  await expect(page.locator("#error-retry-btn-1")).toContainText(
     RETRY_LABEL_FROM_SMOLDOT,
   );
 });
@@ -389,6 +411,9 @@ test("As a user using smoldot directly, when smoldot rejects the chain spec, I s
     HOST_ERRORS.CHAIN_SPEC_REJECTED,
   );
   await expect(page.locator("#error-retry-btn")).toContainText(
+    REFRESH_BTN_LABEL,
+  );
+  await expect(page.locator("#error-retry-btn-1")).toContainText(
     RETRY_LABEL_FROM_SMOLDOT,
   );
 });
@@ -415,6 +440,9 @@ test("As a user using smoldot in shared worker, when smoldot rejects the chain s
     HOST_ERRORS.CHAIN_SPEC_REJECTED,
   );
   await expect(page.locator("#error-retry-btn")).toContainText(
+    REFRESH_BTN_LABEL,
+  );
+  await expect(page.locator("#error-retry-btn-1")).toContainText(
     RETRY_LABEL_FROM_SMOLDOT,
   );
 });
@@ -482,7 +510,7 @@ test("As a user, after a resolution failure, clicking retry switches backend and
   expect(backendBefore).toBe("smoldot-direct");
 
   // When
-  await page.locator("#error-retry-btn").click();
+  await page.locator("#error-retry-btn-1").click();
   await page.waitForLoadState("domcontentloaded");
 
   // Then
@@ -490,6 +518,38 @@ test("As a user, after a resolution failure, clicking retry switches backend and
     localStorage.getItem("dotli:chain-backend"),
   );
   expect(backendAfter).toBe("rpc-gateway");
+});
+
+test("As a user, after a resolution failure, I can refresh instead of switching backend, and the backend stays unchanged", async ({
+  page,
+}) => {
+  // Given
+  await setBackend(page, "smoldot-direct");
+  await mockProtocolIframe(page, fatalOnResolve("smoldot panic"));
+  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  const refresh = page.locator("#error-retry-btn");
+  await expect(refresh).toContainText(REFRESH_BTN_LABEL);
+  await expect(page.locator("#error-retry-btn-1")).toContainText(
+    RETRY_LABEL_FROM_SMOLDOT,
+  );
+
+  // When
+  await refresh.click();
+  await page.waitForLoadState("domcontentloaded");
+
+  // Then
+  await expect(page.locator(".error-page-title")).toHaveText(
+    "Domain can't be reached",
+    { timeout: 10_000 },
+  );
+  const backendAfter = await page.evaluate(() =>
+    localStorage.getItem("dotli:chain-backend"),
+  );
+  expect(backendAfter).toBe("smoldot-direct");
 });
 
 for (const [label, backend] of [

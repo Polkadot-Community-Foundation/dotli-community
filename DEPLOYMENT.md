@@ -8,13 +8,17 @@ works for the first boot and for later top-ups.
 
 ### Remote server
 
-- Ubuntu 24.04+ (Noble) with `sudo` for the SSH user.
+- Ubuntu 24.04+ (Noble).
+- The SSH user must have **passwordless `sudo`** — the provisioning steps run
+  `sudo` non-interactively over SSH (no TTY), so a password prompt makes them
+  fail. Either grant the user `NOPASSWD` sudo (e.g. a drop-in in
+  `/etc/sudoers.d/`), or connect as `root` directly (`REMOTE=root@<ip>`).
 - Reachable over SSH from your machine without a password (key-based auth).
 - Public IP with ports `22`, `80`, and `443` open (the firewall step opens these via `ufw`).
 
 ### DNS
 
-- The zone for the env's base domain (e.g. `dot.li`) managed in Cloudflare.
+- The zone for the env's base domain (e.g. `paseo.li`) managed in Cloudflare.
 - `A` / `AAAA` records pointing to the box for the apex.
 - A Cloudflare API token scoped to **Zone → DNS → Edit** on that zone.
 
@@ -22,7 +26,7 @@ works for the first boot and for later top-ups.
 
 ### Local machine
 
-- `make`, `ssh`, `rsync`.
+- `make`, `ssh`, `rsync`, and [Bun](https://bun.sh) 1.3+.
 - SSH agent loaded with the key the remote accepts (`ssh-add`).
 - This repo checked out and on the branch/commit you want to deploy.
 
@@ -53,33 +57,30 @@ Actions path reads `DEPLOY_HOST` / `DEPLOY_USER` from repository secrets via the
 
 ## What `make provision` does
 
-`Makefile:80` chains these targets in order:
+`Makefile:81` chains these targets in order:
 
 1. `provision-prereqs` — apt-installs nginx (with brotli modules), certbot,
-   the Cloudflare DNS plugin, rsync, ufw, unzip, curl; removes the default
+   the Cloudflare DNS plugin, rsync, ufw, curl; removes the default
    nginx site.
 2. `provision-firewall` — allows `OpenSSH` and `Nginx Full`, then enables
    `ufw`. SSH is whitelisted before enable so you don't lock yourself out.
-3. `provision-bun` — installs `bun` for the SSH user (if missing) and
-   symlinks `bun`/`bunx` into `/usr/local/bin`.
-4. `provision-cloudflare-creds` — writes `/etc/letsencrypt/cloudflare.ini`
+3. `provision-cloudflare-creds` — writes `/etc/letsencrypt/cloudflare.ini`
    (`0600`, `root:root`) from the token you pass in.
-5. `provision-cert` — issues a Let's Encrypt cert via DNS-01 covering the
+4. `provision-cert` — issues a Let's Encrypt cert via DNS-01 covering the
    apex, `*.<base>`, and `*.app.<base>`. `--keep-until-expiring --expand`
    makes re-runs cheap.
 6. `provision-renewal` — enables `certbot.timer` for auto-renewal.
-7. `deploy` — rsyncs the repo to `/tmp/dotli-build`, runs `bun install
---frozen-lockfile && bun run build:prod` on the remote (the same production
-   build CI deploys use: pre-compressed assets, no analytics markers), then
-   syncs the three `dist/` outputs into the env's web root.
-8. `deploy-nginx` — installs `nginx/snippets/` and `nginx/nginx.<env>` into
-   `/etc/nginx/`, runs `nginx -t`, and reloads nginx.
+7. `deploy` — runs `bun run build` on your machine, then rsyncs the three
+   `dist/` outputs into the env's web root.
+8. `deploy-nginx` — renders `nginx/nginx.conf.template` for the env (envsubst)
+   and installs it plus `nginx/snippets/` into `/etc/nginx/`, runs `nginx -t`,
+   and reloads nginx. Preview the result with `make render-nginx ENV=<env>`.
 
 ## Run it
 
 ```sh
 make provision \
-  ENV=polkadot \
+  ENV=paseo \
   REMOTE=ubuntu@ip.for.machine \
   ADMIN_EMAIL=ops@example.com \
   CLOUDFLARE_API_TOKEN=cf_xxxxxxxxxxxxxxxxxxxxxxxxxxx

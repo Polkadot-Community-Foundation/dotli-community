@@ -10,7 +10,7 @@ import { prodNoAnalyticsAliases } from "../../packages/metrics/src/prod-no-analy
 const OUT_DIR = "dist";
 
 function sentry(): Plugin | false {
-  if (process.env.VITE_APP_ENV === "production") return false;
+  if (process.env.VITE_METRICS !== "true") return false;
   if (!process.env.SENTRY_AUTH_TOKEN) return false;
   return sentryVitePlugin({
     org: "paritytech",
@@ -25,13 +25,14 @@ function sentry(): Plugin | false {
 const PACKAGES = resolve(import.meta.dirname, "../../packages");
 
 export default defineConfig({
+  envDir: resolve(import.meta.dirname, "../.."),
   base: process.env.VITE_APP_URL
     ? new URL(process.env.VITE_APP_URL).pathname
     : "/",
   plugins: [wasm(), sentry()],
   resolve: {
     alias: {
-      ...prodNoAnalyticsAliases(process.env.VITE_APP_ENV === "production"),
+      ...prodNoAnalyticsAliases(process.env.VITE_METRICS !== "true"),
       "@dotli/config": resolve(PACKAGES, "config/src"),
       "@dotli/metrics": resolve(PACKAGES, "metrics/src"),
       "@dotli/shared": resolve(PACKAGES, "shared/src"),

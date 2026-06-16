@@ -29,7 +29,9 @@ import {
   resolveOwner,
   resolveRootManifest,
   setResolverAssetHubProvider,
+  setResolverPeopleProvider,
   waitForAssetHubFinalized,
+  waitForPeopleFinalized,
 } from "@dotli/resolver/resolve";
 import { onSmoldotFatal } from "@dotli/resolver/smoldot";
 import { m } from "@dotli/metrics/metrics";
@@ -191,6 +193,17 @@ async function presync(): Promise<void> {
         "Asset Hub",
       ),
     );
+    // The People warm-keep must share this same broker follow. A separate
+    // getSmProvider on the People chain would race the broker's follow (one
+    // shared smoldot JSON-RPC queue) and have its events misrouted, so the
+    // broker drops People follow events as "unknown token" and reads hang.
+    setResolverPeopleProvider(() =>
+      requireBrokerLocalProvider(
+        chainBrokerManager,
+        getActiveServicesConfig().people.genesis,
+        "People",
+      ),
+    );
 
     // 4. Wait for Asset Hub to sync to a finalized block via the
     // explicit presync primitive (no more overloading `resolveDotName`
@@ -214,6 +227,33 @@ async function presync(): Promise<void> {
       port.postMessage(readyMsg);
     }
     pendingPorts.length = 0;
+
+    // Warm the People chain in the background. Legacy-account auth reads the
+    // username -> account map on People, and on a cold start that read races
+    // the parachain warp sync (the source of the intermittent failures). Start
+    // syncing it now so it is ready by the time auth runs. People is not needed
+    // for resolution, so this must not gate the ready signal above.
+    swLog("Warming People chain in background...");
+    // Route the People warm-up through the broker's shared follow (mirrors
+    // Asset Hub above) so it doesn't open a second competing smoldot follow.
+    setResolverPeopleProvider(() =>
+      requireBrokerLocalProvider(
+        chainBrokerManager,
+        getActiveServicesConfig().people.genesis,
+        "People",
+      ),
+    );
+    void waitForPeopleFinalized((msg) => {
+      swLog(`People warm status: ${msg}`);
+    })
+      .then(() => {
+        swLog("People chain warmed");
+      })
+      .catch((err: unknown) => {
+        swLog(
+          `People chain warm failed (retried on demand): ${serializeError(err)}`,
+        );
+      });
   } catch (err: unknown) {
     const msg = serializeError(err);
     swError(`Pre-sync failed: ${msg}`);
