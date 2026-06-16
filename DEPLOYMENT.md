@@ -95,3 +95,43 @@ site is live at `https://<base-domain>`.
 - `make provision` is idempotent; re-run it to pick up nginx config or build changes.
 - For code-only redeployments (no infra changes), `make deploy ENV=<env>` is enough.
 - For nginx-only updates, `make deploy-nginx ENV=<env>`.
+
+## Summit (`ENV=summit`)
+
+Summit is **not** deployed by CI — `.github/workflows/deploy.yml` only targets the
+public dot.li/dev environments (`paseo.li`, `testnet.li`, `paseoli.dev`, …). Summit
+is deployed manually from a workstation with IAP access to the box:
+
+- Host: GCE instance `pcf-summit-dotli`, zone `europe-west3-b`, project
+  `polkadot-community-foundation`, reached over an IAP TCP tunnel (see the
+  `pcf-summit-dotli` `Host` alias in your `~/.ssh/config`, which sets a
+  `gcloud compute start-iap-tunnel` `ProxyCommand`). Requires `gcloud auth login`.
+- `deploy.env`: `REMOTE_SUMMIT := pcf-summit-dotli`
+- `.env` (build-time, gitignored): `VITE_NETWORKS=summit` is **required** (the build
+  throws without it) and `VITE_APP_URL=https://dot.li`. Leave metrics/Sentry unset.
+- Run: `make deploy ENV=summit` then `make deploy-nginx ENV=summit`.
+
+### Automating Summit in CI (TODO — not yet wired)
+
+Unlike the other envs, the Summit box is private (IAP-only, no public SSH), and CI
+has no GCP auth today. To let `deploy.yml` deploy Summit, the following is needed:
+
+1. **`pcf-infra` terraform (then `terraform apply`):**
+   - Widen the GitHub WIF provider's `attribute_condition` in
+     `terraform/identity-federation.tf` to also trust
+     `Polkadot-Community-Foundation/dotli-community` (today it trusts only the
+     `identity-backend` repos).
+   - Add a deploy service account bound to that WIF principal with
+     `roles/iap.tunnelResourceAccessor` (IAP TCP, not the existing web-UI IAP),
+     `roles/compute.viewer`, and OS Login (`roles/compute.osLogin`) on the
+     `pcf-summit-dotli` instance.
+2. **`deploy.yml`, gated to the `summit` env:** add `google-github-actions/auth`
+   (WIF) + `setup-gcloud`, then replace the `ssh-keyscan` + direct-ssh steps with a
+   `start-iap-tunnel` `ProxyCommand` ssh-config (mirroring the local
+   `~/.ssh/config` alias, using the SA / OS-Login identity). `make ci-deploy` then
+   works unchanged with `DEPLOY_HOST=pcf-summit-dotli`.
+3. **GitHub Environment `summit`:** `vars` `NETWORKS=summit`, `APP_URL=https://dot.li`;
+   `secrets` `DEPLOY_USER`, `DEPLOY_HOST=pcf-summit-dotli`,
+   `DEPLOY_PATH=/var/www/summitli` (+ Sentry/metrics if ever enabled). Protect it
+   with a **required reviewer** and drive it from a deliberate trigger
+   (`workflow_dispatch`), not auto-on-push — Summit is production.
