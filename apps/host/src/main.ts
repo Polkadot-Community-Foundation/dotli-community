@@ -42,6 +42,15 @@ import {
   listenForSandboxBitswap,
 } from "@dotli/ui/bulletin-bitswap";
 import {
+  ensureProtocolFrame,
+  resetProtocolFrame,
+  resolveDotNameRemote,
+  resolveExecutableManifestRemote,
+  resolveRootManifestRemote,
+  setProtocolSubMode,
+  warmupProtocol,
+} from "@dotli/protocol/client";
+import {
   getCachedCid,
   setCachedCid,
   recordRevalidateOutcome,
@@ -386,10 +395,9 @@ async function applyProductBranding(
       mod.resolveExecutableManifestViaRpc(label, "app"),
     ]);
   } else {
-    const mod = await import("@dotli/protocol/client");
     [rootResult, appResult] = await Promise.all([
-      mod.resolveRootManifestRemote(label),
-      mod.resolveExecutableManifestRemote(label, "app"),
+      resolveRootManifestRemote(label),
+      resolveExecutableManifestRemote(label, "app"),
     ]);
   }
   if (rootResult.kind === "ok") {
@@ -633,7 +641,6 @@ async function runBackgroundRevalidate(
   try {
     let freshCid: string | null;
     if (chainBackend !== "rpc-gateway") {
-      const { resolveDotNameRemote } = await import("@dotli/protocol/client");
       freshCid = await resolveDotNameRemote(label);
     } else {
       const { resolveDotNameViaRpc } =
@@ -838,7 +845,6 @@ async function applyUrlSettings(): Promise<void> {
   // the next `ensureProtocolFrame()` rebuilds it in the new sub-mode.
   // (No-op on localhost, where the HTTP channel never loaded an iframe.)
   if (prior.chain !== next.chain) {
-    const { resetProtocolFrame } = await import("@dotli/protocol/client");
     resetProtocolFrame();
   }
 
@@ -1018,17 +1024,11 @@ async function main(): Promise<void> {
     } catch {
       /* sessionStorage unavailable: skip pending-reset pick up */
     }
-    const protocolChunkPromise = import("@dotli/protocol/client");
-    void protocolChunkPromise.then(
-      ({ ensureProtocolFrame, warmupProtocol, setProtocolSubMode }) => {
-        setProtocolSubMode(subMode, {
-          skipWorkerCache:
-            pendingProtocolReset || cacheSettings.skipWorkerCache,
-        });
-        void ensureProtocolFrame();
-        void warmupProtocol();
-      },
-    );
+    setProtocolSubMode(subMode, {
+      skipWorkerCache: pendingProtocolReset || cacheSettings.skipWorkerCache,
+    });
+    void ensureProtocolFrame();
+    void warmupProtocol();
     emitDotliDebugEvent({
       layer: "boot",
       event: "protocol_warmup_started",
@@ -1336,7 +1336,6 @@ async function main(): Promise<void> {
       });
 
       try {
-        const { resolveDotNameRemote } = await import("@dotli/protocol/client");
         const { statusToPhase } = await import("@dotli/resolver/resolve");
         const onResolveProgress = (msg: string): void => {
           // Progress events arrive as opaque strings across the iframe
