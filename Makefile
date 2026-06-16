@@ -181,12 +181,17 @@ deploy: _require-env provision-bun
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/sandbox/dist/  $(REMOTE_PATH)/app/; \
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/protocol/dist/ $(REMOTE_PATH)/protocol/"
 
+# A literal '#'. Assigned as a top-level var because an inline `\#` inside a
+# `$(if ...)` survives as a literal backslash-hash (breaks nginx: `\#limit_req`);
+# via a variable make strips the escape correctly. Verified with `make render-nginx`.
+HASH := \#
+
 # env tag → envsubst tokens for nginx/nginx.conf.template. ZONE is a unique
 # per-domain limit_req zone name; RL is "" (rate-limiting on) for the
 # RATE_LIMITED_ENVS and "#" (commented out) for everything else.
 _nginx_render = DOMAIN='$(SITE_$(ENV))' WEBROOT='$(DEPLOY_PATH_$(ENV))' \
 	ZONE='rl_$(subst .,_,$(SITE_$(ENV)))' \
-	RL='$(if $(filter $(ENV),$(RATE_LIMITED_ENVS)),,\#)' \
+	RL='$(if $(filter $(ENV),$(RATE_LIMITED_ENVS)),,$(HASH))' \
 	envsubst '$$DOMAIN $$WEBROOT $$ZONE $$RL' < nginx/nginx.conf.template
 
 # Preview the rendered nginx config for ENV on stdout (no remote changes).
