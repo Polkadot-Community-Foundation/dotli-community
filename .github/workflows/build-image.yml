@@ -1,0 +1,70 @@
+name: Build & Push Image
+
+# Builds the Summit/Kubernetes container image (Dockerfile) and pushes it to the
+# PCF Artifact Registry. Auth via Workload Identity Federation (no long-lived
+# keys) — the WIF provider + service account are provisioned in pcf-infra
+# (terraform/dotli-artifact-registry.tf); set their values as the repo secrets
+# GCP_WIP_GITHUB and GCP_SA_GITHUB.
+#
+# Deploy itself is GitOps: ArgoCD syncs the image into the cluster from
+# pcf-infra (kubernetes/dotli/values-pcf-prod.yaml image.tag). Bump that tag to
+# the immutable :sha-<commit> this workflow pushes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'deploy/**'
+      - 'nginx/**'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'bun.lock'
+      - 'package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # required for WIF OIDC
+
+env:
+  IMAGE: us-docker.pkg.dev/polkadot-community-foundation/dotli/dotli
+
+jobs:
+  build-push:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Authenticate to Google Cloud (WIF)
+        id: auth
+        uses: google-github-actions/auth@6fc4af4b145ae7821d527454aa9bd537d1f2dc5f # v2.1.7
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ secrets.GCP_WIP_GITHUB }}
+          service_account: ${{ secrets.GCP_SA_GITHUB }}
+
+      - name: Docker auth to Artifact Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: us-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+
+      - name: Build & push
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

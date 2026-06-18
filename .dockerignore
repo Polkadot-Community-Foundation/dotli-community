@@ -1,0 +1,26 @@
+# Build the image from clean sources; everything below is regenerated in the
+# builder stage or is irrelevant to it.
+.git
+node_modules
+**/node_modules
+**/dist
+.turbo
+**/.turbo
+.vite
+**/.vite
+.cache
+coverage
+test-results
+**/test-results
+.env
+.env.*
+deploy.env
+*.log
+.DS_Store
+docs
+README.md
+LICENSE
+THIRD_PARTY_NOTICES.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+SECURITY.md
