@@ -1,6 +1,6 @@
 {
   "name": "@dotli/eslint-config",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "type": "module",
   "private": true,
   "license": "AGPL-3.0-only",
