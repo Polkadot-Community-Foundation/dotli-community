@@ -41,6 +41,7 @@ import { clearCidCache } from "@dotli/storage/cid-cache";
 import {
   getNetwork,
   setNetwork,
+  getEnabledNetworks,
   NETWORK_NAME_TO_SERVICES_CONFIG,
   type Network,
 } from "@dotli/config/network";
@@ -930,11 +931,16 @@ function renderModePopover(): void {
   columns.appendChild(rightCol);
 
   appendSectionHeader(leftCol, "Network");
-  const networkChoices: [Network, string, string][] = [
-    ["summit", "Summit", "Web3 Summit network"],
-    ["paseo-next-v2", "Paseo Next V2", "Upgraded Paseo Next system chains"],
-    ["previewnet", "Previewnet", "Product Preview Network"],
-  ];
+  // Only offer networks this deployment was built for (VITE_NETWORKS); the
+  // Summit deploy bakes `summit` alone, so the picker shows Summit only.
+  const enabledNetworks = new Set<Network>(getEnabledNetworks());
+  const networkChoices: [Network, string, string][] = (
+    [
+      ["summit", "Summit", "Web3 Summit network"],
+      ["paseo-next-v2", "Paseo Next V2", "Upgraded Paseo Next system chains"],
+      ["previewnet", "Previewnet", "Product Preview Network"],
+    ] as [Network, string, string][]
+  ).filter(([value]) => enabledNetworks.has(value));
   const networkGroup = document.createElement("div");
   leftCol.appendChild(networkGroup);
   const rerenderNetwork = (): void => {
