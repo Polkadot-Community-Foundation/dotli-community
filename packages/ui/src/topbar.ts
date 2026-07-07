@@ -1330,11 +1330,9 @@ declare const __SMOLDOT_VERSION__: string | undefined;
 declare const __SMOLDOT_COMMIT__: string | undefined;
 declare const __POLKADOT_API_VERSION__: string | undefined;
 declare const __POLKADOT_API_VERSIONS__:
-  | { name: string; version: string }[]
-  | undefined;
+  { name: string; version: string }[] | undefined;
 declare const __NOVASAMATECH_VERSIONS__:
-  | { name: string; version: string }[]
-  | undefined;
+  { name: string; version: string }[] | undefined;
 
 /**
  * Render the Diagnostics block at the bottom of the settings popover. Rows
