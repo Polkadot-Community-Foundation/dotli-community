@@ -44,7 +44,8 @@ export interface ScheduleRequest {
 }
 
 export type ScheduleResult =
-  { ok: true; id: number } | { ok: false; error: "ScheduleLimitReached" };
+  | { ok: true; id: number }
+  | { ok: false; error: "ScheduleLimitReached" };
 
 interface CounterEntry {
   productId: string;

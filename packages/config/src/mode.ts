@@ -12,7 +12,9 @@
 //                fetch via HTTPS IPFS gateway. No smoldot.
 
 export type Backend =
-  "smoldot-direct" | "smoldot-shared-worker" | "rpc-gateway";
+  | "smoldot-direct"
+  | "smoldot-shared-worker"
+  | "rpc-gateway";
 
 export interface CacheSettings {
   /** When true, skip CID cache reads. Always resolve from chain/RPC. */

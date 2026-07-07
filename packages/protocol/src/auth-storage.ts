@@ -11,7 +11,9 @@ export type SharedAuthRequestMethod =
   | "authStorageClear";
 
 export type SharedModeRequestMethod =
-  "modeStorageRead" | "modeStorageWrite" | "modeStorageClear";
+  | "modeStorageRead"
+  | "modeStorageWrite"
+  | "modeStorageClear";
 
 export const SHARED_AUTH_SESSION_KEY = "SsoSessionsV3";
 

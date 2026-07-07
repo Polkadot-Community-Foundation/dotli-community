@@ -116,7 +116,8 @@ async function readRawEntry(
     req.onsuccess = () => {
       resolve(
         req.result as
-          { label: string; cid: string; timestamp: number } | undefined,
+          | { label: string; cid: string; timestamp: number }
+          | undefined,
       );
     };
     req.onerror = () => {

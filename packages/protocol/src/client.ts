@@ -566,7 +566,8 @@ export async function resolveDotNameRemote(
   onStatus?: (message: string) => void,
 ): Promise<string | null> {
   return (await postRequest("resolveDotName", { label }, onStatus)) as
-    string | null;
+    | string
+    | null;
 }
 
 export async function resolveOwnerRemote(
@@ -609,7 +610,8 @@ export async function readSharedAuthStorage(
   key: string,
 ): Promise<string | null> {
   return (await postRequest("authStorageRead", { siteId, key })) as
-    string | null;
+    | string
+    | null;
 }
 
 export async function writeSharedAuthStorage(
@@ -638,7 +640,8 @@ export async function readSharedModeStorage(
   key: string,
 ): Promise<string | null> {
   return (await postRequest("modeStorageRead", { siteId, key })) as
-    string | null;
+    | string
+    | null;
 }
 
 export async function writeSharedModeStorage(

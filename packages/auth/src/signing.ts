@@ -50,7 +50,8 @@ export interface ContainerSignPayloadRequest {
 export interface ContainerSignRawRequest {
   account: [string, number];
   payload:
-    { tag: "Bytes"; value: Uint8Array } | { tag: "Payload"; value: string };
+    | { tag: "Bytes"; value: Uint8Array }
+    | { tag: "Payload"; value: string };
 }
 
 export interface ContainerCreateTransactionPayload {
