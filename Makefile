@@ -20,6 +20,7 @@ REMOTE_BUILD_PATH := /tmp/dotli-build
 # required by the app (packages/config/src/network.ts throws without it). CI
 # passes the equivalent via the GitHub Environment `NETWORKS` var.
 VITE_NETWORKS_summit := summit
+VITE_NETWORKS_paseo-next := paseo-next
 
 # NOTE: summit serves dot.li — the same domain as the legacy `polkadot` env.
 # This is deliberate (dot.li is being cut over to Summit): the two envs target
@@ -36,6 +37,7 @@ SITE_dev-test      := testnet.li
 SITE_westend       := westend.li
 SITE_dev-westend   := westendli.dev
 SITE_summit        := dot.li
+SITE_paseo-next    := dot.li
 
 # env tag → remote (only polkadot is prod; the rest share the staging box,
 # except summit which runs on its own dedicated public box)
@@ -47,6 +49,7 @@ REMOTE_FOR_dev-test      := $(REMOTE_STG)
 REMOTE_FOR_dev-westend   := $(REMOTE_STG)
 REMOTE_FOR_westend       := $(REMOTE_STG)
 REMOTE_FOR_summit        := $(REMOTE_SUMMIT)
+REMOTE_FOR_paseo-next    := $(REMOTE_SUMMIT)
 
 # env tag → web root on the remote (rendered into the `root` directive)
 DEPLOY_PATH_polkadot      := /var/www/dotli
@@ -57,6 +60,7 @@ DEPLOY_PATH_dev-test      := /var/www/testnetli
 DEPLOY_PATH_westend       := /var/www/westendli
 DEPLOY_PATH_dev-westend   := /var/www/westendlidev
 DEPLOY_PATH_summit        := /var/www/summitli
+DEPLOY_PATH_paseo-next    := /var/www/summitli
 
 # One cert per env covering <base>, *.<base>, and *.app.<base>. The cert
 # lands at /etc/letsencrypt/live/<base>/, matching the ssl_certificate paths
@@ -69,8 +73,9 @@ CERT_DOMAINS_dev-test     := testnet.li *.testnet.li *.app.testnet.li
 CERT_DOMAINS_westend      := westend.li *.westend.li *.app.westend.li
 CERT_DOMAINS_dev-westend  := westendli.dev *.westendli.dev *.app.westendli.dev
 CERT_DOMAINS_summit       := dot.li *.dot.li *.app.dot.li
+CERT_DOMAINS_paseo-next   := dot.li *.dot.li *.app.dot.li
 
-VALID_ENVS := polkadot dev-polkadot paseo dev-paseo dev-test westend dev-westend summit
+VALID_ENVS := polkadot dev-polkadot paseo dev-paseo dev-test westend dev-westend summit paseo-next
 
 # Production domains (env tags) that get nginx rate-limiting in the rendered
 # config; every other env renders with rate-limiting commented out.
