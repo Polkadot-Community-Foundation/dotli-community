@@ -932,16 +932,15 @@ function renderModePopover(): void {
   columns.appendChild(rightCol);
 
   appendSectionHeader(leftCol, "Network");
-  // Only offer networks this deployment was built for (VITE_NETWORKS); the
-  // Summit deploy bakes `summit` alone, so the picker shows Summit only.
-  const enabledNetworks = new Set<Network>(getEnabledNetworks());
-  const networkChoices: [Network, string, string][] = (
-    [
-      ["summit", "Summit", "Web3 Summit network"],
-      ["paseo-next-v2", "Paseo Next V2", "Upgraded Paseo Next system chains"],
-      ["previewnet", "Previewnet", "Product Preview Network"],
-    ] as [Network, string, string][]
-  ).filter(([value]) => enabledNetworks.has(value));
+  // Only offer networks this deployment was built for (VITE_NETWORKS).
+  // Labels and descriptions come from the network catalog, so the picker
+  // never goes stale when a deployment retargets to a new network.
+  const networkChoices: [Network, string, string][] = getEnabledNetworks().map(
+    (value) => {
+      const cfg = NETWORK_NAME_TO_SERVICES_CONFIG[value];
+      return [value, cfg.label, cfg.description];
+    },
+  );
   const networkGroup = document.createElement("div");
   leftCol.appendChild(networkGroup);
   const rerenderNetwork = (): void => {
