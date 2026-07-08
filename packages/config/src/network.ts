@@ -6,6 +6,7 @@
 export const NetworkName = {
   PASEO_NEXT_V1: "paseo-next-v1",
   PASEO_NEXT_V2: "paseo-next-v2",
+  PASEO_NEXT: "paseo-next",
   PREVIEW_NET: "previewnet",
   SUMMIT: "summit",
 } as const;
@@ -124,6 +125,41 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
       storageSlots: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
     },
   },
+  [NetworkName.PASEO_NEXT]: {
+    label: "Paseo Next (PCF)",
+    description: "PCF-owned suite on the Paseo Next system chains",
+    relay: {
+      genesis:
+        "0x77afd6190f1554ad45fd0d31aee62aacc33c6db0ea801129acb813f913e0764f",
+      rpcs: [
+        "wss://paseo-rpc.n.dwellir.com",
+        "wss://paseo.dotters.network",
+        "wss://paseo.ibp.network",
+        "wss://paseo.rpc.amforc.com",
+      ],
+    },
+    assethub: {
+      genesis:
+        "0xbf0488dbe9daa1de1c08c5f743e26fdc2a4ecd74cf87dd1b4b1eeb99ae4ef19f",
+      rpcs: ["wss://paseo-asset-hub-next-rpc.polkadot.io"],
+    },
+    bulletin: {
+      genesis:
+        "0x8cfe6717dc4becfda2e13c488a1e2061ff2dfee96e7d031157f72d36716c0a22",
+      rpcs: ["wss://paseo-bulletin-next-rpc.polkadot.io"],
+      ipfsGateways: ["https://paseo-bulletin-next-ipfs.polkadot.io"],
+    },
+    people: {
+      genesis:
+        "0xc5af1826b31493f08b7e2a823842f98575b806a784126f28da9608c68665afa5",
+      rpcs: ["wss://paseo-people-next-system-rpc.polkadot.io"],
+    },
+    dotns: {
+      DOTNS_REGISTRY: "0xFb7AB7E142ED0248D77198CA8722D67C1930D783",
+      DOTNS_CONTENT_RESOLVER: "0xf110e5799c3f0adb8ED885C02c45Ecfe7fD86226",
+      storageSlots: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
+    },
+  },
   [NetworkName.PREVIEW_NET]: {
     label: "Previewnet",
     description: "Product Preview Network",
@@ -194,6 +230,7 @@ export const NETWORK_KEY = "dotli:network";
 const VALID_NETWORKS: ReadonlySet<string> = new Set<Network>([
   NetworkName.PASEO_NEXT_V1,
   NetworkName.PASEO_NEXT_V2,
+  NetworkName.PASEO_NEXT,
   NetworkName.PREVIEW_NET,
   NetworkName.SUMMIT,
 ]);
