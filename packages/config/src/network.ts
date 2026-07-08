@@ -275,7 +275,10 @@ export function getEnabledNetworks(): Network[] {
 }
 
 export function defaultNetwork(): Network {
-  return NetworkName.SUMMIT;
+  // First entry of VITE_NETWORKS — deployment-agnostic (a hardcoded network
+  // breaks any deployment that doesn't enable it: active falls outside the
+  // enabled set and the network selector renders empty).
+  return getEnabledNetworks()[0];
 }
 let networkOverride: Network | null = null;
 
