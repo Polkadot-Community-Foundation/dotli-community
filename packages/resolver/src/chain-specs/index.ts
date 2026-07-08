@@ -66,6 +66,7 @@ function relayUrlFor(network: Network): string {
   switch (network) {
     case "paseo-next-v1":
     case "paseo-next-v2":
+    case "paseo-next":
       return paseoUrl;
     case "previewnet":
       return previewnetRelayUrl;
@@ -79,6 +80,7 @@ function assetHubUrlFor(network: Network): string {
     case "paseo-next-v1":
       return assetHubPaseoV1Url;
     case "paseo-next-v2":
+    case "paseo-next":
       return assetHubPaseoV2Url;
     case "previewnet":
       return assetHubPreviewnetUrl;
@@ -92,6 +94,7 @@ function bulletinUrlFor(network: Network): string {
     case "paseo-next-v1":
       return bulletinPaseoV1Url;
     case "paseo-next-v2":
+    case "paseo-next":
       return bulletinPaseoV2Url;
     case "previewnet":
       return bulletinPreviewnetUrl;
@@ -105,6 +108,7 @@ function peopleUrlFor(network: Network): string {
     case "paseo-next-v1":
       return peoplePaseoV1Url;
     case "paseo-next-v2":
+    case "paseo-next":
       return peoplePaseoV2Url;
     case "previewnet":
       return peoplePreviewnetUrl;
