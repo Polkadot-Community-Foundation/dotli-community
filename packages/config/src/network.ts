@@ -225,7 +225,7 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
     },
   },
   [NetworkName.DEVNET]: {
-    label: "Devnet",
+    label: "Polkadot Products Devnet",
     description: "Public products testnet (dev-dot.li gateway)",
     relay: {
       genesis:
