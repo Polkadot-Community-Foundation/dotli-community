@@ -72,6 +72,8 @@ function relayUrlFor(network: Network): string {
       return previewnetRelayUrl;
     case "summit":
       return summitRelayUrl;
+    case "devnet":
+      throw new Error("devnet is RPC-gateway only; no chain spec");
   }
 }
 
@@ -86,6 +88,8 @@ function assetHubUrlFor(network: Network): string {
       return assetHubPreviewnetUrl;
     case "summit":
       return assetHubSummitUrl;
+    case "devnet":
+      throw new Error("devnet is RPC-gateway only; no chain spec");
   }
 }
 
@@ -100,6 +104,8 @@ function bulletinUrlFor(network: Network): string {
       return bulletinPreviewnetUrl;
     case "summit":
       return bulletinSummitUrl;
+    case "devnet":
+      throw new Error("devnet is RPC-gateway only; no chain spec");
   }
 }
 
@@ -114,6 +120,8 @@ function peopleUrlFor(network: Network): string {
       return peoplePreviewnetUrl;
     case "summit":
       return peopleSummitUrl;
+    case "devnet":
+      throw new Error("devnet is RPC-gateway only; no chain spec");
   }
 }
 
