@@ -248,7 +248,7 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
       genesis:
         "0xe101f0fa4627d29a257645e02be86d80378fea1a2bf8fa6a918d150ebc760a59",
       rpcs: ["wss://bulletin-paseo.tservices.es:8443"],
-      ipfsGateways: ["https://bullet.sik.rocks"],
+      ipfsGateways: ["https://devnet-ipfs.api.polkadotcommunity.foundation"],
     },
     people: {
       genesis:
