@@ -217,5 +217,15 @@ refresh_spec "summit-asset-hub.smol.json"          false "https://summit-asset-h
 refresh_spec "summit-bulletin.smol.json"           false "https://summit-bulletin-rpc.polkadot.io"
 refresh_spec "summit-people.smol.json"             false "https://summit-people-rpc.polkadot.io"
 
+# Devnet (standard public Paseo). The relay + Asset Hub 1000 reuse the public
+# `paseo.smol.json` / `paseo-asset-hub.smol.json` specs (same chains), so only
+# the People 1004 and Bulletin 1010 specs are devnet-specific. They do not
+# serve sync_state_genSyncSpec; refresh only keeps their genesis stateRootHash
+# current (bootNodes come from paseo-network/paseo-chain-specs — see
+# chain-specs/index.ts).
+refresh_spec "devnet-people.smol.json"             false "https://sys.turboflakes.io/people-paseo" \
+                                                         "https://people-paseo.rotko.net"
+refresh_spec "devnet-bulletin.smol.json"           false "https://bulletin-paseo.tservices.es:8443"
+
 echo "Done. Chain specs updated in packages/resolver/src/chain-specs/"
 echo "Rebuild the app to use the new specs."
