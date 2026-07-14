@@ -39,6 +39,8 @@ import summitRelayUrl from "./summit.smol.json?url";
 import assetHubSummitUrl from "./summit-asset-hub.smol.json?url";
 import bulletinSummitUrl from "./summit-bulletin.smol.json?url";
 import peopleSummitUrl from "./summit-people.smol.json?url";
+import bulletinDevnetUrl from "./devnet-bulletin.smol.json?url";
+import peopleDevnetUrl from "./devnet-people.smol.json?url";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { SS_RELAY_CHAIN } from "@dotli/config/config";
@@ -62,24 +64,33 @@ const allChainSpecs = import.meta.glob<string>("./*.json", {
 // crossed with the peer-id pool enumerated via `system_localPeerId` on the
 // load-balanced RPC — smoldot keeps whichever pairings handshake). Verified
 // by live smoldot sync of all three chains, 2026-06-12.
+//
+// devnet is the standard PUBLIC Paseo network (relay Paseo, Asset Hub 1000,
+// People 1004, Bulletin 1010). Its relay and Asset Hub are the same chains as
+// the public-Paseo `paseo` relay / `asset-hub-paseo` (1000) specs already
+// committed, so they reuse `paseoUrl` / `assetHubPaseoV1Url` (genesis state
+// roots probed identical). People and Bulletin diverge from the paseo-next
+// system chains, so they ship their own `devnet-*.smol.json` specs sourced
+// from the official `paseo-network/paseo-chain-specs` (stateRootHash + real
+// wss bootNodes), matching live probes 2026-07-14.
 function relayUrlFor(network: Network): string {
   switch (network) {
     case "paseo-next-v1":
     case "paseo-next-v2":
     case "paseo-next":
+    case "devnet":
       return paseoUrl;
     case "previewnet":
       return previewnetRelayUrl;
     case "summit":
       return summitRelayUrl;
-    case "devnet":
-      throw new Error("devnet is RPC-gateway only; no chain spec");
   }
 }
 
 function assetHubUrlFor(network: Network): string {
   switch (network) {
     case "paseo-next-v1":
+    case "devnet":
       return assetHubPaseoV1Url;
     case "paseo-next-v2":
     case "paseo-next":
@@ -88,8 +99,6 @@ function assetHubUrlFor(network: Network): string {
       return assetHubPreviewnetUrl;
     case "summit":
       return assetHubSummitUrl;
-    case "devnet":
-      throw new Error("devnet is RPC-gateway only; no chain spec");
   }
 }
 
@@ -105,7 +114,7 @@ function bulletinUrlFor(network: Network): string {
     case "summit":
       return bulletinSummitUrl;
     case "devnet":
-      throw new Error("devnet is RPC-gateway only; no chain spec");
+      return bulletinDevnetUrl;
   }
 }
 
@@ -121,7 +130,7 @@ function peopleUrlFor(network: Network): string {
     case "summit":
       return peopleSummitUrl;
     case "devnet":
-      throw new Error("devnet is RPC-gateway only; no chain spec");
+      return peopleDevnetUrl;
   }
 }
 

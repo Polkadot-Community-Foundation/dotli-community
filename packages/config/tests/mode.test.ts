@@ -192,8 +192,9 @@ describe("rpc-gateway-only networks", () => {
     });
   });
 
-  it("no current network is rpc-gateway-only (summit specs landed 2026-06-12)", () => {
+  it("no current network is rpc-gateway-only (summit + devnet specs landed)", () => {
     expect(isRpcGatewayOnly(NetworkName.SUMMIT)).toBe(false);
+    expect(isRpcGatewayOnly(NetworkName.DEVNET)).toBe(false);
     expect(isRpcGatewayOnly(NetworkName.PASEO_NEXT_V2)).toBe(false);
     expect(isRpcGatewayOnly(NetworkName.PREVIEW_NET)).toBe(false);
   });
