@@ -9,6 +9,7 @@ export const NetworkName = {
   PASEO_NEXT: "paseo-next",
   PREVIEW_NET: "previewnet",
   SUMMIT: "summit",
+  DEVNET: "devnet",
 } as const;
 
 export type NetworkName = (typeof NetworkName)[keyof typeof NetworkName];
@@ -223,6 +224,47 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
       storageSlots: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
     },
   },
+  [NetworkName.DEVNET]: {
+    label: "Devnet",
+    description: "Public products testnet (dev-dot.li gateway)",
+    relay: {
+      genesis:
+        "0x374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd",
+      rpcs: [
+        "wss://paseo-rpc.n.dwellir.com",
+        "wss://paseo.dotters.network",
+        "wss://paseo.ibp.network",
+      ],
+    },
+    assethub: {
+      genesis:
+        "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2",
+      rpcs: [
+        "wss://asset-hub-paseo-rpc.n.dwellir.com",
+        "wss://sys.turboflakes.io/asset-hub-paseo",
+      ],
+    },
+    bulletin: {
+      genesis:
+        "0xe101f0fa4627d29a257645e02be86d80378fea1a2bf8fa6a918d150ebc760a59",
+      rpcs: ["wss://bulletin-paseo.tservices.es:8443"],
+      ipfsGateways: ["https://bullet.sik.rocks"],
+    },
+    people: {
+      genesis:
+        "0xe6c30d6e148f250b887105237bcaa5cb9f16dd203bf7b5b9d4f1da7387cb86ec",
+      rpcs: [
+        "wss://people-paseo.rotko.net",
+        "wss://people-paseo.gatotech.network",
+        "wss://rpc.interweb-it.com/people-paseo",
+      ],
+    },
+    dotns: {
+      DOTNS_REGISTRY: "0x527b08a640b527a3dae0C4BE04D7344E430B6E50",
+      DOTNS_CONTENT_RESOLVER: "0x326bdE29315199c814B1c58b431D84D16EA5cE41",
+      storageSlots: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
+    },
+  },
 };
 
 export const NETWORK_KEY = "dotli:network";
@@ -233,6 +275,7 @@ const VALID_NETWORKS: ReadonlySet<string> = new Set<Network>([
   NetworkName.PASEO_NEXT,
   NetworkName.PREVIEW_NET,
   NetworkName.SUMMIT,
+  NetworkName.DEVNET,
 ]);
 
 /**

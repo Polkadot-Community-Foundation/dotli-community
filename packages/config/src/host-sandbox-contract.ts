@@ -21,7 +21,7 @@
 //   Required:
 //     ?cid=<IPFS content id the host resolved from the dotns label>
 //     ?chainBackend=<"smoldot-direct" | "smoldot-shared-worker" | "rpc-gateway">
-//     ?network=<"paseo-next-v1" | "paseo-next-v2" | "paseo-next" | "previewnet" | "summit">
+//     ?network=<"paseo-next-v1" | "paseo-next-v2" | "paseo-next" | "previewnet" | "summit" | "devnet">
 //
 //   Optional:
 //     ?skipArchiveCache=<"0" | "1">
@@ -156,7 +156,7 @@ export function validateSandboxParams(
   if (!isValidNetwork(network)) {
     return {
       ok: false,
-      reason: `Unknown network "${network}". Expected "paseo-next-v1", "paseo-next-v2", "paseo-next", "previewnet", or "summit".`,
+      reason: `Unknown network "${network}". Expected "paseo-next-v1", "paseo-next-v2", "paseo-next", "previewnet", "summit", or "devnet".`,
     };
   }
 

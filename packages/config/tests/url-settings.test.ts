@@ -8,9 +8,11 @@ import {
 } from "@dotli/config/url-settings";
 import { NetworkName, setNetworkOverride } from "@dotli/config/network";
 
-// The default network (Summit) is rpc-gateway-only, which would skew the
-// "matches detected default backend" assertions below. Pin a network with
-// published parachain specs so the smoldot defaults apply.
+// Some networks are rpc-gateway-only (no published parachain specs), which
+// would skew the "matches detected default backend" assertions below. Pin a
+// network with published parachain specs so the smoldot defaults apply. This
+// also matches the default network under the test harness (the first entry of
+// VITE_NETWORKS in vitest.config.ts is paseo-next-v2).
 beforeAll(() => {
   setNetworkOverride(NetworkName.PASEO_NEXT_V2);
 });
@@ -154,7 +156,9 @@ describe("writeSettingsToSearch", () => {
     );
     const changed = writeSettingsToSearch(
       {
-        network: NetworkName.SUMMIT,
+        // The default network under the test harness (first VITE_NETWORKS
+        // entry). A default-valued network axis must be dropped from the URL.
+        network: NetworkName.PASEO_NEXT_V2,
         chainBackend: "smoldot-direct",
         cache: {
           skipCidCache: false,

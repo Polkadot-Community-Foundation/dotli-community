@@ -30,7 +30,7 @@ export interface CacheSettings {
   skipWorkerCache: boolean;
 }
 
-import { getNetwork, type Network } from "./network";
+import { getNetwork, NetworkName, type Network } from "./network";
 
 export const BACKEND_KEY = "dotli:chain-backend";
 export const CACHE_KEY = "dotli:cache-settings";
@@ -43,12 +43,14 @@ export function isSharedWorkerAvailable(): boolean {
  * Networks whose parachain chain specs are missing from `chain-specs/`, so
  * smoldot cannot sync them. On these networks the only working backend is
  * `rpc-gateway`; `getBackend()` overrides (without clobbering) any stored
- * smoldot preference, and the UI disables the smoldot choices. Currently
- * empty — Summit left the set 2026-06-12 when its constructed parachain
- * specs landed (see `chain-specs/index.ts`). Add a network here if it ships
- * before its specs do.
+ * smoldot preference, and the UI disables the smoldot choices. Summit left
+ * the set when its constructed parachain specs landed (see
+ * `chain-specs/index.ts`); devnet is RPC-gateway only and ships no specs.
+ * Add a network here if it ships before its specs do.
  */
-const RPC_GATEWAY_ONLY_NETWORKS: ReadonlySet<Network> = new Set<Network>([]);
+const RPC_GATEWAY_ONLY_NETWORKS: ReadonlySet<Network> = new Set<Network>([
+  NetworkName.DEVNET,
+]);
 
 export function isRpcGatewayOnly(network: Network = getNetwork()): boolean {
   return RPC_GATEWAY_ONLY_NETWORKS.has(network);
