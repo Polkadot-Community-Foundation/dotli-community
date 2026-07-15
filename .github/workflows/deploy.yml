@@ -38,7 +38,11 @@ jobs:
               echo "ref=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
               ;;
             push)
-              echo 'environments=["paseoli.dev"]' >> "$GITHUB_OUTPUT"
+              # Push to main deploys the devnet gateway (dev-dot.li). Requires a
+              # `dev-dot.li` GitHub Environment with the deploy secrets
+              # (DEPLOY_SSH_KEY / DEPLOY_HOST / DEPLOY_USER / DEPLOY_PATH) and the
+              # `NETWORKS=devnet` variable.
+              echo 'environments=["dev-dot.li"]' >> "$GITHUB_OUTPUT"
               echo "ref=" >> "$GITHUB_OUTPUT"
               ;;
             pull_request)
