@@ -253,8 +253,10 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
     people: {
       genesis:
         "0xe6c30d6e148f250b887105237bcaa5cb9f16dd203bf7b5b9d4f1da7387cb86ec",
+      // Statement store (device sync / chat) requires a full node exposing the
+      // `statement_*` RPC. rotko does not yet; keep only the statement-enabled
+      // nodes so pairing/sync/chat work. Re-add rotko once it exposes statement_*.
       rpcs: [
-        "wss://people-paseo.rotko.net",
         "wss://people-paseo.gatotech.network",
         "wss://rpc.interweb-it.com/people-paseo",
       ],
