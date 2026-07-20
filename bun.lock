@@ -15,7 +15,7 @@
     },
     "apps/host": {
       "name": "@dotli/host",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -47,7 +47,7 @@
     },
     "apps/protocol": {
       "name": "@dotli/protocol-app",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -71,7 +71,7 @@
     },
     "apps/sandbox": {
       "name": "@dotli/sandbox",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/content": "workspace:*",
@@ -96,7 +96,7 @@
     },
     "packages/auth": {
       "name": "@dotli/auth",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -127,7 +127,7 @@
     },
     "packages/config": {
       "name": "@dotli/config",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "devDependencies": {
         "@dotli/eslint-config": "workspace:*",
         "@dotli/typescript-config": "workspace:*",
@@ -140,7 +140,7 @@
     },
     "packages/content": {
       "name": "@dotli/content",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -164,7 +164,7 @@
     },
     "packages/eslint-config": {
       "name": "@dotli/eslint-config",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "devDependencies": {
         "@eslint/js": "^10.0.1",
         "eslint": "^10.5.0",
@@ -176,7 +176,7 @@
     },
     "packages/metrics": {
       "name": "@dotli/metrics",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/shared": "workspace:*",
       },
@@ -198,7 +198,7 @@
     },
     "packages/protocol": {
       "name": "@dotli/protocol",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -217,7 +217,7 @@
     },
     "packages/resolver": {
       "name": "@dotli/resolver",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -249,7 +249,7 @@
     },
     "packages/sandbox-checker": {
       "name": "@dotli/sandbox-checker",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "devDependencies": {
         "@dotli/eslint-config": "workspace:*",
         "@dotli/typescript-config": "workspace:*",
@@ -260,7 +260,7 @@
     },
     "packages/shared": {
       "name": "@dotli/shared",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@noble/hashes": "^2.2.0",
@@ -277,7 +277,7 @@
     },
     "packages/storage": {
       "name": "@dotli/storage",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -296,7 +296,7 @@
     },
     "packages/truapi-debug": {
       "name": "@dotli/truapi-debug",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/shared": "workspace:*",
         "@novasamatech/host-api": "0.8.10",
@@ -314,11 +314,11 @@
     },
     "packages/typescript-config": {
       "name": "@dotli/typescript-config",
-      "version": "0.6.7",
+      "version": "0.6.8",
     },
     "packages/ui": {
       "name": "@dotli/ui",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/content": "workspace:*",

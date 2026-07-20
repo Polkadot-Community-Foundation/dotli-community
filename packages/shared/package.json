@@ -2,7 +2,7 @@
   "name": "@dotli/shared",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "type": "module",
   "exports": {
     "./*": "./src/*"
