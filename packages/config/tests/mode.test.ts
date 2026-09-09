@@ -85,10 +85,10 @@ describe("isSharedWorkerAvailable", () => {
 });
 
 describe("defaultBackend", () => {
-  it("returns smoldot-shared-worker when SharedWorker is available", () => {
+  it("returns smoldot-direct even when SharedWorker is available", () => {
     const restore = installSharedWorker();
     try {
-      expect(defaultBackend()).toBe("smoldot-shared-worker");
+      expect(defaultBackend()).toBe("smoldot-direct");
     } finally {
       restore();
     }
@@ -120,11 +120,11 @@ describe("getBackend", () => {
     });
   });
 
-  it("seeds smoldot-shared-worker on first visit when supported", () => {
+  it("seeds smoldot-direct on first visit even when SharedWorker is supported", () => {
     const restore = installSharedWorker();
     try {
-      expect(getBackend()).toBe("smoldot-shared-worker");
-      expect(storage.dump()[BACKEND_KEY]).toBe("smoldot-shared-worker");
+      expect(getBackend()).toBe("smoldot-direct");
+      expect(storage.dump()[BACKEND_KEY]).toBe("smoldot-direct");
     } finally {
       restore();
     }
@@ -202,7 +202,7 @@ describe("rpc-gateway-only networks", () => {
   it("summit gets the smoldot default like any spec-capable network", () => {
     const restore = installSharedWorker();
     try {
-      expect(defaultBackend()).toBe("smoldot-shared-worker");
+      expect(defaultBackend()).toBe("smoldot-direct");
     } finally {
       restore();
     }

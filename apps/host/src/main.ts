@@ -25,7 +25,8 @@ import {
   captureException,
 } from "@dotli/metrics/sentry";
 import {
-  showStatus,
+  trackStatus,
+  setLoadingDomain,
   showError,
   showNoContentError,
   showLanding,
@@ -33,10 +34,11 @@ import {
   advancePhase,
   stopStatusTick,
   listenForSandboxStatus,
-  showGatewayEscape,
 } from "@dotli/ui/ui";
 import type { LoadingPhase } from "@dotli/ui/ui";
 import { initTopBar, wipeOriginState } from "@dotli/ui/topbar";
+import { armTopbarAutoHide, pinTopbarVisible } from "@dotli/ui/topbar-autohide";
+import { createBlockingModalCoordinator } from "@dotli/ui/blocking-modal-queue";
 import {
   bitswapGet,
   listenForSandboxBitswap,
@@ -55,19 +57,25 @@ import {
   setCachedCid,
   recordRevalidateOutcome,
 } from "@dotli/storage/cid-cache";
+import { recordRecentLabel } from "@dotli/ui/recent-labels";
 import { dur, elapsed } from "@dotli/shared/perf";
 import {
   setActiveAppManifest,
   setActiveRootManifest,
 } from "@dotli/shared/active-manifest";
+import {
+  primeChatCapability,
+  setChatCapability,
+} from "@dotli/shared/chat-capability";
 import type {
   ExecutableManifest,
   ManifestResult,
   RootManifest,
 } from "@dotli/resolver/manifest";
-import { BASE_DOMAIN, DEBUG, SITE_ID } from "@dotli/config/config";
+import { BASE_DOMAIN, DEBUG, SITE_ID, isLocalhost } from "@dotli/config/config";
 import { log } from "@dotli/shared/log";
 import { serializeError } from "@dotli/shared/errors";
+import { dotNsUrl } from "@dotli/shared/dotns-url";
 import { escapeHtml, isValidDotLabel } from "@dotli/shared/html";
 import { isMobileDevice } from "@dotli/shared/device";
 import { showNotification } from "@dotli/ui/notification";
@@ -83,7 +91,13 @@ import {
   setCacheSettings,
   type Backend,
 } from "@dotli/config/mode";
-import { NETWORK_KEY, getNetwork, setNetwork } from "@dotli/config/network";
+import {
+  NETWORK_KEY,
+  getActiveTldSuffix,
+  getNetwork,
+  setNetwork,
+  withActiveTld,
+} from "@dotli/config/network";
 import {
   parseSettingsFromSearch,
   writeSettingsToSearch,
@@ -164,6 +178,22 @@ if (m.enabled && typeof PerformanceObserver !== "undefined") {
 }
 
 const T0 = performance.now();
+const DOTLI_PRODUCT_ID_PARAM = "dotliProductId";
+const blockingModalCoordinator = createBlockingModalCoordinator();
+
+function parseLocalProductIdOverride(): string | undefined {
+  if (!isLocalhost) {
+    return undefined;
+  }
+  const value = new URLSearchParams(window.location.search).get(
+    DOTLI_PRODUCT_ID_PARAM,
+  );
+  if (value === null || value.trim() === "") {
+    return undefined;
+  }
+  const productId = value.trim();
+  return dotNsUrl.isProductIdentifier(productId) ? productId : undefined;
+}
 
 /**
  * Parse a localhost proxy URL from the path.
@@ -171,9 +201,9 @@ const T0 = performance.now();
  * Debug-build-only affordance: proxying a visitor's localhost services into the
  * trusted host origin is dangerous on a production deploy, so it is gated behind
  * the build-time `VITE_APP_DEBUG` flag (`DEBUG`). Production builds (flag unset)
- * always return null; only debug builds — local `bun run preview:debug` and the
- * `*.dev` staging deploys — honour a `/localhost:<port>` path. The flag is a
- * compile-time constant, so production never even ships this code path.
+ * always return null. Only debug builds honour a `/localhost:<port>` path,
+ * meaning local `bun run preview:debug` and the `*.dev` staging deploys. The
+ * flag is a compile-time constant, so production never ships this code path.
  *
  * Examples (only in debug builds):
  *   "/localhost:5000"          yields "http://localhost:5000"
@@ -193,8 +223,8 @@ function parseLocalhostUrl(): string | null {
   const host = match[1];
   const rest = match[2] || "";
   // Strip every reserved host-URL param so they do not leak into the
-  // proxied product. Covers the five settings axes, the sandbox contract's
-  // host-only signals (`fullReset`, `v`), and the Playwright auth hook.
+  // proxied product. Covers the settings axes and the sandbox contract's
+  // host-only signals (`fullReset`, `v`).
   const productSearch = new URLSearchParams(window.location.search);
   for (const k of RESERVED_HOST_PARAMS) {
     productSearch.delete(k);
@@ -211,7 +241,7 @@ const RESERVED_HOST_PARAMS = [
   "skipWorkerCache",
   "fullReset",
   "v",
-  "initAuthSubscribe",
+  DOTLI_PRODUCT_ID_PARAM,
 ] as const;
 
 /**
@@ -257,103 +287,18 @@ function parseDotLabel(): string | null {
  *   "verified": green, P2P mode, data independently verified by light client.
  *   "validating": yellow, gateway mode, data from trusted source.
  */
-let topbarHideTimer: ReturnType<typeof setTimeout> | null = null;
-let topbarHoverBound = false;
 let shieldVerified = false;
-
-function isLoggedIn(): boolean {
-  return document.querySelector(".user-badge") !== null;
-}
-
-function setTopbarVisible(visible: boolean): void {
-  const topbar = document.getElementById("topbar");
-  if (!topbar) {
-    return;
-  }
-  const iframe = document.querySelector("iframe");
-  topbar.style.transform = visible ? "translateY(0)" : "translateY(-100%)";
-  if (iframe) {
-    iframe.style.top = visible ? "56px" : "0";
-    iframe.style.height = visible ? "calc(100vh - 56px)" : "100vh";
-  }
-  window.dispatchEvent(
-    new CustomEvent<boolean>("topbar:visibility", { detail: visible }),
-  );
-}
-
-function scheduleTopbarHide(): void {
-  if (topbarHideTimer !== null) {
-    clearTimeout(topbarHideTimer);
-  }
-  if (!isLoggedIn()) {
-    return;
-  }
-  topbarHideTimer = setTimeout(() => {
-    setTopbarVisible(false);
-  }, 5000);
-}
-
-function setupTopbarAutoHide(): void {
-  // No hover on touch devices to bring the bar back, so keep it pinned.
-  if (isMobileDevice()) {
-    return;
-  }
-  const topbar = document.getElementById("topbar");
-  if (!topbar) {
-    return;
-  }
-
-  topbar.style.transition = "transform 0.3s ease";
-  const iframe = document.querySelector("iframe");
-  if (iframe) {
-    iframe.style.transition = "top 0.3s ease, height 0.3s ease";
-  }
-
-  scheduleTopbarHide();
-
-  if (!topbarHoverBound) {
-    topbarHoverBound = true;
-
-    // Invisible trigger zone at the very top. Catches hover even over the iframe.
-    const trigger = document.createElement("div");
-    trigger.style.cssText =
-      "position:fixed;top:0;left:0;right:0;height:6px;z-index:999;";
-    document.body.appendChild(trigger);
-
-    trigger.addEventListener("mouseenter", () => {
-      if (topbarHideTimer !== null) {
-        clearTimeout(topbarHideTimer);
-        topbarHideTimer = null;
-      }
-      setTopbarVisible(true);
-    });
-    topbar.addEventListener("mouseenter", () => {
-      if (topbarHideTimer !== null) {
-        clearTimeout(topbarHideTimer);
-        topbarHideTimer = null;
-      }
-      setTopbarVisible(true);
-    });
-    topbar.addEventListener("mouseleave", () => {
-      scheduleTopbarHide();
-    });
-  }
-}
 
 // Wire auth-state changes to topbar auto-hide. Login starts the hide timer
 // once the shield is verified, logout pins the topbar visible.
 function bindTopbarAutoHide(): void {
   window.addEventListener("dotli:authenticated", () => {
     if (shieldVerified) {
-      setupTopbarAutoHide();
+      armTopbarAutoHide();
     }
   });
   window.addEventListener("dotli:logged-out", () => {
-    if (topbarHideTimer !== null) {
-      clearTimeout(topbarHideTimer);
-      topbarHideTimer = null;
-    }
-    setTopbarVisible(true);
+    pinTopbarVisible();
   });
 }
 
@@ -371,7 +316,7 @@ function setShieldState(state: "validating" | "verified"): void {
   }
 
   shieldVerified = true;
-  setupTopbarAutoHide();
+  armTopbarAutoHide();
 }
 
 /**
@@ -419,7 +364,7 @@ async function applyProductBranding(
       // the loaded app, and is logged so it stays observable in diagnostics.
     } catch (err: unknown) {
       log.warn(
-        `[dot.li manifest] icon fetch failed for ${label}.dot: ${err instanceof Error ? err.message : String(err)}`,
+        `[dot.li manifest] icon fetch failed for ${withActiveTld(label)}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -486,7 +431,7 @@ function resolveTruapiDebugMode(): { enabled: boolean; explicit: boolean } {
       return { enabled: false, explicit: true };
     }
     return { enabled: DEBUG, explicit: false };
-    // eslint-disable-next-line no-restricted-syntax -- URL/sessionStorage may be unavailable in exotic environments (Safari private mode); fall through to the build-time default.
+    // eslint-disable-next-line no-restricted-syntax -- URL or sessionStorage may be unavailable in exotic environments such as Safari private mode, so fall through to the build-time default.
   } catch {
     /* ignore */
   }
@@ -624,7 +569,7 @@ function listenForSandboxDebugEvents(emit: EmitFn): void {
     }
     try {
       emit(payload);
-      // eslint-disable-next-line no-restricted-syntax -- best-effort forwarder; a malformed event from the sandbox must never break the host.
+      // eslint-disable-next-line no-restricted-syntax -- best-effort forwarder. A malformed event from the sandbox must never break the host.
     } catch {
       /* ignore: a malformed event shouldn't kill the host */
     }
@@ -677,71 +622,6 @@ async function runBackgroundRevalidate(
     log.warn(`[dot.li cid-cache] revalidate failed for ${label}:`, err);
     captureException(err, { kind: "cid_cache_revalidate_error" });
   }
-}
-
-interface AuthSubscribeApi {
-  backend: string;
-  subscribeAll: (
-    topicsHex: string[],
-    timeoutMs: number,
-  ) => Promise<{ count: number; isComplete: boolean }>;
-  subscribeAny: (
-    topicsHex: string[],
-    timeoutMs: number,
-  ) => Promise<{ count: number; isComplete: boolean }>;
-}
-
-function hexToBytes(s: string): Uint8Array {
-  const h = s.startsWith("0x") ? s.slice(2) : s;
-  const bytes = new Uint8Array(h.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
-}
-
-async function runAuthSubscribeHook(chainBackend: string): Promise<void> {
-  log.warn("[dot.li auth-subscribe] init auth + statement store");
-  const authMod = await import("@dotli/auth/auth");
-  await authMod.initAuth();
-  const store = await authMod.onStatementStoreReady();
-
-  type Filter = { matchAll: Uint8Array[] } | { matchAny: Uint8Array[] };
-
-  function subscribeFor(
-    filter: Filter,
-    timeoutMs: number,
-  ): Promise<{ count: number; isComplete: boolean }> {
-    return new Promise((resolve) => {
-      let count = 0;
-      let lastIsComplete = false;
-      const unsub = store.subscribeStatements(filter, (page) => {
-        count += page.statements.length;
-        lastIsComplete = page.isComplete;
-        return undefined;
-      });
-      setTimeout(() => {
-        unsub();
-        resolve({ count, isComplete: lastIsComplete });
-      }, timeoutMs);
-    });
-  }
-
-  const api: AuthSubscribeApi = {
-    backend: chainBackend,
-    subscribeAll: (topicsHex, timeoutMs) =>
-      subscribeFor({ matchAll: topicsHex.map(hexToBytes) }, timeoutMs),
-    subscribeAny: (topicsHex, timeoutMs) =>
-      subscribeFor({ matchAny: topicsHex.map(hexToBytes) }, timeoutMs),
-  };
-
-  (
-    window as unknown as { __dotliAuthSubscribe: AuthSubscribeApi }
-  ).__dotliAuthSubscribe = api;
-  log.warn(
-    `[dot.li auth-subscribe] window.__dotliAuthSubscribe ready (backend=${chainBackend})`,
-  );
-  document.title = "dotli-auth-subscribe-ready";
 }
 
 /** Best-effort `localStorage.getItem`, returning null on Safari-private-mode failure. */
@@ -873,10 +753,10 @@ async function applyUrlSettings(): Promise<void> {
   setNetwork(next.network);
   setBackend(next.chain);
   setCacheSettings(next.cache);
-  if (theme === "light" || theme === "dark") {
+  if (theme === "light" || theme === "dark" || theme === "system") {
     try {
       localStorage.setItem("dotli-theme", theme);
-      // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable post-wipe in Safari private mode; theme restore is best-effort.
+      // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable post-wipe in Safari private mode, so theme restore is best-effort.
     } catch {
       /* localStorage unavailable */
     }
@@ -884,7 +764,7 @@ async function applyUrlSettings(): Promise<void> {
   try {
     sessionStorage.setItem("dotli:pending-reset:protocol", "1");
     sessionStorage.setItem("dotli:pending-reset:sandbox", "1");
-    // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); cross-origin purges are best-effort, reload below is unconditional.
+    // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable in Safari private mode, so cross-origin purges are best-effort while the reload below is unconditional.
   } catch {
     /* sessionStorage unavailable */
   }
@@ -1020,7 +900,7 @@ async function main(): Promise<void> {
         pendingProtocolReset = true;
         sessionStorage.removeItem("dotli:pending-reset:protocol");
       }
-      // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable (Safari private mode); reset flag falls back to false which is the safe default.
+      // eslint-disable-next-line no-restricted-syntax -- sessionStorage may be unavailable in Safari private mode, so the reset flag falls back to false which is the safe default.
     } catch {
       /* sessionStorage unavailable: skip pending-reset pick up */
     }
@@ -1038,23 +918,13 @@ async function main(): Promise<void> {
     });
   }
 
-  // Auth-subscribe hook: when `?initAuthSubscribe=1` is in the URL,
-  // initialize the auth module and statement-store, expose
-  // `window.__dotliAuthSubscribe` for the Playwright spec, then bail out
-  // before the normal landing/.dot flow runs. The protocol iframe
-  // pre-warm above is what makes `createRemoteChainProvider(...)` work
-  // for the smoldot statement-store path, so this branch sits AFTER the
-  // pre-warm.
-  if (
-    new URLSearchParams(window.location.search).get("initAuthSubscribe") === "1"
-  ) {
-    await runAuthSubscribeHook(chainBackend);
-    return;
-  }
+  const bridgeModulePromise = import("@dotli/ui/bridge");
+  const bridgeModule = await bridgeModulePromise;
+  bridgeModule.initBridgeEventListeners(blockingModalCoordinator);
 
-  // Initialize top bar UI (auth is lazy-loaded inside topbar when needed)
+  // Initialize top bar UI.
   const t0 = performance.now();
-  initTopBar();
+  initTopBar(blockingModalCoordinator);
   log.warn(`[dot.li perf] initTopBar() done (${dur(t0)})`);
   emitDotliDebugEvent({
     layer: "boot",
@@ -1065,6 +935,7 @@ async function main(): Promise<void> {
   });
 
   const label = parseDotLabel();
+  const productIdOverride = parseLocalProductIdOverride();
 
   if (label === null && previewTargetUrl !== null) {
     const host = new URL(previewTargetUrl).host;
@@ -1077,14 +948,21 @@ async function main(): Promise<void> {
       urlBar.innerHTML = `<div class="topbar-url-pill localhost-pill" id="url-pill"><svg class="localhost-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="topbar-url-text"><span class="dot-domain">${escapeHtml(host)}</span></span></div>`;
     }
 
-    const { renderIframe } = await import("@dotli/ui/bridge");
-    await renderIframe(previewTargetUrl, host);
-    history.replaceState(
-      null,
-      "",
-      `/__preview?url=${encodeURIComponent(previewTargetUrl)}`,
-    );
-    document.title = `${host} — ${SITE_ID}`;
+    // Local products carry no worker manifest to read the chat flag from,
+    // so the debug paths enable chat unconditionally for product testing.
+    setChatCapability(host, true);
+    const { renderIframe } = await bridgeModulePromise;
+    await renderIframe(previewTargetUrl, host, {
+      productId: productIdOverride,
+    });
+    const nextSearch = new URLSearchParams({
+      url: previewTargetUrl,
+    });
+    if (productIdOverride !== undefined) {
+      nextSearch.set(DOTLI_PRODUCT_ID_PARAM, productIdOverride);
+    }
+    history.replaceState(null, "", `/__preview?${nextSearch.toString()}`);
+    document.title = `${host} · ${SITE_ID}`;
     performance.mark("dotli:main:end");
     return;
   }
@@ -1112,16 +990,23 @@ async function main(): Promise<void> {
       urlBar.innerHTML = `<div class="topbar-url-pill localhost-pill" id="url-pill"><svg class="localhost-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="topbar-url-text"><span class="dot-domain">${escapeHtml(host)}</span></span></div>`;
     }
 
-    const { renderIframe } = await import("@dotli/ui/bridge");
-    await renderIframe(localhostUrl, host);
+    setChatCapability(host, true);
+    const { renderIframe } = await bridgeModulePromise;
+    await renderIframe(localhostUrl, host, { productId: productIdOverride });
 
     shieldVerified = true;
     bindTopbarAutoHide();
-    setupTopbarAutoHide();
+    armTopbarAutoHide();
 
     // Deep path was forwarded to the product iframe, so strip it so the URL bar doesn't show a stale path
-    history.replaceState(null, "", "/" + host);
-    document.title = `${host} — ${SITE_ID}`;
+    history.replaceState(
+      null,
+      "",
+      productIdOverride === undefined
+        ? "/" + host
+        : `/${host}?${DOTLI_PRODUCT_ID_PARAM}=${encodeURIComponent(productIdOverride)}`,
+    );
+    document.title = `${host} · ${SITE_ID}`;
     performance.mark("dotli:main:end");
     emitDotliDebugEvent({
       layer: "boot",
@@ -1138,7 +1023,7 @@ async function main(): Promise<void> {
   }
 
   if (label === null) {
-    log.warn(`[dot.li perf] Landing page — no subdomain (${elapsed(T0)})`);
+    log.warn(`[dot.li perf] Landing page, no subdomain (${elapsed(T0)})`);
     showLanding();
     performance.mark("dotli:main:end");
     emitDotliDebugEvent({
@@ -1157,6 +1042,24 @@ async function main(): Promise<void> {
 
   initScheduledNotifications({ label });
 
+  // Resolve the worker manifest's `includes.chat` in parallel with CID
+  // resolution. The bridge awaits this before creating the product's core
+  // provider (it decides the connection's execution kind), and the topbar
+  // uses the announced value to gate the chat button.
+  primeChatCapability(label, async () => {
+    const result =
+      chainBackend === "rpc-gateway"
+        ? await (
+            await import("@dotli/resolver/rpc-resolve")
+          ).resolveExecutableManifestViaRpc(label, "worker")
+        : await resolveExecutableManifestRemote(label, "worker");
+    return (
+      result.kind === "ok" &&
+      result.value.kind === "worker" &&
+      result.value.includes.chat
+    );
+  });
+
   // Pre-load render chunk in parallel (overlap with CID resolution)
   const renderChunkPromise: Promise<RenderChunk> = import("@dotli/ui/bridge");
   void renderChunkPromise.catch(() => {
@@ -1174,7 +1077,7 @@ async function main(): Promise<void> {
     showError("UI failed to initialise", err.message);
     return;
   }
-  urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><span class="verification-shield-wrap"><svg id="verification-shield" class="verification-shield" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-describedby="verification-tooltip"><path d="M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm-1 14.59l-3.29-3.3 1.41-1.41L11 13.76l4.88-4.88 1.41 1.41L11 16.59z"/></svg><span class="verification-tooltip" id="verification-tooltip" role="tooltip"><span class="verification-tooltip-title">How was this site loaded?</span><span class="verification-tooltip-row"><span class="verification-tooltip-dot is-verified" aria-hidden="true"></span><strong class="verification-tooltip-label">Verified</strong><span class="verification-tooltip-desc">More secure, checked by your light client.</span></span><span class="verification-tooltip-row"><span class="verification-tooltip-dot is-trusted" aria-hidden="true"></span><strong class="verification-tooltip-label">Trusted</strong><span class="verification-tooltip-desc">Served by an external RPC provider.</span></span></span></span><span class="topbar-url-text"><span class="dot-domain">${escapeHtml(label)}</span><span class="dot-tld">.dot</span></span></div>`;
+  urlBar.innerHTML = `<div class="topbar-url-pill" id="url-pill"><span class="verification-shield-wrap"><svg id="verification-shield" class="verification-shield" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-describedby="verification-tooltip"><path d="M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm-1 14.59l-3.29-3.3 1.41-1.41L11 13.76l4.88-4.88 1.41 1.41L11 16.59z"/></svg><span class="verification-tooltip" id="verification-tooltip" role="tooltip"><span class="verification-tooltip-title">How was this site loaded?</span><span class="verification-tooltip-row"><span class="verification-tooltip-dot is-verified" aria-hidden="true"></span><strong class="verification-tooltip-label">Verified</strong><span class="verification-tooltip-desc">More secure, checked by your light client.</span></span><span class="verification-tooltip-row"><span class="verification-tooltip-dot is-trusted" aria-hidden="true"></span><strong class="verification-tooltip-label">Trusted</strong><span class="verification-tooltip-desc">Served by an external RPC provider.</span></span></span></span><span class="topbar-url-text"><span class="dot-domain">${escapeHtml(label)}</span><span class="dot-tld">${escapeHtml(getActiveTldSuffix())}</span></span></div>`;
 
   // Listen for status messages from the sandbox iframe so the loading
   // UI continues seamlessly from resolution into content fetching.
@@ -1199,12 +1102,44 @@ async function main(): Promise<void> {
   // peers) cap at the band top and let the sheen carry motion rather than
   // inflating the pace. Both smoldot backends share one model. See
   // `advancePhase` mapping below.
+  // The label names the step for us. What the visitor reads is the stage's
+  // copy, which says the same thing in words they can act on.
   const smoldotPhases = (startLabel: string): LoadingPhase[] => [
-    { label: startLabel, base: 2, target: 6, expectedMs: 650 },
-    { label: "Adding relay chain", base: 6, target: 10, expectedMs: 120 },
-    { label: "Syncing Asset Hub", base: 10, target: 55, expectedMs: 6500 },
-    { label: "Resolving", base: 55, target: 62, expectedMs: 1200 },
-    { label: "Fetching content", base: 62, target: 95, expectedMs: 10000 },
+    {
+      label: startLabel,
+      base: 2,
+      target: 6,
+      expectedMs: 650,
+      stage: "starting",
+    },
+    {
+      label: "Adding relay chain",
+      base: 6,
+      target: 10,
+      expectedMs: 120,
+      stage: "relay",
+    },
+    {
+      label: "Syncing Asset Hub",
+      base: 10,
+      target: 55,
+      expectedMs: 6500,
+      stage: "assetHub",
+    },
+    {
+      label: "Resolving",
+      base: 55,
+      target: 62,
+      expectedMs: 1200,
+      stage: "resolving",
+    },
+    {
+      label: "Fetching content",
+      base: 62,
+      target: 95,
+      expectedMs: 10000,
+      stage: "content",
+    },
   ];
   if (chainBackend === "smoldot-shared-worker") {
     initPhases(smoldotPhases("Starting Worker"));
@@ -1214,18 +1149,37 @@ async function main(): Promise<void> {
     // Gateway path resolves over RPC with no smoldot sync, then fetches
     // content the same way every backend does.
     initPhases([
-      { label: "Connecting", base: 5, target: 50, expectedMs: 1200 },
-      { label: "Resolving", base: 50, target: 62, expectedMs: 1200 },
-      { label: "Fetching content", base: 62, target: 95, expectedMs: 10000 },
+      {
+        label: "Connecting",
+        base: 5,
+        target: 50,
+        expectedMs: 1200,
+        stage: "relay",
+      },
+      {
+        label: "Resolving",
+        base: 50,
+        target: 62,
+        expectedMs: 1200,
+        stage: "resolving",
+      },
+      {
+        label: "Fetching content",
+        base: 62,
+        target: 95,
+        expectedMs: 10000,
+        stage: "content",
+      },
     ]);
   }
   // Content fetch (bitswap/IPFS) runs in the sandbox after the CID resolves and
   // was previously unrepresented, so the bar sat parked while a 20s+ fetch ran.
-  // It is always the last phase; advance to it just before handing off to the
+  // It is always the last phase, so advance to it just before handing off to the
   // sandbox render.
   const contentFetchPhase = chainBackend === "rpc-gateway" ? 2 : 4;
+  setLoadingDomain(label);
   advancePhase(0);
-  showStatus(`Resolving ${label}.dot`);
+  trackStatus(`Resolving ${withActiveTld(label)}`);
 
   try {
     const cachedCid = cacheSettings.skipCidCache
@@ -1251,9 +1205,10 @@ async function main(): Promise<void> {
         advancePhase(contentFetchPhase);
         await renderAppSubdomain(cachedCid, label);
       });
+      void recordRecentLabel(label);
       void applyProductBranding(label, chainBackend).catch((err: unknown) => {
         log.warn(
-          `[dot.li manifest] branding failed for ${label}.dot: ${err instanceof Error ? err.message : String(err)}`,
+          `[dot.li manifest] branding failed for ${withActiveTld(label)}: ${err instanceof Error ? err.message : String(err)}`,
         );
       });
       performance.mark("dotli:main:end");
@@ -1327,48 +1282,36 @@ async function main(): Promise<void> {
       log.warn(
         `[dot.li resolve] path=smoldot (trustless light-client) (${elapsed(T0)})`,
       );
-      // After 10s of slow loading on the verified path, surface a one-click
-      // escape to the gateway backend. The user trades the light-client
-      // verification badge for a faster, trust-based load.
-      const cancelGatewayEscape = showGatewayEscape(() => {
-        m.count(S.GATEWAY_ESCAPE, { from_backend: chainBackend });
-        switchBackendAndReload("rpc-gateway");
-      });
-
-      try {
-        const { statusToPhase } = await import("@dotli/resolver/resolve");
-        const onResolveProgress = (msg: string): void => {
-          // Progress events arrive as opaque strings across the iframe
-          // boundary. The resolver package owns the authoritative
-          // mapping from status text to ResolvePhase, so we defer to it
-          // instead of maintaining a parallel regex here.
-          const phase = statusToPhase(msg);
-          if (phase === "relay-chain-adding") {
-            advancePhase(1);
-          } else if (
-            // `asset-hub-connecting` is ~0ms (just createClient), so it shares
-            // the Syncing band rather than getting a slice that makes the bar
-            // jump for no work.
-            phase === "asset-hub-connecting" ||
-            phase === "asset-hub-syncing" ||
-            phase === "asset-hub-ready"
-          ) {
-            advancePhase(2);
-          } else if (phase === "resolving-content") {
-            advancePhase(3);
-          }
-          emitPhase(msg, phase ?? "progress");
-          showStatus(msg);
-        };
-        cid = await resolveDotNameRemote(`app.${label}`, onResolveProgress);
-        if (cid === null) {
-          cid = await resolveDotNameRemote(label, onResolveProgress);
-          log.warn(
-            `[dot.li resolve] fallback ${label}.dot contenthash -> ${cid ?? "null"}`,
-          );
+      const { statusToPhase } = await import("@dotli/resolver/resolve");
+      const onResolveProgress = (msg: string): void => {
+        // Progress events arrive as opaque strings across the iframe
+        // boundary. The resolver package owns the authoritative
+        // mapping from status text to ResolvePhase, so we defer to it
+        // instead of maintaining a parallel regex here.
+        const phase = statusToPhase(msg);
+        if (phase === "relay-chain-adding") {
+          advancePhase(1);
+        } else if (
+          // `asset-hub-connecting` is ~0ms (just createClient), so it shares
+          // the Syncing band rather than getting a slice that makes the bar
+          // jump for no work.
+          phase === "asset-hub-connecting" ||
+          phase === "asset-hub-syncing" ||
+          phase === "asset-hub-ready"
+        ) {
+          advancePhase(2);
+        } else if (phase === "resolving-content") {
+          advancePhase(3);
         }
-      } finally {
-        cancelGatewayEscape();
+        emitPhase(msg, phase ?? "progress");
+        trackStatus(msg);
+      };
+      cid = await resolveDotNameRemote(`app.${label}`, onResolveProgress);
+      if (cid === null) {
+        cid = await resolveDotNameRemote(label, onResolveProgress);
+        log.warn(
+          `[dot.li resolve] fallback ${withActiveTld(label)} contenthash -> ${cid ?? "null"}`,
+        );
       }
     } else {
       log.warn(
@@ -1378,13 +1321,13 @@ async function main(): Promise<void> {
         await import("@dotli/resolver/rpc-resolve");
       const onResolveProgress = (msg: string): void => {
         emitPhase(msg, "progress");
-        showStatus(msg);
+        trackStatus(msg);
       };
       cid = await resolveDotNameViaRpc(`app.${label}`, onResolveProgress);
       if (cid === null) {
         cid = await resolveDotNameViaRpc(label, onResolveProgress);
         log.warn(
-          `[dot.li resolve] fallback ${label}.dot contenthash -> ${cid ?? "null"}`,
+          `[dot.li resolve] fallback ${withActiveTld(label)} contenthash -> ${cid ?? "null"}`,
         );
       }
     }
@@ -1405,10 +1348,13 @@ async function main(): Promise<void> {
     stopStatusTick();
     performance.mark("dotli:resolve:end");
     log.warn(
-      `[dot.li resolve] RESOLVED ${label}.dot via ${chainBackend} in ${dur(resolveStart)} (total ${elapsed(T0)}) -> ${cid ?? "null"}`,
+      `[dot.li resolve] RESOLVED ${withActiveTld(label)} via ${chainBackend} in ${dur(resolveStart)} (total ${elapsed(T0)}) -> ${cid ?? "null"}`,
     );
 
     if (cid === null) {
+      // No pruning here: a name with no contenthash on the *selected* network
+      // still resolves on another, so dropping its pill would lose good
+      // entries on a network switch. The pill's remove button is the cleanup.
       showNoContentError(label);
       performance.mark("dotli:main:end");
       return;
@@ -1425,9 +1371,10 @@ async function main(): Promise<void> {
     const { renderAppSubdomain } = await renderChunkPromise;
     advancePhase(contentFetchPhase);
     await renderAppSubdomain(cid, label);
+    void recordRecentLabel(label);
     void applyProductBranding(label, chainBackend).catch((err: unknown) => {
       log.warn(
-        `[dot.li manifest] branding failed for ${label}.dot: ${err instanceof Error ? err.message : String(err)}`,
+        `[dot.li manifest] branding failed for ${withActiveTld(label)}: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
 

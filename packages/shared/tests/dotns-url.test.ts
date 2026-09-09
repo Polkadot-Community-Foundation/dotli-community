@@ -1,7 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { setNetworkOverride } from "@dotli/config/network";
 import { dotNsUrl } from "@dotli/shared/dotns-url";
 
 describe("parseDotNsDomain", () => {
@@ -257,6 +258,65 @@ describe("isDotDomain", () => {
 
   it("returns false for localhost", () => {
     expect(dotNsUrl.isDotDomain("localhost")).toBe(false);
+  });
+});
+
+// Paseo Next V2 registers names under `.paseo`, previewnet under `.testnet`. The
+// parser must follow the active network, otherwise a Paseo deployment silently
+// treats every product URL as a regular website, and a `.dot` name resolves
+// against the wrong namehash.
+describe("dotNS TLD per network", () => {
+  afterEach(() => {
+    setNetworkOverride("paseo-next-v1");
+  });
+
+  it("As a user on Paseo Next V2, I open a .paseo name and reach the product", () => {
+    // Given
+    setNetworkOverride("paseo-next-v2");
+
+    // When
+    const parsed = dotNsUrl.parseDotNsDomain("mytestapp.paseo/some/path");
+
+    // Then
+    expect(parsed).toEqual({
+      identifier: "mytestapp.paseo",
+      pathname: "some/path",
+    });
+  });
+
+  it("As a user on Paseo Next V2, I open a .dot name and get a regular website", () => {
+    // Given
+    setNetworkOverride("paseo-next-v2");
+
+    // When
+    const isProduct = dotNsUrl.isDotDomain("mytestapp.dot");
+
+    // Then
+    expect(isProduct).toBe(false);
+  });
+
+  it("As a user on Paseo Next V2, the gateway host paseo.li is not a product", () => {
+    // Given
+    setNetworkOverride("paseo-next-v2");
+
+    // When
+    const parsed = dotNsUrl.parseDotNsDomain("mytestapp.paseo.li");
+
+    // Then
+    expect(parsed).toBeNull();
+  });
+
+  it("As a user on previewnet, a .testnet name is a product and a .dot name is not", () => {
+    // Given
+    setNetworkOverride("previewnet");
+
+    // When
+    const test = dotNsUrl.isDotDomain("mytestapp.testnet");
+    const dot = dotNsUrl.isDotDomain("mytestapp.dot");
+
+    // Then
+    expect(test).toBe(true);
+    expect(dot).toBe(false);
   });
 });
 

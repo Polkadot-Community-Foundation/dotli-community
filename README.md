@@ -61,7 +61,7 @@ Each product gets its own `<label>.app.paseo.li` origin, so versions of the same
 
 1. **Resolves** `.dot` names via an in-browser [smoldot](https://github.com/paritytech/smoldot) light client connected to Asset Hub Paseo, querying dotNS contracts.
 2. **Fetches** content from the [Bulletin Chain](https://github.com/paritytech/polkadot-bulletin-chain) via smoldot `bitswap_v1_get` JSON-RPC or an IPFS gateway.
-3. **Renders** the content in a sandboxed iframe with a full host-container bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage.
+3. **Renders** the content in a sandboxed iframe with the Rust-backed TrUAPI bridge, so loaded SPAs can request accounts, sign transactions, connect to chains, and use scoped storage.
 
 ```
 host-playground.paseo.li
@@ -116,26 +116,47 @@ On repeat visits, content renders instantly from the cache while it is resolved 
 
 If a background re-resolution finds the on-chain CID has changed, dotli shows a **New version available** notification with a **Reload** action rather than swapping content silently.
 
-## Host-container bridge
+## TrUAPI bridge
 
 Loaded SPAs communicate with dotli through a postMessage-based protocol. The bridge exposes:
 
-| Handler                        | What it does                                                           |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| `accountGet`                   | Derives a per-app public key via HDKD soft derivation                  |
-| `getLegacyAccounts`            | Returns non-derived (imported) accounts — always empty on the web host |
-| `signPayload` / `signRaw`      | Shows signing modals, delegates to host-papp session                   |
-| `chainConnection`              | Returns a smoldot-backed JsonRpcProvider for supported chains          |
-| `localStorageRead/Write/Clear` | Scoped `localStorage` per `.dot` domain                                |
-| `navigateTo`                   | Opens URLs in new tabs                                                 |
-| `featureSupported`             | Reports whether a feature is supported (e.g. a chain's genesis hash)   |
-| `connectionStatus`             | Streams auth state changes to the SPA                                  |
+| Handler                        | What it does                                                                          |
+| ------------------------------ | ------------------------------------------------------------------------------------- |
+| `accountGet`                   | Derives a per-app public key via HDKD soft derivation                                 |
+| `getLegacyAccounts`            | Returns non-derived (imported) accounts — always empty on the web host                |
+| `signPayload` / `signRaw`      | Shows signing modals and routes signing through the active session                    |
+| `chainConnection`              | Returns an isolated broker connection over the selected chain backend                 |
+| `localStorageRead/Write/Clear` | Scoped `localStorage` per `.dot` domain                                               |
+| `navigateTo`                   | Opens URLs in new tabs                                                                |
+| `featureSupported`             | Reports whether a feature is supported (e.g. a chain's genesis hash)                  |
+| `connectionStatus`             | Streams auth state changes to the SPA                                                 |
+| `chat.*`                       | Product chat: rooms and messages persisted locally, rendered in the topbar chat panel |
 
-### Nested dApp support
+### Product chat
 
-dApps can embed other dApps via iframes (e.g. a marketplace app embedding a payments app). The host automatically detects nested dApps and creates separate bridges for each one, regardless of nesting depth.
+Products that declare `includes.chat` in their `worker.<label>.<tld>`
+executable manifest get a Worker-kind TrUAPI execution and a chat button in
+the topbar. The product drives the conversation over the core's chat
+surface (`chat.create_room`, `chat.register_bot`, `chat.post_message`,
+`chat.list_subscribe`, `chat.action_subscribe`); the user replies from the
+docked chat panel, and each reply reaches the product as a `MessagePosted`
+action. Rooms and messages persist in IndexedDB on the product origin and
+never leave the device. The core denies chat calls without an active
+session, so chat requires being logged in. The localhost debug paths enable
+chat unconditionally so local products can be tested without publishing a
+manifest.
 
-When the host receives a protocol message from an unknown iframe window, it dynamically creates a new container bridge targeting that window. The dApp SDK always sends to `window.top`, so all nested dApps communicate directly with the host — no relay needed.
+Custom messages (`ChatMessageContent::Custom`) render live: when a custom
+message cell scrolls into view, the panel asks the product to draw it
+(`chat.custom_message_render`) and renders the streamed tree with the
+host's own design system (`src/chat/custom-renderer.ts`). The tree is a
+closed vocabulary of layouts and design tokens, so a product can never
+inject markup, styles, or URLs. Button taps and text-field edits flow back
+as `ActionTriggered` actions, as do taps on `Actions`-content buttons.
+
+### App iframe model
+
+The host creates one TrUAPI bridge for the rendered product iframe. dApp-in-dApp iframes are opaque to the host and must use the top-level product's shared Rust core/provider context rather than separate host-created bridges.
 
 The app context uses `document.write()` to eliminate extra iframe nesting: when loaded inside a host iframe, the app replaces its own document with the dApp content so the dApp occupies the iframe directly.
 
@@ -156,9 +177,72 @@ bun install
 bun run preview          # Build + serve both apps on localhost:5173
 ```
 
+The TrUAPI packages are installed from their published `@parity` packages. To
+iterate against a local truapi checkout instead, run:
+
+```bash
+bun run link:truapi
+```
+
+When dotli is not checked out under `truapi/hosts/dotli`, point the script at
+the truapi repo:
+
+```bash
+TRUAPI_REPO=/path/to/truapi bun run link:truapi
+```
+
+Return to the package versions recorded in `bun.lock` with:
+
+```bash
+bun run unlink:truapi
+```
+
 Local development uses wildcard subdomains:
 
 - `host-playground.localhost:5173` — resolves `host-playground.dot` via the host
+
+### Running the host-playground E2E locally
+
+The product E2E suite can load the source checkout directly through dotli's
+localhost proxy instead of resolving the published `host-playground.dot` CID.
+By default it expects the product at `../../../host-playground` relative to
+this repository, and the `truapi-host` CLI from
+[host-rust-core](https://github.com/paritytech/host-rust-core) on `PATH`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
+```
+
+```bash
+bun run test:e2e:local
+```
+
+Override either checkout or server when needed:
+
+```bash
+E2E_PRODUCT_REPO=/path/to/host-playground \
+E2E_PRODUCT_URL=http://localhost:5199 \
+bun run test:e2e:local
+```
+
+The suite defaults to `rpc-gateway`. Set `E2E_CHAIN_BACKEND` to run the same
+flow through either light-client backend:
+
+```bash
+E2E_CHAIN_BACKEND=smoldot-shared-worker bun run test:e2e:local
+```
+
+Set `SIGNING_HOST_BIN` to a locally built binary (e.g.
+`../host-rust-core/target/debug/truapi-host`) instead of installing, and
+`SIGNING_HOST_NETWORK` when testing against a non-default network. The CLI
+keeps its account state under `apps/host/tests/e2e/.auth/signing-host`, so
+repeat runs reuse one test account; the first run registers a fresh lite
+username on-chain and can take a few minutes.
+
+The command builds dotli with its debug-only localhost proxy enabled, starts
+both preview servers through Playwright, extracts the login QR deeplink, pairs
+a headless `truapi-host signing-host` process that auto-signs for the rest of
+the run, and runs the same host-product suite used in CI.
 
 ### Running an approved build
 
@@ -174,7 +258,7 @@ The published tag on the [Releases page](https://github.com/paritytech/dotli/rel
 
 ## Debug panel
 
-dotli ships a TrUAPI debug panel that aggregates host-side activity (boot/resolve/render/bridge events, TrUAPI host↔product messages, host-papp SSO/session events) into one time-aligned inspector. The panel chunk is dynamically imported, so users who never see it pay no download cost.
+dot.li ships a TrUAPI debug panel that aggregates host-side activity (boot/resolve/render/bridge events, TrUAPI host↔product messages, SSO/session events) into one time-aligned inspector. The panel chunk is dynamically imported, so users who never see it pay no download cost.
 
 In builds compiled with `VITE_APP_DEBUG=true` (local `bun run preview:debug`, and the staging dev deploys at `paseoli.dev` / `dotli.dev`) the panel auto-mounts collapsed. In staging/production it's off until you click **Open in debug mode** in the host Settings menu (or append `?debug=true` to any URL). The choice is sessionStorage-scoped — closing the tab clears it. Use `?debug=off` to silence it explicitly within the same session.
 
@@ -210,6 +294,20 @@ A build offers the networks listed in the required `VITE_NETWORKS` env var, set 
 - **IPFS gateway**: `https://paseo-bulletin-next-ipfs.polkadot.io`
 
 All addresses, endpoints, and selector labels live in `packages/config/src/network.ts` (`NETWORK_NAME_TO_SERVICES_CONFIG`).
+
+### Prebuilt bundles
+
+Each release also publishes two prebuilt artifacts, so a forked dev chain can be browsed without building anything. Both take the same network override at **run time**, so one artifact works against any chain:
+
+```bash
+# container
+docker run -p 5173:5173 -e DOTLI_NETWORK='{…}' ghcr.io/paritytech/dotli-community:0.7.4
+
+# tarball — needs only node >= 22 or bun
+DOTLI_NETWORK='{…}' node serve.mjs
+```
+
+Overrides patch the tables above and reach endpoints only — `label`, `rpcs` and `ipfsGateways`. Genesis hashes and contract addresses stay fixed at build time, because they are the trust root for name resolution. See [docs/docker.md](docs/docker.md).
 
 ## Security
 

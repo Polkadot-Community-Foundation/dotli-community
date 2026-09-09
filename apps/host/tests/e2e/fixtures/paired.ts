@@ -4,14 +4,19 @@
 import { test as base, type Page, type Frame } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { STATE_FILE } from "./paths";
+import {
+  E2E_CHAIN_BACKEND,
+  initializeChainBackend,
+} from "../helpers/chain-backend";
 
 const PORT = process.env.PORT ?? "5173";
 const HOST = process.env.E2E_HOST ?? "host-playground";
+const PRODUCT_URL = process.env.E2E_PRODUCT_URL;
 
-// Restored-session badge wait. The bot was paired once in globalSetup, the
-// storageState restores the host's auth on every context, so seeing the
-// user-badge should be near-instant. A tight cap surfaces a broken bot or
-// host fast instead of running out the workflow clock.
+// Restored-session badge wait. The signing host was paired once in
+// globalSetup, the storageState restores the host's auth on every context,
+// so seeing the user-badge should be near-instant. A tight cap surfaces a
+// broken signer or host fast instead of running out the workflow clock.
 const USER_BADGE_TIMEOUT_MS = 15_000;
 const PRODUCT_IFRAME_TIMEOUT_MS = 20_000;
 
@@ -82,13 +87,13 @@ async function waitForHostPlaygroundFrame(
 
 /**
  * Worker-scoped fixtures: open a fresh page that inherits the
- * once-per-run bot pairing via `storageState` written by globalSetup.
- * No QR scan, no bot pair API call here. If the badge doesn't appear
- * inside 15 s the worker fails fast. The bot is either down or the
- * host can't restore auth from the saved state.
+ * once-per-run signing-host pairing via `storageState` written by
+ * globalSetup. No QR scan, no CLI spawn here. If the badge doesn't appear
+ * inside 15 s the worker fails fast. The signing host is either dead or
+ * the host can't restore auth from the saved state.
  *
  * State sharing: every worker reads the same `.auth/state.json`, so all
- * tests across the run share one bot user. This matches the prior
+ * tests across the run share one signer account. This matches the prior
  * behavior under `workers: 1` (worker-scope pairing) and avoids the
  * re-pair cascade that previously timed out CI on a single test failure.
  */
@@ -102,7 +107,7 @@ export const test = base.extend<
       if (!existsSync(STATE_FILE)) {
         throw new Error(
           `pairedPage: ${STATE_FILE} missing — globalSetup must run first. ` +
-            `If you ran the test directly, ensure SIGNER_BOT_SVC_TOKEN is set ` +
+            `If you ran the test directly, ensure SIGNING_HOST_NETWORK is set ` +
             `and re-run via \`bun run test:e2e\`.`,
         );
       }
@@ -118,7 +123,7 @@ export const test = base.extend<
         if (
           type === "error" ||
           type === "warning" ||
-          /\[dotli|\[dot\.li|host-papp|statement.store|signing/i.test(text)
+          /\[dotli|\[dot\.li|statement.store|signing/i.test(text)
         ) {
           const isFullText =
             type === "error" ||
@@ -138,15 +143,7 @@ export const test = base.extend<
 
       // Mirror the init flags globalSetup used so the page boots into the
       // same backend mode and the restored localStorage stays consistent.
-      await page.addInitScript(() => {
-        try {
-          localStorage.setItem("dotli:mode", "gateway");
-          localStorage.setItem("dotli:chain-backend", "rpc");
-          localStorage.setItem("dotli:content-backend", "ipfs-gateway");
-        } catch {
-          /* ignore */
-        }
-      });
+      await page.addInitScript(initializeChainBackend, E2E_CHAIN_BACKEND);
 
       // WebSocket frames: statement_submit / broadcast traffic for
       // diagnosing the signing tests. Filtered to avoid chain-head spam.
@@ -171,13 +168,19 @@ export const test = base.extend<
         console.log(`[ws] CDP attach failed: ${(e as Error).message}`);
       }
 
-      await page.goto(`http://${HOST}.localhost:${PORT}/`, {
+      const productHostUrl =
+        PRODUCT_URL === undefined
+          ? `http://${HOST}.localhost:${PORT}/`
+          : `http://localhost:${PORT}/${new URL(PRODUCT_URL).host}`;
+      await page.goto(productHostUrl, {
         timeout: 60_000,
       });
-      await page
-        .getByRole("button", { name: "Switch to Gateway" })
-        .click({ timeout: 5_000 })
-        .catch(() => {});
+      if (E2E_CHAIN_BACKEND === "rpc-gateway") {
+        await page
+          .getByRole("button", { name: "Switch to Gateway" })
+          .click({ timeout: 5_000 })
+          .catch(() => {});
+      }
 
       const restoreStart = Date.now();
       await page

@@ -19,5 +19,11 @@ export default defineConfig({
   define: {
     "import.meta.env.DEV": "false",
     "import.meta.env.VITE_APP_DEBUG": '"true"',
+    // `getEnabledNetworks` requires VITE_NETWORKS, with no default by design,
+    // and the dotNS URL parser reads the active network's TLD. paseo-next-v1
+    // leads so the default TLD stays `.dot` and the existing fixtures keep
+    // their meaning. The paseo and previewnet cases switch network explicitly
+    // via `setNetworkOverride`.
+    "import.meta.env.VITE_NETWORKS": '"paseo-next-v1,paseo-next-v2,previewnet"',
   },
 });
