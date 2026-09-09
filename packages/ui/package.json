@@ -34,7 +34,7 @@
     "@dotli/truapi-debug": "workspace:*",
     "@noble/hashes": "^2.2.0",
     "@parity/truapi": "0.13.1",
-    "@parity/truapi-host": "0.10.1",
+    "@parity/truapi-host": "file:../../vendor/parity-truapi-host-0.10.1-pcf602.1.tgz",
     "@polkadot-api/json-rpc-provider": "^0.2.0",
     "@scure/base": "^2.2.0",
     "neverthrow": "^8.2.0",
