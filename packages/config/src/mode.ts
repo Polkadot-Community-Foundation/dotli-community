@@ -168,7 +168,7 @@ export function defaultBackend(): Backend {
   if (isRpcGatewayOnly()) {
     return "rpc-gateway";
   }
-  return isSharedWorkerAvailable() ? "smoldot-shared-worker" : "smoldot-direct";
+  return "smoldot-direct";
 }
 
 /**

@@ -6,25 +6,16 @@
 // Manages the auth button, QR pairing modal, and user popover.
 // All plain DOM manipulation, no framework.
 //
-// Auth module is lazy-loaded. The heavy host-papp, statement-store, and
-// polkadot-api WS deps only load when a persisted session exists or the
-// user clicks the auth button.
-
-import type { AuthState } from "@dotli/auth/auth";
-import type { Identity } from "@novasamatech/host-papp";
 import { log } from "@dotli/shared/log";
 import { escapeHtml } from "@dotli/shared/html";
 import { isMobileDevice } from "@dotli/shared/device";
-import { toHex } from "@dotli/shared/hex";
 import {
   formatAppVersion,
   getActiveAppManifest,
   getActiveRootManifest,
 } from "@dotli/shared/active-manifest";
-import { SITE_ID } from "@dotli/config/config";
 import {
   createRemoteChainProvider,
-  hasSharedAuthSession,
   isRemoteChainSupported,
 } from "@dotli/protocol/client";
 import {
@@ -46,17 +37,29 @@ import {
   NETWORK_NAME_TO_SERVICES_CONFIG,
   type Network,
 } from "@dotli/config/network";
-import { getActiveServicesConfig } from "@dotli/config/network";
+import { getActiveServicesConfig, withActiveTld } from "@dotli/config/network";
 import { writeSettingsToSearch } from "@dotli/config/url-settings";
 import {
   ALL_PERMISSIONS,
-  getPermissionStatus,
+  getPermissionStatuses,
   hasAnyGrant,
   isDevicePermission,
   resetPermission,
   setPermissionStatus,
   type PermissionStatus,
 } from "./permissions";
+import type { LoginFailureKind } from "@parity/truapi-host";
+import { initChatPanel } from "./chat/panel";
+import type { DotliAuthState } from "./host-callbacks/AuthState";
+import {
+  emitPersistedSessionUiState,
+  type TruapiSessionUiState,
+} from "./host-callbacks/SessionStore";
+import {
+  createBlockingModalCoordinator,
+  type BlockingModalCoordinator,
+  type BlockingModalScope,
+} from "./blocking-modal-queue";
 
 function getElement(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -89,6 +92,9 @@ let permissionsPopover: HTMLElement;
 let permissionsPopoverList: HTMLElement;
 let permissionsPopoverBackdrop: HTMLElement | null = null;
 
+let themeButton: HTMLElement | null = null;
+let themePopover: HTMLElement | null = null;
+
 /** The label of the currently loaded product (set via dotli:product-loaded event). */
 let currentProductLabel: string | null = null;
 
@@ -100,67 +106,170 @@ const USER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" st
 
 // Track the current QR payload to prevent stale canvas appends
 let currentQrPayload: string | null = null;
+let truapiSessionConnected = false;
+let blockingModalCoordinator: BlockingModalCoordinator | null = null;
+let authModalScope: BlockingModalScope | null = null;
+let releaseAuthModal: (() => void) | null = null;
 
-interface AuthModule {
-  initAuth: () => Promise<void>;
-  getAuthState: () => AuthState;
-  onAuthStateChange: (fn: (state: AuthState) => void) => () => void;
-  startPairing: () => void;
-  abortPairing: () => void;
-  disconnect: () => Promise<void>;
-  shortenName: (identity: Identity) => string;
-}
-
-let authMod: AuthModule | null = null;
+type ThemePref = "light" | "dark" | "system";
 
 /**
- * Lazy-load and initialize the auth module. Subsequent calls return
- * the cached module immediately (initAuth is idempotent).
+ * Read the persisted theme preference.
+ *
+ * An absent key means "system" so pre-existing users keep following the OS.
  */
-async function ensureAuth(): Promise<AuthModule> {
-  if (authMod) {
-    return authMod;
-  }
-  authMod = await import("@dotli/auth/auth");
-  await authMod.initAuth();
-  authMod.onAuthStateChange(renderAuthState);
-  renderAuthState(authMod.getAuthState());
-  return authMod;
-}
-
-function getStoredTheme(): "light" | "dark" {
+function getStoredThemePref(): ThemePref {
   const stored = localStorage.getItem("dotli-theme");
-  if (stored === "light" || stored === "dark") {
+  if (stored === "light" || stored === "dark" || stored === "system") {
     return stored;
   }
-  if (window.matchMedia("(prefers-color-scheme: light)").matches) {
-    return "light";
-  }
-  return "dark";
+  return "system";
 }
 
-function applyTheme(theme: "light" | "dark"): void {
-  document.documentElement.setAttribute("data-theme", theme);
-  // Notify the container bridge (container.ts) to forward the new theme to the
+function resolveTheme(pref: ThemePref): "light" | "dark" {
+  if (pref !== "system") {
+    return pref;
+  }
+  return window.matchMedia("(prefers-color-scheme: light)").matches
+    ? "light"
+    : "dark";
+}
+
+const THEME_TITLE: Record<ThemePref, string> = {
+  light: "Theme: Light",
+  dark: "Theme: Dark",
+  system: "Theme: System",
+};
+
+function applyThemePref(pref: ThemePref): void {
+  // data-theme-pref drives the toggle icon, data-theme the actual colours.
+  document.documentElement.setAttribute("data-theme-pref", pref);
+  document.documentElement.setAttribute("data-theme", resolveTheme(pref));
+  // Notify the Rust bridge to forward the new theme to the
   // embedded dApp.
   window.dispatchEvent(new Event("dotli:theme-changed"));
 }
 
-function initThemeToggle(): void {
-  applyTheme(getStoredTheme());
+function themePopoverOptions(): HTMLButtonElement[] {
+  if (themePopover === null) {
+    return [];
+  }
+  return Array.from(
+    themePopover.querySelectorAll<HTMLButtonElement>(".theme-popover-option"),
+  );
+}
 
-  const btn = document.getElementById("theme-toggle");
-  if (btn === null) {
+function syncThemePopoverChecked(pref: ThemePref): void {
+  for (const option of themePopoverOptions()) {
+    option.setAttribute(
+      "aria-checked",
+      String(option.dataset.themeOption === pref),
+    );
+  }
+}
+
+function setThemePopoverOpen(open: boolean): void {
+  if (themePopover === null || themeButton === null) {
     return;
   }
+  themePopover.classList.toggle("open", open);
+  themeButton.setAttribute("aria-expanded", String(open));
+  if (!open) {
+    return;
+  }
+  // Menu-button pattern: focus lands on the checked option so arrow
+  // keys and Escape work immediately after opening.
+  const options = themePopoverOptions();
+  if (options.length === 0) {
+    return;
+  }
+  const checked = options.find(
+    (option) => option.getAttribute("aria-checked") === "true",
+  );
+  (checked ?? options[0]).focus();
+}
+
+function selectThemePref(pref: ThemePref): void {
+  localStorage.setItem("dotli-theme", pref);
+  applyThemePref(pref);
+  syncThemePopoverChecked(pref);
+  if (themeButton !== null) {
+    themeButton.title = THEME_TITLE[pref];
+  }
+}
+
+function initThemeToggle(): void {
+  applyThemePref(getStoredThemePref());
+
+  window
+    .matchMedia("(prefers-color-scheme: light)")
+    .addEventListener("change", () => {
+      if (getStoredThemePref() === "system") {
+        applyThemePref("system");
+      }
+    });
+
+  themeButton = document.getElementById("theme-toggle");
+  themePopover = document.getElementById("theme-popover");
+  if (themeButton === null || themePopover === null) {
+    return;
+  }
+  const btn = themeButton;
+  const popover = themePopover;
+  btn.title = THEME_TITLE[getStoredThemePref()];
+  syncThemePopoverChecked(getStoredThemePref());
+
   btn.addEventListener("click", () => {
-    const next = getStoredTheme() === "dark" ? "light" : "dark";
-    localStorage.setItem("dotli-theme", next);
-    applyTheme(next);
+    // Don't stop propagation: the document-level close-outside handler
+    // skips this popover because `themeButton.contains(target)` is true.
+    setThemePopoverOpen(!popover.classList.contains("open"));
+  });
+
+  popover.addEventListener("click", (e) => {
+    const option = (e.target as HTMLElement).closest<HTMLButtonElement>(
+      ".theme-popover-option",
+    );
+    if (option === null) {
+      return;
+    }
+    const pref = option.dataset.themeOption;
+    if (pref === "light" || pref === "dark" || pref === "system") {
+      selectThemePref(pref);
+    }
+    setThemePopoverOpen(false);
+    btn.focus();
+  });
+
+  popover.addEventListener("keydown", (e) => {
+    const options = themePopoverOptions();
+    if (options.length === 0) {
+      return;
+    }
+    const index = options.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const delta = e.key === "ArrowDown" ? 1 : -1;
+      options[(index + delta + options.length) % options.length]?.focus();
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      options[0]?.focus();
+    } else if (e.key === "End") {
+      e.preventDefault();
+      options[options.length - 1]?.focus();
+    } else if (e.key === "Escape") {
+      setThemePopoverOpen(false);
+      btn.focus();
+    } else if (e.key === "Tab") {
+      // Options are not tabbable (tabindex=-1), so Tab leaves the menu.
+      setThemePopoverOpen(false);
+    }
   });
 }
 
-export function initTopBar(): void {
+export function initTopBar(
+  modalCoordinator: BlockingModalCoordinator = createBlockingModalCoordinator(),
+): void {
+  blockingModalCoordinator = modalCoordinator;
   authButton = getElement("auth-button");
   modalBackdrop = getElement("auth-modal-backdrop");
   modalTitle = getElement("auth-modal-title");
@@ -172,12 +281,19 @@ export function initTopBar(): void {
   userPopoverUsername = getElement("user-popover-username");
   userPopoverDisconnect = getElement("user-popover-disconnect");
 
+  modalBackdrop.setAttribute("role", "dialog");
+  modalBackdrop.setAttribute("aria-modal", "true");
+  modalBackdrop.setAttribute("aria-labelledby", "auth-modal-title");
+  modalBackdrop.tabIndex = -1;
+
   // Auth button: opens modal (logged out) or popover (logged in)
   authButton.addEventListener("click", handleAuthButtonClick);
   authButton.removeAttribute("disabled");
 
   // Modal close button
-  modalClose.addEventListener("click", closeModal);
+  modalClose.addEventListener("click", () => {
+    closeModal();
+  });
 
   // Clicking backdrop (outside modal) closes modal
   modalBackdrop.addEventListener("click", (e) => {
@@ -189,28 +305,20 @@ export function initTopBar(): void {
   // Disconnect button
   userPopoverDisconnect.addEventListener("click", handleDisconnect);
 
-  // Products can trigger the login flow via `handleRequestLogin`.
-  // `requestLogin()` in @dotli/auth dispatches this event after checking
-  // the already-connected fast path. The topbar owns the QR modal so we
-  // open it here and kick off pairing.
   window.addEventListener("dotli:request-login", (e: Event) => {
     const detail = (e as CustomEvent<{ reason?: string; label?: string }>)
       .detail;
     openModal(detail.reason, detail.label);
-    void ensureAuth().then(() => {
-      // Skip if the flow advanced between dispatch and here.
-      const state = authMod?.getAuthState();
-      if (
-        state &&
-        state.status !== "authenticated" &&
-        state.status !== "pairing" &&
-        state.status !== "attesting"
-      ) {
-        authMod?.startPairing();
-      }
-    });
+    requestTruapiLogin(detail.reason);
   });
 
+  // Single ordered auth-state stream owned by the Rust core (plus the boot
+  // rehydration and bridge transport-failure synthetics). The modal closes
+  // only on `Connected` or explicit user action; a `Disconnected` can never
+  // tear down an in-flight pairing presentation.
+  window.addEventListener("dotli:truapi-auth-state", (e: Event) => {
+    renderAuthState((e as CustomEvent<DotliAuthState>).detail);
+  });
   // Mobile-only "more" menu: collapses Permissions / Theme / Settings into a
   // single flyout. Each row delegates to .click() on the real button so the
   // existing handlers (and their viewport-anchored popovers) work unchanged.
@@ -281,6 +389,15 @@ export function initTopBar(): void {
     ) {
       setPermissionsPopoverOpen(false);
     }
+    if (
+      themePopover !== null &&
+      themeButton !== null &&
+      themePopover.classList.contains("open") &&
+      !themePopover.contains(e.target as Node) &&
+      !themeButton.contains(e.target as Node)
+    ) {
+      setThemePopoverOpen(false);
+    }
   });
 
   // Set logo home link from VITE_APP_URL (defaults to /)
@@ -300,43 +417,73 @@ export function initTopBar(): void {
   // Permissions
   initPermissions();
 
+  // Product chat button + docked panel
+  initChatPanel();
+
+  window.addEventListener("dotli:blocking-modal-active", (event: Event) => {
+    const { active } = (event as CustomEvent<{ active: boolean }>).detail;
+    if (!active) {
+      return;
+    }
+    userPopover.classList.remove("open");
+    setModePopoverOpen(false);
+    setPermissionsPopoverOpen(false);
+    setThemePopoverOpen(false);
+    morePopover?.classList.remove("open");
+    moreButton?.setAttribute("aria-expanded", "false");
+  });
+
   // Show default logged-out state
   renderLoggedOut();
 
-  // Probe the shared auth storage on host.dot.li. Sessions now live on the
-  // shared host origin so sibling host shells can rehydrate after a
-  // cross-subdomain navigation without eagerly loading the auth bundle for
-  // every visitor.
-  requestIdleCallback(() => {
-    void (async () => {
-      try {
-        if (await hasSharedAuthSession(SITE_ID)) {
-          await ensureAuth();
-        }
-      } catch (error) {
-        log.warn("[dot.li auth] Shared session probe failed:", error);
-      }
-    })();
+  // Rehydrate the persisted same-origin session on idle so a reload shows
+  // the logged-in badge before any core instance boots.
+  scheduleIdle(() => {
+    emitPersistedSessionUiState();
   });
 }
 
-function renderAuthState(state: AuthState): void {
-  switch (state.status) {
-    case "idle":
+function scheduleIdle(callback: () => void): void {
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(() => {
+      callback();
+    });
+  } else {
+    window.setTimeout(callback, 0);
+  }
+}
+
+/**
+ * Render one auth state. The modal lifecycle is state-driven: `Pairing`
+ * opens it with the QR, `Authenticating` replaces the QR with progress,
+ * `Connected` closes it, `LoginFailed` shows a retryable error, and
+ * `Disconnected` only updates the badge so an unrelated disconnect signal
+ * can never close an active pairing modal.
+ */
+function renderAuthState(state: DotliAuthState): void {
+  truapiSessionConnected = state.tag === "Connected";
+  switch (state.tag) {
+    case "Disconnected":
       renderLoggedOut();
       break;
-    case "pairing":
-      renderPairing(state.payload);
+    case "Pairing":
+      openModal(
+        undefined,
+        state.hostGlobal === true ? undefined : state.label,
+        { dotSuffix: state.dotSuffix },
+      );
+      renderPairing(state.deeplink);
       break;
-    case "attesting":
-      renderAttesting();
+    case "Authenticating":
+      renderAuthenticating();
       break;
-    case "authenticated":
-      renderLoggedIn(state);
-      closeModal();
+    case "Connected":
+      closeModal({ skipTruapiCancel: true });
+      renderTruapiLoggedIn(state.session);
       break;
-    case "error":
-      renderError(state.message);
+    case "LoginFailed":
+      openModal();
+      renderError(state.reason, state.kind);
       break;
   }
 }
@@ -344,31 +491,72 @@ function renderAuthState(state: AuthState): void {
 function renderLoggedOut(): void {
   authButton.innerHTML = USER_SVG;
   authButton.title = "Login with Polkadot Mobile";
+  setUserPopoverNoUsernameHint(false);
   window.dispatchEvent(new Event("dotli:logged-out"));
 }
 
-function renderLoggedIn(state: AuthState & { status: "authenticated" }): void {
-  const initials =
-    state.identity && authMod ? authMod.shortenName(state.identity) : "??";
-  authButton.innerHTML = `<div class="user-badge">${escapeHtml(initials)}</div>`;
+function renderTruapiLoggedIn(state: TruapiSessionUiState): void {
+  const initials = truapiSessionInitials(state);
+  authButton.innerHTML =
+    initials !== undefined
+      ? `<div class="user-badge">${escapeHtml(initials)}</div>`
+      : `<div class="user-badge user-badge-anon">${USER_SVG}</div>`;
   authButton.title = "Account";
+  const username =
+    state.primaryUsername ?? state.fullUsername ?? state.liteUsername;
+  userPopoverUsername.textContent =
+    username ??
+    shortenAccount(state.identityAccountId ?? state.publicKey) ??
+    "Connected with Polkadot Mobile";
+  setUserPopoverNoUsernameHint(username === undefined || username.length === 0);
   window.dispatchEvent(new Event("dotli:authenticated"));
+}
 
-  // Update popover with identity name or truncated account address
-  let username: string;
-  const fullName = state.identity?.fullUsername;
-  const liteName = state.identity?.liteUsername;
-  if (
-    (fullName !== undefined && fullName !== "") ||
-    (liteName !== undefined && liteName !== "")
-  ) {
-    username = fullName ?? liteName ?? "";
-  } else {
-    // Fallback to truncated account address
-    const id = toHex(state.session.remoteAccount.accountId).slice(2);
-    username = `0x${id.slice(0, 6)}...${id.slice(-4)}`;
+// A session can install without any username (the account has no dotNS record
+// on this network), so initials only come from real names, never account hex.
+function truapiSessionInitials(
+  state: TruapiSessionUiState,
+): string | undefined {
+  const fullName = state.fullUsername;
+  if (fullName !== undefined && fullName.length > 0) {
+    const parts = fullName.split(" ").filter((part) => part.length > 0);
+    if (parts.length === 1) {
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    if (parts.length > 1) {
+      return `${parts[0].charAt(0)}${parts[1].charAt(0)}`.toUpperCase();
+    }
   }
-  userPopoverUsername.textContent = username;
+  const liteName = state.liteUsername;
+  if (liteName !== undefined && liteName.length > 0) {
+    return liteName.slice(0, 2).toUpperCase();
+  }
+  return undefined;
+}
+
+// Explains the username-less state in the popover instead of leaving a bare
+// address that reads as a rendering bug.
+function setUserPopoverNoUsernameHint(show: boolean): void {
+  const existing = document.getElementById("user-popover-hint");
+  if (!show) {
+    existing?.remove();
+    return;
+  }
+  if (existing !== null) {
+    return;
+  }
+  const hint = document.createElement("div");
+  hint.id = "user-popover-hint";
+  hint.className = "user-popover-hint";
+  hint.textContent = "No username found for this account on this network.";
+  userPopoverUsername.insertAdjacentElement("afterend", hint);
+}
+
+function shortenAccount(account: string | undefined): string | undefined {
+  if (account === undefined || account.length < 12) {
+    return undefined;
+  }
+  return `${account.slice(0, 8)}...${account.slice(-4)}`;
 }
 
 function renderPairing(payload: string): void {
@@ -439,7 +627,10 @@ function renderPairing(payload: string): void {
     });
 }
 
-function renderAttesting(): void {
+function renderAuthenticating(): void {
+  // Invalidate an in-flight lazy QR render so it cannot replace this progress
+  // state after the wallet handshake has already been accepted.
+  currentQrPayload = null;
   modalQr.innerHTML = `
     <div class="attesting">
       <div class="spinner"></div>
@@ -452,13 +643,40 @@ function renderAttesting(): void {
 const PENDING_ICON_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 
+interface FriendlyAuthError {
+  title: string;
+  subtitle: string;
+  detail?: string;
+}
+
+function exhaustedAllowanceError(message: string): FriendlyAuthError {
+  return {
+    title: "No Statement Store slots left",
+    subtitle:
+      "Polkadot Mobile has no free slot to register this browser. Try again once the current allowance period rolls over.",
+    detail: message,
+  };
+}
+
 // Recognize known wallet-side SSO failures and return friendly copy, or null to
-// fall back to the raw error. OriginPersonProviderError ("error 0" =
-// noPersonsExist) means the signer's personhood is not yet included in a VRF
-// ring, so the wallet cannot grant the host its statement-store allowance yet.
-function friendlyAuthError(
-  message: string,
-): { title: string; subtitle: string } | null {
+// fall back to the raw error.
+function friendlyAuthError(message: string): FriendlyAuthError | null {
+  if (message.includes("Invalid Transaction")) {
+    return {
+      title: "Statement Store transaction rejected",
+      subtitle:
+        "Polkadot Mobile could not register this browser because the chain rejected the registration transaction.",
+      detail: message,
+    };
+  }
+  if (message.includes("SubstrateSdk.JSONRPCError error 1")) {
+    return {
+      title: "Statement Store registration failed",
+      subtitle:
+        "Polkadot Mobile reported a JSON-RPC failure while registering this browser as a device.",
+      detail: message,
+    };
+  }
   if (message.includes("OriginPersonProviderError")) {
     return {
       title: "Your account is still being set up",
@@ -468,11 +686,14 @@ function friendlyAuthError(
   return null;
 }
 
-function renderError(message: string): void {
+function renderError(message: string, kind: LoginFailureKind): void {
   const container = document.createElement("div");
   container.className = "auth-modal-error-view";
 
-  const friendly = friendlyAuthError(message);
+  const exhaustedPeriod = kind === "NoFreeAllowanceSlots";
+  const friendly = exhaustedPeriod
+    ? exhaustedAllowanceError(message)
+    : friendlyAuthError(message);
   if (friendly) {
     const icon = document.createElement("div");
     icon.className = "auth-modal-pending-icon";
@@ -488,6 +709,13 @@ function renderError(message: string): void {
     subtitle.className = "auth-modal-pending-subtitle";
     subtitle.textContent = friendly.subtitle;
     container.appendChild(subtitle);
+
+    if (friendly.detail !== undefined && friendly.detail.length > 0) {
+      const detail = document.createElement("p");
+      detail.className = "auth-modal-error";
+      detail.textContent = friendly.detail;
+      container.appendChild(detail);
+    }
   } else {
     const msg = document.createElement("p");
     msg.className = "auth-modal-error";
@@ -495,47 +723,47 @@ function renderError(message: string): void {
     container.appendChild(msg);
   }
 
-  const retry = document.createElement("button");
-  retry.className = "auth-modal-retry";
-  retry.textContent = "Retry";
-  retry.addEventListener("click", () => {
-    authMod?.startPairing();
-  });
-  container.appendChild(retry);
+  if (!exhaustedPeriod) {
+    const retry = document.createElement("button");
+    retry.className = "auth-modal-retry";
+    retry.textContent = "Retry";
+    retry.addEventListener("click", () => {
+      openModal();
+      requestTruapiLogin();
+    });
+    container.appendChild(retry);
+  }
 
   modalQr.innerHTML = "";
   modalQr.appendChild(container);
 }
 
 function handleAuthButtonClick(): void {
-  if (authMod) {
-    const state = authMod.getAuthState();
-
-    if (state.status === "authenticated") {
-      // Toggle user popover
-      userPopover.classList.toggle("open");
-    } else if (state.status === "attesting") {
-      // Attestation still running in background, just reshow the modal
-      modalBackdrop.classList.add("open");
-    } else {
-      // Open modal and start pairing
-      openModal();
-      authMod.startPairing();
-    }
+  if (truapiSessionConnected) {
+    userPopover.classList.toggle("open");
   } else {
-    // Auth not loaded yet, load it and start pairing
     openModal();
-    void ensureAuth().then(() => {
-      authMod?.startPairing();
-    });
+    requestTruapiLogin();
   }
 }
 
 function handleDisconnect(): void {
   userPopover.classList.remove("open");
-  if (authMod) {
-    void authMod.disconnect();
-  }
+  requestTruapiDisconnect();
+}
+
+export function requestTruapiDisconnect(): void {
+  window.dispatchEvent(new Event("dotli:truapi-disconnect-request"));
+}
+
+function requestTruapiLogin(reason?: string): void {
+  window.dispatchEvent(
+    new CustomEvent("dotli:truapi-login-request", {
+      detail: {
+        reason,
+      },
+    }),
+  );
 }
 
 const PERM_ICONS: Record<string, string> = {
@@ -556,14 +784,14 @@ const PERM_ICONS: Record<string, string> = {
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
   Biometrics:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11a4 4 0 0 0-4 4v2a4 4 0 0 0 8 0v-2a4 4 0 0 0-4-4z"/><path d="M6 11a6 6 0 0 1 12 0"/><path d="M4 11a8 8 0 0 1 16 0"/></svg>',
+  IdentityDisclosure:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/><path d="M19 3v4h4"/></svg>',
   ChainSubmit:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
   PreimageSubmit:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
   StatementSubmit:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg>',
-  GetUserId:
-    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
 };
 
 function initPermissions(): void {
@@ -575,6 +803,13 @@ function initPermissions(): void {
   permissionsPopoverBackdrop = document.getElementById(
     "permissions-popover-backdrop",
   );
+
+  permissionsButton.setAttribute("aria-haspopup", "dialog");
+  permissionsButton.setAttribute("aria-expanded", "false");
+  permissionsButton.setAttribute("aria-controls", permissionsPopover.id);
+  permissionsPopover.setAttribute("role", "dialog");
+  permissionsPopover.setAttribute("aria-label", "Permissions");
+  permissionsPopover.tabIndex = -1;
 
   permissionsButton.addEventListener("click", () => {
     const willOpen = !permissionsPopover.classList.contains("open");
@@ -627,14 +862,21 @@ function initPermissions(): void {
 
 /** Update the shield icon to reflect whether any permissions are active. */
 function updatePermissionsButtonState(): void {
-  if (currentProductLabel === null) {
+  const productLabel = currentProductLabel;
+  if (productLabel === null) {
     permissionsButton.classList.remove("has-grants");
     return;
   }
-  permissionsButton.classList.toggle(
-    "has-grants",
-    hasAnyGrant(currentProductLabel),
-  );
+  void (async () => {
+    const hasGrant = await hasAnyGrant(productLabel);
+    if (currentProductLabel === productLabel) {
+      permissionsButton.classList.toggle("has-grants", hasGrant);
+    }
+  })().catch(() => {
+    if (currentProductLabel === productLabel) {
+      permissionsButton.classList.remove("has-grants");
+    }
+  });
 }
 
 const STATUS_LABELS: Record<PermissionStatus, string> = {
@@ -646,6 +888,7 @@ const STATUS_LABELS: Record<PermissionStatus, string> = {
 const STATUS_ORDER: readonly PermissionStatus[] = ["ask", "granted", "denied"];
 
 let openDropdownCleanup: (() => void) | null = null;
+let permissionsRenderToken = 0;
 
 function closeOpenDropdown(): void {
   openDropdownCleanup?.();
@@ -653,10 +896,30 @@ function closeOpenDropdown(): void {
 }
 
 function renderPermissionsPopover(): void {
+  const token = ++permissionsRenderToken;
+  void renderPermissionsPopoverAsync(token).catch(() => {
+    if (token !== permissionsRenderToken) {
+      return;
+    }
+    permissionsPopoverList.innerHTML = "";
+    const hint = document.createElement("div");
+    hint.className = "permissions-popover-footer";
+    hint.textContent = "Permissions are unavailable for this app.";
+    permissionsPopoverList.appendChild(hint);
+  });
+}
+
+async function renderPermissionsPopoverAsync(token: number): Promise<void> {
   closeOpenDropdown();
+  // A re-render replaces the focused control. Remember it by id so focus
+  // can be restored below, keeping keyboard users anchored.
+  const prevFocusId = permissionsPopoverList.contains(document.activeElement)
+    ? (document.activeElement?.id ?? "")
+    : "";
   permissionsPopoverList.innerHTML = "";
 
-  if (currentProductLabel === null) {
+  const productLabel = currentProductLabel;
+  if (productLabel === null) {
     const hint = document.createElement("div");
     hint.className = "permissions-popover-footer";
     hint.textContent = productErrored
@@ -666,9 +929,19 @@ function renderPermissionsPopover(): void {
     return;
   }
 
-  for (const perm of ALL_PERMISSIONS) {
-    const productLabel = currentProductLabel;
-    const status = getPermissionStatus(productLabel, perm.name);
+  const statuses = await getPermissionStatuses(
+    productLabel,
+    ALL_PERMISSIONS.map(({ name }) => name),
+  );
+
+  for (const [index, perm] of ALL_PERMISSIONS.entries()) {
+    const status = statuses[index] ?? "ask";
+    if (
+      token !== permissionsRenderToken ||
+      currentProductLabel !== productLabel
+    ) {
+      return;
+    }
 
     const row = document.createElement("div");
     row.className = "permissions-popover-row";
@@ -680,27 +953,31 @@ function renderPermissionsPopover(): void {
 
     const nameEl = document.createElement("span");
     nameEl.className = "permissions-popover-name";
+    nameEl.id = `permissions-popover-name-${perm.name}`;
     nameEl.textContent = perm.label;
     row.appendChild(nameEl);
 
     row.appendChild(
-      createPermissionDropdown(status, (next) => {
-        if (next === "ask") {
-          resetPermission(productLabel, perm.name);
-        } else {
-          setPermissionStatus(productLabel, perm.name, next);
-        }
-        // Device permissions need iframe reload (allow attribute changes).
-        // Non-device permissions just update the UI.
-        const event = isDevicePermission(perm.name)
-          ? "dotli:device-permission-changed"
-          : "dotli:permission-changed";
-        window.dispatchEvent(
-          new CustomEvent(event, {
-            detail: { label: productLabel, permission: perm.name },
-          }),
-        );
-        renderPermissionsPopover();
+      createPermissionDropdown(perm, status, (next) => {
+        void (async () => {
+          if (next === "ask") {
+            await resetPermission(productLabel, perm.name);
+          } else {
+            await setPermissionStatus(productLabel, perm.name, next);
+          }
+          // Device permissions need iframe reload (allow attribute changes).
+          // Non-device permissions just update the UI.
+          const event = isDevicePermission(perm.name)
+            ? "dotli:device-permission-changed"
+            : "dotli:permission-changed";
+          window.dispatchEvent(
+            new CustomEvent(event, {
+              detail: { label: productLabel, permission: perm.name },
+            }),
+          );
+        })().catch(() => {
+          renderPermissionsPopover();
+        });
       }),
     );
 
@@ -712,9 +989,14 @@ function renderPermissionsPopover(): void {
   footer.className = "permissions-popover-footer";
   footer.textContent = "Changing permissions will reload the app.";
   permissionsPopoverList.appendChild(footer);
+
+  if (prevFocusId !== "") {
+    document.getElementById(prevFocusId)?.focus();
+  }
 }
 
 function createPermissionDropdown(
+  perm: (typeof ALL_PERMISSIONS)[number],
   currentStatus: PermissionStatus,
   onChange: (status: PermissionStatus) => void,
 ): HTMLElement {
@@ -724,13 +1006,22 @@ function createPermissionDropdown(
   const trigger = document.createElement("button");
   trigger.type = "button";
   trigger.className = "permissions-popover-select";
+  trigger.id = `permissions-popover-select-${perm.name}`;
   trigger.setAttribute("aria-haspopup", "listbox");
   trigger.setAttribute("aria-expanded", "false");
 
   const triggerLabel = document.createElement("span");
   triggerLabel.className = "permissions-popover-select-label";
+  triggerLabel.id = `permissions-popover-status-${perm.name}`;
   triggerLabel.textContent = STATUS_LABELS[currentStatus];
   trigger.appendChild(triggerLabel);
+
+  // Name the control "<permission> <status>" so screen readers announce
+  // which permission this select changes, not just its current value.
+  trigger.setAttribute(
+    "aria-labelledby",
+    `permissions-popover-name-${perm.name} ${triggerLabel.id}`,
+  );
 
   const caret = document.createElement("span");
   caret.className = "permissions-popover-select-caret";
@@ -753,6 +1044,21 @@ function createPermissionDropdown(
     const menu = document.createElement("div");
     menu.className = "permissions-popover-menu";
     menu.setAttribute("role", "listbox");
+    menu.setAttribute("aria-label", `${perm.label} permission`);
+
+    menu.addEventListener("keydown", (ev) => {
+      if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") {
+        return;
+      }
+      ev.preventDefault();
+      const options = Array.from(
+        menu.querySelectorAll<HTMLButtonElement>('[role="option"]'),
+      );
+      const active = document.activeElement;
+      const index = options.findIndex((option) => option === active);
+      const step = ev.key === "ArrowDown" ? 1 : -1;
+      options[(index + step + options.length) % options.length].focus();
+    });
 
     for (const status of STATUS_ORDER) {
       const item = document.createElement("button");
@@ -786,6 +1092,7 @@ function createPermissionDropdown(
 
     wrap.appendChild(menu);
     trigger.setAttribute("aria-expanded", "true");
+    menu.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
 
     function onDocClick(ev: MouseEvent): void {
       if (!wrap.contains(ev.target as Node)) {
@@ -801,10 +1108,14 @@ function createPermissionDropdown(
     document.addEventListener("keydown", onKeyDown);
 
     openDropdownCleanup = (): void => {
+      const menuHadFocus = menu.contains(document.activeElement);
       menu.remove();
       trigger.setAttribute("aria-expanded", "false");
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("keydown", onKeyDown);
+      if (menuHadFocus) {
+        trigger.focus();
+      }
     };
   });
 
@@ -818,6 +1129,13 @@ function initModeToggle(): void {
   // Backdrop is optional. Older host shells that haven't added the element
   // still work, the popover just doesn't get a modal overlay there.
   modePopoverBackdrop = document.getElementById("mode-popover-backdrop");
+
+  modeButton.setAttribute("aria-haspopup", "dialog");
+  modeButton.setAttribute("aria-expanded", "false");
+  modeButton.setAttribute("aria-controls", modePopover.id);
+  modePopover.setAttribute("role", "dialog");
+  modePopover.setAttribute("aria-label", "Settings");
+  modePopover.tabIndex = -1;
 
   // Show the "trusted provider" indicator on the settings button whenever
   // the session is not fully verified, i.e. chain=rpc or content=gateway
@@ -839,6 +1157,103 @@ function initModeToggle(): void {
   });
 }
 
+let modePopoverFocusTrap: (() => void) | null = null;
+let permissionsPopoverFocusTrap: (() => void) | null = null;
+let authModalFocusTrap: (() => void) | null = null;
+
+const FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "a[href]",
+  '[tabindex]:not([tabindex="-1"])',
+].join(", ");
+
+/**
+ * Escape, Tab containment, and focus restore for an open popover. Same
+ * lifecycle as the permission dropdowns: attach on open, cleanup on close.
+ */
+function trapPopoverFocus(
+  popover: HTMLElement,
+  trigger: HTMLElement,
+  close: () => void,
+): () => void {
+  const focusables = (): HTMLElement[] =>
+    Array.from(popover.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      .filter(
+        // Match native tab order: unchecked radios are reached with arrow
+        // keys inside their group, not with Tab.
+        (el) =>
+          !(
+            el instanceof HTMLInputElement &&
+            el.type === "radio" &&
+            !el.checked
+          ),
+      )
+      .filter(
+        // Skip controls CSS hides, like the sheet close button on desktop.
+        (el) =>
+          typeof el.checkVisibility !== "function" || el.checkVisibility(),
+      );
+
+  function onKeyDown(ev: KeyboardEvent): void {
+    // A popover removed from the document without a close call must not
+    // keep acting on key events.
+    if (!popover.isConnected) {
+      return;
+    }
+    if (ev.key === "Escape") {
+      // An open permission dropdown consumes Escape first. Its own
+      // document handler closes it right after this one returns.
+      if (openDropdownCleanup === null) {
+        close();
+      }
+      return;
+    }
+    if (ev.key !== "Tab") {
+      return;
+    }
+    const items = focusables();
+    if (items.length === 0) {
+      ev.preventDefault();
+      popover.focus();
+      return;
+    }
+    const active = document.activeElement;
+    const inside = active instanceof HTMLElement && popover.contains(active);
+    if (ev.shiftKey) {
+      if (!inside || active === items[0] || active === popover) {
+        ev.preventDefault();
+        items[items.length - 1].focus();
+      }
+    } else if (!inside || active === items[items.length - 1]) {
+      ev.preventDefault();
+      items[0].focus();
+    }
+  }
+
+  document.addEventListener("keydown", onKeyDown);
+  popover.focus();
+
+  return () => {
+    document.removeEventListener("keydown", onKeyDown);
+    // Restore focus unless the user already moved it somewhere else,
+    // e.g. by clicking outside the popover to dismiss it.
+    const active = document.activeElement;
+    if (
+      active === null ||
+      active === document.body ||
+      popover.contains(active)
+    ) {
+      trigger.focus();
+      if (document.activeElement !== trigger) {
+        document.getElementById("more-button")?.focus();
+      }
+    }
+  };
+}
+
 /**
  * Single source of truth for popover open/close. Keeps the backdrop in
  * sync with the popover visibility so "the rest of the page is blocked
@@ -847,8 +1262,15 @@ function initModeToggle(): void {
 function setModePopoverOpen(open: boolean): void {
   modePopover.classList.toggle("open", open);
   modePopoverBackdrop?.classList.toggle("open", open);
+  modeButton.setAttribute("aria-expanded", String(open));
   if (open) {
     renderModePopover();
+    modePopoverFocusTrap ??= trapPopoverFocus(modePopover, modeButton, () => {
+      setModePopoverOpen(false);
+    });
+  } else {
+    modePopoverFocusTrap?.();
+    modePopoverFocusTrap = null;
   }
 }
 
@@ -860,9 +1282,19 @@ function setModePopoverOpen(open: boolean): void {
 function setPermissionsPopoverOpen(open: boolean): void {
   permissionsPopover.classList.toggle("open", open);
   permissionsPopoverBackdrop?.classList.toggle("open", open);
+  permissionsButton.setAttribute("aria-expanded", String(open));
   if (open) {
     renderPermissionsPopover();
+    permissionsPopoverFocusTrap ??= trapPopoverFocus(
+      permissionsPopover,
+      permissionsButton,
+      () => {
+        setPermissionsPopoverOpen(false);
+      },
+    );
   } else {
+    permissionsPopoverFocusTrap?.();
+    permissionsPopoverFocusTrap = null;
     closeOpenDropdown();
   }
 }
@@ -931,54 +1363,56 @@ function renderModePopover(): void {
   rightCol.className = "mode-popover-col";
   columns.appendChild(rightCol);
 
-  appendSectionHeader(leftCol, "Network");
-  // Only offer networks this deployment was built for (VITE_NETWORKS).
-  // Labels and descriptions come from the network catalog, so the picker
-  // never goes stale when a deployment retargets to a new network.
-  const networkChoices: [Network, string, string][] = getEnabledNetworks().map(
-    (value) => {
-      const cfg = NETWORK_NAME_TO_SERVICES_CONFIG[value];
-      return [value, cfg.label, cfg.description];
-    },
-  );
-  const networkGroup = document.createElement("div");
-  leftCol.appendChild(networkGroup);
-  const rerenderNetwork = (): void => {
-    networkGroup.innerHTML = "";
-    for (const [value, label, desc] of networkChoices) {
-      renderNetworkRadio(
-        networkGroup,
-        value,
-        label,
-        desc,
-        draft.network,
-        (next) => {
-          draft.network = next;
-          // Networks without published parachain chain specs can only run
-          // via the RPC gateway; coerce the draft so Apply never pairs a
-          // smoldot backend with such a network.
-          if (isRpcGatewayOnly(next)) {
-            draft.chain = "rpc-gateway";
-          }
-          rerenderNetwork();
-          rerenderChain();
-          syncApply();
-        },
-      );
-    }
-  };
+  const enabledNetworks = getEnabledNetworks();
+  if (enabledNetworks.length > 1) {
+    appendSectionHeader(leftCol, "Network");
+    const networkChoices: [Network, string, string][] = enabledNetworks.map(
+      (n) => {
+        const cfg = NETWORK_NAME_TO_SERVICES_CONFIG[n];
+        return [n, cfg.label, cfg.description];
+      },
+    );
+    const networkGroup = document.createElement("div");
+    networkGroup.setAttribute("role", "radiogroup");
+    networkGroup.setAttribute("aria-label", "Network");
+    leftCol.appendChild(networkGroup);
+    const rerenderNetwork = (): void => {
+      networkGroup.innerHTML = "";
+      for (const [value, label, desc] of networkChoices) {
+        renderNetworkRadio(
+          networkGroup,
+          value,
+          label,
+          desc,
+          draft.network,
+          (next) => {
+            draft.network = next;
+            rerenderNetwork();
+            // The rebuild replaced the focused input. Refocus the checked
+            // radio so keyboard arrow navigation survives the re-render.
+            networkGroup
+              .querySelector<HTMLInputElement>("input:checked")
+              ?.focus();
+            syncApply();
+          },
+        );
+      }
+    };
+    rerenderNetwork();
+    appendDivider(leftCol);
+  }
 
   appendSectionHeader(leftCol, "Backend");
   const chainChoices: [Backend, string, string][] = [
     [
-      "smoldot-shared-worker",
-      "Light Client Shared",
-      "Verified in your browser, shared across tabs (recommended)",
-    ],
-    [
       "smoldot-direct",
       "Light Client Per-Tab",
-      "Verified in your browser, separate per tab",
+      "Verified in your browser, separate per tab (recommended)",
+    ],
+    [
+      "smoldot-shared-worker",
+      "Light Client Shared",
+      "Verified in your browser, shared across tabs",
     ],
     [
       "rpc-gateway",
@@ -987,6 +1421,8 @@ function renderModePopover(): void {
     ],
   ];
   const chainGroup = document.createElement("div");
+  chainGroup.setAttribute("role", "radiogroup");
+  chainGroup.setAttribute("aria-label", "Backend");
   leftCol.appendChild(chainGroup);
   const sharedWorkerSupported = isSharedWorkerAvailable();
   const rerenderChain = (): void => {
@@ -1013,12 +1449,14 @@ function renderModePopover(): void {
         (next) => {
           draft.chain = next;
           rerenderChain();
+          // The rebuild replaced the focused input. Refocus the checked
+          // radio so keyboard arrow navigation survives the re-render.
+          chainGroup.querySelector<HTMLInputElement>("input:checked")?.focus();
           syncApply();
         },
       );
     }
   };
-  rerenderNetwork();
   rerenderChain();
 
   appendDivider(leftCol);
@@ -1167,7 +1605,7 @@ async function applyAndReset(
       setBackend(draft.chain);
       setNetwork(draft.network);
       setCacheSettings(draft.cache);
-      if (theme === "light" || theme === "dark") {
+      if (theme === "light" || theme === "dark" || theme === "system") {
         localStorage.setItem("dotli-theme", theme);
       }
       // Force every origin to purge regardless of persisted prefs.
@@ -1332,7 +1770,7 @@ declare const __POLKADOT_API_VERSION__: string | undefined;
 declare const __POLKADOT_API_VERSIONS__:
   | { name: string; version: string }[]
   | undefined;
-declare const __NOVASAMATECH_VERSIONS__:
+declare const __PARITY_TRUAPI_VERSIONS__:
   | { name: string; version: string }[]
   | undefined;
 
@@ -1446,19 +1884,10 @@ function renderDiagnostics(parent: HTMLElement): void {
     polkadotApi.push(...__POLKADOT_API_VERSIONS__);
   }
 
-  // @novasamatech/* versions move in lockstep, so showing every single
-  // package is noise. Keep only the two that are independently meaningful:
-  // host-api (the host runtime) and sdk-statement (the statement store
-  // client). Everything else in the scope tracks host-api's version.
-  const NOVASAMATECH_ALLOWLIST = new Set([
-    "@novasamatech/host-api",
-    "@novasamatech/sdk-statement",
-  ]);
-  const novasamatech = (
-    typeof __NOVASAMATECH_VERSIONS__ === "undefined"
+  const parityTruapi =
+    typeof __PARITY_TRUAPI_VERSIONS__ === "undefined"
       ? []
-      : __NOVASAMATECH_VERSIONS__
-  ).filter((p) => NOVASAMATECH_ALLOWLIST.has(p.name));
+      : __PARITY_TRUAPI_VERSIONS__;
 
   if (polkadotApi.length > 0) {
     appendSectionHeader(parent, "@polkadot-api");
@@ -1466,9 +1895,9 @@ function renderDiagnostics(parent: HTMLElement): void {
       renderInfoRow(parent, pkg.name, pkg.version);
     }
   }
-  if (novasamatech.length > 0) {
-    appendSectionHeader(parent, "@triangle-sdk");
-    for (const pkg of novasamatech) {
+  if (parityTruapi.length > 0) {
+    appendSectionHeader(parent, "@parity/truapi");
+    for (const pkg of parityTruapi) {
       renderInfoRow(parent, pkg.name, pkg.version);
     }
   }
@@ -1483,24 +1912,26 @@ function renderDiagnostics(parent: HTMLElement): void {
   shareBtn.title =
     "Open a new issue on paritytech/dotli pre-filled with these diagnostics";
   shareBtn.addEventListener("click", () => {
-    const report = formatDiagnosticsReport(
-      base,
-      smoldotInfo,
-      polkadotApi,
-      novasamatech,
-    );
-    const body = [
-      "<!-- Describe the issue above this line; the diagnostics below are auto-filled. -->",
-      "",
-      "## Diagnostics",
-      "",
-      "```",
-      report,
-      "```",
-    ].join("\n");
-    const url = new URL("https://github.com/paritytech/dotli/issues/new");
-    url.searchParams.set("body", body);
-    window.open(url.toString(), "_blank", "noopener,noreferrer");
+    void (async () => {
+      const report = await formatDiagnosticsReport(
+        base,
+        smoldotInfo,
+        polkadotApi,
+        parityTruapi,
+      );
+      const body = [
+        "<!-- Describe the issue above this line; the diagnostics below are auto-filled. -->",
+        "",
+        "## Diagnostics",
+        "",
+        "```",
+        report,
+        "```",
+      ].join("\n");
+      const url = new URL("https://github.com/paritytech/dotli/issues/new");
+      url.searchParams.set("body", body);
+      window.open(url.toString(), "_blank", "noopener,noreferrer");
+    })();
   });
 
   const debugOn = isTruapiDebugEnabled();
@@ -1541,16 +1972,16 @@ function isTruapiDebugEnabled(): boolean {
  *              so the snapshot matches what's actually live right now.
  *    3. Permissions: per-product, omitted on landing where we don't have
  *                    a scoped label to query.
- *    4. Packages: flat list of smoldot, polkadot-api, and novasamatech. The
+ *    4. Packages: flat list of smoldot, polkadot-api, and @parity/truapi. The
  *                 live block heights from the @smoldot popover section
  *                 aren't included here because they're noise in a bug
  *                 report. The popover already shows them live. */
-function formatDiagnosticsReport(
+async function formatDiagnosticsReport(
   base: [label: string, value: string][],
   smoldot: SmoldotInfo,
   polkadotApi: { name: string; version: string }[],
-  novasamatech: { name: string; version: string }[],
-): string {
+  parityTruapi: { name: string; version: string }[],
+): Promise<string> {
   const lines: string[] = [];
   for (const [k, v] of base) {
     lines.push(`${k}: ${v}`);
@@ -1567,10 +1998,15 @@ function formatDiagnosticsReport(
   );
 
   // Permissions, only when we know which product label to scope against.
-  if (currentProductLabel !== null) {
+  const productLabel = currentProductLabel;
+  if (productLabel !== null) {
     lines.push("", "Permissions:");
-    for (const perm of ALL_PERMISSIONS) {
-      const status = getPermissionStatus(currentProductLabel, perm.name);
+    const statuses = await getPermissionStatuses(
+      productLabel,
+      ALL_PERMISSIONS.map(({ name }) => name),
+    );
+    for (const [index, perm] of ALL_PERMISSIONS.entries()) {
+      const status = statuses[index] ?? "ask";
       lines.push(`  ${perm.label}: ${status === "granted" ? "on" : "off"}`);
     }
   }
@@ -1581,7 +2017,7 @@ function formatDiagnosticsReport(
   for (const p of polkadotApi) {
     lines.push(`  ${p.name}: ${p.version}`);
   }
-  for (const p of novasamatech) {
+  for (const p of parityTruapi) {
     lines.push(`  ${p.name}: ${p.version}`);
   }
   return lines.join("\n");
@@ -1944,6 +2380,7 @@ function renderCacheToggle(
 
   const toggle = document.createElement("button");
   toggle.setAttribute("role", "switch");
+  toggle.setAttribute("aria-label", label);
 
   const track = document.createElement("span");
   track.className = "permissions-toggle-track";
@@ -1973,7 +2410,11 @@ function renderCacheToggle(
   parent.appendChild(row);
 }
 
-function openModal(reason?: string, label?: string): void {
+function openModal(
+  reason?: string,
+  label?: string,
+  options: { dotSuffix?: boolean } = {},
+): void {
   modalQr.innerHTML = `<div class="spinner"></div>`;
   // Mobile leads with the deeplink button. The QR toggle swaps this copy later.
   modalHint.textContent = isMobileDevice()
@@ -1983,10 +2424,13 @@ function openModal(reason?: string, label?: string): void {
   // mode rendering a local dev server directly (apps/host/src/main.ts
   // localhost-proxy branch). Show it as-is. Deployed dotNs products
   // served via `<label>.localhost:<port>` still pass through as the bare
-  // label and get the ".dot" suffix.
+  // label and get the active network's TLD suffix.
   let productLabel = "";
   if (label !== undefined && label.length > 0) {
-    productLabel = label.startsWith("localhost:") ? label : `${label}.dot`;
+    productLabel =
+      label.startsWith("localhost:") || options.dotSuffix === false
+        ? label
+        : withActiveTld(label);
   }
   modalTitle.innerHTML =
     productLabel.length > 0
@@ -1999,17 +2443,68 @@ function openModal(reason?: string, label?: string): void {
     modalReason.textContent = "";
     modalReason.hidden = true;
   }
-  modalBackdrop.classList.add("open");
+  ensureAuthModalLease();
 }
 
-function closeModal(): void {
+function closeModal(opts: { skipTruapiCancel?: boolean } = {}): void {
   modalBackdrop.classList.remove("open");
+  authModalFocusTrap?.();
+  authModalFocusTrap = null;
+  currentQrPayload = null;
+  modalQr.innerHTML = "";
+  const scope = authModalScope;
+  const release = releaseAuthModal;
+  authModalScope = null;
+  releaseAuthModal = null;
+  release?.();
+  scope?.dispose("Authentication modal closed");
 
-  if (authMod) {
-    const state = authMod.getAuthState();
-    // Only abort during pairing or error. Let attestation continue in background
-    if (state.status === "pairing" || state.status === "error") {
-      authMod.abortPairing();
-    }
+  if (opts.skipTruapiCancel !== true) {
+    // User-initiated close: cancel any in-flight login in the core so the
+    // pairing flow stops polling and resolves as Rejected.
+    window.dispatchEvent(new Event("dotli:truapi-cancel-login"));
   }
+}
+
+function ensureAuthModalLease(): void {
+  if (authModalScope !== null) {
+    return;
+  }
+
+  if (blockingModalCoordinator === null) {
+    throw new Error("Top bar initialized without a blocking modal coordinator");
+  }
+  const scope = blockingModalCoordinator.createScope();
+  authModalScope = scope;
+  void scope
+    .enqueue(
+      (signal) =>
+        new Promise<void>((resolve) => {
+          if (authModalScope !== scope || signal.aborted) {
+            resolve();
+            return;
+          }
+
+          const finish = (): void => {
+            signal.removeEventListener("abort", finish);
+            if (releaseAuthModal === finish) {
+              releaseAuthModal = null;
+            }
+            resolve();
+          };
+          releaseAuthModal = finish;
+          signal.addEventListener("abort", finish, { once: true });
+          modalBackdrop.classList.add("open");
+          authModalFocusTrap ??= trapPopoverFocus(
+            modalBackdrop,
+            authButton,
+            () => {
+              closeModal();
+            },
+          );
+        }),
+    )
+    .catch(() => {
+      // Closing a pending or active authentication modal disposes its lease.
+    });
 }

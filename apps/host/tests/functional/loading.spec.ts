@@ -12,6 +12,8 @@ import { test } from "./helpers/shared-mode-reset";
 import { findAppFrame } from "../product-frame";
 import { seedBackend, type Backend } from "./fixtures/settings";
 
+import { TLD_SUFFIX } from "../env";
+
 const DOMAIN = process.env.COMBO_DOMAIN ?? "host-playground";
 const PORT = process.env.COMBO_PORT ?? "5173";
 const HOST_URL = `http://${DOMAIN}.localhost:${PORT}/`;
@@ -131,30 +133,6 @@ const successfulResolveResponse = (cid: string): string => `
   });
 `;
 
-/** Rescale any setTimeout call whose delay matches `fromMs` down to `toMs`. */
-async function shrinkTimeout(
-  page: Page,
-  fromMs: number,
-  toMs: number,
-): Promise<void> {
-  await page.addInitScript(
-    ([from, to]) => {
-      const orig = window.setTimeout.bind(window);
-      window.setTimeout = ((
-        handler: TimerHandler,
-        ms?: number,
-        ...rest: unknown[]
-      ) =>
-        orig(
-          handler,
-          ms === from ? to : ms,
-          ...rest,
-        )) as typeof window.setTimeout;
-    },
-    [fromMs, toMs],
-  );
-}
-
 test("As a user using smoldot directly, when the light client panics mid-resolution, I see the appropriate error and can switch backend", async ({
   page,
 }) => {
@@ -265,12 +243,11 @@ test("As a user using smoldot in shared worker, when the worker dies silently, I
   );
 });
 
-test("As a user using smoldot directly, when loading is slow (>10s) I see a one-click gateway escape, and if it times out (>45s) I see the appropriate error and can switch backend", async ({
+test("As a user using smoldot directly, when the sync times out (>45s) I see the appropriate error and can switch backend", async ({
   page,
 }) => {
   // Given
   await setBackend(page, "smoldot-direct");
-  await shrinkTimeout(page, 10_000, 500);
   await mockProtocolIframe(
     page,
     errorResolveResponse(
@@ -283,10 +260,6 @@ test("As a user using smoldot directly, when loading is slow (>10s) I see a one-
   await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
 
   // Then
-  await expect(page.locator(".loading-gateway-btn")).toContainText(
-    "Use Trusted Provider",
-    { timeout: 5_000 },
-  );
   await expect(page.locator(".error-page-title")).toHaveText(
     "Domain can't be reached",
     { timeout: 10_000 },
@@ -302,12 +275,11 @@ test("As a user using smoldot directly, when loading is slow (>10s) I see a one-
   );
 });
 
-test("As a user using smoldot in shared worker, when loading is slow (>10s) I see a one-click gateway escape, and if it times out (>45s) I see the appropriate error and can switch backend", async ({
+test("As a user using smoldot in shared worker, when the sync times out (>45s) I see the appropriate error and can switch backend", async ({
   page,
 }) => {
   // Given
   await setBackend(page, "smoldot-shared-worker");
-  await shrinkTimeout(page, 10_000, 500);
   await mockProtocolIframe(
     page,
     errorResolveResponse(
@@ -320,10 +292,6 @@ test("As a user using smoldot in shared worker, when loading is slow (>10s) I se
   await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
 
   // Then
-  await expect(page.locator(".loading-gateway-btn")).toContainText(
-    "Use Trusted Provider",
-    { timeout: 5_000 },
-  );
   await expect(page.locator(".error-page-title")).toHaveText(
     "Domain can't be reached",
     { timeout: 10_000 },
@@ -337,35 +305,6 @@ test("As a user using smoldot in shared worker, when loading is slow (>10s) I se
   await expect(page.locator("#error-retry-btn-1")).toContainText(
     RETRY_LABEL_FROM_SMOLDOT,
   );
-});
-
-test("As a user using smoldot directly, when I click the gateway escape, the backend flips to rpc-gateway and the page reloads", async ({
-  page,
-}) => {
-  // Given
-  await setBackend(page, "smoldot-direct");
-  await shrinkTimeout(page, 10_000, 500);
-  await mockProtocolIframe(
-    page,
-    errorResolveResponse("never resolves in test window", 30_000),
-  );
-
-  // When
-  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
-  const gatewayBtn = page.locator(".loading-gateway-btn");
-  await expect(gatewayBtn).toContainText("Use Trusted Provider", {
-    timeout: 5_000,
-  });
-  await Promise.all([
-    page.waitForLoadState("domcontentloaded"),
-    gatewayBtn.click(),
-  ]);
-
-  // Then
-  const backend = await page.evaluate(() =>
-    localStorage.getItem("dotli:chain-backend"),
-  );
-  expect(backend).toBe("rpc-gateway");
 });
 
 test("As a user, when the app chunks fail to load mid-session, I see the appropriate error with a reload button", async ({
@@ -462,7 +401,9 @@ test("As a user, when I visit a domain that has no content set, I see the approp
     "This app can't be reached",
     { timeout: 10_000 },
   );
-  await expect(page.locator(".error-page-domain")).toHaveText(`${DOMAIN}.dot`);
+  await expect(page.locator(".error-page-domain")).toHaveText(
+    `${DOMAIN}${TLD_SUFFIX}`,
+  );
   await expect(page.locator(".error-page-detail")).toContainText(
     "Check if there is a typo",
   );

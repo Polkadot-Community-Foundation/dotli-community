@@ -1,13 +1,33 @@
 /* Copyright 2026 Parity Technologies (UK) Ltd. */
 /* SPDX-License-Identifier: AGPL-3.0-only */
 
-/* dot.li — Base styles: reset, layout, shared components */
+/* dot.li base styles: reset, layout, shared components */
 
-/* ── Reset ──────────────────────────────── */
+/* Reset */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+/* Layout tokens shared by every stylesheet and by the inline styles in JS.
+
+   The host sets `viewport-fit=cover`, so the viewport spans the whole display
+   and every edge needs its own inset. `env()` carries the 0px fallback here, so
+   rules in this stylesheet use the tokens bare. Inline styles set from JS repeat
+   a px fallback instead, because they do not ship with this file. Defined here
+   rather than in topbar.css because base.css consumes them too. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --topbar-height: calc(56px + var(--safe-top));
+  --content-height: calc(100dvh - var(--topbar-height) - var(--safe-bottom));
+}
+:focus-visible {
+  outline: 2px solid #737373;
+  outline-offset: 2px;
 }
 body {
   background: #0a0a0a;
@@ -15,7 +35,7 @@ body {
   font-family: system-ui, sans-serif;
 }
 
-/* ── Spinner (shared) ───────────────────── */
+/* Spinner (shared) */
 .spinner {
   width: 24px;
   height: 24px;
@@ -31,13 +51,13 @@ body {
   }
 }
 
-/* ── App Content ────────────────────────── */
+/* App Content */
 #app {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: calc(100dvh - 56px);
-  margin-top: 56px;
+  min-height: var(--content-height);
+  margin-top: var(--topbar-height);
   text-align: center;
 }
 /* Scoped to `#app > .loading` because the bare `.loading` class is *also*
@@ -52,10 +72,10 @@ body {
   padding: 0 24px;
   position: relative;
   z-index: 10;
-  min-height: calc(100vh - 56px);
+  min-height: var(--content-height);
 }
 
-/* Loading logo spinner — rAF-driven via JS, CSS just sets transform-origin */
+/* Loading logo spinner. rAF-driven via JS, CSS just sets transform-origin. */
 .loading-logo {
   margin-bottom: 32px;
   transition: opacity 0.8s ease;
@@ -125,7 +145,7 @@ body {
   text-align: right;
 }
 
-/* Text block — phase label + terminal log */
+/* Text block: the phase label and the terminal log */
 .loading-text {
   display: flex;
   flex-direction: column;
@@ -144,9 +164,24 @@ body {
   line-height: 1.3;
   text-align: center;
   width: 100%;
-  white-space: nowrap;
+  /* The explanatory lines run past one line at this width, and clipping them
+     to an ellipsis would defeat the point of showing them. Two lines are
+     reserved so the bar above does not shift as a sentence wraps. */
+  text-wrap: balance;
+  min-height: 2.6em;
+}
+/* Off-screen but still announced. `display: none` and `visibility: hidden`
+   would take it out of the accessibility tree too. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 /* Slow-step hint (shown below status when a step exceeds its threshold) */
 .loading-hint {
@@ -165,67 +200,12 @@ body {
   display: block;
 }
 
-.loading-gateway-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  margin: 20px auto 0;
-  padding: 10px 16px 10px 14px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.92);
-  font-family: inherit;
-  cursor: pointer;
-  line-height: 1.2;
-  transition:
-    border-color 0.2s ease,
-    background 0.2s ease,
-    color 0.2s ease,
-    transform 0.15s ease;
-}
-.loading-gateway-btn:hover {
-  border-color: rgba(255, 255, 255, 0.32);
-  background: rgba(255, 255, 255, 0.07);
-  color: #fff;
-}
-.loading-gateway-btn:active {
-  transform: translateY(1px);
-}
-.loading-gateway-btn-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #fafafa;
-  flex-shrink: 0;
-}
-.loading-gateway-btn-text {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-}
-.loading-gateway-btn-label {
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-.loading-gateway-btn-sub {
-  font-size: 10.5px;
-  color: rgba(255, 255, 255, 0.5);
-  letter-spacing: -0.005em;
-}
-
 .accent {
   color: #fafafa;
   font-weight: 600;
 }
 
-/* ── Attesting (login spinner) ──────────── */
+/* Attesting (login spinner) */
 .attesting {
   text-align: center;
 }
@@ -235,12 +215,12 @@ body {
   margin-top: 8px;
 }
 
-/* ── Error Page ─────────────────────────── */
+/* Error Page */
 .error-page {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: calc(100dvh - 56px);
+  min-height: var(--content-height);
   font-family: system-ui, sans-serif;
 }
 .error-page-inner {

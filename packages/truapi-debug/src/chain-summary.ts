@@ -3,16 +3,16 @@
 
 // Human-readable summary of a chain-protocol message
 //
-// Translates the decoded payload of a `remote_chain_*` TrUAPI message
-// into a single-sentence description. Used in the detail pane so a
-// reader doesn't have to parse the JSON to understand what a message
-// is doing.
+// Translates an already-decoded `remote_chain_*` TrUAPI payload into a
+// single-sentence description. The debug tap decodes chain frames before
+// they reach the panel, so this runs for every chain event it shows.
 //
 // Returns `null` for non-chain messages or unknown shapes. The caller
 // omits the summary section when null.
 
 import type { ChainAnnotations } from "./chain-decode.ts";
 import { formatChainDisplay } from "./chain-registry.ts";
+import { asEnum, asObj, asString, peelVersion } from "./shape.ts";
 
 /** Length at which we abbreviate hex strings in the human summary. */
 const HEX_SHORT_LEN = 8;
@@ -239,39 +239,6 @@ function summariseStringResponse(
     return `${label} lookup returned.`;
   }
   return `${label}: ${value}.`;
-}
-
-function peelVersion(v: unknown): unknown {
-  const o = asObj(v);
-  if (o === undefined) {
-    return v;
-  }
-  if (typeof o.tag === "string" && /^v\d+$/.test(o.tag) && "value" in o) {
-    return o.value;
-  }
-  return v;
-}
-
-function asObj(v: unknown): Record<string, unknown> | undefined {
-  if (typeof v === "object" && v !== null) {
-    return v as Record<string, unknown>;
-  }
-  return undefined;
-}
-
-function asEnum(v: unknown): { tag: string; value: unknown } | undefined {
-  const o = asObj(v);
-  if (o === undefined) {
-    return undefined;
-  }
-  if (typeof o.tag !== "string") {
-    return undefined;
-  }
-  return { tag: o.tag, value: o.value };
-}
-
-function asString(v: unknown): string | undefined {
-  return typeof v === "string" ? v : undefined;
 }
 
 function fmtBlock(hash: string | undefined): string {
