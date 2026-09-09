@@ -16,7 +16,7 @@
     },
     "apps/host": {
       "name": "@dotli/host",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -48,7 +48,7 @@
     },
     "apps/protocol": {
       "name": "@dotli/protocol-app",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -72,7 +72,7 @@
     },
     "apps/sandbox": {
       "name": "@dotli/sandbox",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/content": "workspace:*",
@@ -97,7 +97,7 @@
     },
     "packages/config": {
       "name": "@dotli/config",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "devDependencies": {
         "@dotli/eslint-config": "workspace:*",
         "@dotli/typescript-config": "workspace:*",
@@ -110,7 +110,7 @@
     },
     "packages/content": {
       "name": "@dotli/content",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -134,7 +134,7 @@
     },
     "packages/eslint-config": {
       "name": "@dotli/eslint-config",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "devDependencies": {
         "@eslint/js": "^10.0.1",
         "eslint": "^10.5.0",
@@ -146,7 +146,7 @@
     },
     "packages/metrics": {
       "name": "@dotli/metrics",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/shared": "workspace:*",
       },
@@ -168,7 +168,7 @@
     },
     "packages/protocol": {
       "name": "@dotli/protocol",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -187,7 +187,7 @@
     },
     "packages/resolver": {
       "name": "@dotli/resolver",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -216,7 +216,7 @@
     },
     "packages/sandbox-checker": {
       "name": "@dotli/sandbox-checker",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "devDependencies": {
         "@dotli/eslint-config": "workspace:*",
         "@dotli/typescript-config": "workspace:*",
@@ -227,7 +227,7 @@
     },
     "packages/shared": {
       "name": "@dotli/shared",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@noble/hashes": "^2.2.0",
@@ -244,7 +244,7 @@
     },
     "packages/storage": {
       "name": "@dotli/storage",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/metrics": "workspace:*",
@@ -263,7 +263,7 @@
     },
     "packages/truapi-debug": {
       "name": "@dotli/truapi-debug",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/shared": "workspace:*",
@@ -279,11 +279,11 @@
     },
     "packages/typescript-config": {
       "name": "@dotli/typescript-config",
-      "version": "0.6.0",
+      "version": "0.6.8",
     },
     "packages/ui": {
       "name": "@dotli/ui",
-      "version": "0.6.0",
+      "version": "0.6.8",
       "dependencies": {
         "@dotli/config": "workspace:*",
         "@dotli/content": "workspace:*",
@@ -295,7 +295,7 @@
         "@dotli/truapi-debug": "workspace:*",
         "@noble/hashes": "^2.2.0",
         "@parity/truapi": "0.13.1",
-        "@parity/truapi-host": "0.10.1",
+        "@parity/truapi-host": "file:../../vendor/parity-truapi-host-0.10.1-pcf602.1.tgz",
         "@polkadot-api/json-rpc-provider": "^0.2.0",
         "@scure/base": "^2.2.0",
         "neverthrow": "^8.2.0",
@@ -660,7 +660,7 @@
 
     "@parity/truapi": ["@parity/truapi@0.13.1", "", { "dependencies": { "@noble/hashes": "^2.2.0", "neverthrow": "^8.2.0", "scale-ts": "^1.6.1" } }, "sha512-6gkfHskN8I7H5DwB7j96wRusVx7xuGzu1YGWLBLPCD1RtBSnkPaQq/8Ac3MwudNz8kYqKZ5kZao3EkJ4PN4nCg=="],
 
-    "@parity/truapi-host": ["@parity/truapi-host@0.10.1", "", { "dependencies": { "@parity/truapi": "^0.13.1" } }, "sha512-XcS8CeOVGBH/RBZb5KmFw5EnwHAsoqXnG2NyP3g7gMA5S575FEOzQxQf4FzIr7Jvz38JBYGZWIq079TOAtVRlw=="],
+    "@parity/truapi-host": ["@parity/truapi-host@../../vendor/parity-truapi-host-0.10.1-pcf602.1.tgz", { "dependencies": { "@parity/truapi": "^0.13.1" } }, "sha512-Juf/VUCXhMmdNZkYTGxQQ+zQ54gh+H6fzYiDDKX0yj03mLJJZ+YrkMXKZCDxtjTzIrq1l038cibJsWyVqw2xqg=="],
 
     "@playwright/test": ["@playwright/test@1.62.1", "", { "dependencies": { "playwright": "1.62.1" }, "bin": { "playwright": "cli.js" } }, "sha512-DTcUc8qii+cpHvtOwggMtBRMjKZHXYWdw8syRYu2vtzuq4Wxphqq4NfCs5Zt44L6mA8rfDfj+PHnxFc/FeK6mQ=="],
 
