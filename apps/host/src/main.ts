@@ -34,6 +34,7 @@ import {
   advancePhase,
   stopStatusTick,
   listenForSandboxStatus,
+  onSandboxDone,
 } from "@dotli/ui/ui";
 import type { LoadingPhase } from "@dotli/ui/ui";
 import { initTopBar, wipeOriginState } from "@dotli/ui/topbar";
@@ -45,6 +46,7 @@ import {
 } from "@dotli/ui/bulletin-bitswap";
 import {
   ensureProtocolFrame,
+  getSmoldotDbOutcome,
   resetProtocolFrame,
   resolveDotNameRemote,
   resolveExecutableManifestRemote,
@@ -1172,6 +1174,64 @@ async function main(): Promise<void> {
   advancePhase(0);
   trackStatus(`Resolving ${withActiveTld(label)}`);
 
+  // Read in the catch below, which covers both the warm and the cold path.
+  // Without it a warm-path failure would be counted against the cold attempt
+  // total and the cold failure rate would read high.
+  let cidCache: "hit" | "miss" | "unknown" = "unknown";
+
+  // On a CID cache hit the render never waits on the light client, and the
+  // gateway backend runs none at all, so the dimension is inapplicable on
+  // both. "n/a" keeps them out of "unknown", which is reserved for a signal
+  // that should have arrived and did not. One tag per chain: the relay and
+  // Asset Hub gate the resolve, Bulletin gates the content fetch, and their
+  // warm states vary independently.
+  const smoldotDbCacheTags = (): Record<string, string> => {
+    const inapplicable = cidCache === "hit" || chainBackend === "rpc-gateway";
+    return {
+      smoldotdb_relay_cache: inapplicable
+        ? "n/a"
+        : getSmoldotDbOutcome("relay"),
+      smoldotdb_hub_cache: inapplicable ? "n/a" : getSmoldotDbOutcome("hub"),
+      smoldotdb_bulletin_cache: inapplicable
+        ? "n/a"
+        : getSmoldotDbOutcome("bulletin"),
+    };
+  };
+
+  // The bulletin chain is only dialed during the sandbox's content fetch,
+  // which outlives the render handoff `await`. Capturing at handoff would
+  // freeze the bulletin tag at "unknown" on every cold load, so the cold
+  // success event waits for the sandbox's done signal. The timeout keeps a
+  // stalled fetch from losing the event; its tags then read as-is.
+  const captureResolveOkAfterContent = (): void => {
+    let captured = false;
+    const capture = (): void => {
+      if (!captured) {
+        captured = true;
+        captureResolveResult("ok");
+      }
+    };
+    onSandboxDone(capture);
+    setTimeout(capture, 120_000);
+  };
+
+  // The non-throwing half of the failure rate whose error half is the tagged
+  // exception in the catch below. `no_content` is its own outcome rather than
+  // an error: the name resolved, it just has nothing published on this
+  // network, so folding it into either half would misstate the rate.
+  const captureResolveResult = (outcome: "ok" | "no_content"): void => {
+    Sentry.captureMessage("dotli.resolve_result", {
+      level: "info",
+      tags: {
+        surface: "host_main_resolve",
+        outcome,
+        cid_cache: cidCache,
+        ...smoldotDbCacheTags(),
+        chain_backend: chainBackend,
+      },
+    });
+  };
+
   try {
     const cachedCid = cacheSettings.skipCidCache
       ? null
@@ -1184,6 +1244,7 @@ async function main(): Promise<void> {
       payload: { label, hit: cachedCid !== null, cid: cachedCid ?? undefined },
     });
     if (cachedCid !== null) {
+      cidCache = "hit";
       m.count(S.CACHE_HIT);
       log.warn(
         `[dot.li resolve] path=cache (${chainBackend}) (${elapsed(T0)}) -> ${cachedCid}`,
@@ -1215,12 +1276,14 @@ async function main(): Promise<void> {
           path: "fast",
         },
       });
+      captureResolveResult("ok");
       // SWR: keep the cache honest across reloads without blocking the render.
       requestIdleCallback(() => {
         void runBackgroundRevalidate(label, cachedCid, chainBackend);
       });
       return;
     }
+    cidCache = "miss";
     m.count(S.CACHE_MISS);
     log.warn(`[dot.li perf] CID cache MISS (${elapsed(T0)})`);
 
@@ -1347,6 +1410,7 @@ async function main(): Promise<void> {
       // still resolves on another, so dropping its pill would lose good
       // entries on a network switch. The pill's remove button is the cleanup.
       showNoContentError(label);
+      captureResolveResult("no_content");
       performance.mark("dotli:main:end");
       return;
     }
@@ -1373,6 +1437,7 @@ async function main(): Promise<void> {
       outcome: "ok",
       chain_backend: chainBackend,
     });
+    captureResolveOkAfterContent();
     performance.mark("dotli:main:end");
     log.warn(`[dot.li perf] === TOTAL: ${dur(T0)} ===`);
     emitDotliDebugEvent({
@@ -1400,6 +1465,8 @@ async function main(): Promise<void> {
       surface: "host_main_resolve",
       outcome: "error",
       dependency,
+      cid_cache: cidCache,
+      ...smoldotDbCacheTags(),
       chain_backend: chainBackend,
     });
     // Full cause chain to console for devs.
