@@ -26,6 +26,12 @@ VITE_NETWORKS_summit := devnet
 # network entry must exist in packages/config/src/network.ts before build:prod.
 VITE_NETWORKS_devnet := devnet
 
+# Brand variant for the host shell's favicon and install icons, from
+# polkadot-app-brand-assets (apps/host/public/brand/<variant>). Unset = the
+# stock Polkadot icons; dev-dot.li flies the DEV tile so a devnet tab is
+# recognisable next to a production one.
+VITE_BRAND_VARIANT_devnet := devnet
+
 # Download target for the "Get Polkadot Desktop" banner (same for every gateway).
 # Overrides the app's hardcoded fallback; keep in sync with .env.example.
 VITE_DESKTOP_DOWNLOAD_URL := https://github.com/Polkadot-Community-Foundation/polkadot-desktop-community/releases/latest
@@ -198,7 +204,7 @@ deploy: _require-env provision-bun
 		--exclude='.DS_Store' \
 		--exclude='*.log' \
 		./ $(REMOTE_TARGET):$(REMOTE_BUILD_PATH)/
-	ssh $(REMOTE_TARGET) 'set -euo pipefail; cd $(REMOTE_BUILD_PATH) && bun install --frozen-lockfile && VITE_NETWORKS=$(VITE_NETWORKS_$(ENV)) VITE_DESKTOP_DOWNLOAD_URL=$(VITE_DESKTOP_DOWNLOAD_URL) bun run build:prod'
+	ssh $(REMOTE_TARGET) 'set -euo pipefail; cd $(REMOTE_BUILD_PATH) && bun install --frozen-lockfile && VITE_NETWORKS=$(VITE_NETWORKS_$(ENV)) VITE_BRAND_VARIANT=$(VITE_BRAND_VARIANT_$(ENV)) VITE_DESKTOP_DOWNLOAD_URL=$(VITE_DESKTOP_DOWNLOAD_URL) bun run build:prod'
 	ssh $(REMOTE_TARGET) "set -euo pipefail; \
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/host/dist/     $(REMOTE_PATH)/host/; \
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/sandbox/dist/  $(REMOTE_PATH)/app/; \

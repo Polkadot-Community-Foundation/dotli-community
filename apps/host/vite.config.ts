@@ -298,6 +298,12 @@ function sentry(): Plugin | false {
   });
 }
 
+import {
+  brandFavicon,
+  brandManifestIcons,
+  brandSocialImage,
+} from "./brand-variant";
+
 const PACKAGES = resolve(import.meta.dirname, "../../packages");
 const SANDBOX_CHECKER_SRC = resolve(PACKAGES, "sandbox-checker/src");
 
@@ -314,9 +320,10 @@ export default defineConfig({
       description:
         "A decentralized web browser that runs in your browser. Open any Polkadot app with trustless, client-side resolution and no servers in the loop.",
       siteName: "Polkadot Web",
-      image: "/icon-512.png",
+      image: brandSocialImage(),
       imageAlt: "Polkadot logo",
     }),
+    brandFavicon(),
     preloadCriticalAssets(),
     previewCoepHeaders(),
     copyTruapiWasmWebBundle(),
@@ -340,16 +347,7 @@ export default defineConfig({
         background_color: "#000000",
         display: "standalone",
         start_url: "/",
-        icons: [
-          { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
-          { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
-          {
-            src: "/icon-512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "any maskable",
-          },
-        ],
+        icons: brandManifestIcons(),
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,ico,wasm}"],
