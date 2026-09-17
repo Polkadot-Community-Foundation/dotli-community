@@ -427,6 +427,10 @@ export const NETWORK_KEY = "dotli:network";
 const VALID_NETWORKS: ReadonlySet<string> = new Set<Network>([
   NetworkName.PASEO,
   NetworkName.PREVIEWNET,
+  // PCF fork: devnet is a first-class network here (dev-dot.li). Upstream has no
+  // entry for it, so a sync that rewrites this set drops it and every devnet build
+  // fails at startup on VITE_NETWORKS.
+  NetworkName.DEVNET,
 ]);
 
 /**
