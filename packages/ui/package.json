@@ -2,7 +2,7 @@
   "name": "@dotli/ui",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.6.8",
+  "version": "0.7.9",
   "type": "module",
   "exports": {
     "./*": "./src/*"
@@ -33,8 +33,8 @@
     "@dotli/storage": "workspace:*",
     "@dotli/truapi-debug": "workspace:*",
     "@noble/hashes": "^2.2.0",
-    "@parity/truapi": "0.13.1",
-    "@parity/truapi-host": "0.10.1",
+    "@parity/truapi": "0.17.0",
+    "@parity/truapi-host": "0.17.0",
     "@polkadot-api/json-rpc-provider": "^0.2.0",
     "@scure/base": "^2.2.0",
     "neverthrow": "^8.2.0",

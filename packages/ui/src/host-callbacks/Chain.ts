@@ -22,12 +22,13 @@ import { createChainBrokerManager } from "@dotli/protocol/broker";
 import {
   createChainProvider as createSmoldotChainProvider,
   isChainSupported as isSmoldotChainSupported,
-} from "@dotli/resolver/chains";
+} from "@dotli/resolver/provider";
 import {
   createCoreRpcChainProvider,
   isCoreRpcChainSupported,
 } from "@dotli/resolver/rpc-chain";
 import { log } from "@dotli/shared/log";
+import { ERRORS } from "../errors";
 
 // `createSmoldotChainProvider` returns wrappers around singleton smoldot
 // chains. Every wrapper drains the same response queue, so independent core
@@ -55,7 +56,7 @@ function toConnection(
   provider: JsonRpcProvider<unknown> | null,
 ): PlatformJsonRpcConnection {
   if (!provider) {
-    throw new Error("Chain provider unavailable");
+    throw new Error(ERRORS.CHAIN_PROVIDER_UNAVAILABLE);
   }
   const queue: string[] = [];
   let wake: (() => void) | null = null;
@@ -84,7 +85,7 @@ function toConnection(
     send(request: string): void {
       const parsed: unknown = JSON.parse(request);
       if (!isJsonRpcRequest(parsed)) {
-        throw new Error("Invalid JSON-RPC request");
+        throw new Error(ERRORS.INVALID_JSON_RPC_REQUEST);
       }
       conn.send(parsed);
     },

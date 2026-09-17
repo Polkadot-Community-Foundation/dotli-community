@@ -15,7 +15,7 @@ import type { ChainIdentifier } from "@parity/truapi";
 import { toHexString } from "@parity/truapi/scale";
 import { getBackend } from "@dotli/config/mode";
 import { getActiveServicesConfig, getNetwork } from "@dotli/config/network";
-import { isChainSupported as isSmoldotChainSupported } from "@dotli/resolver/chains";
+import { isChainSupported as isSmoldotChainSupported } from "@dotli/resolver/provider";
 import { isRpcChainSupported } from "@dotli/resolver/rpc-chain";
 
 export function createSupportedChains(): Features["supportedChains"] {
@@ -31,9 +31,6 @@ export function createSupportedChains(): Features["supportedChains"] {
       getBackend() === "rpc-gateway"
         ? isRpcChainSupported
         : isSmoldotChainSupported;
-    // The environment id ("paseo-next-v2"), not a bare ecosystem ("paseo"):
-    // the field is informational and two environments of one ecosystem must
-    // stay distinguishable in product logs.
     return Promise.resolve({
       network: getNetwork(),
       chains: slots
