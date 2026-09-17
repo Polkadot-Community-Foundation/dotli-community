@@ -2,7 +2,7 @@
   "name": "@dotli/host",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "type": "module",
   "scripts": {
     "build": "tsc && bunx --bun vite build",
