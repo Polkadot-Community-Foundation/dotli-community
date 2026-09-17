@@ -1,7 +1,7 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   NETWORK_NAME_TO_SERVICES_CONFIG,
   NetworkName,
@@ -9,6 +9,10 @@ import {
   setNetwork,
 } from "@dotli/config/network";
 import {
+  ENVELOPE_CHAIN_KEYS,
+  ENVELOPE_SYNC_KINDS,
+  isChainSyncPayloadValid,
+  getRequestSyncTimeoutMs,
   isProtocolEnvelope,
   type ProtocolRequestEnvelope,
   type ProtocolResponseEnvelope,
@@ -17,6 +21,8 @@ import {
   type ProtocolChainMessageEnvelope,
   type ProtocolChainHaltEnvelope,
   type ProtocolReadyEnvelope,
+  type ProtocolChainSyncEnvelope,
+  type ProtocolSmoldotDbEnvelope,
 } from "@dotli/protocol/messages";
 
 describe("isProtocolEnvelope", () => {
@@ -90,6 +96,16 @@ describe("isProtocolEnvelope", () => {
     expect(isProtocolEnvelope(envelope)).toBe(true);
   });
 
+  it("returns true for a valid smoldot-db envelope", () => {
+    const envelope: ProtocolSmoldotDbEnvelope = {
+      namespace: "dotli:protocol",
+      kind: "smoldot-db",
+      chain: "hub",
+      outcome: "hit",
+    };
+    expect(isProtocolEnvelope(envelope)).toBe(true);
+  });
+
   it("returns false for null", () => {
     expect(isProtocolEnvelope(null)).toBe(false);
   });
@@ -131,6 +147,60 @@ describe("isProtocolEnvelope", () => {
   });
 });
 
+describe("getRequestSyncTimeoutMs", () => {
+  // Not inside a test body: a failing assertion would leak the mock onward.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const requestWithDeadline = (
+    deadlineMs?: number,
+  ): ProtocolRequestEnvelope => ({
+    namespace: "dotli:protocol",
+    kind: "request",
+    id: "test-deadline",
+    method: "resolveDotName",
+    payload: { label: "chinpokomon" },
+    deadlineMs,
+  });
+
+  it("reserves response-delivery time inside the caller's deadline", () => {
+    // Given
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+
+    // When
+    const budget = getRequestSyncTimeoutMs(requestWithDeadline(100_000));
+
+    // Then
+    expect(budget).toBe(89_000);
+  });
+
+  it("As a handler reading an already-expired deadline, my budget stays positive", () => {
+    // Given
+    vi.spyOn(Date, "now").mockReturnValue(100_000);
+
+    // When
+    const budget = getRequestSyncTimeoutMs(requestWithDeadline(10_000));
+
+    // Then
+    expect(budget).toBe(1);
+  });
+
+  it("ignores missing or non-finite deadlines", () => {
+    const request: ProtocolRequestEnvelope = {
+      namespace: "dotli:protocol",
+      kind: "request",
+      id: "test-no-deadline",
+      method: "warmup",
+      payload: {},
+    };
+
+    expect(getRequestSyncTimeoutMs(request)).toBeUndefined();
+    request.deadlineMs = Number.POSITIVE_INFINITY;
+    expect(getRequestSyncTimeoutMs(request)).toBeUndefined();
+  });
+});
+
 describe("getActiveSupportedGenesisHashes", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -140,7 +210,7 @@ describe("getActiveSupportedGenesisHashes", () => {
   });
 
   it("does not contain arbitrary hashes", () => {
-    setNetwork(NetworkName.PASEO_NEXT_V1);
+    setNetwork(NetworkName.PASEO);
     expect(getActiveSupportedGenesisHashes().has("0xdeadbeef")).toBe(false);
   });
 });
@@ -150,5 +220,77 @@ describe("genesis hash constants", () => {
     for (const cfg of Object.values(NETWORK_NAME_TO_SERVICES_CONFIG)) {
       expect(cfg.relay.genesis).toMatch(/^0x[0-9a-f]{64}$/);
     }
+  });
+});
+
+describe("chain-sync envelope validation works", () => {
+  function envelope(
+    over: Partial<ProtocolChainSyncEnvelope> = {},
+  ): ProtocolChainSyncEnvelope {
+    return {
+      namespace: "dotli:protocol",
+      kind: "chain-sync",
+      chain: "relay",
+      syncKind: "firstPeer",
+      ...over,
+    };
+  }
+
+  // This is the drift guard. The resolver owns the vocabulary, and the
+  // validator keeps its own runtime copy so smoldot stays out of every
+  // bundle that talks to the protocol. When the two fell out of step, three
+  // kinds were dropped in silence and the loading screen simply went quiet.
+  it("As a user, every sync milestone the resolver can emit reaches the shell", () => {
+    // Given / When / Then
+    for (const chain of ENVELOPE_CHAIN_KEYS) {
+      for (const syncKind of ENVELOPE_SYNC_KINDS) {
+        expect(
+          isChainSyncPayloadValid(
+            envelope({
+              chain,
+              syncKind,
+              ...(syncKind === "peers" ? { peers: 1 } : {}),
+            }),
+          ),
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("As a user, a spoofed chain or milestone is refused", () => {
+    // Given / When / Then
+    expect(
+      isChainSyncPayloadValid(
+        envelope({
+          chain: "not-a-chain" as (typeof ENVELOPE_CHAIN_KEYS)[number],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isChainSyncPayloadValid(
+        envelope({
+          syncKind: "somethingElse" as (typeof ENVELOPE_SYNC_KINDS)[number],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("As a user, a nonsense peer count or block height is refused", () => {
+    // Given / When / Then
+    for (const peers of [-1, 1.5, 10_001, Number.NaN]) {
+      expect(
+        isChainSyncPayloadValid(envelope({ syncKind: "peers", peers })),
+      ).toBe(false);
+    }
+    expect(
+      isChainSyncPayloadValid(
+        envelope({ syncKind: "warpSyncProgress", at: Number.NaN, target: 10 }),
+      ),
+    ).toBe(false);
+    expect(
+      isChainSyncPayloadValid(
+        envelope({ syncKind: "warpSyncFinished", finalized: -5 }),
+      ),
+    ).toBe(false);
   });
 });

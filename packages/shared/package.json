@@ -2,10 +2,10 @@
   "name": "@dotli/shared",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.6.8",
+  "version": "0.7.9",
   "type": "module",
   "exports": {
-    "./*": "./src/*"
+    "./*": "./src/*.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -1,21 +1,12 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   parseSettingsFromSearch,
   writeSettingsToSearch,
 } from "@dotli/config/url-settings";
-import { NetworkName, setNetworkOverride } from "@dotli/config/network";
-
-// Some networks are rpc-gateway-only (no published parachain specs), which
-// would skew the "matches detected default backend" assertions below. Pin a
-// network with published parachain specs so the smoldot defaults apply. This
-// also matches the default network under the test harness (the first entry of
-// VITE_NETWORKS in vitest.config.ts is paseo-next-v2).
-beforeAll(() => {
-  setNetworkOverride(NetworkName.PASEO_NEXT_V2);
-});
+import { NetworkName } from "@dotli/config/network";
 
 const globalAny = globalThis as { SharedWorker?: unknown };
 
@@ -60,10 +51,10 @@ describe("parseSettingsFromSearch", () => {
   it("returns the typed value for each valid axis", () => {
     const parsed = parseSettingsFromSearch(
       new URLSearchParams(
-        "network=paseo-next-v2&chainBackend=rpc-gateway&skipArchiveCache=0&skipCidCache=1&skipWorkerCache=1",
+        `network=${NetworkName.PASEO}&chainBackend=rpc-gateway&skipArchiveCache=0&skipCidCache=1&skipWorkerCache=1`,
       ),
     );
-    expect(parsed.network).toBe(NetworkName.PASEO_NEXT_V2);
+    expect(parsed.network).toBe(NetworkName.PASEO);
     expect(parsed.chainBackend).toBe("rpc-gateway");
     expect(parsed.skipArchiveCache).toBe(false);
     expect(parsed.skipCidCache).toBe(true);
@@ -95,7 +86,7 @@ describe("writeSettingsToSearch against the smoldot-direct default", () => {
       const search = new URLSearchParams("chainBackend=smoldot-direct");
       const changed = writeSettingsToSearch(
         {
-          network: NetworkName.PASEO_NEXT_V1,
+          network: NetworkName.PREVIEWNET,
           chainBackend: "smoldot-direct",
           cache: {
             skipCidCache: true,
@@ -115,7 +106,7 @@ describe("writeSettingsToSearch against the smoldot-direct default", () => {
       const search = new URLSearchParams();
       writeSettingsToSearch(
         {
-          network: NetworkName.PASEO_NEXT_V1,
+          network: NetworkName.PREVIEWNET,
           chainBackend: "smoldot-shared-worker",
           cache: {
             skipCidCache: true,
@@ -134,7 +125,7 @@ describe("writeSettingsToSearch against the smoldot-direct default", () => {
       const search = new URLSearchParams("chainBackend=smoldot-direct");
       writeSettingsToSearch(
         {
-          network: NetworkName.PASEO_NEXT_V1,
+          network: NetworkName.PREVIEWNET,
           chainBackend: "smoldot-direct",
           cache: {
             skipCidCache: true,
@@ -152,13 +143,11 @@ describe("writeSettingsToSearch against the smoldot-direct default", () => {
 describe("writeSettingsToSearch", () => {
   it("drops default-valued axes and preserves unrelated params", () => {
     const search = new URLSearchParams(
-      "network=paseo-next-v1&chainBackend=rpc-gateway&skipArchiveCache=1&keep=me",
+      "network=previewnet&chainBackend=rpc-gateway&skipArchiveCache=1&keep=me",
     );
     const changed = writeSettingsToSearch(
       {
-        // The default network under the test harness (first VITE_NETWORKS
-        // entry). A default-valued network axis must be dropped from the URL.
-        network: NetworkName.PASEO_NEXT_V2,
+        network: NetworkName.PASEO,
         chainBackend: "smoldot-direct",
         cache: {
           skipCidCache: false,
@@ -180,7 +169,7 @@ describe("writeSettingsToSearch", () => {
     const search = new URLSearchParams();
     writeSettingsToSearch(
       {
-        network: NetworkName.PASEO_NEXT_V1,
+        network: NetworkName.PREVIEWNET,
         chainBackend: "smoldot-direct",
         cache: {
           skipCidCache: true,
@@ -190,7 +179,7 @@ describe("writeSettingsToSearch", () => {
       },
       search,
     );
-    expect(search.get("network")).toBe(NetworkName.PASEO_NEXT_V1);
+    expect(search.get("network")).toBe(NetworkName.PREVIEWNET);
     expect(search.get("chainBackend")).toBeNull();
     expect(search.get("skipCidCache")).toBe("1");
     expect(search.get("skipArchiveCache")).toBeNull();

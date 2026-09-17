@@ -16,6 +16,7 @@ import wasm from "vite-plugin-wasm";
 import { VitePWA } from "vite-plugin-pwa";
 import { prodNoAnalyticsAliases } from "../../packages/metrics/src/prod-no-analytics-aliases";
 import { runtimeNetworkConfigScript } from "../../packages/config/src/runtime-network-config-plugin";
+import { socialMetaTags } from "../../packages/config/src/social-meta-plugin";
 
 // Local builds don't get `VITE_COMMIT_SHA` injected by CI. Fall back to the
 // git HEAD so Diagnostics shows a real commit identifier in dev too. The
@@ -116,9 +117,12 @@ function collectDirectScopedDeps(
     .map(([name, version]) => ({ name, version }));
 }
 
-function readSmoldotVersion(): string {
-  const direct = collectDirectScopedDeps("smoldot");
-  return direct.find((p) => p.name === "smoldot")?.version ?? "unknown";
+function readLightClientVersion(): string {
+  const direct = collectDirectScopedDeps("@parity/truapi-provider");
+  return (
+    direct.find((p) => p.name === "@parity/truapi-provider")?.version ??
+    "unknown"
+  );
 }
 
 function readPolkadotApiVersion(): string {
@@ -135,96 +139,6 @@ function readHostVersion(): string {
   } catch {
     return "0.0.0";
   }
-}
-
-/**
- * Look up the paritytech/smoldot commit SHA for the npm-published `smoldot`
- * version we bundle. Smoldot's git repo tags its JS releases with the
- * `light-js-deno-v<version>` prefix, and the JS binding's published version
- * tracks that tag directly, so the commit behind `light-js-deno-v3.0.0` is the
- * commit that produced `smoldot@3.0.0` on npm.
- *
- * Neither `bun.lock` nor smoldot's package.json carries a commit. The
- * lockfile only stores the tarball integrity hash, so the GitHub API is
- * the only build-time source of truth. Failures are silent: if the build
- * host can't reach github.com (offline dev, locked-down CI), the
- * Diagnostics row degrades to just `<version>` instead of `<version>
- * (sha)` rather than failing the build.
- */
-async function resolveSmoldotCommit(version: string): Promise<string> {
-  if (version === "" || version === "unknown") {
-    return "";
-  }
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch(
-      `https://api.github.com/repos/paritytech/smoldot/git/refs/tags/light-js-deno-v${version}`,
-      {
-        signal: controller.signal,
-        headers: { Accept: "application/vnd.github+json" },
-      },
-    );
-    clearTimeout(timer);
-    if (!res.ok) {
-      return "";
-    }
-    const data = (await res.json()) as { object?: { sha?: string } };
-    return data.object?.sha ?? "";
-  } catch {
-    return "";
-  }
-}
-
-const SMOLDOT_COMMIT = await resolveSmoldotCommit(readSmoldotVersion());
-
-/**
- * Extract unique WSS bootnode hostnames from a chain spec JSON file.
- */
-function extractBootnodeHosts(specPath: string): string[] {
-  try {
-    const spec = JSON.parse(readFileSync(specPath, "utf8")) as {
-      bootNodes?: string[];
-    };
-    const hosts = new Set<string>();
-    for (const bn of spec.bootNodes ?? []) {
-      if (bn.includes("/wss/") || bn.includes("/tls/ws/")) {
-        const match = /\/dns[46]?\/([^/]+)/.exec(bn);
-        if (match?.[1]) hosts.add(match[1]);
-      }
-    }
-    return [...hosts];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Vite plugin that injects <link rel="preconnect"> for smoldot relay chain
- * and Asset Hub bootnode hostnames.
- */
-function preconnectBootnodes(): Plugin {
-  return {
-    name: "preconnect-bootnodes",
-    transformIndexHtml(html) {
-      const specDir = resolve(
-        import.meta.dirname,
-        "../../packages/resolver/src/chain-specs",
-      );
-      const hosts = [
-        ...extractBootnodeHosts(resolve(specDir, "paseo.smol.json")),
-        ...extractBootnodeHosts(resolve(specDir, "paseo-asset-hub.smol.json")),
-      ];
-      const unique = [...new Set(hosts)];
-      const links = unique
-        .map(
-          (host) =>
-            `<link rel="preconnect" href="https://${host}" crossorigin />`,
-        )
-        .join("\n    ");
-      return html.replace("</head>", `    ${links}\n  </head>`);
-    },
-  };
 }
 
 /**
@@ -250,7 +164,6 @@ function preloadCriticalAssets(): Plugin {
         const resolveChunk = findChunk(/^assets\/resolve-.*\.js$/);
         const fetchChunk = findChunk(/^assets\/fetch-.*\.js$/);
         const renderChunk = findChunk(/^assets\/render-.*\.js$/);
-        const wasmAsset = findChunk(/^assets\/.*\.wasm$/);
         const metadataAsset = findChunk(/^assets\/ah-.*\.scale$/);
 
         const chunks = [resolveChunk, fetchChunk, renderChunk].filter(Boolean);
@@ -258,7 +171,7 @@ function preloadCriticalAssets(): Plugin {
 
         const b = resolvedBase;
 
-        const fetchPreloads = [wasmAsset, metadataAsset]
+        const fetchPreloads = [metadataAsset]
           .filter(Boolean)
           .map(
             (a) =>
@@ -396,7 +309,14 @@ export default defineConfig({
   plugins: [
     wasm(),
     runtimeNetworkConfigScript(),
-    preconnectBootnodes(),
+    socialMetaTags({
+      title: "Polkadot - The decentralized web, in your browser",
+      description:
+        "A decentralized web browser that runs in your browser. Open any Polkadot app with trustless, client-side resolution and no servers in the loop.",
+      siteName: "Polkadot Web",
+      image: "/icon-512.png",
+      imageAlt: "Polkadot logo",
+    }),
     preloadCriticalAssets(),
     previewCoepHeaders(),
     copyTruapiWasmWebBundle(),
@@ -433,6 +353,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,ico,wasm}"],
+        globIgnores: ["**/truapi_provider_bg-*.wasm"],
         // VitePWA's default treats every file under `assets/` as
         // hash-versioned. The copied wasm-pack bundle keeps stable filenames,
         // so let Workbox attach content revisions to those entries.
@@ -469,8 +390,7 @@ export default defineConfig({
     // missing package (shouldn't happen given the monorepo overrides)
     // falls back to empty/"unknown" rather than failing the build.
     __DOTLI_VERSION__: JSON.stringify(readHostVersion()),
-    __SMOLDOT_VERSION__: JSON.stringify(readSmoldotVersion()),
-    __SMOLDOT_COMMIT__: JSON.stringify(SMOLDOT_COMMIT),
+    __LIGHT_CLIENT_VERSION__: JSON.stringify(readLightClientVersion()),
     __POLKADOT_API_VERSION__: JSON.stringify(readPolkadotApiVersion()),
     __POLKADOT_API_VERSIONS__: JSON.stringify(
       collectDirectScopedDeps("@polkadot-api/"),

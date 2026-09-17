@@ -3,7 +3,7 @@
 
 // dotNS name resolution via direct storage reads
 //
-// Uses polkadot-api with the shared Asset Hub provider from smoldot.ts.
+// Uses polkadot-api with the shared Asset Hub provider from provider.ts.
 
 import {
   createClient,
@@ -15,17 +15,11 @@ import { getActiveServicesConfig } from "@dotli/config/network";
 import { namehash, toHex, decodeIpfsContenthashResult } from "./abi";
 import {
   ContenthashDecodeError,
-  NetworkSyncTimeoutError,
   UnsupportedContenthashCodecError,
 } from "./errors";
+import { raceSyncTimeout, withSyncBudget } from "./sync-deadline";
 import { dur } from "@dotli/shared/perf";
 import { log } from "@dotli/shared/log";
-import {
-  getSmoldot,
-  getRelayChain,
-  onConnectionIssue,
-  onSmoldotFatal,
-} from "./smoldot";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { readMappingBytes, readMappingAddress } from "./access-raw-storage";
@@ -45,13 +39,35 @@ export type {
   ResolvePhase,
 } from "./access-raw-storage";
 export { statusToPhase } from "./access-raw-storage";
-export { getSmoldot, getSmoldotDirect, getRelayChain } from "./smoldot";
-export { onConnectionIssue } from "./smoldot";
+export {
+  onChainSync,
+  enableSyncReporting,
+  CHAIN_KEYS,
+  CHAIN_SYNC_KINDS,
+} from "./chain-sync";
+export { onChainDetail } from "./chain-sync";
+export type {
+  ChainSyncEvent,
+  ChainSyncKind,
+  ChainKey,
+  ChainDetail,
+  ChainPeer,
+  SyncReportingConfig,
+} from "./chain-sync";
+
+const HUB_CHAIN = "Asset Hub Paseo";
+
+/** Shared shape for every resolver read that may have to wait on sync. */
+export interface ResolveOptions {
+  onStatus?: StatusCallback;
+  onPhase?: PhaseCallback;
+  /** Remaining budget from the caller's request deadline, if it set one. */
+  syncTimeoutMs?: number;
+}
 
 let clientInstance: SubstrateClient | null = null;
 let apiInstance: Api | null = null;
 let clientPromise: Promise<Api> | null = null;
-let fatalUnsubscribe: (() => void) | null = null;
 
 // Asset Hub provider used to read dotNS. The host injects a broker-backed
 // provider during bootstrap so the resolver shares the broker's single Asset
@@ -81,13 +97,9 @@ export function setResolverPeopleProvider(
 
 /**
  * Tear down the cached resolver client. Callers that hold a reference to
- * `apiInstance` must discard it. Every subsequent `.` resolution will
- * rebuild against a fresh smoldot chain.
- *
- * Used by:
- *   - `onSmoldotFatal` to clear stale references after a WASM panic so
- *     the next `resolveDotName` doesn't hand the caller a dead client.
- *   - Config changes (chain backend switch) that require a new client.
+ * `apiInstance` must discard it. Every subsequent `.` resolution rebuilds
+ * against a fresh client. Used on a chain-backend switch that requires a new
+ * client.
  */
 export function destroyResolverClient(): void {
   if (clientInstance !== null) {
@@ -105,41 +117,26 @@ export function destroyResolverClient(): void {
   clientPromise = null;
 }
 
-/**
- * Register a one-shot listener against `onSmoldotFatal` so a WASM panic
- * clears the cached client before any subsequent `resolveDotName` runs.
- * Without this, the next caller would receive `apiInstance` pointing at a
- * client whose upstream chain is dead and hang indefinitely.
- */
-function ensureFatalListener(): void {
-  if (fatalUnsubscribe !== null) {
-    return;
-  }
-  fatalUnsubscribe = onSmoldotFatal((message) => {
-    log.error(`[dot.li resolve] Smoldot fatal, clearing client: ${message}`);
-    destroyResolverClient();
-  });
-}
-
-function ensureClient(
-  onStatus?: StatusCallback,
-  onPhase?: PhaseCallback,
-): Promise<Api> {
-  ensureFatalListener();
+function ensureClient(opts: ResolveOptions = {}): Promise<Api> {
   if (apiInstance !== null) {
     // Already synced. Emit the terminal phase so a late subscriber
     // still sees an accurate snapshot instead of staying on whatever
     // the previous phase was.
-    onPhase?.("asset-hub-ready");
+    opts.onPhase?.("asset-hub-ready");
     return Promise.resolve(apiInstance);
   }
-  if (clientPromise !== null) {
-    return clientPromise;
-  }
-  clientPromise = doCreateClient(onStatus, onPhase).finally(() => {
+  // The underlying client keeps the full sync budget so a short manifest
+  // request cannot poison a concurrent name resolution with a longer
+  // deadline. Each caller races this shared initialization below.
+  clientPromise ??= doCreateClient(opts.onStatus, opts.onPhase).finally(() => {
     clientPromise = null;
   });
-  return clientPromise;
+  return withSyncBudget(
+    clientPromise,
+    HUB_CHAIN,
+    opts.syncTimeoutMs,
+    TIMEOUTS.HUB_FINALIZED_SYNC,
+  );
 }
 
 async function doCreateClient(
@@ -149,34 +146,9 @@ async function doCreateClient(
   const initStart = performance.now();
   const stopPresync = m.timer(S.SMOLDOT_PRESYNC);
 
-  // Forward bootnode drops to the loading UI, throttled to 1/sec because
-  // cold sync can fail hundreds of handshakes per second and would
-  // otherwise thrash the status line unreadably.
-  let lastBootnodeAt = 0;
-  const unsubConnectionIssue = onConnectionIssue((msg) => {
-    const now = performance.now();
-    if (now - lastBootnodeAt < 1000) {
-      return;
-    }
-    lastBootnodeAt = now;
-    onStatus?.(`Bootnode connection issue, ${msg}`);
-    m.count(S.BOOTNODE_ERROR, { source: "log-callback" });
-  });
-
   try {
     onPhase?.("light-client-starting");
     onStatus?.("Starting light client...");
-    m.span(S.SMOLDOT_CREATE, () => {
-      getSmoldot();
-    });
-    log.warn(`[dot.li resolve] Smoldot instance created (${dur(initStart)})`);
-
-    onPhase?.("relay-chain-adding");
-    onStatus?.("Adding Paseo relay chain...");
-    const relayStart = performance.now();
-    await m.span(S.SMOLDOT_RELAY_CHAIN, () => getRelayChain());
-    m.measure(S.SMOLDOT_RELAY_CHAIN, performance.now() - relayStart);
-    log.warn(`[dot.li resolve] Relay chain added (${dur(relayStart)})`);
 
     onPhase?.("asset-hub-connecting");
     onStatus?.("Connecting to Asset Hub Paseo...");
@@ -203,25 +175,17 @@ async function doCreateClient(
     // smoldot can emit from the relay's best block during the optimistic
     // bootstrap window, well before the first real relay finalization.
     //
-    // Bound the wait: without the race, an unreachable peer set leaves
+    // Bound the wait: without it, an unreachable peer set leaves
     // `whenReady()` pending forever and the UI sits on the "Syncing…"
     // overlay indefinitely. The timeout throws so the outer catch can
     // surface a visible error via `showError`.
     try {
       await m.span(S.SMOLDOT_FINALIZED_BLOCK, () =>
-        Promise.race([
+        raceSyncTimeout(
           api.whenReady(),
-          new Promise<never>((_, reject) => {
-            setTimeout(() => {
-              reject(
-                new NetworkSyncTimeoutError(
-                  "Asset Hub Paseo",
-                  TIMEOUTS.ASSET_HUB_FINALIZED_SYNC,
-                ),
-              );
-            }, TIMEOUTS.ASSET_HUB_FINALIZED_SYNC);
-          }),
-        ]),
+          HUB_CHAIN,
+          TIMEOUTS.HUB_FINALIZED_SYNC,
+        ),
       );
       const syncMs = performance.now() - syncStart;
       m.measure(S.SMOLDOT_FINALIZED_BLOCK, syncMs);
@@ -252,13 +216,12 @@ async function doCreateClient(
 
     clientInstance = client;
     apiInstance = api;
-    stopPresync();
     log.warn(`[dot.li resolve] Ready (${dur(initStart)} total)`);
     onPhase?.("asset-hub-ready");
     onStatus?.("Connected to Asset Hub Paseo");
     return apiInstance;
   } finally {
-    unsubConnectionIssue();
+    stopPresync();
   }
 }
 
@@ -278,7 +241,7 @@ export async function waitForAssetHubFinalized(
   onStatus?: StatusCallback,
   onPhase?: PhaseCallback,
 ): Promise<void> {
-  await ensureClient(onStatus, onPhase);
+  await ensureClient({ onStatus, onPhase });
 }
 
 // People chain warm-keep for legacy-account auth.
@@ -328,19 +291,11 @@ export async function waitForPeopleFinalized(
     const client = createClient(provider);
     const api = createRawApi(client);
     try {
-      await Promise.race([
+      await raceSyncTimeout(
         api.whenReady(),
-        new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            reject(
-              new NetworkSyncTimeoutError(
-                "People Paseo",
-                TIMEOUTS.PEOPLE_FINALIZED_SYNC,
-              ),
-            );
-          }, TIMEOUTS.PEOPLE_FINALIZED_SYNC);
-        }),
-      ]);
+        "People Paseo",
+        TIMEOUTS.PEOPLE_FINALIZED_SYNC,
+      );
     } catch (err) {
       try {
         api.destroy();
@@ -372,10 +327,10 @@ export async function waitForPeopleFinalized(
 
 export async function resolveDotName(
   label: string,
-  onStatus?: StatusCallback,
-  onPhase?: PhaseCallback,
+  opts: ResolveOptions = {},
 ): Promise<string | null> {
-  const api = await ensureClient(onStatus, onPhase);
+  const { onStatus, onPhase } = opts;
+  const api = await ensureClient(opts);
 
   const domain = `${label}.${getActiveServicesConfig().dotns.TLD}`;
   const node = namehash(domain);
@@ -428,8 +383,9 @@ export async function resolveDotName(
 export async function resolveExecutableManifest(
   label: string,
   kind: ExecutableKind,
+  opts: ResolveOptions = {},
 ): Promise<ManifestResult<ExecutableManifest>> {
-  const api = await ensureClient();
+  const api = await ensureClient(opts);
   const dotns = getActiveServicesConfig().dotns;
   return readExecutableManifest(api, dotns, label, kind);
 }
@@ -437,14 +393,18 @@ export async function resolveExecutableManifest(
 /** Smoldot-backed reader for the root manifest at `<label>.<tld>`. */
 export async function resolveRootManifest(
   label: string,
+  opts: ResolveOptions = {},
 ): Promise<ManifestResult<RootManifest>> {
-  const api = await ensureClient();
+  const api = await ensureClient(opts);
   const dotns = getActiveServicesConfig().dotns;
   return readRootManifest(api, dotns, label);
 }
 
-export async function resolveOwner(label: string): Promise<string | null> {
-  const api = await ensureClient();
+export async function resolveOwner(
+  label: string,
+  opts: ResolveOptions = {},
+): Promise<string | null> {
+  const api = await ensureClient(opts);
 
   const domain = `${label}.${getActiveServicesConfig().dotns.TLD}`;
   const node = namehash(domain);

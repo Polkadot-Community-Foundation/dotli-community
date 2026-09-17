@@ -6,6 +6,17 @@
 // Manages the auth button, QR pairing modal, and user popover.
 // All plain DOM manipulation, no framework.
 //
+import { getActiveChainRoles, type ChainRole } from "@dotli/config/network";
+import {
+  getNetworkStatus,
+  getTransfer,
+  setBlockSource,
+  startNetworkWatch,
+  stopNetworkWatch,
+  subscribeNetwork,
+  type BlockSource,
+  type ChainStatus,
+} from "@dotli/ui/network-monitor";
 import { log } from "@dotli/shared/log";
 import { escapeHtml } from "@dotli/shared/html";
 import { isMobileDevice } from "@dotli/shared/device";
@@ -16,6 +27,7 @@ import {
 } from "@dotli/shared/active-manifest";
 import {
   createRemoteChainProvider,
+  isRemoteChainConnectable,
   isRemoteChainSupported,
 } from "@dotli/protocol/client";
 import {
@@ -23,17 +35,17 @@ import {
   setCacheSettings,
   getBackend,
   setBackend,
-  isRpcGatewayOnly,
   isSharedWorkerAvailable,
   isVerifiedSession,
+  BACKEND_LABELS,
   type Backend,
   type CacheSettings,
 } from "@dotli/config/mode";
 import { clearCidCache } from "@dotli/storage/cid-cache";
 import {
+  getEnabledNetworks,
   getNetwork,
   setNetwork,
-  getEnabledNetworks,
   NETWORK_NAME_TO_SERVICES_CONFIG,
   type Network,
 } from "@dotli/config/network";
@@ -60,6 +72,7 @@ import {
   type BlockingModalCoordinator,
   type BlockingModalScope,
 } from "./blocking-modal-queue";
+import { ERRORS } from "./errors";
 
 function getElement(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -78,6 +91,7 @@ let modalQr: HTMLElement;
 let modalReason: HTMLElement;
 let modalHint: HTMLElement;
 let modalClose: HTMLElement;
+let modalGetApp: HTMLAnchorElement;
 let userPopover: HTMLElement;
 let userPopoverUsername: HTMLElement;
 let userPopoverDisconnect: HTMLElement;
@@ -106,6 +120,9 @@ const USER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" st
 
 // Track the current QR payload to prevent stale canvas appends
 let currentQrPayload: string | null = null;
+
+// Lists the current Polkadot Mobile store listings for phones without the app.
+const POLKADOT_MOBILE_DOWNLOAD_URL = "https://docs.polkadot.com/apps/";
 let truapiSessionConnected = false;
 let blockingModalCoordinator: BlockingModalCoordinator | null = null;
 let authModalScope: BlockingModalScope | null = null;
@@ -113,13 +130,15 @@ let releaseAuthModal: (() => void) | null = null;
 
 type ThemePref = "light" | "dark" | "system";
 
+const THEME_KEY = "dotli-theme";
+
 /**
  * Read the persisted theme preference.
  *
  * An absent key means "system" so pre-existing users keep following the OS.
  */
 function getStoredThemePref(): ThemePref {
-  const stored = localStorage.getItem("dotli-theme");
+  const stored = localStorage.getItem(THEME_KEY);
   if (stored === "light" || stored === "dark" || stored === "system") {
     return stored;
   }
@@ -190,7 +209,7 @@ function setThemePopoverOpen(open: boolean): void {
 }
 
 function selectThemePref(pref: ThemePref): void {
-  localStorage.setItem("dotli-theme", pref);
+  localStorage.setItem(THEME_KEY, pref);
   applyThemePref(pref);
   syncThemePopoverChecked(pref);
   if (themeButton !== null) {
@@ -277,6 +296,8 @@ export function initTopBar(
   modalReason = getElement("auth-modal-reason");
   modalHint = getElement("auth-modal-hint");
   modalClose = getElement("auth-modal-close");
+  modalGetApp = getElement("auth-modal-get-app") as HTMLAnchorElement;
+  modalGetApp.href = POLKADOT_MOBILE_DOWNLOAD_URL;
   userPopover = getElement("user-popover");
   userPopoverUsername = getElement("user-popover-username");
   userPopoverDisconnect = getElement("user-popover-disconnect");
@@ -289,6 +310,7 @@ export function initTopBar(
   // Auth button: opens modal (logged out) or popover (logged in)
   authButton.addEventListener("click", handleAuthButtonClick);
   authButton.removeAttribute("disabled");
+  authButton.removeAttribute("aria-busy");
 
   // Modal close button
   modalClose.addEventListener("click", () => {
@@ -413,6 +435,8 @@ export function initTopBar(
 
   // Mode toggle (P2P / Centralized)
   initModeToggle();
+  setBlockSource(createBlockSource());
+  initChainsPopover();
 
   // Permissions
   initPermissions();
@@ -491,6 +515,7 @@ function renderAuthState(state: DotliAuthState): void {
 function renderLoggedOut(): void {
   authButton.innerHTML = USER_SVG;
   authButton.title = "Login with Polkadot Mobile";
+  authButton.setAttribute("aria-label", "Login with Polkadot Mobile");
   setUserPopoverNoUsernameHint(false);
   window.dispatchEvent(new Event("dotli:logged-out"));
 }
@@ -502,6 +527,7 @@ function renderTruapiLoggedIn(state: TruapiSessionUiState): void {
       ? `<div class="user-badge">${escapeHtml(initials)}</div>`
       : `<div class="user-badge user-badge-anon">${USER_SVG}</div>`;
   authButton.title = "Account";
+  authButton.setAttribute("aria-label", "Account");
   const username =
     state.primaryUsername ?? state.fullUsername ?? state.liteUsername;
   userPopoverUsername.textContent =
@@ -628,6 +654,7 @@ function renderPairing(payload: string): void {
 }
 
 function renderAuthenticating(): void {
+  modalGetApp.hidden = true;
   // Invalidate an in-flight lazy QR render so it cannot replace this progress
   // state after the wallet handshake has already been accepted.
   currentQrPayload = null;
@@ -647,7 +674,90 @@ interface FriendlyAuthError {
   title: string;
   subtitle: string;
   detail?: string;
+  retryable?: boolean;
 }
+
+interface AuthErrorRule {
+  match: RegExp;
+  title: string;
+  subtitle: string;
+  retryable?: boolean;
+  hideDetail?: boolean;
+}
+
+// First match wins, so chain-specific wording and runtime boot failures sit
+// above the broad declined, timeout, and transport buckets.
+const AUTH_ERROR_RULES: readonly AuthErrorRule[] = [
+  {
+    match: /Invalid Transaction|rejected by the node|re-broadcast rejected/,
+    title: "Statement Store transaction rejected",
+    subtitle:
+      "Polkadot Mobile could not register this browser because the chain rejected the registration transaction.",
+  },
+  {
+    match: /SubstrateSdk\.JSONRPCError error 1/,
+    title: "Statement Store registration failed",
+    subtitle:
+      "Polkadot Mobile reported a JSON-RPC failure while registering this browser as a device.",
+  },
+  {
+    match: /OriginPersonProviderError/,
+    title: "Your account is still being set up",
+    subtitle: "Please try again later",
+    hideDetail: true,
+  },
+  {
+    match:
+      /version mismatch|unsupported version|incompatible|malformed ?frame/i,
+    title: "Update Polkadot Mobile",
+    subtitle:
+      "This browser and your Polkadot Mobile app are out of step. Update the app and try again.",
+  },
+  {
+    match: /denied|rejected|declined/i,
+    title: "Login was declined",
+    subtitle:
+      "The request was declined in Polkadot Mobile. Start again and approve it on your phone.",
+  },
+  {
+    match: /cancel/i,
+    title: "Login was cancelled",
+    subtitle:
+      "The pairing stopped before it finished. Try again when you are ready.",
+  },
+  {
+    match: /timed? ?out|timeout/i,
+    title: "Login timed out",
+    subtitle:
+      "Polkadot Mobile did not answer in time. Check that your phone is online and try again.",
+  },
+  {
+    match: /not supported|unsupported/i,
+    title: "Login is not available here",
+    subtitle: "This page cannot sign you in with Polkadot Mobile.",
+    retryable: false,
+  },
+  {
+    match:
+      /worker init failed|wasm|webassembly|dynamically imported module|auth host was disposed/i,
+    title: "The login service did not start",
+    subtitle:
+      "This page could not start its login runtime. Reload the page and try again.",
+  },
+  {
+    match:
+      /disconnected|connection is closed|transport closed|not connected|connection (refused|reset|aborted)|network (unreachable|down)|host unreachable|failed to fetch|networkerror|load failed/i,
+    title: "Connection to Polkadot Mobile was lost",
+    subtitle:
+      "The link between this browser and your phone dropped before login finished. Check that both are online and try again.",
+  },
+  {
+    match: /handshake|statement[- ]store|allowance/i,
+    title: "Pairing could not complete",
+    subtitle:
+      "This browser and Polkadot Mobile could not exchange their pairing messages. Try again in a moment.",
+  },
+];
 
 function exhaustedAllowanceError(message: string): FriendlyAuthError {
   return {
@@ -655,75 +765,66 @@ function exhaustedAllowanceError(message: string): FriendlyAuthError {
     subtitle:
       "Polkadot Mobile has no free slot to register this browser. Try again once the current allowance period rolls over.",
     detail: message,
+    // Retrying cannot succeed until the allowance period rolls over.
+    retryable: false,
   };
 }
 
-// Recognize known wallet-side SSO failures and return friendly copy, or null to
-// fall back to the raw error.
-function friendlyAuthError(message: string): FriendlyAuthError | null {
-  if (message.includes("Invalid Transaction")) {
+// Map a wallet or transport failure to copy a first-time user can act on.
+// Unknown reasons keep the raw text as a detail line for bug reports.
+function friendlyAuthError(message: string): FriendlyAuthError {
+  const rule = AUTH_ERROR_RULES.find((candidate) =>
+    candidate.match.test(message),
+  );
+  if (rule === undefined) {
     return {
-      title: "Statement Store transaction rejected",
+      title: "Login did not complete",
       subtitle:
-        "Polkadot Mobile could not register this browser because the chain rejected the registration transaction.",
+        "Something interrupted the connection to Polkadot Mobile. Try again, and make sure the app is installed and up to date.",
       detail: message,
     };
   }
-  if (message.includes("SubstrateSdk.JSONRPCError error 1")) {
-    return {
-      title: "Statement Store registration failed",
-      subtitle:
-        "Polkadot Mobile reported a JSON-RPC failure while registering this browser as a device.",
-      detail: message,
-    };
-  }
-  if (message.includes("OriginPersonProviderError")) {
-    return {
-      title: "Your account is still being set up",
-      subtitle: "Please try again later",
-    };
-  }
-  return null;
+  return {
+    title: rule.title,
+    subtitle: rule.subtitle,
+    detail: rule.hideDetail === true ? undefined : message,
+    retryable: rule.retryable,
+  };
 }
 
 function renderError(message: string, kind: LoginFailureKind): void {
+  modalGetApp.hidden = true;
   const container = document.createElement("div");
   container.className = "auth-modal-error-view";
 
-  const exhaustedPeriod = kind === "NoFreeAllowanceSlots";
-  const friendly = exhaustedPeriod
-    ? exhaustedAllowanceError(message)
-    : friendlyAuthError(message);
-  if (friendly) {
-    const icon = document.createElement("div");
-    icon.className = "auth-modal-pending-icon";
-    icon.innerHTML = PENDING_ICON_SVG;
-    container.appendChild(icon);
+  const friendly =
+    kind === "NoFreeAllowanceSlots"
+      ? exhaustedAllowanceError(message)
+      : friendlyAuthError(message);
 
-    const title = document.createElement("div");
-    title.className = "auth-modal-pending-title";
-    title.textContent = friendly.title;
-    container.appendChild(title);
+  const icon = document.createElement("div");
+  icon.className = "auth-modal-pending-icon";
+  icon.innerHTML = PENDING_ICON_SVG;
+  container.appendChild(icon);
 
-    const subtitle = document.createElement("div");
-    subtitle.className = "auth-modal-pending-subtitle";
-    subtitle.textContent = friendly.subtitle;
-    container.appendChild(subtitle);
+  const title = document.createElement("div");
+  title.className = "auth-modal-pending-title";
+  title.textContent = friendly.title;
+  container.appendChild(title);
 
-    if (friendly.detail !== undefined && friendly.detail.length > 0) {
-      const detail = document.createElement("p");
-      detail.className = "auth-modal-error";
-      detail.textContent = friendly.detail;
-      container.appendChild(detail);
-    }
-  } else {
-    const msg = document.createElement("p");
-    msg.className = "auth-modal-error";
-    msg.textContent = message;
-    container.appendChild(msg);
+  const subtitle = document.createElement("div");
+  subtitle.className = "auth-modal-pending-subtitle";
+  subtitle.textContent = friendly.subtitle;
+  container.appendChild(subtitle);
+
+  if (friendly.detail !== undefined && friendly.detail.length > 0) {
+    const detail = document.createElement("p");
+    detail.className = "auth-modal-error";
+    detail.textContent = friendly.detail;
+    container.appendChild(detail);
   }
 
-  if (!exhaustedPeriod) {
+  if (friendly.retryable !== false) {
     const retry = document.createElement("button");
     retry.className = "auth-modal-retry";
     retry.textContent = "Retry";
@@ -1122,6 +1223,553 @@ function createPermissionDropdown(
   return wrap;
 }
 
+let unsubscribeNetwork: (() => void) | null = null;
+let pendingTicker: ReturnType<typeof setInterval> | null = null;
+
+function stopPendingTicker(): void {
+  if (pendingTicker !== null) {
+    clearInterval(pendingTicker);
+    pendingTicker = null;
+  }
+}
+
+/**
+ * Network popover: what each chain is doing right now.
+ *
+ * Heights and peer counts are read fresh on every open rather than polled,
+ * because this panel is the only thing that wants them and a background
+ * poll would keep four chains awake for something nobody has looked at.
+ */
+/**
+ * Watch the best block of each chain over a client held for the session.
+ *
+ * One client per chain, held open, pays for metadata once. `bestBlocks$` then
+ * reports every head change rather than whatever a poll happens to catch.
+ */
+/**
+ * How the arrival of a single block reads on hover.
+ *
+ * The interval comes first because it is the measurement, then how far past the
+ * expectation the chain declares it landed. A block inside the expectation has no delay
+ * to report, and saying "0s late" would invite the reader to look for a problem
+ * that is not there.
+ */
+function describeBlockDelay(gapMs: number, blockTimeMs: number): string {
+  const secs = (ms: number): string =>
+    ms < 10_000
+      ? `${(ms / 1000).toFixed(1)}s`
+      : `${String(Math.round(ms / 1000))}s`;
+  const late = gapMs - blockTimeMs;
+  return late <= 0
+    ? `${secs(gapMs)}, on time`
+    : `${secs(gapMs)}, ${secs(late)} late`;
+}
+
+function createBlockSource(): BlockSource {
+  return {
+    isReachable: (genesis) => isRemoteChainConnectable(genesis),
+    subscribe: (genesis, onBlock) => {
+      // A record rather than two locals: the returned unsubscribe runs after
+      // this function has gone, and a plain boolean flipped from there cannot
+      // be seen by the checker.
+      const live = { cancelled: false, teardown: null as (() => void) | null };
+      void (async () => {
+        try {
+          const provider = createRemoteChainProvider(genesis);
+          if (provider === null) {
+            return;
+          }
+          const papi = await import("polkadot-api");
+          const client = papi.createClient(provider);
+          if (live.cancelled) {
+            client.destroy();
+            return;
+          }
+          const sub = client.bestBlocks$.subscribe({
+            next: (blocks) => {
+              const best = blocks.at(0);
+              if (best !== undefined) {
+                onBlock(best.number);
+              }
+            },
+            error: (err: unknown) => {
+              // A dropped chain renders as a gap in its strip, which is the
+              // truth, so this is worth a log line and nothing louder.
+              log.warn(
+                `[dot.li network] block stream for ${genesis.slice(0, 10)} ended: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            },
+          });
+          live.teardown = () => {
+            sub.unsubscribe();
+            client.destroy();
+          };
+        } catch (err: unknown) {
+          log.warn(
+            `[dot.li network] cannot watch ${genesis.slice(0, 10)}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })();
+      return () => {
+        live.cancelled = true;
+        live.teardown?.();
+      };
+    },
+  };
+}
+
+/** Bytes as the panel says them: kB up to a megabyte, then MB. */
+function formatSize(bytes: number): string {
+  return bytes < 1_048_576
+    ? `${String(Math.round(bytes / 1024))} kB`
+    : `${(bytes / 1_048_576).toFixed(1)} MB`;
+}
+
+function formatRate(bytesPerSecond: number): string {
+  // Below half a kilobyte the kB rounding reads "0 kB/s", which says the
+  // opposite of what is happening: bytes are moving, just barely.
+  if (bytesPerSecond < 1024) {
+    return `${String(Math.round(bytesPerSecond))} B/s`;
+  }
+  return bytesPerSecond < 1_048_576
+    ? `${String(Math.round(bytesPerSecond / 1024))} kB/s`
+    : `${(bytesPerSecond / 1_048_576).toFixed(1)} MB/s`;
+}
+
+/**
+ * Glide the strip left by the room the newly landed bars just took.
+ *
+ * The bars are packed to the right, so appending one shifts every older bar
+ * left instantly. Starting the strip offset by that same distance and
+ * transitioning it back to zero replays the shift as motion, which is what
+ * makes a block arriving read as an arrival.
+ */
+function slideStrip(strip: HTMLElement, landed: number): void {
+  const style = getComputedStyle(strip);
+  const gap = Number.parseFloat(style.columnGap) || 0;
+  const first = strip.firstElementChild;
+  const width = first === null ? 0 : first.getBoundingClientRect().width;
+  const shift = landed * (width + gap);
+  if (shift <= 0) {
+    return;
+  }
+  for (const node of Array.from(strip.children).slice(-landed)) {
+    const mark = node as HTMLElement;
+    mark.classList.add("is-new");
+    mark.addEventListener(
+      "animationend",
+      () => {
+        mark.classList.remove("is-new");
+      },
+      { once: true },
+    );
+  }
+  strip.classList.remove("is-sliding");
+  strip.style.transform = `translateX(${String(shift)}px)`;
+  // Read back so the untransitioned offset is committed before the class that
+  // animates it is added. Without this the browser coalesces both into the
+  // final position and nothing moves.
+  strip.getBoundingClientRect();
+  strip.classList.add("is-sliding");
+  strip.style.transform = "translateX(0)";
+}
+
+/**
+ * How many marks this strip can actually show.
+ *
+ * Measured rather than assumed, so the history a visitor sees is exactly the
+ * history that fits: widen the panel and it lengthens, narrow it and it
+ * shortens. Falls back to the full set before first layout, when the strip has
+ * no width to measure and every number would be a guess.
+ */
+function stripCapacity(strip: HTMLElement, fallback: number): number {
+  const width = strip.getBoundingClientRect().width;
+  if (width <= 0) {
+    return fallback;
+  }
+  const style = getComputedStyle(strip);
+  const barWidth = Number.parseFloat(style.getPropertyValue("--chains-bar-w"));
+  const gap = Number.parseFloat(style.gap);
+  const step =
+    (Number.isFinite(barWidth) ? barWidth : 4) +
+    (Number.isFinite(gap) ? gap : 4);
+  return Math.max(
+    1,
+    Math.floor((width + (Number.isFinite(gap) ? gap : 4)) / step),
+  );
+}
+
+function renderChainsPopover(parent: HTMLElement): void {
+  parent.replaceChildren();
+
+  appendSectionHeader(parent, "Network");
+  const statusRow = document.createElement("div");
+  statusRow.className = "chains-status";
+  const dot = document.createElement("span");
+  const text = document.createElement("span");
+  statusRow.append(dot, text);
+  parent.appendChild(statusRow);
+
+  // The verdict reads from block arrivals, which both backends produce, so a
+  // gateway connection reports its health the same way a light client does.
+  const paint = (): void => {
+    const { text: label, tone } = describeLiveNetwork();
+    dot.className = `chains-status-dot is-${tone}`;
+    text.textContent = label;
+  };
+  paint();
+
+  // A labelled strip per chain rather than a table. The bars answer whether
+  // blocks are arriving. The peer count beside the name answers who they are
+  // arriving from, which is the question a stalled strip raises next.
+  const barCells = new Map<ChainRole, HTMLElement>();
+  // Kept across renders so the marks inside can be animated rather than
+  // rebuilt. A cell that lost its strip to the unavailable copy gets a new one.
+  const stripCells = new Map<ChainRole, HTMLElement>();
+  const stripFor = (role: ChainRole, cell: HTMLElement): HTMLElement => {
+    const found = stripCells.get(role);
+    if (found?.parentElement === cell) {
+      return found;
+    }
+    const fresh = document.createElement("div");
+    fresh.className = "chains-bars";
+    cell.replaceChildren(fresh);
+    stripCells.set(role, fresh);
+    return fresh;
+  };
+  const peerCells = new Map<ChainRole, HTMLElement>();
+  const pendingCells = new Map<
+    ChainRole,
+    { ghost: HTMLElement; text: HTMLElement }
+  >();
+  for (const chain of getActiveChainRoles()) {
+    const group = document.createElement("div");
+    group.className = "chains-group";
+    const name = document.createElement("p");
+    name.className = "chains-group-label";
+    const labelText = document.createElement("span");
+    labelText.textContent = chain.label;
+    const peers = document.createElement("span");
+    peers.className = "chains-group-peers";
+    name.append(labelText, peers);
+    const bars = document.createElement("div");
+    bars.className = "chains-bars-cell";
+    group.append(name, bars);
+    parent.appendChild(group);
+    barCells.set(chain.role, bars);
+    peerCells.set(chain.role, peers);
+  }
+
+  // Blank rather than "0 peers" until a sample lands: before the first reply
+  // the shell does not know the count, and zero is a different claim.
+  const renderPeers = (chain: ChainStatus): void => {
+    const cell = peerCells.get(chain.role);
+    if (cell === undefined) {
+      return;
+    }
+    if (!chain.reachable || chain.peers === null) {
+      cell.textContent = "";
+      cell.removeAttribute("aria-label");
+      return;
+    }
+    cell.textContent =
+      chain.peers === 1 ? "1 peer" : `${String(chain.peers)} peers`;
+    cell.setAttribute(
+      "aria-label",
+      `${chain.label}: ${String(chain.peers)} ${chain.peers === 1 ? "peer" : "peers"} connected`,
+    );
+  };
+
+  const renderBars = (): void => {
+    for (const chain of getNetworkStatus()) {
+      renderPeers(chain);
+      const cell = barCells.get(chain.role);
+      if (cell === undefined) {
+        continue;
+      }
+      if (!chain.reachable) {
+        cell.textContent = "no endpoint on this network";
+        cell.classList.add("is-unavailable");
+        continue;
+      }
+      cell.classList.remove("is-unavailable");
+      const strip = stripFor(chain.role, cell);
+
+      if (chain.bars.length === 0) {
+        // A ghost bar and a live estimate instead of static waiting words.
+        // Before the first head nothing is predictable, so no number is shown.
+        // After it, the next block is genuinely due within the chain-declared
+        // block time, and the ticker below keeps the estimate current.
+        const ghost = document.createElement("span");
+        ghost.className = "chains-bar chains-bar-pending";
+        const waiting = document.createElement("span");
+        waiting.className = "chains-bars-waiting";
+        strip.replaceChildren(ghost, waiting);
+        pendingCells.set(chain.role, { ghost, text: waiting });
+        continue;
+      }
+      pendingCells.delete(chain.role);
+
+      // Bars are reconciled by block number rather than rebuilt, so a mark
+      // that is already on screen keeps its element and can be animated. A
+      // wholesale `replaceChildren` made every block look like a new one.
+      const existing = new Map<string, HTMLElement>();
+      for (const node of Array.from(strip.children)) {
+        const key = (node as HTMLElement).dataset.block;
+        if (key === undefined) {
+          node.remove();
+          continue;
+        }
+        existing.set(key, node as HTMLElement);
+      }
+      // Only the newest marks the strip can fit are rendered. The rest stay in
+      // state, so widening the panel reveals more history rather than starting
+      // it over.
+      const visible = chain.bars.slice(
+        -stripCapacity(strip, chain.bars.length),
+      );
+      const wanted = new Set(visible.map((bar) => String(bar.number)));
+      for (const [key, node] of existing) {
+        if (!wanted.has(key)) {
+          node.remove();
+          existing.delete(key);
+        }
+      }
+
+      const hadBars = existing.size > 0;
+      let landed = 0;
+      visible.forEach((bar, index) => {
+        const key = String(bar.number);
+        let mark = existing.get(key);
+        if (mark === undefined) {
+          mark = document.createElement("span");
+          mark.dataset.block = key;
+          mark.className = `chains-bar is-${bar.health}`;
+          // Hovering a bar answers the only question it raises: how late was it.
+          const label = describeBlockDelay(bar.gapMs, chain.blockTimeMs);
+          mark.title = label;
+          mark.setAttribute("aria-label", `Block ${key}, ${label}`);
+          landed += 1;
+        }
+        const atIndex = strip.children.item(index);
+        if (atIndex !== mark) {
+          strip.insertBefore(mark, atIndex);
+        }
+      });
+
+      if (landed > 0 && hadBars) {
+        slideStrip(strip, landed);
+      }
+    }
+    updatePending();
+    paint();
+  };
+
+  // Countdown copy is honest by construction: it never shows zero or a
+  // negative. When the estimate passes it swaps to words, and past 3x the
+  // panel verdict line escalates, so "due any moment" cannot linger.
+  const updatePending = (): void => {
+    if (pendingCells.size === 0) {
+      return;
+    }
+    for (const chain of getNetworkStatus()) {
+      const pending = pendingCells.get(chain.role);
+      if (pending === undefined) {
+        continue;
+      }
+      if (chain.sinceLast === null) {
+        pending.ghost.classList.add("is-searching");
+        // Before the first block there is nothing to count down to, so the
+        // slot says where the chain actually is instead. "connecting" was
+        // hardcoded here and stayed wrong for a chain that had already warped
+        // or gone ready without yet producing a block we saw.
+        pending.text.textContent = chain.phase ?? "connecting";
+        continue;
+      }
+      pending.ghost.classList.remove("is-searching");
+      const fraction = Math.min(chain.sinceLast / chain.blockTimeMs, 1);
+      pending.ghost.style.height = `${String(Math.round(20 + fraction * 80))}%`;
+      const leftMs = chain.blockTimeMs - chain.sinceLast;
+      if (leftMs > 0) {
+        pending.text.textContent = `next block in about ${String(Math.ceil(leftMs / 1000))}s`;
+        pending.ghost.classList.remove("is-due");
+      } else {
+        pending.text.textContent = "due any moment";
+        pending.ghost.classList.add("is-due");
+      }
+    }
+  };
+
+  startNetworkWatch();
+  renderBars();
+  unsubscribeNetwork?.();
+  // Footer: what the connection is doing, under the per-chain bars. While the
+  // product is arriving this is the download. Once it has landed the size is
+  // the only part still worth stating, so the progress line becomes it rather
+  // than sitting at 100% forever.
+  const footer = document.createElement("div");
+  footer.className = "chains-transfer";
+  const speedRow = document.createElement("p");
+  speedRow.className = "chains-transfer-row";
+  const sizeRow = document.createElement("p");
+  sizeRow.className = "chains-transfer-row";
+  footer.append(speedRow, sizeRow);
+  parent.appendChild(footer);
+
+  const renderTransfer = (): void => {
+    // Speed and size describe the load. Once the product is on screen they
+    // describe history, so the footer empties rather than sitting at its
+    // final numbers forever.
+    if (currentProductLabel !== null) {
+      speedRow.textContent = "";
+      sizeRow.textContent = "";
+      return;
+    }
+    const { bytesPerSecond, fetched, total } = getTransfer();
+    if (bytesPerSecond === null) {
+      speedRow.textContent = "";
+    } else {
+      speedRow.innerHTML =
+        `<span class="chains-transfer-label">Speed</span>` +
+        `<span class="chains-transfer-value">${escapeHtml(formatRate(bytesPerSecond))}</span>`;
+    }
+    if (fetched === null || total === null || total <= 0) {
+      sizeRow.textContent = "";
+      return;
+    }
+    const done = fetched >= total;
+    sizeRow.innerHTML =
+      `<span class="chains-transfer-label">${done ? "Size" : "Downloading"}</span>` +
+      `<span class="chains-transfer-value">${
+        done
+          ? escapeHtml(formatSize(total))
+          : `${escapeHtml(formatSize(fetched))} / ${escapeHtml(formatSize(total))}`
+      }</span>`;
+  };
+  renderTransfer();
+
+  // The panel explains what the connection is doing. These are the two things
+  // a visitor can actually do about it. Static, so it is built once rather
+  // than on every repaint.
+  const tips = document.createElement("div");
+  tips.className = "chains-tips";
+  const tipsTitle = document.createElement("p");
+  tipsTitle.className = "chains-tips-title";
+  tipsTitle.textContent = "Tips for better performance";
+  const tipsList = document.createElement("ul");
+  tipsList.className = "chains-tips-list";
+  for (const tip of [
+    "Close apps and tabs you are not using",
+    "Move closer to your router",
+  ]) {
+    const item = document.createElement("li");
+    item.textContent = tip;
+    tipsList.appendChild(item);
+  }
+  tips.append(tipsTitle, tipsList);
+  parent.appendChild(tips);
+
+  unsubscribeNetwork = subscribeNetwork(() => {
+    renderBars();
+    renderTransfer();
+  });
+  stopPendingTicker();
+  pendingTicker = setInterval(updatePending, 250);
+}
+
+/**
+ * The overall verdict, from the blocks actually arriving.
+ *
+ * Read from arrivals rather than lifecycle milestones, which are terminal: a
+ * verdict built from those latches at whatever the last chain to bootstrap
+ * reported and keeps saying it after the connection dies.
+ */
+function describeLiveNetwork(): { text: string; tone: string } {
+  const chains = getNetworkStatus().filter((c) => c.reachable);
+  if (chains.length === 0) {
+    return { text: "Starting", tone: "idle" };
+  }
+  const started = chains.filter((c) => c.latest !== null);
+  if (started.length === 0) {
+    return { text: "Connecting", tone: "idle" };
+  }
+  const overdue = started.filter(
+    (c) => c.sinceLast !== null && c.sinceLast > c.blockTimeMs * 3,
+  );
+  if (overdue.length > 0) {
+    return {
+      text: `Waiting on ${overdue.map((c) => c.label).join(" and ")}`,
+      tone: "warn",
+    };
+  }
+  if (started.length < chains.length) {
+    return {
+      text: `Connecting, ${String(started.length)} of ${String(chains.length)} ready`,
+      tone: "idle",
+    };
+  }
+  return { text: "Your connection is good", tone: "ok" };
+}
+
+/**
+ * Reveal the network button. The host calls this once a product is on
+ * screen, so the icon appears with the app rather than during the load.
+ */
+export function setChainsButtonVisible(visible: boolean): void {
+  document
+    .getElementById("chains-button")
+    ?.classList.toggle("visible", visible);
+}
+
+function initChainsPopover(): void {
+  const button = document.getElementById("chains-button");
+  const popover = document.getElementById("chains-popover");
+  if (button === null || popover === null) {
+    return;
+  }
+  button.setAttribute("aria-haspopup", "dialog");
+  popover.setAttribute("role", "dialog");
+  popover.setAttribute("aria-label", "Network");
+
+  const close = (): void => {
+    popover.classList.remove("open");
+    button.setAttribute("aria-expanded", "false");
+    unsubscribeNetwork?.();
+    unsubscribeNetwork = null;
+    stopPendingTicker();
+    stopNetworkWatch();
+  };
+  // No `stopPropagation`. The shared outside-click closer has to see this
+  // click to shut Settings, which sits at the same fixed position and would
+  // otherwise render on top of this panel.
+  button.addEventListener("click", () => {
+    if (popover.classList.contains("open")) {
+      close();
+      return;
+    }
+    renderChainsPopover(popover);
+    popover.classList.add("open");
+    button.setAttribute("aria-expanded", "true");
+  });
+  document.addEventListener("click", (e) => {
+    // `contains` rather than an identity check: the click lands on the globe
+    // SVG inside the button, so comparing against the button itself closed
+    // the panel in the same click that opened it.
+    if (
+      popover.classList.contains("open") &&
+      !popover.contains(e.target as Node) &&
+      !button.contains(e.target as Node)
+    ) {
+      close();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      close();
+    }
+  });
+}
+
 function initModeToggle(): void {
   modeButton = getElement("mode-button");
   modePopover = getElement("mode-popover");
@@ -1399,46 +2047,46 @@ function renderModePopover(): void {
       }
     };
     rerenderNetwork();
-    appendDivider(leftCol);
   }
 
-  appendSectionHeader(leftCol, "Backend");
+  // Only separate from the Network section when there is one. With a single
+  // enabled network this header leads the column and must line up with
+  // Diagnostics opposite.
+  appendSectionHeader(
+    leftCol,
+    "Network Transport",
+    enabledNetworks.length > 1 ? "mode-popover-section--spaced" : undefined,
+  );
   const chainChoices: [Backend, string, string][] = [
     [
       "smoldot-direct",
-      "Light Client Per-Tab",
+      BACKEND_LABELS["smoldot-direct"],
       "Verified in your browser, separate per tab (recommended)",
     ],
     [
       "smoldot-shared-worker",
-      "Light Client Shared",
+      BACKEND_LABELS["smoldot-shared-worker"],
       "Verified in your browser, shared across tabs",
     ],
     [
       "rpc-gateway",
-      "Trusted Providers",
+      BACKEND_LABELS["rpc-gateway"],
       "Fetched from trusted servers, fastest but less private",
     ],
   ];
   const chainGroup = document.createElement("div");
   chainGroup.setAttribute("role", "radiogroup");
-  chainGroup.setAttribute("aria-label", "Backend");
+  chainGroup.setAttribute("aria-label", "Network Transport");
   leftCol.appendChild(chainGroup);
   const sharedWorkerSupported = isSharedWorkerAvailable();
   const rerenderChain = (): void => {
     chainGroup.innerHTML = "";
-    const gatewayOnly = isRpcGatewayOnly(draft.network);
     for (const [value, label, desc] of chainChoices) {
-      const isSmoldot = value !== "rpc-gateway";
       const disabled =
-        (value === "smoldot-shared-worker" && !sharedWorkerSupported) ||
-        (isSmoldot && gatewayOnly);
-      const effectiveDesc =
-        isSmoldot && gatewayOnly
-          ? "Unavailable: this network has not published its chain specs yet"
-          : disabled
-            ? "Unavailable in this browser or private window"
-            : desc;
+        value === "smoldot-shared-worker" && !sharedWorkerSupported;
+      const effectiveDesc = disabled
+        ? "Unavailable in this browser or private window"
+        : desc;
       renderChainRadio(
         chainGroup,
         value,
@@ -1459,8 +2107,7 @@ function renderModePopover(): void {
   };
   rerenderChain();
 
-  appendDivider(leftCol);
-  appendSectionHeader(leftCol, "Cache");
+  appendSectionHeader(leftCol, "Cache", "mode-popover-section--bottom");
   renderCacheToggle(
     leftCol,
     "dotNS cache",
@@ -1598,16 +2245,10 @@ async function applyAndReset(
 ): Promise<void> {
   try {
     if (forceFullWipe) {
-      // Snapshot the theme so the wipe (which clears localStorage) doesn't
-      // yank the user into a different colour scheme.
-      const theme = localStorage.getItem("dotli-theme");
       await wipeOriginState();
       setBackend(draft.chain);
       setNetwork(draft.network);
       setCacheSettings(draft.cache);
-      if (theme === "light" || theme === "dark" || theme === "system") {
-        localStorage.setItem("dotli-theme", theme);
-      }
       // Force every origin to purge regardless of persisted prefs.
       try {
         sessionStorage.setItem("dotli:pending-reset:protocol", "1");
@@ -1668,10 +2309,20 @@ async function applyAndReset(
 }
 
 /**
+ * Keys that describe the browser rather than the state a reset clears.
+ *
+ * The theme is what the visitor chose to look at, not state they asked the
+ * reset to clear. Losing it turns a settings reset into a visible change
+ * nobody requested.
+ */
+const PRESERVED_KEYS: readonly string[] = [THEME_KEY];
+
+/**
  * Wipe this origin's IDB, CacheStorage, SW registrations, localStorage,
  * sessionStorage. Best-effort: Firefox and Safari pre-17 lack
- * `indexedDB.databases()`. Callers must snapshot keys they need preserved
- * (theme, settings) and re-write them after, since localStorage is cleared.
+ * `indexedDB.databases()`. Everything in `PRESERVED_KEYS` survives. Callers
+ * still re-write settings they want to change, since those are new values
+ * rather than preserved ones.
  */
 export async function wipeOriginState(): Promise<void> {
   await Promise.allSettled([deleteAllIndexedDBs(), deleteAllCacheStorage()]);
@@ -1683,7 +2334,15 @@ export async function wipeOriginState(): Promise<void> {
     /* sessionStorage unavailable */
   }
   try {
+    const preserved = PRESERVED_KEYS.map(
+      (key) => [key, localStorage.getItem(key)] as const,
+    );
     localStorage.clear();
+    for (const [key, value] of preserved) {
+      if (value !== null) {
+        localStorage.setItem(key, value);
+      }
+    }
     // eslint-disable-next-line no-restricted-syntax -- localStorage unavailable. Full reset is best-effort.
   } catch {
     /* localStorage unavailable */
@@ -1752,9 +2411,16 @@ async function unregisterAllServiceWorkers(): Promise<void> {
   }
 }
 
-function appendSectionHeader(parent: HTMLElement, text: string): void {
+function appendSectionHeader(
+  parent: HTMLElement,
+  text: string,
+  modifier?: string,
+): void {
   const header = document.createElement("div");
-  header.className = "mode-popover-section";
+  header.className =
+    modifier === undefined
+      ? "mode-popover-section"
+      : `mode-popover-section ${modifier}`;
   header.textContent = text;
   parent.appendChild(header);
 }
@@ -1764,8 +2430,7 @@ function appendSectionHeader(parent: HTMLElement, text: string): void {
 // present in practice. `undefined` fallbacks are defensive for tests and
 // for any future caller that imports this module from a different bundle.
 declare const __DOTLI_VERSION__: string | undefined;
-declare const __SMOLDOT_VERSION__: string | undefined;
-declare const __SMOLDOT_COMMIT__: string | undefined;
+declare const __LIGHT_CLIENT_VERSION__: string | undefined;
 declare const __POLKADOT_API_VERSION__: string | undefined;
 declare const __POLKADOT_API_VERSIONS__:
   | { name: string; version: string }[]
@@ -1826,49 +2491,14 @@ function renderDiagnostics(parent: HTMLElement): void {
     );
   }
 
-  // Version is static and cheap. Block numbers are async so the rows start
-  // with an ellipsis placeholder and get swapped in when `chainConnect`
-  // rounds-trip back with a finalized-block header. When the user is on
-  // the RPC chain backend, smoldot isn't running, so hide the per-chain
-  // block rows entirely (the endpoints already appear under Chain) and
-  // keep only the smoldot version so the dependency is still visible.
-  const smoldotInfo: SmoldotInfo = {
-    version: buildSmoldotVersionLabel(),
-    blocks: { relay: "…", assetHub: "…", people: "…" },
-  };
-  const smoldotActive = getBackend() !== "rpc-gateway";
-  appendSectionHeader(parent, "@smoldot");
-  renderInfoRow(parent, "smoldot", smoldotInfo.version);
-  if (smoldotActive) {
-    const relayRow = renderInfoRow(parent, "Relay Chain", "…");
-    const assetHubRow = renderInfoRow(parent, "Asset Hub", "…");
-    const peopleRow = renderInfoRow(parent, "People Chain", "…");
-
-    // Fire all queries. They update their own rows and the shared snapshot
-    // (so the "Share diagnostic" button captures whatever resolved in time).
-    const cfg = getActiveServicesConfig();
-    void queryFinalizedBlock(cfg.relay.genesis).then((n) => {
-      const v = formatBlock(n);
-      relayRow.update(v);
-      smoldotInfo.blocks.relay = v;
-    });
-    void queryFinalizedBlock(cfg.assethub.genesis).then((n) => {
-      const v = formatBlock(n);
-      assetHubRow.update(v);
-      smoldotInfo.blocks.assetHub = v;
-    });
-    void queryFinalizedBlock(cfg.people.genesis).then((n) => {
-      const v = formatBlock(n);
-      peopleRow.update(v);
-      smoldotInfo.blocks.people = v;
-    });
-  } else {
-    // Keep the snapshot tagged as n/a so the Share-diagnostic report is
-    // coherent: smoldot wasn't consulted, don't claim a block height.
-    smoldotInfo.blocks.relay = "n/a";
-    smoldotInfo.blocks.assetHub = "n/a";
-    smoldotInfo.blocks.people = "n/a";
-  }
+  // Version only. The per-chain block heights live in the network popover,
+  // where they can be read live.
+  appendSectionHeader(parent, "Light client");
+  renderInfoRow(
+    parent,
+    "@parity/truapi-provider",
+    buildLightClientVersionLabel(),
+  );
 
   // The unscoped `polkadot-api` package lives in the same visual section as
   // `@polkadot-api/*`. Same ecosystem, same release cadence, users expect
@@ -1913,6 +2543,10 @@ function renderDiagnostics(parent: HTMLElement): void {
     "Open a new issue on paritytech/dotli pre-filled with these diagnostics";
   shareBtn.addEventListener("click", () => {
     void (async () => {
+      // Block heights now live in the Network popover, so nothing has them
+      // cached. Query them here, where a report is actually being made,
+      // instead of keeping four chains awake for a panel nobody opened.
+      const smoldotInfo = await collectSmoldotInfo();
       const report = await formatDiagnosticsReport(
         base,
         smoldotInfo,
@@ -1972,10 +2606,10 @@ function isTruapiDebugEnabled(): boolean {
  *              so the snapshot matches what's actually live right now.
  *    3. Permissions: per-product, omitted on landing where we don't have
  *                    a scoped label to query.
- *    4. Packages: flat list of smoldot, polkadot-api, and @parity/truapi. The
- *                 live block heights from the @smoldot popover section
- *                 aren't included here because they're noise in a bug
- *                 report. The popover already shows them live. */
+ *    4. Packages: flat list of smoldot, polkadot-api, and @parity/truapi,
+ *                 with the block heights queried at share time. They are
+ *                 not rendered in this popover any more, they live in the
+ *                 network panel where they can be read live. */
 async function formatDiagnosticsReport(
   base: [label: string, value: string][],
   smoldot: SmoldotInfo,
@@ -2038,10 +2672,10 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
     ["Site", window.location.host],
     ["Build", `${version} (${shortSha(sha)})`],
     ["Network", NETWORK_NAME_TO_SERVICES_CONFIG[network].label],
-    ["Backend", backendLabel(backend)],
+    ["Network Transport", backendLabel(backend)],
   ];
 
-  // Sub-row attached to the Backend row:
+  // Sub-row attached to the Network Transport row:
   //   - smoldot-shared-worker: "Worker" label and build SHA. The SharedWorker
   //     is a cached script. If it's running an older bundle than the current
   //     page, this SHA diverges from Build, which is the tell-tale for a stale
@@ -2083,14 +2717,30 @@ function buildBaseDiagnosticsRows(): [label: string, value: string][] {
 }
 
 function backendLabel(b: Backend): string {
-  switch (b) {
-    case "smoldot-shared-worker":
-      return "Light Client Shared";
-    case "smoldot-direct":
-      return "Light Client Per-Tab";
-    case "rpc-gateway":
-      return "Trusted Providers";
+  return BACKEND_LABELS[b];
+}
+
+/** Gather the smoldot readouts a diagnostic report quotes. */
+async function collectSmoldotInfo(): Promise<SmoldotInfo> {
+  const info: SmoldotInfo = {
+    version: buildLightClientVersionLabel(),
+    blocks: { relay: "n/a", assetHub: "n/a", people: "n/a" },
+  };
+  if (getBackend() === "rpc-gateway") {
+    return info;
   }
+  const cfg = getActiveServicesConfig();
+  const [relay, assetHub, people] = await Promise.all([
+    queryFinalizedBlock(cfg.relay.genesis),
+    queryFinalizedBlock(cfg.assethub.genesis),
+    queryFinalizedBlock(cfg.people.genesis),
+  ]);
+  info.blocks = {
+    relay: formatBlock(relay),
+    assetHub: formatBlock(assetHub),
+    people: formatBlock(people),
+  };
+  return info;
 }
 
 interface SmoldotInfo {
@@ -2100,17 +2750,13 @@ interface SmoldotInfo {
   blocks: { relay: string; assetHub: string; people: string };
 }
 
-function buildSmoldotVersionLabel(): string {
-  const smoldot =
-    typeof __SMOLDOT_VERSION__ === "string" ? __SMOLDOT_VERSION__ : "unknown";
-  // Smoldot's upstream commit is resolved at build time by the host's
-  // vite.config against paritytech/smoldot's release tags. Degrades to
-  // just `<version>` when the lookup wasn't possible (offline build).
-  const commit =
-    typeof __SMOLDOT_COMMIT__ === "string" && __SMOLDOT_COMMIT__.length > 0
-      ? ` (${shortSha(__SMOLDOT_COMMIT__)})`
-      : "";
-  return `${smoldot}${commit}`;
+// The light client is smoldot compiled into truapi-provider's wasm, so the
+// provider version is what identifies the build. There is no separate smoldot
+// version to report.
+function buildLightClientVersionLabel(): string {
+  return typeof __LIGHT_CLIENT_VERSION__ === "string"
+    ? __LIGHT_CLIENT_VERSION__
+    : "unknown";
 }
 
 /**
@@ -2416,6 +3062,9 @@ function openModal(
   options: { dotSuffix?: boolean } = {},
 ): void {
   modalQr.innerHTML = `<div class="spinner"></div>`;
+  // Desktop users scan with a phone that already has the app, so the install
+  // link only helps on the phone itself.
+  modalGetApp.hidden = !isMobileDevice();
   // Mobile leads with the deeplink button. The QR toggle swaps this copy later.
   modalHint.textContent = isMobileDevice()
     ? "Sign in with the Polkadot app on this device"
@@ -2472,7 +3121,7 @@ function ensureAuthModalLease(): void {
   }
 
   if (blockingModalCoordinator === null) {
-    throw new Error("Top bar initialized without a blocking modal coordinator");
+    throw new Error(ERRORS.MISSING_MODAL_COORDINATOR);
   }
   const scope = blockingModalCoordinator.createScope();
   authModalScope = scope;

@@ -3,27 +3,33 @@
 
 // Protocol SharedWorker.
 //
-// Runs smoldot directly on the SharedWorker thread using `start()` from
-// `polkadot-api/smoldot` (no sub-Worker needed, because the `Worker`
-// constructor is not available in SharedWorkerGlobalScope).
-//
-// All protocol iframes (across all tabs) connect via MessagePort.
-// Smoldot persists as long as at least one tab is open.
+// Runs @parity/truapi-provider's embedded smoldot light client in-thread, via
+// `@dotli/resolver/provider`. No sub-Worker is spawned, because the `Worker`
+// constructor is not available in SharedWorkerGlobalScope. All protocol iframes
+// across every tab connect over MessagePort and share the one light client,
+// which persists as long as at least one tab is open.
 
 /// <reference lib="webworker" />
 declare const self: SharedWorkerGlobalScope;
 
 import type { StringJsonRpcConnection } from "@dotli/protocol/broker";
+import type {
+  SmoldotDbChain,
+  SmoldotDbOutcome,
+} from "@dotli/protocol/messages";
 import { MAX_CONNECTIONS_PER_ORIGIN } from "@dotli/config/config";
 import {
   isValidNetwork,
   setNetworkOverride,
   getActiveServicesConfig,
 } from "@dotli/config/network";
-import { createChainProvider, isChainSupported } from "@dotli/resolver/chains";
 import {
-  getRelayChain,
-  getSmoldotDirect,
+  createChainProvider,
+  isChainSupported,
+  onProviderFatal,
+  onSmoldotDbOutcome,
+} from "@dotli/resolver/provider";
+import {
   resolveDotName,
   resolveExecutableManifest,
   resolveOwner,
@@ -33,7 +39,6 @@ import {
   waitForAssetHubFinalized,
   waitForPeopleFinalized,
 } from "@dotli/resolver/resolve";
-import { onSmoldotFatal } from "@dotli/resolver/smoldot";
 import { m } from "@dotli/metrics/metrics";
 import * as S from "@dotli/metrics/spans";
 import { initSentry, installGlobalErrorHandlers } from "@dotli/metrics/sentry";
@@ -41,8 +46,9 @@ import {
   createChainBrokerManager,
   requireBrokerLocalProvider,
 } from "@dotli/protocol/broker";
-import { serializeError } from "@dotli/shared/errors";
+import { errorName, serializeError } from "@dotli/shared/errors";
 import { isExecutableKind } from "@dotli/shared/executables";
+import { PROTOCOL_APP_ERRORS } from "./errors";
 
 initSentry("worker");
 installGlobalErrorHandlers("worker");
@@ -53,10 +59,11 @@ import {
   isSharedAuthRequestMethod,
   isSharedModeRequestMethod,
 } from "@dotli/protocol/auth-storage";
-import type {
-  ProtocolRequestEnvelope,
-  ProtocolRequestMap,
-  ProtocolEnvelope,
+import {
+  getRequestSyncTimeoutMs,
+  type ProtocolRequestEnvelope,
+  type ProtocolRequestMap,
+  type ProtocolEnvelope,
 } from "@dotli/protocol/messages";
 
 export interface SWRelayRequest {
@@ -115,34 +122,37 @@ if (requestedNetwork === null) {
   swLog(`Active network pinned to ${requestedNetwork}`);
 }
 
+// Chain-death broadcast. When a chain connection ends without a deliberate
+// disconnect, relay a `fatal` envelope to every connected port so the host
+// client rejects every in-flight request immediately instead of waiting for
+// a per-request timeout. `onProviderFatal` is idempotent and replays to late
+// subscribers, so firing this once at module load covers the SharedWorker's
+// lifetime.
+onProviderFatal((message) => {
+  swError(
+    `Chain death detected, broadcasting fatal to ${String(ports.size)} port(s)`,
+  );
+  broadcastToPorts({ namespace: "dotli:protocol", kind: "fatal", message });
+});
+
+// Tell every connected tab which chains began from pre-existing state. The
+// provider replay only covers this in-worker subscriber, never MessagePorts,
+// so the record-time broadcast reaches only ports connected at that instant.
+// `latchedSmoldotDb` covers the rest: the connect handler below replays it to
+// every port that arrives later.
+const latchedSmoldotDb = new Map<SmoldotDbChain, SmoldotDbOutcome>();
+onSmoldotDbOutcome((chain, outcome) => {
+  latchedSmoldotDb.set(chain, outcome);
+  broadcastToPorts({
+    namespace: "dotli:protocol",
+    kind: "smoldot-db",
+    chain,
+    outcome,
+  });
+});
+
 // Placeholder broker manager until pre-sync creates the real one.
 let chainBrokerManager: ReturnType<typeof createChainBrokerManager>;
-
-// Smoldot panic broadcast. When smoldot's log callback detects a WASM
-// panic, relay a `fatal` envelope to every connected port so the host
-// client rejects every in-flight request immediately instead of waiting
-// for a per-request timeout. `onSmoldotFatal` is idempotent and replays
-// the last panic to late subscribers, so firing this once at module
-// load is enough for the lifetime of the SharedWorker.
-onSmoldotFatal((message) => {
-  swError(
-    `Smoldot panic detected, broadcasting fatal to ${String(ports.size)} port(s)`,
-  );
-  const fatal: ProtocolEnvelope = {
-    namespace: "dotli:protocol",
-    kind: "fatal",
-    message,
-  };
-  const msg: SWRelayResponse = { type: "relay-response", envelope: fatal };
-  for (const port of ports) {
-    try {
-      port.postMessage(msg);
-      // eslint-disable-next-line no-restricted-syntax -- defensive fatal broadcast: one closed port must not prevent delivery to the rest. `removePort` already cleans up ports that throw on later sends.
-    } catch {
-      /* port already disconnected, ignore on broadcast */
-    }
-  }
-});
 
 // NO retries. NO cleanup-and-retry. NO backoff. The user picked
 // smoldot-shared-worker. If presync fails the actual cause is surfaced to
@@ -152,34 +162,10 @@ let presyncFailureMessage: string | null = null;
 
 async function presync(): Promise<void> {
   const t0 = performance.now();
-  m.breadcrumb("smoldot presync starting");
+  m.breadcrumb("presync starting");
 
   try {
-    // 1. Create smoldot on the SharedWorker's own thread.
-    //
-    // `getSmoldotDirect()` is the in-thread smoldot bootstrap helper. The
-    // name is a polkadot-api convention meaning "run smoldot on the
-    // current execution context", NOT the dot.li chain backend named
-    // "smoldot-direct". Inside a SharedWorker the `Worker` constructor
-    // is unavailable, so this is the only option. The chain backend the
-    // user picked is still honored via the iframe's `?mode=` param.
-    swLog("Creating smoldot on SharedWorker thread...");
-    getSmoldotDirect();
-    m.measure(S.SMOLDOT_CREATE, performance.now() - t0);
-    swLog(
-      `Smoldot client created (${String(Math.round(performance.now() - t0))}ms)`,
-    );
-
-    // 2. Add relay chain
-    swLog("Adding relay chain...");
-    const relayT0 = performance.now();
-    await getRelayChain();
-    m.measure(S.SMOLDOT_RELAY_CHAIN, performance.now() - relayT0);
-    swLog(
-      `Relay chain added (${String(Math.round(performance.now() - t0))}ms)`,
-    );
-
-    // 3. Create the broker FIRST and route the resolver's Asset Hub reads
+    // Create the broker FIRST and route the resolver's Asset Hub reads
     // through it as a local session, so there is one shared Asset Hub follow
     // (never removed mid-read) instead of a separate resolver chain the first
     // dApp connection would release — the `ChainHead disjointed` load failure.
@@ -203,7 +189,7 @@ async function presync(): Promise<void> {
       ),
     );
 
-    // 4. Wait for Asset Hub to sync to a finalized block via the
+    // Wait for Asset Hub to sync to a finalized block via the
     // explicit presync primitive (no more overloading `resolveDotName`
     // with a sentinel label). This now syncs the broker's shared chain.
     swLog("Waiting for Asset Hub to reach finalized block...");
@@ -215,7 +201,7 @@ async function presync(): Promise<void> {
     m.distribution(S.SMOLDOT_PRESYNC, totalMs);
     swLog(`Asset Hub synced (${String(Math.round(totalMs))}ms total)`);
 
-    // 5. Success: mark ready.
+    // Success: mark ready.
     swLog("Pre-sync complete, engine ready");
     engineReady = true;
 
@@ -278,6 +264,12 @@ function assertString(value: unknown, name: string): asserts value is string {
   }
 }
 
+function broadcastToPorts(envelope: ProtocolEnvelope): void {
+  for (const port of ports) {
+    sendToPort(port, envelope);
+  }
+}
+
 function sendToPort(port: MessagePort, envelope: ProtocolEnvelope): void {
   try {
     const msg: SWRelayResponse = { type: "relay-response", envelope };
@@ -289,8 +281,7 @@ function sendToPort(port: MessagePort, envelope: ProtocolEnvelope): void {
     // cause (a structured-clone failure on an un-transferable payload,
     // for example) is a real bug and we want it visible instead of
     // silently removing an otherwise-healthy port.
-    const name =
-      err instanceof Error && typeof err.name === "string" ? err.name : "";
+    const name = errorName(err) ?? "";
     if (name === "InvalidStateError") {
       swLog("Port closed, cleaning up");
       removePort(port);
@@ -346,6 +337,8 @@ async function handleRequest(
     );
   }
 
+  const syncTimeoutMs = getRequestSyncTimeoutMs(request);
+
   switch (request.method) {
     case "warmup": {
       // Pre-sync already started smoldot, the relay chain, and periodic
@@ -366,13 +359,16 @@ async function handleRequest(
     case "resolveDotName": {
       const payload = request.payload as ProtocolRequestMap["resolveDotName"];
       assertString(payload.label, "label");
-      const result = await resolveDotName(payload.label, (message) => {
-        sendToPort(port, {
-          namespace: "dotli:protocol",
-          kind: "progress",
-          id: request.id,
-          message,
-        });
+      const result = await resolveDotName(payload.label, {
+        onStatus: (message) => {
+          sendToPort(port, {
+            namespace: "dotli:protocol",
+            kind: "progress",
+            id: request.id,
+            message,
+          });
+        },
+        syncTimeoutMs,
       });
       swLog(
         `Resolved "${payload.label}" → ${result ?? "null"} (${String(Math.round(performance.now() - t))}ms)`,
@@ -390,7 +386,7 @@ async function handleRequest(
     case "resolveOwner": {
       const payload = request.payload as ProtocolRequestMap["resolveOwner"];
       assertString(payload.label, "label");
-      const result = await resolveOwner(payload.label);
+      const result = await resolveOwner(payload.label, { syncTimeoutMs });
       swLog(
         `Owner "${payload.label}" → ${result ?? "null"} (${String(Math.round(performance.now() - t))}ms)`,
       );
@@ -418,6 +414,7 @@ async function handleRequest(
       const result = await resolveExecutableManifest(
         payload.label,
         payload.kind,
+        { syncTimeoutMs },
       );
       sendToPort(port, {
         namespace: "dotli:protocol",
@@ -433,7 +430,9 @@ async function handleRequest(
       const payload =
         request.payload as ProtocolRequestMap["resolveRootManifest"];
       assertString(payload.label, "label");
-      const result = await resolveRootManifest(payload.label);
+      const result = await resolveRootManifest(payload.label, {
+        syncTimeoutMs,
+      });
       sendToPort(port, {
         namespace: "dotli:protocol",
         kind: "response",
@@ -485,7 +484,7 @@ async function handleRequest(
         },
       );
       if (connection === null) {
-        throw new Error("Failed to create chain broker");
+        throw new Error(PROTOCOL_APP_ERRORS.CHAIN_BROKER_FAILED);
       }
       chainConnections.set(payload.connectionId, connection);
       connectionPorts.set(payload.connectionId, port);
@@ -605,6 +604,7 @@ self.addEventListener("connect", (event) => {
         id: envelope.id,
         ok: false,
         error: msg,
+        errorName: errorName(error),
       });
     });
   });
@@ -615,6 +615,17 @@ self.addEventListener("connect", (event) => {
     // Engine already synced, signal ready immediately.
     const readyMsg: SWReady = { type: "ready" };
     port.postMessage(readyMsg);
+    // This tab joins a worker whose recorded chains are already live, so it
+    // pays no sync cost regardless of what the worker's own first load did.
+    // Report the state this tab got rather than the worker's disk outcomes.
+    for (const chain of latchedSmoldotDb.keys()) {
+      sendToPort(port, {
+        namespace: "dotli:protocol",
+        kind: "smoldot-db",
+        chain,
+        outcome: "hit",
+      });
+    }
   } else if (presyncFailureMessage !== null) {
     // Pre-sync already failed. Surface the original cause immediately
     // instead of queuing this port forever.
@@ -625,6 +636,17 @@ self.addEventListener("connect", (event) => {
     port.postMessage(errorMsg);
   } else {
     // Engine still syncing. Queue the port and signal when pre-sync completes.
+    // A port arriving after a store read missed that record-time broadcast
+    // and would otherwise never learn the outcome. It waits on the same sync
+    // the worker is running, so the worker's outcomes are its own.
+    for (const [chain, outcome] of latchedSmoldotDb) {
+      sendToPort(port, {
+        namespace: "dotli:protocol",
+        kind: "smoldot-db",
+        chain,
+        outcome,
+      });
+    }
     swLog("Engine not ready yet, queuing port for ready signal");
     pendingPorts.push(port);
   }

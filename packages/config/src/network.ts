@@ -4,11 +4,9 @@
 // Network Configuration
 
 export const NetworkName = {
-  PASEO_NEXT_V1: "paseo-next-v1",
-  PASEO_NEXT_V2: "paseo-next-v2",
-  PASEO_NEXT: "paseo-next",
-  PREVIEW_NET: "previewnet",
-  SUMMIT: "summit",
+  PASEO: "paseo-next-v2",
+  PREVIEWNET: "previewnet",
+  /** PCF fork: the public products devnet (dev-dot.li / dot.li gateways). */
   DEVNET: "devnet",
 } as const;
 
@@ -33,6 +31,17 @@ export interface DotnsContracts {
 export interface ChainService {
   readonly genesis: string;
   readonly rpcs: readonly string[];
+  /**
+   * How often this chain is expected to produce a block, in milliseconds.
+   *
+   * Measured rather than assumed, and not derivable at runtime: no single
+   * constant yields it for a parachain. `Timestamp.MinimumPeriod` is 0 on all
+   * three here, and `Aura.SlotDuration` reads 12000 or 24000 because it is the
+   * async-backing slot, not the block time. The rate of a parachain is its relay
+   * slot divided by its `BLOCK_PROCESSING_VELOCITY`, which is a Rust generic
+   * absent from metadata.
+   */
+  readonly blockTimeMs: number;
 }
 
 export interface BulletinService extends ChainService {
@@ -50,9 +59,9 @@ export interface ServicesConfig {
 }
 
 const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
-  [NetworkName.PASEO_NEXT_V1]: {
-    label: "Paseo Next V1",
-    description: "Legacy Paseo Next system chains",
+  [NetworkName.PASEO]: {
+    label: "Paseo",
+    description: "Paseo Next Network",
     relay: {
       genesis:
         "0x374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd",
@@ -62,63 +71,26 @@ const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
         "wss://paseo.ibp.network",
         "wss://paseo.rpc.amforc.com",
       ],
-    },
-    assethub: {
-      genesis:
-        "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2",
-      rpcs: [
-        "wss://asset-hub-paseo-rpc.n.dwellir.com",
-        "wss://asset-hub-paseo.dotters.network",
-        "wss://asset-hub-paseo.ibp.network",
-        "wss://sys.turboflakes.io/asset-hub-paseo",
-      ],
-    },
-    bulletin: {
-      genesis:
-        "0x744960c32e3a3df5440e1ecd4d34096f1ce2230d7016a5ada8a765d5a622b4ea",
-      rpcs: [],
-      ipfsGateways: ["https://paseo-ipfs.polkadot.io"],
-    },
-    people: {
-      genesis:
-        "0xa22a2424d2cbf561eaecf7da8b1b548fa9d1939f60265e942b1049616a012f71",
-      rpcs: [],
-    },
-    dotns: {
-      DOTNS_REGISTRY: "0x4Da0d37aBe96C06ab19963F31ca2DC0412057a6f",
-      DOTNS_CONTENT_RESOLVER: "0x7756DF72CBc7f062e7403cD59e45fBc78bed1cD7",
-      STORAGE_SLOTS: { REGISTRY_RECORDS: 0, CONTENTHASH: 1 },
-      TLD: "dot",
-    },
-  },
-  [NetworkName.PASEO_NEXT_V2]: {
-    label: "Paseo Next V2",
-    description: "Upgraded Paseo Next system chains",
-    relay: {
-      genesis:
-        "0x374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd",
-      rpcs: [
-        "wss://paseo-rpc.n.dwellir.com",
-        "wss://paseo.dotters.network",
-        "wss://paseo.ibp.network",
-        "wss://paseo.rpc.amforc.com",
-      ],
+      blockTimeMs: 6000,
     },
     assethub: {
       genesis:
         "0x4349b00e54897e21196fd331015fc5be0f14e118beb0375ed2bb1793737bb57a",
       rpcs: ["wss://paseo-asset-hub-next-rpc.polkadot.io"],
+      blockTimeMs: 2000,
     },
     bulletin: {
       genesis:
         "0x8cfe6717dc4becfda2e13c488a1e2061ff2dfee96e7d031157f72d36716c0a22",
       rpcs: ["wss://paseo-bulletin-next-rpc.polkadot.io"],
+      blockTimeMs: 6000,
       ipfsGateways: ["https://paseo-bulletin-next-ipfs.polkadot.io"],
     },
     people: {
       genesis:
         "0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48",
       rpcs: ["wss://paseo-people-next-system-rpc.polkadot.io"],
+      blockTimeMs: 2000,
     },
     dotns: {
       DOTNS_REGISTRY: "0xf34054fd76BbF85f216cf9908226D5f0A72E50CA",
@@ -127,43 +99,7 @@ const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
       TLD: "paseo",
     },
   },
-  [NetworkName.PASEO_NEXT]: {
-    label: "Paseo Next (PCF)",
-    description: "PCF-owned suite on the Paseo Next system chains",
-    relay: {
-      genesis:
-        "0x77afd6190f1554ad45fd0d31aee62aacc33c6db0ea801129acb813f913e0764f",
-      rpcs: [
-        "wss://paseo-rpc.n.dwellir.com",
-        "wss://paseo.dotters.network",
-        "wss://paseo.ibp.network",
-        "wss://paseo.rpc.amforc.com",
-      ],
-    },
-    assethub: {
-      genesis:
-        "0xbf0488dbe9daa1de1c08c5f743e26fdc2a4ecd74cf87dd1b4b1eeb99ae4ef19f",
-      rpcs: ["wss://paseo-asset-hub-next-rpc.polkadot.io"],
-    },
-    bulletin: {
-      genesis:
-        "0x8cfe6717dc4becfda2e13c488a1e2061ff2dfee96e7d031157f72d36716c0a22",
-      rpcs: ["wss://paseo-bulletin-next-rpc.polkadot.io"],
-      ipfsGateways: ["https://paseo-bulletin-next-ipfs.polkadot.io"],
-    },
-    people: {
-      genesis:
-        "0xc5af1826b31493f08b7e2a823842f98575b806a784126f28da9608c68665afa5",
-      rpcs: ["wss://paseo-people-next-system-rpc.polkadot.io"],
-    },
-    dotns: {
-      DOTNS_REGISTRY: "0xFb7AB7E142ED0248D77198CA8722D67C1930D783",
-      DOTNS_CONTENT_RESOLVER: "0xf110e5799c3f0adb8ED885C02c45Ecfe7fD86226",
-      STORAGE_SLOTS: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
-      TLD: "dot",
-    },
-  },
-  [NetworkName.PREVIEW_NET]: {
+  [NetworkName.PREVIEWNET]: {
     label: "Previewnet",
     description: "Product Preview Network",
     relay: {
@@ -173,59 +109,32 @@ const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
         "wss://previewnet.substrate.dev/relay/alice",
         "wss://previewnet.substrate.dev/relay/bob",
       ],
+      blockTimeMs: 6000,
     },
     assethub: {
       genesis:
         "0xc27c8bf3f13f96dc2130cd2b0a3debe57618fd02521ecc1902bd7dd4ed83d2fe",
       rpcs: ["wss://previewnet.substrate.dev/asset-hub"],
+      blockTimeMs: 2000,
     },
     bulletin: {
       genesis:
         "0xea9158d768971553e315b76323cbffda238b6b865f3d3d5e138350b12312173d",
       rpcs: ["wss://previewnet.substrate.dev/bulletin"],
+      blockTimeMs: 6000,
       ipfsGateways: ["https://previewnet.substrate.dev"],
     },
     people: {
       genesis:
         "0xf720c28fe3315e67fa799a616fc59abad47dd257b1a336af6538435844d35218",
       rpcs: ["wss://previewnet.substrate.dev/people"],
+      blockTimeMs: 2000,
     },
     dotns: {
       DOTNS_REGISTRY: "0xf34054fd76BbF85f216cf9908226D5f0A72E50CA",
       DOTNS_CONTENT_RESOLVER: "0x7F74D7CD50f5a834270E2ad395a01b01891AB37d",
       STORAGE_SLOTS: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
       TLD: "testnet",
-    },
-  },
-  [NetworkName.SUMMIT]: {
-    label: "Summit",
-    description: "Web3 Summit network",
-    relay: {
-      genesis:
-        "0xb658399458ec6a1102fb65f86751be6fde9f123503cac81dbeeecd04f71a65c9",
-      rpcs: ["wss://summit-rpc.polkadot.io"],
-    },
-    assethub: {
-      genesis:
-        "0xf388dc6d6cdf6fb77eac3c4a91f31bc0c8642b142f1a757512ab7849f9f70660",
-      rpcs: ["wss://summit-asset-hub-rpc.polkadot.io"],
-    },
-    bulletin: {
-      genesis:
-        "0x147aae0d60625af72300d4d5ebd5dcb869f7ac4c6c1a326be1cbb14a4a65ae77",
-      rpcs: ["wss://summit-bulletin-rpc.polkadot.io"],
-      ipfsGateways: ["https://summit-ipfs.polkadot.io"],
-    },
-    people: {
-      genesis:
-        "0xbe5238f82c3553bc57ac3be43bef110bd58c49ad0744110814985195ca7d8c4e",
-      rpcs: ["wss://summit-people-rpc.polkadot.io"],
-    },
-    dotns: {
-      DOTNS_REGISTRY: "0xFb7AB7E142ED0248D77198CA8722D67C1930D783",
-      DOTNS_CONTENT_RESOLVER: "0xf110e5799c3f0adb8ED885C02c45Ecfe7fD86226",
-      STORAGE_SLOTS: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
-      TLD: "dot",
     },
   },
   [NetworkName.DEVNET]: {
@@ -239,6 +148,7 @@ const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
         "wss://paseo.dotters.network",
         "wss://paseo.ibp.network",
       ],
+      blockTimeMs: 6000,
     },
     assethub: {
       genesis:
@@ -247,12 +157,14 @@ const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
         "wss://asset-hub-paseo-rpc.n.dwellir.com",
         "wss://sys.turboflakes.io/asset-hub-paseo",
       ],
+      blockTimeMs: 2000,
     },
     bulletin: {
       genesis:
         "0xe101f0fa4627d29a257645e02be86d80378fea1a2bf8fa6a918d150ebc760a59",
       rpcs: ["wss://bulletin-paseo.tservices.es:8443"],
       ipfsGateways: ["https://devnet-ipfs.api.polkadotcommunity.foundation"],
+      blockTimeMs: 6000,
     },
     people: {
       genesis:
@@ -265,6 +177,7 @@ const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
         "wss://rpc.interweb-it.com/people-paseo",
         "wss://people-paseo.rotko.net",
       ],
+      blockTimeMs: 2000,
     },
     dotns: {
       DOTNS_REGISTRY: "0x38cf3dE5877a18157f4C1a4e067F84956F582b31",
@@ -292,7 +205,7 @@ const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
  *   * **Endpoints only** — `label`, `rpcs` and `ipfsGateways`. Never `genesis` or
  *     `dotns`, which are the trust root for name resolution: an override that
  *     could repoint the DotNS registry would let anything running in the page
- *     redirect every `.dot` lookup while `isVerifiedSession()` still reported
+ *     redirect every dotNS lookup while `isVerifiedSession()` still reported
  *     "verified". Limiting it to endpoints means the worst an override can do is
  *     move you to a different node for the *same* chain identity, which the light
  *     client verifies against the compiled-in genesis anyway. It is also why only
@@ -411,7 +324,8 @@ function asString(value: unknown, path: string): string {
 // The merges below are written out field by field rather than as a generic deep
 // merge. With this few fields it is shorter, it cannot walk the prototype chain,
 // and the exact set of things an override may reach is legible at a glance —
-// note `genesis` is copied from the built-in and never read from the patch.
+// note `genesis` and `blockTimeMs` are copied from the built-in and never read
+// from the patch.
 
 function mergeChain(
   base: ChainService,
@@ -422,6 +336,7 @@ function mergeChain(
   checkFields(p, ["rpcs"], path);
   return {
     genesis: base.genesis,
+    blockTimeMs: base.blockTimeMs,
     rpcs: p.rpcs === undefined ? base.rpcs : asStrings(p.rpcs, `${path}.rpcs`),
   };
 }
@@ -435,6 +350,7 @@ function mergeBulletin(
   checkFields(p, ["rpcs", "ipfsGateways"], path);
   return {
     genesis: base.genesis,
+    blockTimeMs: base.blockTimeMs,
     rpcs: p.rpcs === undefined ? base.rpcs : asStrings(p.rpcs, `${path}.rpcs`),
     ipfsGateways:
       p.ipfsGateways === undefined
@@ -509,12 +425,8 @@ export const NETWORK_NAME_TO_SERVICES_CONFIG: Record<
 export const NETWORK_KEY = "dotli:network";
 
 const VALID_NETWORKS: ReadonlySet<string> = new Set<Network>([
-  NetworkName.PASEO_NEXT_V1,
-  NetworkName.PASEO_NEXT_V2,
-  NetworkName.PASEO_NEXT,
-  NetworkName.PREVIEW_NET,
-  NetworkName.SUMMIT,
-  NetworkName.DEVNET,
+  NetworkName.PASEO,
+  NetworkName.PREVIEWNET,
 ]);
 
 /**
@@ -574,9 +486,6 @@ export function getEnabledNetworks(): Network[] {
 }
 
 export function defaultNetwork(): Network {
-  // First entry of VITE_NETWORKS — deployment-agnostic (a hardcoded network
-  // breaks any deployment that doesn't enable it: active falls outside the
-  // enabled set and the network selector renders empty).
   return getEnabledNetworks()[0];
 }
 let networkOverride: Network | null = null;
@@ -656,6 +565,59 @@ export function getActiveSupportedGenesisHashes(): Set<string> {
 }
 
 /**
+ * The four chains this app runs, named by what they do for the visitor.
+ *
+ * `ServicesConfig` already implies exactly this set by having exactly these
+ * four fields. Naming it lets a popover row, its status and its block history
+ * share one key, where today rows are keyed by genesis hash and sync state by
+ * the resolver `ChainKey`. Config cannot import the resolver, so
+ * `ChainKey` deliberately stays out of here.
+ */
+export const CHAIN_ROLES = ["relay", "assethub", "bulletin", "people"] as const;
+export type ChainRole = (typeof CHAIN_ROLES)[number];
+
+/** What the visitor is told each chain is for. */
+export const CHAIN_ROLE_LABELS: Record<ChainRole, string> = {
+  relay: "Relay",
+  assethub: "Hub",
+  bulletin: "Storage",
+  people: "Identity",
+};
+
+export interface ActiveChainRole {
+  readonly role: ChainRole;
+  readonly label: string;
+  readonly genesis: string;
+  readonly blockTimeMs: number;
+  /** False when the active network has no endpoint for this chain. */
+  readonly hasEndpoint: boolean;
+}
+
+/** Every chain of the active network, in the order a visitor should read them. */
+export function getActiveChainRoles(): ActiveChainRole[] {
+  const cfg = getActiveServicesConfig();
+  return CHAIN_ROLES.map((role) => {
+    const service = cfg[role];
+    return {
+      role,
+      label: CHAIN_ROLE_LABELS[role],
+      genesis: service.genesis,
+      blockTimeMs: service.blockTimeMs,
+      hasEndpoint: service.rpcs.length > 0,
+    };
+  });
+}
+
+/** Which role a genesis hash belongs to, or null when it is not ours. */
+export function chainRoleForGenesis(genesisHash: string): ChainRole | null {
+  const key = genesisHash.toLowerCase();
+  const cfg = getActiveServicesConfig();
+  return (
+    CHAIN_ROLES.find((role) => cfg[role].genesis.toLowerCase() === key) ?? null
+  );
+}
+
+/**
  * Chains advertised to sandboxed dApps in **RPC-gateway** mode: the curated
  * system chains that have configured WSS RPC endpoints. The Bulletin chain is
  * intentionally excluded because its content is served through IPFS gateways.
@@ -674,6 +636,13 @@ export function getActiveGatewayChains(): ChainService[] {
 /** Genesis hashes (lowercased) advertised to dApps in RPC-gateway mode. */
 export function getActiveGatewaySupportedGenesisHashes(): Set<string> {
   return new Set(getActiveGatewayChains().map((c) => c.genesis.toLowerCase()));
+}
+
+/** Genesis hashes (lowercased) the core gateway seam can serve. */
+export function getActiveCoreGatewaySupportedGenesisHashes(): Set<string> {
+  return new Set(
+    getActiveCoreGatewayChains().map((c) => c.genesis.toLowerCase()),
+  );
 }
 
 /** Gateway chains accepted by the shared Rust-core connection callback. */

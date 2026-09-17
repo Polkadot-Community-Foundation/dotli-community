@@ -16,6 +16,19 @@ export type Backend =
   | "smoldot-shared-worker"
   | "rpc-gateway";
 
+/**
+ * What the Settings panel calls each backend.
+ *
+ * Lives with the type rather than in the topbar because error copy has to send
+ * the visitor to one of these by name. Two copies of these strings drift, and a
+ * tip naming a control that does not exist is worse than no tip.
+ */
+export const BACKEND_LABELS: Record<Backend, string> = {
+  "smoldot-direct": "Light Client Per-Tab",
+  "smoldot-shared-worker": "Light Client Shared",
+  "rpc-gateway": "Trusted Providers",
+};
+
 export interface CacheSettings {
   /** When true, skip CID cache reads. Always resolve from chain/RPC. */
   skipCidCache: boolean;
@@ -30,28 +43,11 @@ export interface CacheSettings {
   skipWorkerCache: boolean;
 }
 
-import { getNetwork, type Network } from "./network";
-
 export const BACKEND_KEY = "dotli:chain-backend";
 export const CACHE_KEY = "dotli:cache-settings";
 
 export function isSharedWorkerAvailable(): boolean {
   return typeof SharedWorker !== "undefined";
-}
-
-/**
- * Networks whose parachain chain specs are missing from `chain-specs/`, so
- * smoldot cannot sync them. On these networks the only working backend is
- * `rpc-gateway`; `getBackend()` overrides (without clobbering) any stored
- * smoldot preference, and the UI disables the smoldot choices. Summit and
- * devnet both left the set when their constructed parachain specs landed
- * (see `chain-specs/index.ts`). Add a network here if it ships before its
- * specs do.
- */
-const RPC_GATEWAY_ONLY_NETWORKS: ReadonlySet<Network> = new Set<Network>([]);
-
-export function isRpcGatewayOnly(network: Network = getNetwork()): boolean {
-  return RPC_GATEWAY_ONLY_NETWORKS.has(network);
 }
 
 // Pre-collapse keys. `rpc` chain backend maps to `rpc-gateway`. Legacy
@@ -134,11 +130,6 @@ export function migrateLegacyOn(target: ModeStorage): Backend | null {
 }
 
 export function getBackend(): Backend {
-  // Networks without parachain chain specs can only run via the RPC gateway.
-  // The stored preference is left untouched so it resumes if specs arrive.
-  if (isRpcGatewayOnly()) {
-    return "rpc-gateway";
-  }
   const stored = storage.getItem(BACKEND_KEY);
   if (stored !== null && VALID_BACKENDS.has(stored)) {
     if (stored === "smoldot-shared-worker" && !isSharedWorkerAvailable()) {
@@ -165,9 +156,6 @@ export function setBackend(chainBackend: Backend): void {
 }
 
 export function defaultBackend(): Backend {
-  if (isRpcGatewayOnly()) {
-    return "rpc-gateway";
-  }
   return "smoldot-direct";
 }
 
