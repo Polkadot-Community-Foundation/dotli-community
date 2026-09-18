@@ -8,17 +8,16 @@
 // product. The product drives its side over TrUAPI (`chat.create_room`,
 // `chat.post_message`); the user's replies go back to the product through
 // the core's `chat.action_subscribe` stream via `publishChatAction` on the
-// worker host runtime. Custom messages are drawn through the Renderer
-// service (`renderer.render`), whose taps flow back on
-// `renderer.action_subscribe`. Nothing leaves the device.
+// worker host runtime. Nothing leaves the device.
 
 import type {
   ChatMessageContent,
   HostChatActionSubscribeItem,
-  HostRendererActionSubscribeItem,
-  ProductRendererRenderRequest,
 } from "@parity/truapi";
-import type { RenderSink } from "@parity/truapi-host";
+import type {
+  CustomMessageRenderRequest,
+  CustomMessageRenderSink,
+} from "@parity/truapi-host";
 import {
   appendMessage,
   createRoom,
@@ -50,8 +49,10 @@ export interface ChatMessageEventDetail {
 /** Live handles for one product's Worker-kind core connection. */
 export interface ChatConnection {
   publish(action: HostChatActionSubscribeItem): Promise<void>;
-  publishRendererAction(item: HostRendererActionSubscribeItem): Promise<void>;
-  render(request: ProductRendererRenderRequest, sink: RenderSink): () => void;
+  renderCustomMessage(
+    request: CustomMessageRenderRequest,
+    sink: CustomMessageRenderSink,
+  ): () => void;
 }
 
 const connections = new Map<string, ChatConnection>();
@@ -150,8 +151,8 @@ export async function userPostMessage(
 }
 
 /**
- * User tap on a host-drawn `Actions` button, published into the product's
- * chat action stream.
+ * User-triggered action from a rendered custom message (button tap or
+ * text-field edit), published into the product's action stream.
  */
 export async function userTriggerAction(
   productId: string,
@@ -170,21 +171,6 @@ export async function userTriggerAction(
 }
 
 /**
- * User gesture inside a product-rendered custom message (button tap or
- * text-field edit), published into the product's renderer action stream.
- */
-export async function userTriggerRendererAction(
-  productId: string,
-  item: HostRendererActionSubscribeItem,
-): Promise<void> {
-  const connection = connections.get(productId);
-  if (connection === undefined) {
-    throw new Error("Chat is not connected for this product");
-  }
-  await connection.publishRendererAction(item);
-}
-
-/**
  * Ask the live product to draw one stored custom message, streaming
  * replacement trees into `sink` until the returned disposer is called.
  * Without a live connection the sink fails immediately; the stored message
@@ -192,15 +178,15 @@ export async function userTriggerRendererAction(
  */
 export function renderCustomMessage(
   productId: string,
-  request: ProductRendererRenderRequest,
-  sink: RenderSink,
+  request: CustomMessageRenderRequest,
+  sink: CustomMessageRenderSink,
 ): () => void {
   const connection = connections.get(productId);
   if (connection === undefined) {
     sink.onError?.(new Error("Chat is not connected for this product"));
     return (): void => undefined;
   }
-  return connection.render(request, sink);
+  return connection.renderCustomMessage(request, sink);
 }
 
 /**

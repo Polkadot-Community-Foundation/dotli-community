@@ -26,13 +26,7 @@ import {
   VersionedRemoteChainHeadStopOperationRequest,
   VersionedRemoteChainHeadStorageRequest,
   VersionedRemoteChainHeadUnpinRequest,
-  MESSAGE_TYPE_INTERRUPT,
-  MESSAGE_TYPE_REQUEST,
-  MESSAGE_TYPE_START,
-  MESSAGE_TYPE_STOP,
   type Codec,
-  type MethodIds,
-  type Payload,
   type WireProvider,
 } from "@parity/truapi";
 import {
@@ -65,20 +59,6 @@ interface DecodedFollowBoundRequest {
 
 type FollowBoundDecoder = (payload: Uint8Array) => DecodedFollowBoundRequest;
 
-// Codec 2 addresses a method by (trait, method); the leg is the envelope's
-// own message-type byte, so matching a frame needs all three.
-function methodKey(ids: Pick<MethodIds, "trait" | "method">): string {
-  return `${String(ids.trait)}:${String(ids.method)}`;
-}
-
-function isLeg(payload: Payload, ids: MethodIds, messageType: number): boolean {
-  return (
-    payload.traitId === ids.trait &&
-    payload.methodId === ids.method &&
-    payload.messageType === messageType
-  );
-}
-
 function createFollowBoundDecoder<T extends VersionedFollowBoundRequest>(
   codec: Codec<T>,
 ): FollowBoundDecoder {
@@ -98,33 +78,33 @@ function createFollowBoundDecoder<T extends VersionedFollowBoundRequest>(
   };
 }
 
-const followBoundDecoders = new Map<string, FollowBoundDecoder>([
+const followBoundDecoders = new Map<number, FollowBoundDecoder>([
   [
-    methodKey(CHAIN_GET_HEAD_HEADER),
+    CHAIN_GET_HEAD_HEADER.request,
     createFollowBoundDecoder(VersionedRemoteChainHeadHeaderRequest),
   ],
   [
-    methodKey(CHAIN_GET_HEAD_BODY),
+    CHAIN_GET_HEAD_BODY.request,
     createFollowBoundDecoder(VersionedRemoteChainHeadBodyRequest),
   ],
   [
-    methodKey(CHAIN_GET_HEAD_STORAGE),
+    CHAIN_GET_HEAD_STORAGE.request,
     createFollowBoundDecoder(VersionedRemoteChainHeadStorageRequest),
   ],
   [
-    methodKey(CHAIN_CALL_HEAD),
+    CHAIN_CALL_HEAD.request,
     createFollowBoundDecoder(VersionedRemoteChainHeadCallRequest),
   ],
   [
-    methodKey(CHAIN_UNPIN_HEAD),
+    CHAIN_UNPIN_HEAD.request,
     createFollowBoundDecoder(VersionedRemoteChainHeadUnpinRequest),
   ],
   [
-    methodKey(CHAIN_CONTINUE_HEAD),
+    CHAIN_CONTINUE_HEAD.request,
     createFollowBoundDecoder(VersionedRemoteChainHeadContinueRequest),
   ],
   [
-    methodKey(CHAIN_STOP_HEAD_OPERATION),
+    CHAIN_STOP_HEAD_OPERATION.request,
     createFollowBoundDecoder(VersionedRemoteChainHeadStopOperationRequest),
   ],
 ]);
@@ -191,12 +171,12 @@ export function createLegacyNovaChainHeadProvider(
     // A legacy transport handshake is the first frame after an iframe reload.
     // The core-side provider survives that navigation, so discard mappings
     // belonging to the previous document before accepting new follows.
-    if (isLeg(payload, SYSTEM_HANDSHAKE, MESSAGE_TYPE_REQUEST)) {
+    if (payload.id === SYSTEM_HANDSHAKE.request) {
       forgetAllFollows();
       return message;
     }
     if (
-      isLeg(payload, ACCOUNT_GET_ACCOUNT, MESSAGE_TYPE_REQUEST) &&
+      payload.id === ACCOUNT_GET_ACCOUNT.request &&
       localProductId !== undefined
     ) {
       try {
@@ -209,7 +189,7 @@ export function createLegacyNovaChainHeadProvider(
           const encoded = encodeWireMessage({
             requestId,
             payload: {
-              ...payload,
+              id: payload.id,
               value: VersionedHostAccountGetRequest.enc(request),
             },
           });
@@ -221,7 +201,7 @@ export function createLegacyNovaChainHeadProvider(
       }
     }
 
-    if (isLeg(payload, CHAIN_FOLLOW_HEAD_SUBSCRIBE, MESSAGE_TYPE_START)) {
+    if (payload.id === CHAIN_FOLLOW_HEAD_SUBSCRIBE.start) {
       let genesisHash: string;
       try {
         const request = VersionedRemoteChainHeadFollowRequest.dec(
@@ -241,17 +221,12 @@ export function createLegacyNovaChainHeadProvider(
       return message;
     }
 
-    if (isLeg(payload, CHAIN_FOLLOW_HEAD_SUBSCRIBE, MESSAGE_TYPE_STOP)) {
+    if (payload.id === CHAIN_FOLLOW_HEAD_SUBSCRIBE.stop) {
       forgetFollowId(requestId);
       return message;
     }
 
-    const decodeFollowBoundRequest =
-      payload.messageType === MESSAGE_TYPE_REQUEST
-        ? followBoundDecoders.get(
-            methodKey({ trait: payload.traitId, method: payload.methodId }),
-          )
-        : undefined;
+    const decodeFollowBoundRequest = followBoundDecoders.get(payload.id);
     if (!decodeFollowBoundRequest) {
       return message;
     }
@@ -269,7 +244,7 @@ export function createLegacyNovaChainHeadProvider(
       const encoded = encodeWireMessage({
         requestId,
         payload: {
-          ...payload,
+          id: payload.id,
           value: request.withFollowSubscriptionId(followId),
         },
       });
@@ -286,11 +261,7 @@ export function createLegacyNovaChainHeadProvider(
       const decoded = decodeWireMessage(message);
       if (
         decoded.isOk() &&
-        isLeg(
-          decoded.value.payload,
-          CHAIN_FOLLOW_HEAD_SUBSCRIBE,
-          MESSAGE_TYPE_INTERRUPT,
-        )
+        decoded.value.payload.id === CHAIN_FOLLOW_HEAD_SUBSCRIBE.interrupt
       ) {
         forgetFollowId(decoded.value.requestId);
       }

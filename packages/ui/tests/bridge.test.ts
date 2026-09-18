@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  MESSAGE_TYPE_RESPONSE,
+  HostRequestLoginResponse,
   VersionedHostRequestLoginError,
-  VersionedHostRequestLoginResponse,
   decodeWireMessage,
   encodeWireMessage,
   scale,
@@ -161,14 +160,19 @@ function loginResponseFrame(
     | { success: false; reason: string }
     | { success: false; hostFailure: string },
 ): Uint8Array {
-  // Codec 2 legs carry Result outside and the version wrapper inside.
-  const responseCodec = scale.Result(
-    VersionedHostRequestLoginResponse,
-    scale.CallError(VersionedHostRequestLoginError),
-  );
-  const value = responseCodec.enc(
-    result.success
-      ? { success: true, value: { tag: "V1", value: result.value } }
+  const responseCodec = scale.indexedTaggedUnion({
+    V1: [
+      0,
+      scale.Result(
+        HostRequestLoginResponse,
+        scale.CallError(VersionedHostRequestLoginError),
+      ),
+    ] as const,
+  });
+  const value = responseCodec.enc({
+    tag: "V1",
+    value: result.success
+      ? { success: true, value: result.value }
       : "hostFailure" in result
         ? {
             success: false,
@@ -190,13 +194,11 @@ function loginResponseFrame(
               },
             },
           },
-  );
+  });
   const frame = encodeWireMessage({
     requestId,
     payload: {
-      traitId: ACCOUNT_REQUEST_LOGIN.trait,
-      methodId: ACCOUNT_REQUEST_LOGIN.method,
-      messageType: MESSAGE_TYPE_RESPONSE,
+      id: ACCOUNT_REQUEST_LOGIN.response,
       value,
     },
   });
