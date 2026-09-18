@@ -134,10 +134,15 @@ jobs:
         with:
           bun-version: "1.3.13"
 
-      # Installs the current stable prebuilt binary (release pointer
-      # `truapi-host-cli-stable` in host-rust-core). Pin with
-      # TRUAPI_HOST_VERSION=x.y.z if a release ever breaks the suite.
+      # Pinned, NOT the stable pointer: the CLI is the signing peer, so it has
+      # to speak the same TrUAPI wire codec as the workspace. truapi 0.16
+      # changed the codec and made the version check a strict equality, so a
+      # floating CLI (currently 0.17.0 = codec 2) fails every signing test
+      # against our codec-1 build. Keep this in lockstep with @parity/truapi
+      # in package.json.
       - name: Install truapi-host CLI
+        env:
+          TRUAPI_HOST_VERSION: "0.13.1"
         run: |
           curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"

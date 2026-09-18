@@ -9,9 +9,8 @@
 // nobody is looking at. The observer starts the subscription when the
 // cell scrolls in and drops it when it leaves, like the desktop host.
 
-import type { HexString, RenderContext } from "@parity/truapi";
-import { bytesToHex } from "@parity/truapi/scale";
-import { renderCustomMessage, userTriggerRendererAction } from "./service";
+import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
+import { renderCustomMessage, userTriggerAction } from "./service";
 import { renderCustomNode } from "./custom-renderer";
 
 export interface CustomMessageMount {
@@ -20,7 +19,7 @@ export interface CustomMessageMount {
   messageId: string;
   messageType: string;
   /** Stored product-defined payload, hex-encoded. */
-  payload: HexString;
+  payload: string;
 }
 
 /**
@@ -37,22 +36,11 @@ export function mountCustomMessage(
   setPlaceholder(root, "Loading…");
   container.appendChild(root);
 
-  // The same context names the body on the render request and on every
-  // action fired inside it, so the product can pair the two.
-  const context: RenderContext = {
-    tag: "ChatMessage",
-    value: {
-      roomId: mount.roomId,
-      messageId: mount.messageId,
-      messageType: mount.messageType,
-    },
-  };
-
   const onAction = (actionId: string, payload?: Uint8Array): void => {
-    userTriggerRendererAction(mount.productId, {
-      context,
+    userTriggerAction(mount.productId, mount.roomId, {
+      messageId: mount.messageId,
       actionId,
-      payload: payload === undefined ? "0x" : bytesToHex(payload),
+      payload: payload === undefined ? undefined : bytesToHex(payload),
     }).catch(() => {
       setPlaceholder(root, "The app could not be reached.");
     });
@@ -67,7 +55,11 @@ export function mountCustomMessage(
     }
     stopRender = renderCustomMessage(
       mount.productId,
-      { context, payload: mount.payload },
+      {
+        messageId: mount.messageId,
+        messageType: mount.messageType,
+        payload: hexToBytes(mount.payload),
+      },
       {
         onUpdate: (node) => {
           if (disposed) {
