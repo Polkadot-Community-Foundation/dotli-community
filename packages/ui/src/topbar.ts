@@ -49,7 +49,11 @@ import {
   NETWORK_NAME_TO_SERVICES_CONFIG,
   type Network,
 } from "@dotli/config/network";
-import { getActiveServicesConfig, withActiveTld } from "@dotli/config/network";
+import {
+  activeNetworkSupportsLightClient,
+  getActiveServicesConfig,
+  withActiveTld,
+} from "@dotli/config/network";
 import { writeSettingsToSearch } from "@dotli/config/url-settings";
 import {
   ALL_PERMISSIONS,
@@ -2084,14 +2088,19 @@ function renderModePopover(): void {
   chainGroup.setAttribute("aria-label", "Network Transport");
   leftCol.appendChild(chainGroup);
   const sharedWorkerSupported = isSharedWorkerAvailable();
+  const lightClientSupported = activeNetworkSupportsLightClient();
   const rerenderChain = (): void => {
     chainGroup.innerHTML = "";
     for (const [value, label, desc] of chainChoices) {
-      const disabled =
+      const lightClientOff = value !== "rpc-gateway" && !lightClientSupported;
+      const workerOff =
         value === "smoldot-shared-worker" && !sharedWorkerSupported;
-      const effectiveDesc = disabled
-        ? "Unavailable in this browser or private window"
-        : desc;
+      const disabled = lightClientOff || workerOff;
+      const effectiveDesc = lightClientOff
+        ? "Not available on this network yet"
+        : workerOff
+          ? "Unavailable in this browser or private window"
+          : desc;
       renderChainRadio(
         chainGroup,
         value,
