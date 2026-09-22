@@ -11,6 +11,8 @@
 //   rpc-gateway: chain access via WSS JSON-RPC to a trusted node, content
 //                fetch via HTTPS IPFS gateway. No smoldot.
 
+import { activeNetworkSupportsLightClient } from "./network";
+
 export type Backend =
   | "smoldot-direct"
   | "smoldot-shared-worker"
@@ -130,6 +132,11 @@ export function migrateLegacyOn(target: ModeStorage): Backend | null {
 }
 
 export function getBackend(): Backend {
+  // PCF fork: the stored choice is kept, not overwritten, so it applies again
+  // on a network that supports the light client.
+  if (!activeNetworkSupportsLightClient()) {
+    return "rpc-gateway";
+  }
   const stored = storage.getItem(BACKEND_KEY);
   if (stored !== null && VALID_BACKENDS.has(stored)) {
     if (stored === "smoldot-shared-worker" && !isSharedWorkerAvailable()) {
@@ -156,7 +163,7 @@ export function setBackend(chainBackend: Backend): void {
 }
 
 export function defaultBackend(): Backend {
-  return "smoldot-direct";
+  return activeNetworkSupportsLightClient() ? "smoldot-direct" : "rpc-gateway";
 }
 
 /**

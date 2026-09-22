@@ -56,6 +56,12 @@ export interface ServicesConfig {
   readonly bulletin: BulletinService;
   readonly people: ChainService;
   readonly dotns: DotnsContracts;
+  /**
+   * PCF fork: `false` when truapi-provider's bundled catalog cannot serve this
+   * network's parachains, leaving `rpc-gateway` as the only working transport.
+   * Absent means supported.
+   */
+  readonly lightClient?: boolean;
 }
 
 const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
@@ -140,6 +146,10 @@ const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
   [NetworkName.DEVNET]: {
     label: "Polkadot Products Devnet",
     description: "Public products testnet (dev-dot.li gateway)",
+    // truapi-provider's catalog carries the Paseo relay but only the Paseo Next
+    // parachains, so connecting to this AH/People/Bulletin rejects and the host
+    // reports a smoldot crash. RPC until the catalog includes them.
+    lightClient: false,
     relay: {
       genesis:
         "0x374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd",
@@ -550,6 +560,11 @@ export function withActiveTld(label: string): string {
 /** Full service config for the active network. */
 export function getActiveServicesConfig(): ServicesConfig {
   return NETWORK_NAME_TO_SERVICES_CONFIG[getNetwork()];
+}
+
+/** PCF fork: whether the light-client transports can serve the active network. */
+export function activeNetworkSupportsLightClient(): boolean {
+  return getActiveServicesConfig().lightClient !== false;
 }
 
 /**
