@@ -302,7 +302,7 @@
         "@dotli/truapi-debug": "workspace:*",
         "@noble/hashes": "^2.2.0",
         "@parity/truapi": "0.13.1",
-        "@parity/truapi-host": "0.10.1",
+        "@parity/truapi-host": "npm:@polkadot-community-foundation/truapi-host@0.10.1-pcf.1",
         "@polkadot-api/json-rpc-provider": "^0.2.0",
         "@scure/base": "^2.2.0",
         "neverthrow": "^8.2.0",
@@ -669,7 +669,7 @@
 
     "@parity/truapi": ["@parity/truapi@0.13.1", "", { "dependencies": { "@noble/hashes": "^2.2.0", "neverthrow": "^8.2.0", "scale-ts": "^1.6.1" } }, "sha512-6gkfHskN8I7H5DwB7j96wRusVx7xuGzu1YGWLBLPCD1RtBSnkPaQq/8Ac3MwudNz8kYqKZ5kZao3EkJ4PN4nCg=="],
 
-    "@parity/truapi-host": ["@parity/truapi-host@0.10.1", "", { "dependencies": { "@parity/truapi": "^0.13.1" } }, "sha512-XcS8CeOVGBH/RBZb5KmFw5EnwHAsoqXnG2NyP3g7gMA5S575FEOzQxQf4FzIr7Jvz38JBYGZWIq079TOAtVRlw=="],
+    "@parity/truapi-host": ["@polkadot-community-foundation/truapi-host@0.10.1-pcf.1", "", { "dependencies": { "@parity/truapi": "^0.13.1" } }, "sha512-u1jfcm/TUFfe0ZgI7WT4K69k85h+mX7WlbLpcCQjHI1DGLRtiO2Y3QPhrvdIeirSyF9m/iZ/aGTQLnVXAbj7+g=="],
 
     "@parity/truapi-provider": ["@parity/truapi-provider@0.1.1-dev-20260911.0", "", {}, "sha512-VzBjZMQrgGa07cEDDGWV1Ocz8VMGMrbUL9+kcrz4Q9xvHdUzGdg1+QdVY8JLPVhmqaagG8hTQ9aoWjVaTFlLIQ=="],
 
