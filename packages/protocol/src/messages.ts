@@ -1,9 +1,9 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { ChainKey, ChainPeer, ChainSyncKind } from '@dotli/resolver';
-// Leaf import: the `config` barrel reads `self.location` at module load.
-import { TIMEOUTS } from '@dotli/config';
+import type { ChainPeer, ChainSyncKind, SmoldotDbChain, SmoldotDbOutcome } from '@dotli/chains';
+import type { ExecutableManifest, ManifestResult, ResolvePhase, RootManifest } from '@dotli/resolver';
+import { CHAIN_ROLES, TIMEOUTS, type ChainRole } from '@dotli/config';
 
 /** Wire shape of the local wallet's cached identity. */
 export interface LocalWalletIdentity {
@@ -43,6 +43,28 @@ export interface ProtocolRequestMap {
 
 export type ProtocolRequestMethod = keyof ProtocolRequestMap;
 
+/** What the frame answers each request with. A request it fails rejects instead. */
+export interface ProtocolResponseMap {
+  warmup: true;
+  resolveDotName: string | null;
+  resolveOwner: string | null;
+  resolveExecutableManifest: ManifestResult<ExecutableManifest>;
+  resolveRootManifest: ManifestResult<RootManifest>;
+  authStorageRead: string | null;
+  authStorageWrite: true;
+  authStorageClear: true;
+  modeStorageRead: string | null;
+  modeStorageWrite: true;
+  modeStorageClear: true;
+  localWalletRead: LocalWalletReadResult;
+  localWalletSave: true;
+  localWalletIdentity: true;
+  localWalletForget: true;
+  chainConnect: true;
+  chainSend: true;
+  chainDisconnect: true;
+}
+
 export interface ProtocolRequestEnvelope<M extends ProtocolRequestMethod = ProtocolRequestMethod> {
   namespace: 'dotli:protocol';
   kind: 'request';
@@ -60,18 +82,19 @@ export interface ProtocolRequestEnvelope<M extends ProtocolRequestMethod = Proto
  * Turns an untrusted deadline into the resolver's remaining sync budget, less a grace for the typed
  * error to cross postMessage. The only place the deadline is validated.
  */
-export function getRequestSyncTimeoutMs(request: ProtocolRequestEnvelope): number | undefined {
+export function getRequestSyncTimeoutMs(request: ProtocolRequestEnvelope, now = Date.now()): number | undefined {
   if (typeof request.deadlineMs !== 'number' || !Number.isFinite(request.deadlineMs)) {
     return undefined;
   }
-  return Math.max(1, Math.floor(request.deadlineMs - Date.now() - TIMEOUTS.RESPONSE_DELIVERY_GRACE));
+  return Math.max(1, Math.floor(request.deadlineMs - now - TIMEOUTS.RESPONSE_DELIVERY_GRACE));
 }
 
+/** How far a name read has come, for the loading bar. */
 export interface ProtocolProgressEnvelope {
   namespace: 'dotli:protocol';
   kind: 'progress';
   id: string;
-  message: string;
+  phase: ResolvePhase;
 }
 
 export interface ProtocolResponseEnvelope {
@@ -119,14 +142,13 @@ export interface ProtocolListeningEnvelope {
   kind: 'listening';
 }
 
+export type { SmoldotDbChain, SmoldotDbOutcome };
+
 /**
  * Whether a chain started from existing smoldot state, sent once per chain. "hit" is a loaded database
  * or an already synced SharedWorker chain, "unavailable" a store that could not answer. The store lives
  * in the protocol origin's IndexedDB, so this is the host's only view of it.
  */
-export type SmoldotDbChain = 'relay' | 'hub' | 'bulletin';
-export type SmoldotDbOutcome = 'hit' | 'miss' | 'unavailable';
-
 export interface ProtocolSmoldotDbEnvelope {
   namespace: 'dotli:protocol';
   kind: 'smoldot-db';
@@ -152,7 +174,7 @@ export interface ProtocolInitFailedEnvelope {
 export interface ProtocolChainSyncEnvelope {
   namespace: 'dotli:protocol';
   kind: 'chain-sync';
-  chain: ChainKey;
+  chain: ChainRole;
   syncKind: ChainSyncKind;
   reason?: string;
   peers?: number;
@@ -168,7 +190,7 @@ export interface ProtocolChainSyncEnvelope {
 export interface ProtocolChainDetailEnvelope {
   namespace: 'dotli:protocol';
   kind: 'chain-detail';
-  chain: ChainKey;
+  chain: ChainRole;
   dbCache?: 'hit' | 'miss';
   peers?: ChainPeer[];
 }
@@ -223,17 +245,10 @@ const VALID_KINDS = new Set([
   'auth-storage-changed',
 ]);
 
-// postMessage data is untrusted, so chain and kind are checked at runtime. The lists are copied because
-// importing them would pull smoldot into every protocol bundle. As `Record<T, true>`, a value missing
-// here fails typecheck instead of being dropped silently.
-export const ENVELOPE_CHAIN_KEYS = Object.keys({
-  relay: true,
-  'asset-hub': true,
-  bulletin: true,
-  people: true,
-} satisfies Record<ChainKey, true>) as ChainKey[];
-
-export const ENVELOPE_SYNC_KINDS = Object.keys({
+// postMessage data is untrusted, so the kind is checked at runtime. The list is copied, since importing it would bring
+// the chain package's sync reporter, which starts at module load, into every page that talks to the frame. As
+// `Record<T, true>`, a value missing here fails typecheck instead of being dropped silently.
+const ENVELOPE_SYNC_KINDS = Object.keys({
   firstPeer: true,
   bootstrapComplete: true,
   stalled: true,
@@ -244,7 +259,19 @@ export const ENVELOPE_SYNC_KINDS = Object.keys({
   warpSyncFinished: true,
 } satisfies Record<ChainSyncKind, true>) as ChainSyncKind[];
 
-const CHAIN_KEY_VALUES = new Set<string>(ENVELOPE_CHAIN_KEYS);
+const ENVELOPE_RESOLVE_PHASES = Object.keys({
+  'asset-hub-connecting': true,
+  'asset-hub-syncing': true,
+  'asset-hub-ready': true,
+  'resolving-content': true,
+} satisfies Record<ResolvePhase, true>) as ResolvePhase[];
+
+const RESOLVE_PHASE_VALUES = new Set<unknown>(ENVELOPE_RESOLVE_PHASES);
+
+/** The chain role an envelope names. Null for a name that is not a role. */
+export function envelopeChainRole(chain: string): ChainRole | null {
+  return CHAIN_ROLES.find(role => role === chain) ?? null;
+}
 
 // Wider than the union on purpose, since the sender's declared type is a claim and a narrowed check would compile away.
 const CACHE_RESULT_VALUES = new Set<string>(['hit', 'miss']);
@@ -252,7 +279,7 @@ const SYNC_KIND_VALUES = new Set<string>(ENVELOPE_SYNC_KINDS);
 
 /** Whether a `chain-sync` envelope is safe for the loading UI, where a bad height would render as NaN. */
 export function isChainSyncPayloadValid(msg: ProtocolChainSyncEnvelope): boolean {
-  if (!CHAIN_KEY_VALUES.has(msg.chain) || !SYNC_KIND_VALUES.has(msg.syncKind)) {
+  if (envelopeChainRole(msg.chain) === null || !SYNC_KIND_VALUES.has(msg.syncKind)) {
     return false;
   }
   if (
@@ -269,13 +296,18 @@ export function isChainSyncPayloadValid(msg: ProtocolChainSyncEnvelope): boolean
   return true;
 }
 
+/** Whether a `progress` envelope names a phase the resolver reports, which is all the loading bar reads. */
+export function isProgressPayloadValid(msg: ProtocolProgressEnvelope): boolean {
+  return RESOLVE_PHASE_VALUES.has(msg.phase);
+}
+
 // Peer ids and roles land in telemetry attributes, so a spoofed frame could write unbounded junk into spans.
 const MAX_PEER_ID_LENGTH = 128;
 const MAX_PEERS = 50;
 
 /** Whether a `chain-detail` envelope carries values worth recording. */
 export function isChainDetailPayloadValid(msg: ProtocolChainDetailEnvelope): boolean {
-  if (!CHAIN_KEY_VALUES.has(msg.chain)) {
+  if (envelopeChainRole(msg.chain) === null) {
     return false;
   }
   if (msg.dbCache !== undefined && !CACHE_RESULT_VALUES.has(msg.dbCache)) {

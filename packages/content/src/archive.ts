@@ -6,7 +6,7 @@ import * as dagPb from '@ipld/dag-pb';
 import { UnixFS } from 'ipfs-unixfs';
 import type { CID } from 'multiformats/cid';
 import { concatBytes } from '@noble/hashes/utils.js';
-import { log } from '@dotli/shared';
+import { createAsyncTaskPool, log } from '@dotli/shared';
 import { assertBlockMatchesCid, assertSameContentId, verifyingBlockSource } from './verify.js';
 
 export type ArchiveFiles = Record<string, Uint8Array>;
@@ -63,6 +63,12 @@ function joinPath(base: string, name: string): string {
 /** Per node, so one big file or directory cannot saturate the smoldot bitswap queue. */
 const MAX_PARALLEL_BLOCK_FETCHES = 8;
 
+/** Runs `work` over `items` with at most `MAX_PARALLEL_BLOCK_FETCHES` at once, in their order. */
+function eachBounded<T, R>(items: readonly T[], work: (item: T) => Promise<R>): Promise<R[]> {
+  const pool = createAsyncTaskPool({ poolSize: MAX_PARALLEL_BLOCK_FETCHES });
+  return Promise.all(items.map(item => pool.call(() => work(item))));
+}
+
 /**
  * Walk a UnixFS DAG into a flat map of path to bytes. Missing blocks and unknown codecs throw.
  * HAMT-sharded directories are walked as plain ones, so past about 256 entries they appear truncated.
@@ -83,19 +89,6 @@ export async function walkUnixFsDag(rootCid: CID, blockSource: BlockSource): Pro
     }
 
     throw new Error(`Unsupported chunk codec 0x${cid.code.toString(16)} for ${cid.toString()}`);
-  }
-
-  async function runBounded<T>(items: readonly T[], work: (item: T, i: number) => Promise<void>): Promise<void> {
-    if (items.length === 0) {
-      return;
-    }
-    const pending = items.entries();
-    const worker = async (): Promise<void> => {
-      for (const [idx, item] of pending) {
-        await work(item, idx);
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL_BLOCK_FETCHES, items.length) }, () => worker()));
   }
 
   async function processNode(cid: CID, path: string): Promise<void> {
@@ -128,9 +121,7 @@ export async function walkUnixFsDag(rootCid: CID, blockSource: BlockSource): Pro
       const entries = node.Links.filter(
         (link): link is typeof link & { Name: string } => link.Name !== undefined && link.Name !== '',
       );
-      await runBounded(entries, async link => {
-        await processNode(link.Hash, joinPath(path, link.Name));
-      });
+      await eachBounded(entries, link => processNode(link.Hash, joinPath(path, link.Name)));
       return;
     }
 
@@ -139,11 +130,7 @@ export async function walkUnixFsDag(rootCid: CID, blockSource: BlockSource): Pro
       if (node.Links.length === 0) {
         content = uf?.data ?? new Uint8Array(0);
       } else {
-        const chunks = new Array<Uint8Array>(node.Links.length);
-        await runBounded(node.Links, async (link, i) => {
-          chunks[i] = await getChunkData(link.Hash);
-        });
-        content = concatBytes(...chunks);
+        content = concatBytes(...(await eachBounded(node.Links, link => getChunkData(link.Hash))));
       }
 
       // A CAR at the root, uploaded as a chunked file.
@@ -169,7 +156,7 @@ export async function walkUnixFsDag(rootCid: CID, blockSource: BlockSource): Pro
  * Pass `expectedRoot` for untrusted transports, so the root must match it. Every block is hash-verified.
  * Omit it only for bytes already trusted, such as a CAR re-packed under a smoldot-verified CID.
  */
-export async function parseCarFile(buffer: Uint8Array, expectedRoot?: CID): Promise<ArchiveFiles> {
+async function parseCarFile(buffer: Uint8Array, expectedRoot?: CID): Promise<ArchiveFiles> {
   const reader = await CarReader.fromBytes(buffer);
   const roots = await reader.getRoots();
   const rootCid = roots[0];

@@ -17,9 +17,8 @@ export default defineConfig([
   },
   {
     // The Playwright suites read env knobs straight from the shell, never through a turbo task, so turbo has no
-    // cache to key on them. The Vitest unit tests run under turbo and keep the rule.
+    // cache to key on them.
     files: ['tests/**/*.ts'],
-    ignores: ['tests/unit/**'],
     rules: {
       'turbo/no-undeclared-env-vars': 'off',
     },

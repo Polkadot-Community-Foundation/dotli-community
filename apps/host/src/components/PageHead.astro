@@ -27,34 +27,7 @@ const socialMeta = socialMetaAttributes({
 />
 <title>{TITLE}</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-{/* An island can hydrate before the page's entry runs, so its errors queue here until reportIslandErrors listens. */}
-<script is:inline>
-  window.__dotliIslandErrors = [];
-  addEventListener('astro:hydration-error', function (event) {
-    window.__dotliIslandErrors?.push(event);
-  });
-</script>
 {socialMeta.map(attrs => (
   <meta {...attrs} />
 ))}
 <link rel="manifest" href={`${base}manifest.webmanifest`} />
-<script is:inline>
-  (function () {
-    let pref = 'system';
-    try {
-      const stored = localStorage.getItem('dotli-theme');
-      if (stored === 'light' || stored === 'dark' || stored === 'system') {
-        pref = stored;
-      }
-      // eslint-disable-next-line no-restricted-syntax -- localStorage may be unavailable (private mode, disabled cookies): fall back to the system theme.
-    } catch {
-      /* localStorage unavailable: fall back to system */
-    }
-    let theme = pref;
-    if (theme === 'system') {
-      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-    }
-    document.documentElement.setAttribute('data-theme-pref', pref);
-    document.documentElement.setAttribute('data-theme', theme);
-  })();
-</script>

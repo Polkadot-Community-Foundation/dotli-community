@@ -35,9 +35,11 @@ configurable — see the README inside the tarball
 `serve.mjs` is bundled from `scripts/serve.ts` at release time, so it runs on
 node >= 22 without TypeScript support or the rest of this repo. It reproduces the nginx serving rules: hostname
 routing, the same security headers, precompressed siblings, immutable asset
-caching and SPA fallback. **Changing the rules in one means changing the other** —
-nothing enforces it, and a mismatch means the tarball behaves differently from a
-deployed site.
+caching and SPA fallback. **Changing the rules in one means changing the other.**
+A spec holds the header values to nginx's snippets and pins which file answers a
+path (the root page, the asset 404 and the shell fallback). Which snippet each
+nginx location includes is not checked, and a mismatch there means the tarball
+behaves differently from a deployed site.
 
 ## Running the container
 
@@ -119,8 +121,8 @@ mirroring what `scripts/preview-server.ts` does for local previews.
 
 This needs no code changes and no DNS setup: the flat `*.localhost` shape is
 already special-cased in `getProtocolOrigin` (`packages/protocol/src/client.ts`),
-`dotUrl` (`packages/ui/src/ui.ts`) and `getAppOrigin`
-(`packages/ui/src/bridge.ts`), browsers resolve every `*.localhost` name to
+`dotUrl` (`apps/host/src/components/landing/dot-url.ts`) and `appOrigin`
+(`apps/host/src/runtime/product-frame.ts`), browsers resolve every `*.localhost` name to
 loopback, and `http://*.localhost` is a secure context so `crypto.subtle`,
 service workers and SharedWorker all work.
 
@@ -169,8 +171,7 @@ landing page regardless.
 
 Every reader of the network table is synchronous, so the config has to be in place
 before the module bundle runs. A blocking classic `<script src="/dotli-network.js">`
-sets `globalThis.__DOTLI_NETWORK__` ahead of the deferred bundle — the same trick
-all three `index.html` files already use to pre-open IndexedDB. The table is then
+sets `globalThis.__DOTLI_NETWORK__` ahead of the deferred bundle. The table is then
 built once at module init, with no async hydration anywhere.
 
 The file does not exist in the image. `docker/entrypoint.sh` generates it at
@@ -229,9 +230,10 @@ correct while the UI names your fork. Genesis checks cannot catch this. Use
 
 **Mode preferences are not shared across subdomains.** `preview-server.ts`
 implements a `/__dotli-mode/<key>` store to work around `localhost` being on the
-Public Suffix List; nginx has no equivalent. `shared-mode.ts` prefers the
-per-origin seed on localhost and only warns, so each subdomain simply keeps its
-own backend and cache settings.
+Public Suffix List; nginx has no equivalent. On localhost the settings
+resolution (`resolveSettings`, with `preferLocal`) prefers the per-origin choice
+and the shared store only reports a read error, so each subdomain simply keeps
+its own backend and cache settings.
 
 **No brotli.** `dotli-precompressed.conf` uses `brotli_static`, which the
 official nginx image is not built with, so the image overwrites that snippet with
@@ -246,7 +248,8 @@ and a read-only mount makes the entrypoint's write fail.
 
 `.github/workflows/release-artifacts.yml` builds both artifacts on
 `release: published`, and accepts a tag via `workflow_dispatch` for releases
-published before it existed (a tag-triggered run cannot backfill one).
+published before it existed (a tag-triggered run cannot backfill one). The tarball and the image build only
+after the same checks as a PR pass on the tag.
 
 Two build settings are load-bearing, and the workflow asserts both rather than
 trusting them:

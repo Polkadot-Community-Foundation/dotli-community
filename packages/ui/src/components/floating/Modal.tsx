@@ -1,9 +1,10 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { children, createEffect, createSignal, isHydrating, onSettled, Show } from 'solid-js';
+import { children, createEffect, createSignal, isHydrating, onSettled, Show, type Component } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { isPhoneViewport, watchPhoneViewport } from '../../phone-viewport.js';
+import { isPhoneViewport, watchPhoneViewport } from '../../page/phone-viewport.js';
+import type { IconProps } from '../icons/icon-props.js';
 import { IconTile } from '../primitives/IconTile.js';
 import { InSheet } from './in-sheet.js';
 import { ModalLayer } from './ModalLayer.js';
@@ -92,6 +93,7 @@ function ModalRoot(props: ModalProps): JSX.Element {
           <div
             class={[s['card'], props.class]}
             data-modal-surface=""
+            data-state={props.open ? 'open' : 'closed'}
             data-testid={props.testId}
             data-placement={props.placement ?? 'center'}
             tabindex="-1"
@@ -106,6 +108,7 @@ function ModalRoot(props: ModalProps): JSX.Element {
             props.onOpenChange(false, 'close');
           }}
           testId={props.testId}
+          open={props.open}
           closeLabel="Close"
           body={{ class: s['sheetScroll'] }}
         >
@@ -121,13 +124,13 @@ function Head(props: {
   /** The modal's `labelledBy`. */
   titleId: string;
   title: string;
-  /** Trusted SVG markup for the IconTile. */
-  icon?: string | undefined;
+  /** Drawn in the IconTile. */
+  icon?: Component<IconProps> | undefined;
   iconTestId?: string;
 }): JSX.Element {
   return (
     <div class={s['head']}>
-      <Show when={props.icon}>{icon => <IconTile markup={icon()} testId={props.iconTestId} />}</Show>
+      <Show when={props.icon}>{icon => <IconTile icon={icon()} testId={props.iconTestId} />}</Show>
       <h2 class={s['title']} id={props.titleId}>
         {props.title}
       </h2>

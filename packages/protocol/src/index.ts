@@ -14,56 +14,18 @@ export {
   isValidSharedModeKey,
   type SharedWalletRequestMethod,
 } from './auth-storage.js';
-export { requireBrokerLocalProvider, type ChainBrokerManager, type StringJsonRpcConnection } from './broker.js';
 export {
-  CHAIN_HALTED_ERROR_DATA,
-  chainHaltedError,
-  ChainHaltError,
-  haltReasonOf,
-  type RemoteChainHalt,
-} from './chain-halted.js';
-export {
-  createChainPool,
-  type ChainActivity,
-  type ChainPool,
-  type ChainPoolWatcher,
-  type LeaseProvider,
-} from './chain-pool.js';
-export {
-  clearSharedAuthStorage,
-  clearSharedModeStorage,
-  forgetSharedLocalWallet,
-  readSharedLocalWallet,
-  saveSharedLocalWallet,
-  updateSharedLocalWalletIdentity,
-  createRemoteChainProvider,
-  ensureProtocolFrame,
   getProtocolOrigin,
-  getSharedStoreStatus,
-  getSmoldotDbOutcome,
-  isProtocolBooting,
-  isProtocolReady,
   isRemoteChainConnectable,
   isRemoteChainSupported,
-  onProtocolChainDetail,
-  onProtocolChainSync,
-  onProtocolNetBytes,
-  onProtocolReady,
-  readSharedAuthStorage,
-  readSharedModeStorage,
-  resetProtocolFrame,
-  resolveDotNameRemote,
-  resolveExecutableManifestRemote,
-  resolveRootManifestRemote,
-  setProtocolSubMode,
-  type SharedStoreStatus,
-  subscribeSharedAuthStorage,
-  subscribeSharedStoreStatus,
+  protocolClient,
+  type ProtocolClient,
+  type ProtocolFrameConfig,
+  type ProtocolStatus,
   type RemoteChainProvider,
-  warmupProtocol,
-  writeSharedAuthStorage,
-  writeSharedModeStorage,
+  type SharedStoreStatus,
 } from './client.js';
+export { backendOfFrameMode } from './frame.js';
 export { ProtocolFatalError, ProtocolInitFailedError } from './errors.js';
 export {
   getRequestSyncTimeoutMs,
