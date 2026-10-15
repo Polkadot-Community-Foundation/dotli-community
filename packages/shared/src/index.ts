@@ -11,6 +11,13 @@ export {
 export { endpointHost, gatewayUnreachable } from './error-copy.js';
 export { errorName, fullErrorChain, named, serializeError } from './errors.js';
 export { deleteIdb, idbRequest, idbTransaction, openIdb } from './idb.js';
+export {
+  deleteAllDatabases,
+  OriginWipeError,
+  wipeOriginStores,
+  type OriginStores,
+  type OriginWipePart,
+} from './origin-wipe.js';
 export { fromHex, toHex } from './hex.js';
 export { bindLogSink, log, type LogLevel } from './log.js';
 export { formatRate, formatSize } from './byte-size.js';
@@ -29,4 +36,5 @@ export {
 } from './sync-store.js';
 export { pageLocalStorage, pageSessionStorage, safeStorage, type SafeStorage } from './safe-storage.js';
 export { realTimers, type Timers } from './timers.js';
+export { sleep } from './sleep.js';
 export { withTimeout } from './with-timeout.js';

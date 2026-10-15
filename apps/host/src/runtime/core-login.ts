@@ -20,7 +20,7 @@ import {
 import { ACCOUNT_REQUEST_LOGIN } from '@parity/truapi/wire-table';
 import { captureException, m, recordExpected, reportExpected, spans as S } from '@dotli/metrics';
 import { createAsyncTaskPool, log, type ReadableStore } from '@dotli/shared';
-import { wrapCoreProviderForDebug } from './core-connection.js';
+import { ownCoreConnection } from './core-connection.js';
 import type { DotliAuthState } from './session/auth-state.js';
 import type { SessionState } from './session/session-state.js';
 import { LoginRequestError } from './login-request-error.js';
@@ -42,8 +42,11 @@ export interface AuthCommands {
 
 export interface AuthCommandsDeps {
   auth: ReadableStore<DotliAuthState>;
-  /** One login to its end, reporting its own failures. */
-  login(reason: string | undefined): Promise<void>;
+  /**
+   * One login to its end, reporting its own failures. `signal` aborts once a cancel or a logout ends the round, so a
+   * login still waiting for its core sends nothing.
+   */
+  login(reason: string | undefined, signal: AbortSignal): Promise<void>;
   /** One logout to its end, reporting its own failures. */
   logout(): Promise<void>;
   cancelPairing(): void;
@@ -55,8 +58,12 @@ export function createAuthCommands(deps: AuthCommandsDeps): AuthCommands {
   const queue = createAsyncTaskPool({ poolSize: 1 });
   // A login answers every call made in its round, so a click queued behind it starts no second pairing. A round ends
   // when its login ends or when a cancel or logout is asked for, whichever comes first, so a click after either still
-  // logs in.
-  let round = {};
+  // logs in. Ending a round by cancel or logout aborts it, which a login still waiting for its core hears.
+  let round = new AbortController();
+  const endRound = (): void => {
+    round.abort(new DOMException('The sign-in was cancelled', 'AbortError'));
+    round = new AbortController();
+  };
   return {
     login(reason) {
       const asked = round;
@@ -67,11 +74,11 @@ export function createAuthCommands(deps: AuthCommandsDeps): AuthCommands {
           }
           try {
             if (deps.auth.get().tag !== 'Connected') {
-              await deps.login(reason);
+              await deps.login(reason, asked.signal);
             }
           } finally {
             if (round === asked) {
-              round = {};
+              round = new AbortController();
             }
           }
         },
@@ -79,7 +86,7 @@ export function createAuthCommands(deps: AuthCommandsDeps): AuthCommands {
       );
     },
     logout() {
-      round = {};
+      endRound();
       // The logout queues behind the open login, which only the cancel ends when the core never answers it.
       const { tag } = deps.auth.get();
       if (tag === 'Pairing' || tag === 'Authenticating') {
@@ -96,7 +103,7 @@ export function createAuthCommands(deps: AuthCommandsDeps): AuthCommands {
       );
     },
     cancelLogin() {
-      round = {};
+      endRound();
       deps.cancelPairing();
     },
   };
@@ -115,11 +122,14 @@ export interface CoreAuthCommandsDeps {
 type LogoutFailureReason = 'boot' | 'disconnect';
 
 export function createCoreAuthCommands(deps: CoreAuthCommandsDeps): AuthCommands {
-  async function login(reason: string | undefined): Promise<void> {
+  async function login(reason: string | undefined, signal: AbortSignal): Promise<void> {
     log.event('login requested', { flow: 'wallet' });
     try {
-      await topbarLogin(reason);
-      log.event('login completed', { flow: 'wallet' });
+      if (await topbarLogin(reason, signal)) {
+        log.event('login completed', { flow: 'wallet' });
+      } else {
+        log.event('login cancelled before pairing', { flow: 'wallet' });
+      }
     } catch (error) {
       captureLoginFailure(error);
       // The core already rendered a `LoginRequestError`, or stayed silent on purpose. Report a failure
@@ -130,13 +140,25 @@ export function createCoreAuthCommands(deps: CoreAuthCommandsDeps): AuthCommands
     }
   }
 
-  /** Over a connection of its own, since the product's connection forwards every frame to the product. */
-  async function topbarLogin(reason: string | undefined): Promise<void> {
+  /**
+   * Over a connection of its own, since the product's connection forwards every frame to the product. False when the
+   * round ended before the request went out, since the core's cancel only reaches a pairing already under way.
+   */
+  async function topbarLogin(reason: string | undefined, signal: AbortSignal): Promise<boolean> {
+    // Read after each wait, since a cancel or a logout can end the round during any of them.
+    const ended = (): boolean => signal.aborted;
     const lease = await deps.core.acquire();
     try {
-      const core = wrapCoreProviderForDebug(await lease.connect());
+      if (ended()) {
+        return false;
+      }
+      const core = ownCoreConnection(await lease.connect());
       try {
+        if (ended()) {
+          return false;
+        }
         await requestCoreLogin(core, reason);
+        return true;
       } finally {
         core.dispose();
       }
@@ -244,6 +266,7 @@ export function requestCoreLogin(core: Provider, reason?: string): Promise<Login
 
   return new Promise<LoginResponse>((resolve, reject) => {
     let settled = false;
+    let reportedUndecodable = false;
     let cleanupRequested = false;
     let unsubscribeMessage: (() => void) | undefined;
     let unsubscribeClose: (() => void) | undefined;
@@ -285,7 +308,18 @@ export function requestCoreLogin(core: Provider, reason?: string): Promise<Login
       core.subscribe(message => {
         const decoded = decodeWireMessage(message);
         if (decoded.isErr()) {
-          rejectRequest(decoded.error);
+          // Every frame the core sends this connection lands here, so one that does not decode is not this answer.
+          // The connection is the login's alone, so it is a protocol fault, reported once per request.
+          if (!reportedUndecodable) {
+            reportedUndecodable = true;
+            reportExpected(decoded.error, {
+              flow: 'wallet',
+              step: 'login_frame',
+              metric: S.WALLET_LOGIN_FRAME,
+              reason: 'undecodable_frame',
+              message: '[dot.li login] ignored a frame that does not decode:',
+            });
+          }
           return;
         }
         const { payload } = decoded.value;
@@ -297,17 +331,15 @@ export function requestCoreLogin(core: Provider, reason?: string): Promise<Login
         ) {
           return;
         }
-        cleanup();
         try {
           const result = responseCodec.dec(payload.value);
           if (result.success) {
             resolveRequest(result.value.value);
           } else {
-            const error = new LoginRequestError(result.value);
-            rejectRequest(error);
+            rejectRequest(new LoginRequestError(result.value));
           }
         } catch (error) {
-          rejectRequest(error instanceof Error ? error : new Error(String(error)));
+          rejectRequest(new Error('The login answer did not decode', { cause: error }));
         }
       }),
       unsubscribe => {

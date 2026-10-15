@@ -276,7 +276,7 @@ describe('auth controller: login requests', () => {
 
     // Then
     await changes.until(() => getAuthModalState().view.kind === 'error');
-    expect(getAuthModalState().view).toMatchObject({ kind: 'error', title: 'The login service did not start' });
+    expect(getAuthModalState().view).toMatchObject({ kind: 'error', title: 'The sign-in service did not start' });
     expect(exceptions).toEqual([]);
   });
 
@@ -308,7 +308,7 @@ describe('auth controller: login requests', () => {
     expect(exceptions).toEqual([[failure, { flow: 'wallet', step: 'login' }]]);
   });
 
-  it('As the account popover, Log out asks the core to log out', async () => {
+  it('As the account popover, Sign out asks the core to log out', async () => {
     // Given
     const { controller, calls, changes } = start();
 
@@ -635,10 +635,26 @@ describe('auth controller: auth states', () => {
         kind: 'error',
         message: 'User declined the request',
         retry: true,
-        title: 'Login was declined',
-        subtitle: 'The request was declined in Polkadot Mobile. Start again and approve it on your phone.',
+        pending: false,
+        title: 'Sign-in was declined',
+        subtitle: 'The request was declined in Polkadot App. Start again and approve it on your phone.',
         detail: 'User declined the request',
       },
+    });
+  });
+
+  it('As a new user whose account is still being set up, the failure is shown as a wait', () => {
+    // Given
+    const { auth } = start();
+
+    // When
+    auth.set({ tag: 'LoginFailed', kind: 'Other', reason: 'OriginPersonProviderError: not yet' });
+
+    // Then
+    expect(getAuthModalState().view).toMatchObject({
+      kind: 'error',
+      pending: true,
+      title: 'Your account is still being set up',
     });
   });
 
@@ -751,7 +767,7 @@ describe('auth controller on the page stores', () => {
       const copy = friendlyAuthError('transport closed before the wallet answered');
 
       // Then
-      expect(copy.title).toBe('Connection to Polkadot Mobile was lost');
+      expect(copy.title).toBe('Connection to Polkadot App was lost');
       expect(copy.detail).toBe('transport closed before the wallet answered');
       expect(copy.retryable).not.toBe(false);
     });
@@ -771,16 +787,16 @@ describe('auth controller on the page stores', () => {
       const copy = friendlyAuthError('Login request denied');
 
       // Then
-      expect(copy.title).toBe('Login was declined');
+      expect(copy.title).toBe('Sign-in was declined');
       expect(copy.retryable).not.toBe(false);
     });
 
-    it('As a new user, I am told when Polkadot Mobile did not answer in time', () => {
+    it('As a new user, I am told when Polkadot App did not answer in time', () => {
       // When
       const copy = friendlyAuthError('runtime call timed out');
 
       // Then
-      expect(copy.title).toBe('Login timed out');
+      expect(copy.title).toBe('Sign-in timed out');
       expect(copy.retryable).not.toBe(false);
     });
 
@@ -789,7 +805,7 @@ describe('auth controller on the page stores', () => {
       const copy = friendlyAuthError('Login is not supported by this host');
 
       // Then
-      expect(copy.title).toBe('Login is not available here');
+      expect(copy.title).toBe('Sign-in is not available here');
       expect(copy.retryable).toBe(false);
     });
 
@@ -798,7 +814,7 @@ describe('auth controller on the page stores', () => {
       const copy = friendlyAuthError('worker init failed: undefined');
 
       // Then
-      expect(copy.title).toBe('The login service did not start');
+      expect(copy.title).toBe('The sign-in service did not start');
       expect(copy.retryable).not.toBe(false);
     });
 
@@ -808,9 +824,9 @@ describe('auth controller on the page stores', () => {
 
       // Then
       expect(copy).toEqual({
-        title: 'Login did not complete',
+        title: 'Sign-in did not complete',
         subtitle:
-          'Something interrupted the connection to Polkadot Mobile. Try again, and make sure the app is installed and up to date.',
+          'Something interrupted the connection to Polkadot App. Try again, and make sure the app is installed and up to date.',
         detail: 'Host failure',
       });
     });

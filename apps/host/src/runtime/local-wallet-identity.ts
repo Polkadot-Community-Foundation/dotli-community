@@ -5,11 +5,12 @@
 // per page and cached in the shared wallet record so the next boot activates with it.
 
 import { getActiveServicesConfig, SITE_ID } from '@dotli/config';
-import { m, spans as S } from '@dotli/metrics';
+import { reportExpected, spans as S } from '@dotli/metrics';
 import { protocolClient, type LocalWalletIdentity } from '@dotli/protocol';
-import { createAsyncTaskPool, log } from '@dotli/shared';
+import { createAsyncTaskPool } from '@dotli/shared';
 import { hexToBytes } from '@parity/truapi/scale';
-import { loadBridge } from '../lazy.js';
+import { loadPolkadotApi } from '../lazy.js';
+import { hostChainProvider } from './host-callbacks/chain.js';
 import { reportLocalWalletFailure, type LocalWalletBoot, type LocalWalletFailureReason } from './wallet-boot.js';
 
 export interface LiteUsernameRefreshDeps {
@@ -42,8 +43,14 @@ export function createLiteUsernameRefresh(deps: LiteUsernameRefreshDeps): LiteUs
     try {
       name = await deps.readLiteUsername(identityAccountId);
     } catch (error) {
-      log.warn('[dot.li wallet] lite username read failed, keeping the cached name:', error);
-      m.count(S.WALLET_LOCAL_ACTIVATE, { outcome: 'error', reason: 'username-read' });
+      // People unreachable from this backend is the environment, and the cached name still serves.
+      reportExpected(error, {
+        flow: 'wallet',
+        step: 'lite_username_read',
+        metric: S.WALLET_LOCAL_ACTIVATE,
+        reason: 'username-read',
+        message: '[dot.li wallet] lite username read failed, keeping the cached name:',
+      });
       return null;
     }
     const cached = wallet.identity;
@@ -80,12 +87,11 @@ function isConsumer(value: unknown): value is { lite_username: Uint8Array } {
 }
 
 async function readFromPeople(identityAccountId: string): Promise<string | null> {
-  const { hostChainProvider } = await loadBridge();
   const provider = hostChainProvider(getActiveServicesConfig().people.genesis);
   if (provider === null) {
     throw new Error('People is not reachable on this chain backend');
   }
-  const papi = await import('polkadot-api');
+  const papi = await loadPolkadotApi();
   const client = papi.createClient(provider);
   try {
     const account = papi.AccountId().dec(hexToBytes(identityAccountId));

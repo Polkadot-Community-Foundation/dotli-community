@@ -10,15 +10,15 @@ import type { IframeHost, IframeHostOptions } from '@parity/truapi-host/web';
 import { BASE_DOMAIN, DEV_SANDBOX_PORT, getBackend, getNetwork } from '@dotli/config';
 import { SANDBOX_CONTRACT_PARAMS, SANDBOX_SCHEMA_VERSION, type SandboxChannel } from '@dotli/sandbox-wire';
 import { captureException, getResolutionId, m, reportExpected, spans as S } from '@dotli/metrics';
-import { createAsyncTaskPool, log, randomId } from '@dotli/shared';
+import { createAsyncTaskPool, log, randomId, sleep } from '@dotli/shared';
 import { emitDotliDebugEvent } from '@dotli/truapi-debug';
 import { chatConnections } from './chat/chat-store.js';
-import { wrapCoreProviderForDebug } from './core-connection.js';
+import { ownCoreConnection } from './core-connection.js';
 import { ERRORS } from './errors.js';
 import { CoreRedialError, type CoreConnection, type CoreLease, type PageCore } from './page-core.js';
 import { takePendingReset } from './pending-reset.js';
 import { createPermissionResponseGate } from './permission-response-gate.js';
-import { buildAllowAttribute, registerPermissionAuthorizationProvider } from './permissions.js';
+import type { PermissionAuthorizations } from './permissions.js';
 import { labelToProductId } from './runtime-config.js';
 import { setProductLoaded } from './state/product.js';
 import type { PermissionsChange } from './state/product-permissions.js';
@@ -45,6 +45,8 @@ export interface ProductFrameDeps {
   /** Where a reloaded sandbox asks to be rebuilt. */
   channel: SandboxChannel;
   onPermissionsChanged: (listener: (change: PermissionsChange) => void) => () => void;
+  /** Where the frame routes each product connection's permissions, and reads the `allow` attribute from. */
+  permissions: Pick<PermissionAuthorizations, 'register' | 'allowAttribute'>;
   view: ProductFrameView;
   /** The page's notifications, for a reload the frame could not do itself. */
   notify: ShowNotification;
@@ -104,6 +106,11 @@ interface MountedHost {
   chat: boolean;
   /** Runs `run` once the product's pending permission answer has reached it. */
   afterPermissionResponse: (run: () => void) => void;
+  /**
+   * Lets go of the core under the product, which stays on screen until a render replaces it. Idempotent, and `dispose`
+   * after it only removes the frame.
+   */
+  releaseCore: () => void;
   dispose: () => void;
 }
 
@@ -236,6 +243,8 @@ export function createProductFrame(deps: ProductFrameDeps): ProductFrame {
     coreDeaths += 1;
     if (coreDeaths >= CORE_DEATH_BUDGET) {
       setStatus('failed');
+      // The product stays on screen under the reload notice, but its core is down for good, so its lease goes.
+      mounted?.releaseCore();
       reportRerenderFailure(
         new Error(`The wallet core went down ${String(coreDeaths)} times in a row under the product`),
         'core_deaths',
@@ -253,9 +262,7 @@ export function createProductFrame(deps: ProductFrameDeps): ProductFrame {
         }
         replacedAt = Date.now();
         await rerender('replacement');
-        await new Promise<void>(resolve => {
-          setTimeout(resolve, RECOVER_MIN_INTERVAL_MS);
-        });
+        await sleep(RECOVER_MIN_INTERVAL_MS);
       })
       .catch((error: unknown) => {
         reportRerenderFailure(error, 'replacement');
@@ -407,9 +414,9 @@ export function createProductFrame(deps: ProductFrameDeps): ProductFrame {
       pool: args.debugFlowId,
     });
     const unsubscribeDown = lease.subscribeDown(args.onCoreDown);
-    const coreProvider = wrapCoreProviderForDebug(connection);
+    const coreProvider = ownCoreConnection(connection);
     const unregisterChat = chatCapable ? registerProductChat(connection) : noop;
-    const unregisterPermissions = registerPermissionAuthorizationProvider(args.label, coreProvider);
+    const unregisterPermissions = deps.permissions.register(args.label, coreProvider);
     let productProvider: Provider | null = null;
     let disposePipe: (() => void) | null = null;
     const lifetime = new AbortController();
@@ -424,7 +431,13 @@ export function createProductFrame(deps: ProductFrameDeps): ProductFrame {
       disposePipe = null;
       productProvider = null;
     };
+    // Runs once, from a dispose, a failed build or a frame that gave up on its core.
+    let coreSideHeld = true;
     const cleanupCoreSide = (): void => {
+      if (!coreSideHeld) {
+        return;
+      }
+      coreSideHeld = false;
       unsubscribeDown();
       unregisterPermissions();
       unregisterChat();
@@ -433,7 +446,7 @@ export function createProductFrame(deps: ProductFrameDeps): ProductFrame {
       lease.release();
     };
     try {
-      const allow = `${await buildAllowAttribute(args.label)}; cross-origin-isolated`;
+      const allow = `${await deps.permissions.allowAttribute(args.label)}; cross-origin-isolated`;
       const host = await deps.createIframeHost({
         iframeUrl: args.iframeUrl,
         allowedOrigin: args.allowedOrigin,
@@ -448,6 +461,9 @@ export function createProductFrame(deps: ProductFrameDeps): ProductFrame {
         iframe: host.iframe,
         chat: chatCapable,
         afterPermissionResponse: responses.afterResponse,
+        // The frame's lifetime runs on, so a device grant still waiting for its answer when the frame gives up still
+        // rebuilds it.
+        releaseCore: cleanupCoreSide,
         dispose() {
           lifetime.abort();
           cleanupCoreSide();
@@ -543,9 +559,7 @@ export function createProductFrame(deps: ProductFrameDeps): ProductFrame {
             return;
           }
           await rerender('recover');
-          await new Promise<void>(resolve => {
-            setTimeout(resolve, RECOVER_MIN_INTERVAL_MS);
-          });
+          await sleep(RECOVER_MIN_INTERVAL_MS, ask.signal);
         },
         { signal: ask.signal },
       )

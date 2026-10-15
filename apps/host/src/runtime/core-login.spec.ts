@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { decodeWireMessage } from '@parity/truapi';
 import { bindCaptureSink } from '@dotli/metrics';
 import { createAuthCommands, createCoreAuthCommands, requestCoreLogin, type AuthCommands } from './core-login.js';
 import type { DotliAuthState } from './session/auth-state.js';
@@ -172,6 +171,62 @@ describe('topbar login over the page core', () => {
     expect(fakes.captures.expected).toHaveBeenCalledWith(failure, { flow: 'wallet', step: 'login' });
     expect(fakes.captures.exception).not.toHaveBeenCalled();
     expect(fakes.session.reportLoginFailure).toHaveBeenCalledWith(failure.message);
+  });
+
+  it('As a user who closes the sign-in while the wallet core still starts, no pairing starts once it is up', async () => {
+    // Given: a login waiting for its connection to the core
+    const fakes = harness();
+    const done = fakes.commands.login();
+    await fakes.changes.until(() => fakes.connections.length === 1);
+
+    // When: the user closes the modal, then the core comes up
+    fakes.commands.cancelLogin();
+    const login = await answerConnection(fakes, 0);
+    await fakes.changes.until(() => login.dispose.mock.calls.length === 1 || login.postMessage.mock.calls.length === 1);
+    await done;
+
+    // Then: nothing was asked of the core, and nothing is reported
+    expect(login.postMessage).not.toHaveBeenCalled();
+    expect(login.dispose).toHaveBeenCalledTimes(1);
+    expect(fakes.session.reportLoginFailure).not.toHaveBeenCalled();
+    expect(fakes.captures.exception).not.toHaveBeenCalled();
+  });
+
+  it('As a user who logs out while a login still waits for the wallet core, no pairing starts once it is up', async () => {
+    // Given: a login waiting for its connection to the core
+    const fakes = harness();
+    const done = fakes.commands.login();
+    await fakes.changes.until(() => fakes.connections.length === 1);
+
+    // When
+    void fakes.commands.logout();
+    const login = await answerConnection(fakes, 0);
+    await fakes.changes.until(() => login.dispose.mock.calls.length === 1 || login.postMessage.mock.calls.length === 1);
+    await done;
+
+    // Then
+    expect(login.postMessage).not.toHaveBeenCalled();
+    expect(login.dispose).toHaveBeenCalledTimes(1);
+    expect(fakes.session.reportLoginFailure).not.toHaveBeenCalled();
+  });
+
+  it('As a user who closes the sign-in while the wallet core still boots, no pairing starts once it has booted', async () => {
+    // Given: a login waiting for a cold wallet core to boot
+    const fakes = harness();
+    fakes.holdBoots();
+    const done = fakes.commands.login();
+    await fakes.changes.until(() => fakes.heldBoots.length === 1);
+
+    // When: the user closes the modal, then the core finishes booting
+    fakes.commands.cancelLogin();
+    nth(fakes.heldBoots, 0).resolve(undefined);
+    await done;
+
+    // Then: no connection was opened, nothing was reported, and the login let the core go
+    expect(fakes.connections).toHaveLength(0);
+    expect(fakes.session.reportLoginFailure).not.toHaveBeenCalled();
+    expect(fakes.captures.exception).not.toHaveBeenCalled();
+    expect(fakes.runtimes[0]?.dispose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -354,22 +409,43 @@ describe('requestCoreLogin', () => {
     expect(provider.listener).toBeNull();
   });
 
-  it('As a dotli integrator, the host rejects malformed response frames and unsubscribes', async () => {
-    // Given
+  it('As a dotli integrator, the host skips a frame that does not decode and still takes the login answer after it', async () => {
+    // Given a core that sends a frame that does not decode before its answer
     const { requestCoreLogin } = harness();
-    const malformed = new Uint8Array([0xff, 0x00]);
     const provider = makeProvider({
-      onPostMessage() {
-        provider.listener?.(malformed);
+      onPostMessage(message) {
+        provider.listener?.(new Uint8Array([0xff, 0x00]));
+        provider.listener?.(loginResponseFrame(requestIdFromFrame(message), { success: true, value: 'Success' }));
       },
     });
 
     // When
     const login = requestCoreLogin(provider);
 
-    // Then: the login fails with the envelope's own decode error
-    await expect(login).rejects.toThrow(decodeWireMessage(malformed)._unsafeUnwrapErr().message);
+    // Then
+    await expect(login).resolves.toBe('Success');
     expect(provider.listener).toBeNull();
+  });
+
+  it('As an operator, frames that do not decode during a login are reported once and the login still resolves', async () => {
+    // Given a core that sends two frames that do not decode before its answer
+    const { requestCoreLogin, captures, counted } = harness();
+    const provider = makeProvider({
+      onPostMessage(message) {
+        provider.listener?.(new Uint8Array([0xff, 0x00]));
+        provider.listener?.(new Uint8Array([0xfe]));
+        provider.listener?.(loginResponseFrame(requestIdFromFrame(message), { success: true, value: 'Success' }));
+      },
+    });
+
+    // When
+    const login = requestCoreLogin(provider);
+
+    // Then
+    await expect(login).resolves.toBe('Success');
+    expect(captures.expected).toHaveBeenCalledTimes(1);
+    expect(captures.expected).toHaveBeenCalledWith(expect.anything(), { flow: 'wallet', step: 'login_frame' });
+    expect(counted('wallet.login_frame')).toEqual([{ outcome: 'error', reason: 'undecodable_frame' }]);
   });
 
   it('As a dotli integrator, the host rejects send failures and unsubscribes', async () => {
@@ -425,16 +501,17 @@ function queueHarness(
 ): {
   auth: SyncStore<DotliAuthState>;
   commands: AuthCommands;
-  calls: { logins: (string | undefined)[]; logouts: number; cancels: number };
+  calls: { logins: (string | undefined)[]; signals: AbortSignal[]; logouts: number; cancels: number };
   end: (state: DotliAuthState) => void;
 } {
   const auth = createSyncStore<DotliAuthState>('auth-test', initial, { equals: () => false });
-  const calls = { logins: [] as (string | undefined)[], logouts: 0, cancels: 0 };
+  const calls = { logins: [] as (string | undefined)[], signals: [] as AbortSignal[], logouts: 0, cancels: 0 };
   const answer = Promise.withResolvers<undefined>();
   const commands = createAuthCommands({
     auth,
-    login: reason => {
+    login: (reason, signal) => {
       calls.logins.push(reason);
+      calls.signals.push(signal);
       return answer.promise;
     },
     logout: async () => {
@@ -459,6 +536,18 @@ function queueHarness(
 }
 
 describe('auth commands', () => {
+  it('As a user who closes the modal, the login under way hears the cancel', () => {
+    // Given
+    const core = queueHarness({ tag: 'Disconnected' });
+    void core.commands.login();
+
+    // When
+    core.commands.cancelLogin();
+
+    // Then
+    expect(core.calls.signals[0]?.aborted).toBe(true);
+  });
+
   it('As a user who clicks Sign in twice before the wallet answers, I get one pairing', async () => {
     // Given: a login waiting for the wallet
     const core = queueHarness({ tag: 'Disconnected' });
@@ -560,7 +649,7 @@ describe('auth commands', () => {
     const first = core.commands.login('first');
     core.auth.set(PAIRING);
 
-    // When: Log out, then Sign in, are pressed before the first login ends signed in
+    // When: Sign out, then Sign in, are pressed before the first login ends signed in
     const logout = core.commands.logout();
     const second = core.commands.login('second');
     core.end(CONNECTED);
@@ -623,7 +712,7 @@ describe('auth commands', () => {
     expect(core.calls.logins).toEqual([undefined]);
   });
 
-  it('As a user who presses Log out twice, the session is cleared once', async () => {
+  it('As a user who presses Sign out twice, the session is cleared once', async () => {
     // Given
     const core = queueHarness(CONNECTED);
     const first = core.commands.logout();
@@ -637,7 +726,7 @@ describe('auth commands', () => {
     expect(core.calls.logouts).toBe(1);
   });
 
-  it('As a signed-out user, Log out does nothing', async () => {
+  it('As a signed-out user, Sign out does nothing', async () => {
     // Given
     const core = queueHarness({ tag: 'Disconnected' });
 
@@ -648,7 +737,7 @@ describe('auth commands', () => {
     expect(core.calls.logouts).toBe(0);
   });
 
-  it('As a user whose logout the core refused, Log out tries again', async () => {
+  it('As a user whose logout the core refused, Sign out tries again', async () => {
     // Given: a logout that left the session in place
     const core = queueHarness(CONNECTED);
     const first = core.commands.logout();

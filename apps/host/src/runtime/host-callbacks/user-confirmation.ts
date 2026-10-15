@@ -339,11 +339,12 @@ function confirmationCopy(review: ModalReview): ConfirmationCopy {
 }
 
 function handlePreimageSubmitReview(
+  label: string,
   review: PreimageSubmitReview,
   signal: AbortSignal,
   prompts: ConfirmationPrompts,
 ): Promise<boolean> {
-  return prompts.confirmPreimage(Number(review.size), signal);
+  return prompts.confirmPreimage(label, Number(review.size), signal);
 }
 
 async function handleConfirmationReview(
@@ -367,8 +368,10 @@ function permissionDecision(decision: ConfirmationDecision): PermissionDecision 
     case 'accepted':
       return 'AllowAlways';
     case 'rejected':
-    case 'dismissed':
       return 'Deny';
+    case 'dismissed':
+      // The core keeps every answer but AllowOnce, so a dismissal rejects and the next request asks again.
+      throw new Error(ERRORS.PERMISSION_DIALOG_DISMISSED);
   }
 }
 
@@ -383,17 +386,20 @@ export function createUserConfirmationAdapters(
     confirmUserAction: review =>
       modalScope.enqueue(async signal =>
         review.tag === 'PreimageSubmit'
-          ? handlePreimageSubmitReview(review.value, signal, prompts)
+          ? handlePreimageSubmitReview(label, review.value, signal, prompts)
           : (await handleConfirmationReview(label, review, signal, false, prompts)) === 'accepted',
       ),
     // The core stores AllowAlways and Deny, and honours AllowOnce for this request only.
     confirmPermission: review =>
-      modalScope.enqueue(async signal =>
-        review.tag === 'PreimageSubmit'
-          ? (await handlePreimageSubmitReview(review.value, signal, prompts))
-            ? 'AllowOnce'
-            : 'Deny'
-          : permissionDecision(await handleConfirmationReview(label, review, signal, true, prompts)),
-      ),
+      modalScope.enqueue(async signal => {
+        if (review.tag !== 'PreimageSubmit') {
+          return permissionDecision(await handleConfirmationReview(label, review, signal, true, prompts));
+        }
+        // The dialog's Allow lasts one request, so its Cancel does too, where a Deny would be stored for good.
+        if (!(await handlePreimageSubmitReview(label, review.value, signal, prompts))) {
+          throw new Error(ERRORS.PREIMAGE_SUBMIT_CANCELLED);
+        }
+        return 'AllowOnce';
+      }),
   };
 }

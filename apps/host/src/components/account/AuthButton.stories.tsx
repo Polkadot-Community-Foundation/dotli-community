@@ -52,7 +52,7 @@ function StoryButton(props: { idPrefix?: string; showName?: boolean }): JSX.Elem
 /** Everything the button carries apart from styling, logged out or logged in. */
 async function expectButton(state: 'logged-out' | { initials: string | undefined }): Promise<void> {
   const b = button();
-  const label = state === 'logged-out' ? 'Sign in with Polkadot Mobile' : 'Account';
+  const label = state === 'logged-out' ? 'Sign in with Polkadot App' : 'Account';
   await expect(b).toHaveAttribute('title', label);
   await expect(b).toHaveAttribute(
     'aria-label',
@@ -121,7 +121,7 @@ export const Open: Story = {
       await expect(popover).toHaveAttribute('tabindex', '-1');
       await expectAccount('Alice Smith', false);
       await expect(popover.querySelector('[data-testid="account-content"]')).toHaveTextContent(/^ASWelcome back/);
-      await expect(byId('user-popover-disconnect')).toHaveTextContent('Log out');
+      await expect(byId('user-popover-disconnect')).toHaveTextContent('Sign out');
       await expect(document.querySelector('[data-testid="account-local"]')).toBeNull();
     });
   },
@@ -166,7 +166,7 @@ export const LocalWallet: Story = {
   },
 };
 
-/** As a logged-out user in the bar, I see an enabled Sign in button named for Polkadot Mobile. */
+/** As a logged-out user in the bar, I see an enabled Sign in button named for Polkadot App. */
 export const LoggedOut: Story = {
   tags: ['!autodocs'],
   beforeEach: () => {
@@ -340,7 +340,7 @@ export const MarkupName: Story = {
   },
 };
 
-/** As a user restored from a bare session, my account says I am connected with Polkadot Mobile. */
+/** As a user restored from a bare session, my account says I am connected with Polkadot App. */
 export const BareSession: Story = {
   tags: ['!autodocs'],
   beforeEach: () => {
@@ -348,13 +348,13 @@ export const BareSession: Story = {
   },
   play: async ctx => {
     await open(ctx);
-    await ctx.step('Then it says Connected with Polkadot Mobile, with the hint', async () => {
-      await expectAccount('Connected with Polkadot Mobile', true);
+    await ctx.step('Then it says Connected with Polkadot App, with the hint', async () => {
+      await expectAccount('Connected with Polkadot App', true);
     });
   },
 };
 
-/** As a local wallet user restored from a bare session, my account says I am connected, not through Polkadot Mobile. */
+/** As a local wallet user restored from a bare session, my account says I am connected, not through Polkadot App. */
 export const LocalBareSession: Story = {
   tags: ['!autodocs'],
   beforeEach: () => {
@@ -389,15 +389,15 @@ export const LoggedOutNoHint: Story = {
   },
 };
 
-/** As a logged-in user, Log out requests a disconnect and closes the popover. */
-export const LogOutClosesPopover: Story = {
+/** As a logged-in user, Sign out requests a disconnect and closes the popover. */
+export const SignOutClosesPopover: Story = {
   tags: ['!autodocs'],
   beforeEach: () => {
     connect(PG);
   },
   play: async ctx => {
     await open(ctx);
-    await ctx.step('When I press Log out', async () => {
+    await ctx.step('When I press Sign out', async () => {
       await ctx.userEvent.click(byId('user-popover-disconnect'));
     });
     await ctx.step('Then one logout was asked for, no login, and the popover closed', async () => {
@@ -416,7 +416,7 @@ export const SessionDropReturnsFocus: Story = {
   },
   play: async ctx => {
     await open(ctx);
-    await ctx.step('Given focus on Log out', () => {
+    await ctx.step('Given focus on Sign out', () => {
       byId('user-popover-disconnect').focus();
     });
     await ctx.step('When the session drops', () => {

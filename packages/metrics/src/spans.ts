@@ -161,6 +161,12 @@ export const WALLET_CORE_REDIAL = 'wallet.core_redial';
  */
 export const PRODUCT_RERENDER = 'product.rerender';
 
+/**
+ * A frame on the topbar login's own connection that the login skipped and survived. Tagged `outcome` (error) and
+ * `reason` (`undecodable_frame`, a frame that did not decode, counted once per login).
+ */
+export const WALLET_LOGIN_FRAME = 'wallet.login_frame';
+
 /** A topbar logout of a paired session. Tagged `outcome` and, on error, `reason`, as a failed one leaves the user in. */
 export const WALLET_LOGOUT = 'wallet.logout';
 
@@ -246,3 +252,34 @@ export const LAZY_CHUNK_LOAD = 'lazy_chunk.load';
 
 /** One flush of buffered telemetry before a context closes. Counted only when the flush threw, tagged `outcome` and `reason` (the error's name). */
 export const TELEMETRY_FLUSH = 'telemetry.flush';
+
+/**
+ * The at-rest key of the core's secret slots. Tagged `outcome` (error) and `reason`: `ephemeral_key` when IndexedDB
+ * cannot keep it, so this session's secrets will not decrypt after a reload, or `undecryptable` for a slot dropped
+ * because it no longer decrypts.
+ */
+export const CORE_STORAGE_SECRET = 'core_storage.secret';
+
+/**
+ * A read of a product's storage for its subscription that failed. Tagged `outcome` (error) and `reason` (the error's
+ * name), as the product then hears only a read failure.
+ */
+export const PRODUCT_STORAGE_WATCH = 'product_storage.watch';
+
+/**
+ * One write of a mode setting shared across subdomains. Tagged `outcome` and, on error, `reason`, as a failed one leaves
+ * the other subdomains on the old setting.
+ */
+export const SHARED_MODE_WRITE = 'shared_mode.write';
+
+/**
+ * One preimage lookup a product asked for. Tagged `outcome` and, on error, `reason`: `fetch` once per lookup whose
+ * backend keeps failing while the poll retries, or `mismatch` for bytes that do not hash to the key.
+ */
+export const PREIMAGE_LOOKUP = 'preimage.lookup';
+
+/**
+ * A new lease on a host chain after its transport halted. Tagged `outcome` and, on error, `reason`: `no_transport` when
+ * the backend no longer serves the chain, `halted` when the new lease halted at once, or the error's name.
+ */
+export const TRUAPI_CHAIN_REOPEN = 'truapi_chain.reopen';

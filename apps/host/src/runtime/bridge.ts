@@ -6,18 +6,19 @@
 
 import { m, spans as S } from '@dotli/metrics';
 import { hostPrompts } from '../page-prompts.js';
-import { loadLocalWalletCore } from '../lazy.js';
+import { loadHostRuntimeChunk, loadLocalWalletCore } from '../lazy.js';
 import { pageNotifications } from '../page-notifications.js';
 import { productFrameContainer, productFrameView } from '../product-frame-view.js';
 import { recordBestBlock, recordChainActivity } from '../state/network-monitor.js';
 import { createBridge } from './create-bridge.js';
 import { createCoreRuntimeBoot } from './core-runtime.js';
+import { createRuntimeLoader } from './runtime-loader.js';
 import { watchHostChains } from './host-callbacks/chain.js';
+import { pagePermissions, productPermissions } from './page-permissions.js';
 import { onStoredSessionChanged } from './session/core-storage.js';
 import { createHostCallbacks } from './host-callbacks/handlers.js';
 import { sessionState } from './session/session-state.js';
 import { authStore } from './state/auth.js';
-import { onPermissionsChanged } from './state/product-permissions.js';
 import { getWalletMode } from './state/wallet-mode.js';
 import { readWalletBoot } from './wallet-boot.js';
 import { walletSwitch } from './wallet-switch.js';
@@ -30,17 +31,16 @@ export { startSessionState } from './session/session-state.js';
 // Started with debug mode from the boot chunk, which must not import the codecs this file already carries.
 export { preloadWireDescriber } from './core-connection.js';
 
-// Preloaded so they are ready when the first product renders.
-const chunkLoadStart = performance.now();
-const runtimeChunkPromise = Promise.all([
-  import('@parity/truapi-host/web'),
-  import('@parity/truapi-host/worker-runtime?worker'),
-]).then(([web]) => {
+// One load serves the frame and every core.
+const hostRuntime = createRuntimeLoader(async () => {
+  const chunkLoadStart = performance.now();
+  const runtime = await loadHostRuntimeChunk();
   m.measure(S.BRIDGE_CHUNK_LOAD, performance.now() - chunkLoadStart);
-  return { createIframeHost: web.createIframeHost };
+  return runtime;
 });
-void runtimeChunkPromise.catch(() => {
-  // The render that awaits it reports the failure.
+// Preloaded so it is ready when the first product renders.
+void hostRuntime().catch(() => {
+  // The render or the core boot that asks next loads it again and reports its own failure.
 });
 
 // Each core boots on the wallet read from the shared store and the published host runtime, with callbacks that ask
@@ -48,14 +48,16 @@ void runtimeChunkPromise.catch(() => {
 const bootRuntime = createCoreRuntimeBoot({
   readWallet: readWalletBoot,
   loadHostRuntime: async () => {
-    const [web, worker] = await Promise.all([
-      import('@parity/truapi-host/web'),
-      import('@parity/truapi-host/worker-runtime?worker'),
-    ]);
-    return { createWebWorkerPairingHostRuntime: web.createWebWorkerPairingHostRuntime, HostWorker: worker.default };
+    const { web, HostWorker } = await hostRuntime();
+    return { createWebWorkerPairingHostRuntime: web.createWebWorkerPairingHostRuntime, HostWorker };
   },
   createCallbacks: options =>
-    createHostCallbacks({ ...options, prompts: hostPrompts, notifications: pageNotifications() }),
+    createHostCallbacks({
+      ...options,
+      prompts: hostPrompts,
+      notifications: pageNotifications(),
+      permissions: { registry: pagePermissions, product: productPermissions },
+    }),
   loadLocalWalletCore,
 });
 
@@ -63,8 +65,9 @@ export const { initBridge, setPageProduct, startProductFrame, authCommands } = c
   bootRuntime,
   onStoredSessionChanged,
   createIframeHost: async options =>
-    (await runtimeChunkPromise).createIframeHost({ ...options, container: productFrameContainer() }),
-  onPermissionsChanged,
+    (await hostRuntime()).web.createIframeHost({ ...options, container: productFrameContainer() }),
+  onPermissionsChanged: productPermissions.onChanged,
+  permissions: pagePermissions,
   frameView: productFrameView,
   notify: hostPrompts.notify,
   watchChains: () => {

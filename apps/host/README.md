@@ -44,14 +44,20 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
   apart from the TrUAPI host callbacks. State the runtime reads or writes (auth, product, permissions, theme, wallet
   mode) lives with the runtime, and the page chrome's own state (topbar, URL pill, chat panel, network) lives with the
   page.
+- The page builds one route to the core's permission store and one permissions store over it. The product frame and the
+  permission prompts get both, the menu reads the store and the diagnostics read the route. A product's newest
+  connection answers.
 - The auth controller drives the sign-in modal by writing its store. It holds the blocking-modal lease while the modal
   is up, so one blocking prompt shows at a time.
 - The toasts and dialogs are one idle island on each page. What boot queues before it hydrates shows once it does.
 - Components are imported where they are used. The startup size budgets in CI guard what each page loads first.
 - The bridge, and what a visit may never open, load on demand through a lazy loader, each in its own chunk: the bridge,
   the panel bodies (chat, account, chains, permissions, settings), the violation panel, the debug panel and its wire
-  describer, the local wallet and workbox. The small pieces of a product load (branding, the cache check, the failure
-  screen, the verification tooltip) are plain imports.
+  describer, the local wallet and workbox, the host runtime and its worker, the chain client and the QR encoder. The
+  small pieces of a product load (branding, the cache check, the failure screen, the verification tooltip) are plain
+  imports.
+- The host runtime loads once and serves the frame and every core. A failed load is forgotten, so the next caller, a
+  sign-in Retry for one, loads it again without a page reload.
 - The error page and the no-content page replace the page's content at once, through the shared screen owner. A
   full-page screen ends the loading screen and the landing islands, and the product frame takes the screen down when it
   shows.
