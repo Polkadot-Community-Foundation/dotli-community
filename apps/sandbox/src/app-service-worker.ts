@@ -7,9 +7,8 @@
 /// <reference lib="webworker" />
 
 import { idbRequest, idbTransaction, openIdb } from '@dotli/shared';
-import { injectSandboxChecker } from './inject-checker.js';
+import type { SetArchiveMessage } from './archive-handoff.js';
 import { getMimeType } from './mime.js';
-import stripAppPrefixScript from './head/strip-app-prefix.js?inline-script';
 
 // The page reads it through `GET_SW_VERSION` to detect a stale worker. A build inlines it as a literal, so the worker's
 // bytes change between releases and the browser never skips the update as byte-identical.
@@ -21,6 +20,19 @@ function hasExtension(path: string): boolean {
   return lastDot > lastSlash;
 }
 
+/** The archive path a request names, or null when its escapes do not decode, so it names no archive file. */
+function archivePath(pathname: string, base: string): string | null {
+  const relative = pathname.startsWith(base) ? pathname.slice(base.length) : pathname.slice(1);
+  try {
+    return decodeURIComponent(relative);
+  } catch (err) {
+    if (err instanceof URIError) {
+      return null;
+    }
+    throw err;
+  }
+}
+
 // The browser stops an idle worker after about 30s, so the archive is also kept in IndexedDB and read back on the
 // first fetch after a restart.
 
@@ -29,6 +41,14 @@ type ArchiveIndex = { p: string; o: number; l: number }[];
 interface PersistedArchive {
   packed: ArrayBuffer;
   index: ArchiveIndex;
+  /** Absent in an archive a worker from the previous release kept. */
+  directory?: string;
+}
+
+/** The archive's files and the directory of the path its page is written at, replaced together by each handoff. */
+interface ServedArchive {
+  files: Record<string, ArrayBuffer>;
+  directory: string;
 }
 
 const ARCHIVE_DB_NAME = 'dotli-app-sw';
@@ -93,14 +113,20 @@ export interface AppServiceWorkerDeps {
   /** The origin's storage, which outlives the worker across idle restarts. */
   indexedDB: IDBFactory;
   fetch: typeof fetch;
+  /** The dev server serves the sandbox's own modules under `src/`, `@` paths and `node_modules/`. */
+  devServer: boolean;
 }
 
 /** Serves the archive the page hands it, from this scope's events. Each call is a fresh worker start. */
-export function startAppServiceWorker({ scope, indexedDB, fetch: fetchFromNetwork }: AppServiceWorkerDeps): void {
+export function startAppServiceWorker({
+  scope,
+  indexedDB,
+  fetch: fetchFromNetwork,
+  devServer,
+}: AppServiceWorkerDeps): void {
   const BASE = scope.location.pathname.replace(/(?:src\/)?app-sw\.[jt]s$/, '');
-  const DOTLI_APP_PREFIX = `${BASE}dotli-app/`;
 
-  let servedFiles: Record<string, ArrayBuffer> | null = null;
+  let served: ServedArchive | null = null;
 
   /** Started by the first fetch that finds no archive in memory. */
   let restoring: Promise<void> | null = null;
@@ -116,7 +142,7 @@ export function startAppServiceWorker({ scope, indexedDB, fetch: fetchFromNetwor
           return;
         }
         // A SET_ARCHIVE that landed while the read was in flight is newer.
-        servedFiles ??= unpackArchive(archive.packed, archive.index);
+        served ??= { files: unpackArchive(archive.packed, archive.index), directory: archive.directory ?? BASE };
       },
       (err: unknown) => {
         // eslint-disable-next-line no-console -- the worker has no logger, and the page reports the failure
@@ -135,11 +161,11 @@ export function startAppServiceWorker({ scope, indexedDB, fetch: fetchFromNetwor
   }
 
   function hasArchive(): boolean {
-    return servedFiles !== null;
+    return served !== null;
   }
 
   function getFile(path: string): ArrayBuffer | undefined {
-    return servedFiles !== null && Object.hasOwn(servedFiles, path) ? servedFiles[path] : undefined;
+    return served !== null && Object.hasOwn(served.files, path) ? served.files[path] : undefined;
   }
 
   scope.addEventListener('install', () => {
@@ -187,18 +213,19 @@ export function startAppServiceWorker({ scope, indexedDB, fetch: fetchFromNetwor
       };
 
       // An ACK without a payload would leave the sender looping forever against an empty SW.
-      const packed = data['packed'] as ArrayBuffer | undefined;
-      const idx = data['index'] as ArchiveIndex | undefined;
+      const { packed, index: idx, directory: sent } = data as Partial<SetArchiveMessage>;
 
       if (packed === undefined || idx === undefined) {
         reply({ type: 'ARCHIVE_ERROR', reason: 'SET_ARCHIVE missing packed/index payload' });
         return;
       }
 
-      servedFiles = unpackArchive(packed, idx);
+      // A page from the previous release names no directory, and its page needs no remap.
+      const directory = typeof sent === 'string' ? sent : BASE;
+      served = { files: unpackArchive(packed, idx), directory };
       // The write matters only to the next instance, so it does not hold up the ACK. `waitUntil` keeps this one alive.
       event.waitUntil(
-        persistArchive(indexedDB, { packed, index: idx }).catch((err: unknown) => {
+        persistArchive(indexedDB, { packed, index: idx, directory }).catch((err: unknown) => {
           // eslint-disable-next-line no-console -- the worker has no logger, and the page reports the failure
           console.error('Failed to persist the archive; a restarted worker will not serve it:', err);
           if (sender !== null) {
@@ -217,75 +244,72 @@ export function startAppServiceWorker({ scope, indexedDB, fetch: fetchFromNetwor
       return;
     }
 
-    // SW infrastructure goes to the network. An archive that ships its own `node_modules/` is not served from it.
+    // The sandbox page and this worker come from the network. So does every navigation, since the page writes the
+    // product's index.html into its own window. On the dev server the sandbox's own modules do too.
     if (
+      event.request.mode === 'navigate' ||
       url.pathname === BASE ||
       url.pathname === BASE.slice(0, -1) ||
       url.pathname === `${BASE}app-sw.js` ||
-      url.pathname.startsWith(`${BASE}src/`) ||
-      url.pathname.startsWith(`${BASE}node_modules/`) ||
-      url.pathname.startsWith(`${BASE}@`)
+      (devServer &&
+        (url.pathname.startsWith(`${BASE}src/`) ||
+          url.pathname.startsWith(`${BASE}node_modules/`) ||
+          url.pathname.startsWith(`${BASE}@`)))
     ) {
       return;
     }
 
-    if (event.request.mode === 'navigate' && !url.pathname.startsWith(DOTLI_APP_PREFIX)) {
-      return;
-    }
+    const { request } = event;
 
     if (hasArchive()) {
-      const result = lookupArchive(url.pathname, event.request.mode);
-      if (result !== null) {
-        event.respondWith(result);
+      const found = lookupArchive(url.pathname) ?? lookupUnderPageDirectory(url.pathname);
+      if (found !== null) {
+        event.respondWith(found);
       }
       return;
     }
 
     if (nothingPersisted) {
-      const result = noArchiveResponse(url.pathname);
-      if (result !== null) {
-        event.respondWith(result);
-      }
       return;
     }
 
     // A restarted worker reads the archive back first, since nginx answers every path with the shell as `text/html`.
-    const { request } = event;
     event.respondWith(
-      restoreArchive().then(
-        () =>
-          (hasArchive() ? lookupArchive(url.pathname, request.mode) : noArchiveResponse(url.pathname)) ??
-          fetchFromNetwork(request),
-      ),
+      restoreArchive().then(() => {
+        if (!hasArchive()) {
+          return fetchFromNetwork(request);
+        }
+        return lookupArchive(url.pathname) ?? lookupUnderPageDirectory(url.pathname) ?? fetchFromNetwork(request);
+      }),
     );
   });
 
   /**
-   * App paths get a 503 rather than nginx's shell HTML under the wrong MIME type. `null` lets the sandbox's own assets
-   * reach the network.
+   * The archive file a request means once the page's directory is read as the archive root.
+   *
+   * The page is written at the URL the visitor opened, so below the root a relative URL resolves under the page's
+   * directory, while the archive holds every file from its root. The directory is the one the page was written at, not
+   * the requester's current URL: a product's router moves its page elsewhere, and a product's worker is open at its own
+   * script's path, yet both still ask for files under the written directory.
    */
-  function noArchiveResponse(pathname: string): Response | null {
-    if (!pathname.startsWith(DOTLI_APP_PREFIX)) {
+  function lookupUnderPageDirectory(pathname: string): Response | null {
+    const directory = served?.directory ?? BASE;
+    if (directory.length <= BASE.length || !directory.startsWith(BASE) || !pathname.startsWith(directory)) {
       return null;
     }
-    return new Response(null, {
-      status: 503,
-      statusText: 'App archive not yet loaded',
-    });
+    return lookupArchive(BASE + pathname.slice(directory.length));
   }
 
   /**
    * `null` means the path is not the archive's and must reach the network: the origin also serves the shell's own
    * assets, and a 404 for them strands a refresh on the loader.
    */
-  function lookupArchive(pathname: string, requestMode: RequestMode): Response | null {
-    let filePath = pathname.startsWith(DOTLI_APP_PREFIX)
-      ? pathname.slice(DOTLI_APP_PREFIX.length)
-      : pathname.startsWith(BASE)
-        ? pathname.slice(BASE.length)
-        : pathname.slice(1);
-
-    filePath = decodeURIComponent(filePath);
+  function lookupArchive(pathname: string): Response | null {
+    const decoded = archivePath(pathname, BASE);
+    if (decoded === null) {
+      return null;
+    }
+    let filePath = decoded;
 
     let content = getFile(filePath);
 
@@ -311,34 +335,11 @@ export function startAppServiceWorker({ scope, indexedDB, fetch: fetchFromNetwor
       }
     }
 
-    if (content !== undefined) {
-      const mime = getMimeType(filePath);
-      if (mime === 'text/html') {
-        if (pathname === `${DOTLI_APP_PREFIX}index.html` || pathname === DOTLI_APP_PREFIX) {
-          return makePrimaryHtmlResponse(content, mime);
-        }
-        return makeHtmlResponse(content, mime, DOTLI_APP_PREFIX);
-      }
-      return new Response(content, archiveResponseInit(mime));
+    if (content === undefined) {
+      return null;
     }
-
-    // Only navigations fall back to the SPA index, so shell assets still reach nginx.
-    if (requestMode === 'navigate') {
-      const indexHtml = getFile('index.html');
-      if (!hasExtension(filePath) && indexHtml !== undefined) {
-        return makeHtmlResponse(indexHtml, 'text/html', DOTLI_APP_PREFIX);
-      }
-    }
-
-    return null;
+    return new Response(content, archiveResponseInit(getMimeType(filePath)));
   }
-}
-
-function injectSandboxScript(html: string): string {
-  if (import.meta.env.VITE_SANDBOX_CHECKER !== 'true') {
-    return html;
-  }
-  return injectSandboxChecker(html);
 }
 
 /** One source, so a new header lands on every served body. */
@@ -351,23 +352,4 @@ function archiveResponseInit(mime: string): ResponseInit {
       'Cache-Control': 'no-cache',
     },
   };
-}
-
-/** No base href or prefix stripping, which only sub-pages need. */
-function makePrimaryHtmlResponse(content: ArrayBuffer | Uint8Array, mime: string): Response {
-  let html = new TextDecoder().decode(content);
-  html = injectSandboxScript(html);
-  return new Response(new TextEncoder().encode(html), archiveResponseInit(mime));
-}
-
-function makeHtmlResponse(content: ArrayBuffer | Uint8Array, mime: string, appPrefix: string): Response {
-  let html = new TextDecoder().decode(content);
-  const prefixNoSlash = appPrefix.slice(0, -1);
-  // A replacer function, so no `$` pattern in the script is read as a replacement pattern.
-  html = html.replace(
-    '<head>',
-    () => `<head><base href="${appPrefix}"><script data-prefix="${prefixNoSlash}">${stripAppPrefixScript}</script>`,
-  );
-  html = injectSandboxScript(html);
-  return new Response(new TextEncoder().encode(html), archiveResponseInit(mime));
 }

@@ -34,8 +34,9 @@ export interface SandboxBlockRelayDeps {
   /** Null when the settings skip the archive cache. */
   cache: BlockCache | null;
   /**
-   * Whether the bytes hash to the CID. A rejection leaves that unknown, so nothing unverified is trusted or written, and
-   * a cached copy is kept for a verifier that loads later. The verifier reports why it could not run.
+   * Whether the bytes hash to the CID. This relay is the one check of every block on its path. A rejection leaves the
+   * answer unknown, so the block is not served or written, and a cached copy is kept for a verifier that loads later.
+   * The verifier reports why it could not run.
    */
   verify: (cid: string, bytes: Uint8Array) => Promise<boolean>;
   /** The clock the transfer speed is measured on. */
@@ -52,7 +53,7 @@ export interface SandboxBlockRelay {
 }
 
 /** `unknown` when the verifier could not run, which says nothing about the bytes. */
-type Verdict = 'match' | 'mismatch' | 'unknown';
+type Verdict = { kind: 'match' } | { kind: 'mismatch' } | { kind: 'unknown'; cause: unknown };
 
 interface ServedBlock {
   bytes: Uint8Array;
@@ -90,9 +91,8 @@ export function createSandboxBlockRelay(deps: SandboxBlockRelayDeps): SandboxBlo
   const servedListeners = createListenerSet<BlockOrigin>({
     onListenerError: reportListener('content', 'bitswap_relay.served'),
   });
-  let bytesFetched = 0;
-  let totalBytes: number | null = null;
-  let firstBlockAt: number | null = null;
+  /** The running load's count. A walk asks for its root first and only once, so the root asked again is a new load. */
+  let load: { root: string; totalBytes: number | null; bytesFetched: number; startedAt: number } | null = null;
   /**
    * Live fetches per frame, then per id, so a sandbox can abort its own on `pagehide`. Keyed by frame because ids
    * restart at 1 in each frame. A frame is the id it sends together with its origin, since its abort arrives after it
@@ -106,26 +106,29 @@ export function createSandboxBlockRelay(deps: SandboxBlockRelayDeps): SandboxBlo
     return frame === undefined ? source : `${origin} ${frame}`;
   }
 
-  function noteBlock({ bytes, from }: ServedBlock): void {
-    if (firstBlockAt === null) {
-      firstBlockAt = now();
-      totalBytes = readDagTotal(bytes);
+  function noteBlock(cid: string, { bytes, from }: ServedBlock): void {
+    // A retry in the sandbox, or a frame the host rendered again, walks from the root again and counts from zero.
+    if (load === null || cid === load.root) {
+      load = { root: cid, totalBytes: readDagTotal(bytes), bytesFetched: 0, startedAt: now() };
     }
-    bytesFetched += bytes.length;
-    const elapsed = now() - firstBlockAt;
-    const progress = { bytesFetched, totalBytes, bytesPerSecond: elapsed > 0 ? (bytesFetched / elapsed) * 1000 : 0 };
-    progressListeners.emit(progress);
+    load.bytesFetched += bytes.length;
+    const elapsed = now() - load.startedAt;
+    progressListeners.emit({
+      bytesFetched: load.bytesFetched,
+      totalBytes: load.totalBytes,
+      bytesPerSecond: elapsed > 0 ? (load.bytesFetched / elapsed) * 1000 : 0,
+    });
     servedListeners.emit(from);
   }
 
   async function check(cid: string, bytes: Uint8Array): Promise<Verdict> {
     try {
-      return (await deps.verify(cid, bytes)) ? 'match' : 'mismatch';
+      return (await deps.verify(cid, bytes)) ? { kind: 'match' } : { kind: 'mismatch' };
     } catch (err) {
       // The verifier reported why it could not run, so each block it leaves unchecked is a breadcrumb and a count.
       recordExpected(err, { flow: 'content', step: 'relay_verify' });
       m.count(S.CONTENT_BLOCK_RELAY, { outcome: 'error', reason: errorName(err) ?? 'unknown', step: 'verify' });
-      return 'unknown';
+      return { kind: 'unknown', cause: err };
     }
   }
 
@@ -141,11 +144,11 @@ export function createSandboxBlockRelay(deps: SandboxBlockRelayDeps): SandboxBlo
       return null;
     }
     const verdict = await check(cid, bytes);
-    if (verdict === 'match') {
+    if (verdict.kind === 'match') {
       return bytes;
     }
     // Unverified, so this read goes to the network, and the copy waits for a verifier that loads.
-    if (verdict === 'unknown') {
+    if (verdict.kind === 'unknown') {
       return null;
     }
     // Corrupted on disk. Dropped so the network copy takes its place.
@@ -165,13 +168,19 @@ export function createSandboxBlockRelay(deps: SandboxBlockRelayDeps): SandboxBlo
     const bytes = await blocks(cid, signal);
     // The sandbox re-hashes only the root block, so this is the check for every other block a peer sends.
     const verdict = await check(cid, bytes);
-    if (verdict === 'mismatch') {
+    if (verdict.kind === 'mismatch') {
       const err = named(new Error(`Block ${cid} does not hash to its CID`), VERIFICATION_ERROR);
       reportRelayFailure('verify', err, cid, 'mismatch');
       throw err;
     }
-    // An unknown verdict is served, since the verifier could not run, but never kept.
-    if (cache !== null && verdict === 'match') {
+    // Fail closed. The verifier already reported why it could not run, so this refusal is not reported again.
+    if (verdict.kind === 'unknown') {
+      throw named(
+        new Error(`Block ${cid} could not be checked against its CID`, { cause: verdict.cause }),
+        VERIFICATION_ERROR,
+      );
+    }
+    if (cache !== null) {
       // The reply detaches `bytes.buffer` before the IndexedDB write clones it.
       void cache.put(cid, bytes.slice()).catch((err: unknown) => {
         reportRelayFailure('cache_write', err);
@@ -222,7 +231,7 @@ export function createSandboxBlockRelay(deps: SandboxBlockRelayDeps): SandboxBlo
         }
       })
       .then(served => {
-        noteBlock(served);
+        noteBlock(data.cid, served);
         const reply: BitswapResultMessage = {
           type: 'dotli:bitswap-result',
           id: data.id,

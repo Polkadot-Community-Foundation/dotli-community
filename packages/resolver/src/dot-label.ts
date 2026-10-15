@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * A dotNS label. Callers normalize and lowercase user input first, because folding here would hide input
+ * A dotNS label. Callers lowercase user input first, because folding here would hide input
  * that disagrees with the registered form.
  */
 const DOT_LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -11,7 +11,15 @@ export type DotLabelResult =
   | { ok: true }
   | {
       ok: false;
-      reason: 'empty' | 'too-long' | 'uppercase' | 'leading-hyphen' | 'trailing-hyphen' | 'invalid-char' | 'non-ascii';
+      reason:
+        | 'empty'
+        | 'too-long'
+        | 'uppercase'
+        | 'leading-hyphen'
+        | 'trailing-hyphen'
+        | 'invalid-char'
+        | 'non-ascii'
+        | 'punycode';
     };
 
 export function validateDotLabel(label: string): DotLabelResult {
@@ -27,6 +35,10 @@ export function validateDotLabel(label: string): DotLabelResult {
   // eslint-disable-next-line no-control-regex -- the range covers all of ASCII, NUL included.
   if (/[^\x00-\x7f]/.test(label)) {
     return { ok: false, reason: 'non-ascii' };
+  }
+  // A punycode label can spell a name in letters that only look like another name's.
+  if (label.startsWith('xn--')) {
+    return { ok: false, reason: 'punycode' };
   }
   if (label.startsWith('-')) {
     return { ok: false, reason: 'leading-hyphen' };

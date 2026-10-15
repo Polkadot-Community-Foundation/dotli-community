@@ -34,7 +34,7 @@ interface Origin {
 }
 
 /** A fresh worker over the origin's existing storage. A second call is Chrome restarting a stopped idle worker. */
-function startWorker(origin: Origin): WorkerScope {
+function startWorker(origin: Origin, devServer = false): WorkerScope {
   const scope = Object.assign(new EventTarget(), {
     location: new URL(`${ORIGIN}/app-sw.js`),
     skipWaiting: () => Promise.resolve(),
@@ -53,12 +53,19 @@ function startWorker(origin: Origin): WorkerScope {
         ]),
     },
   });
-  startAppServiceWorker({ scope: scope as unknown as AppServiceWorkerDeps['scope'], ...origin });
+  startAppServiceWorker({
+    scope: scope as unknown as AppServiceWorkerDeps['scope'],
+    ...origin,
+    devServer,
+  });
   return scope;
 }
 
-/** Hands over an archive as the sandbox page does, and waits for every write the worker keeps alive. */
-async function setArchive(scope: WorkerScope, files: Record<string, string>): Promise<unknown[]> {
+/**
+ * Hands over an archive as the sandbox page does, and waits for every write the worker keeps alive. `directory` is
+ * the directory of the path the page writes the product at.
+ */
+async function setArchive(scope: WorkerScope, files: Record<string, string>, directory = '/'): Promise<unknown[]> {
   const encoder = new TextEncoder();
   const { packed, index } = packArchive(
     Object.fromEntries(Object.entries(files).map(([path, text]) => [path, encoder.encode(text)])),
@@ -66,7 +73,7 @@ async function setArchive(scope: WorkerScope, files: Record<string, string>): Pr
   const replies: unknown[] = [];
   const kept: Promise<unknown>[] = [];
   const event = Object.assign(new Event('message'), {
-    data: { type: 'SET_ARCHIVE', packed, index },
+    data: { type: 'SET_ARCHIVE', packed, index, directory },
     ports: [],
     source: {
       postMessage: (message: unknown) => {
@@ -165,10 +172,10 @@ function quotaAbortingIndexedDb(): IDBFactory {
 }
 
 /** `undefined` means the worker let the request through to the network. */
-async function request(scope: WorkerScope, path: string): Promise<Response | undefined> {
+async function request(scope: WorkerScope, path: string, mode: RequestMode = 'no-cors'): Promise<Response | undefined> {
   let answer: Response | Promise<Response> | undefined;
   const event = Object.assign(new Event('fetch'), {
-    request: { url: `${ORIGIN}${path}`, mode: 'no-cors' },
+    request: { url: `${ORIGIN}${path}`, mode },
     respondWith: (response: Response | Promise<Response>) => {
       answer = response;
     },
@@ -259,12 +266,10 @@ describe('app service worker', () => {
 
     // When
     const shellAsset = await request(scope, '/assets/index.js');
-    const appPath = await request(scope, '/dotli-app/main.js');
 
     // Then
     expect(await shellAsset?.text()).toBe('<!doctype html>shell');
     expect(network).toHaveBeenCalledOnce();
-    expect(appPath?.status).toBe(503);
   });
 
   it('As an operator, an archive the worker could not keep for its next restart is reported to the page', async () => {
@@ -311,10 +316,10 @@ describe('app service worker', () => {
     const reported = nextPageMessage();
 
     // When the app asks it for a file
-    const response = await request(scope, '/dotli-app/main.js');
+    const response = await request(scope, '/main.js');
 
-    // Then the request fails as before, and the page hears why
-    expect(response?.status).toBe(503);
+    // Then the request goes to the network, and the page hears why
+    expect(await response?.text()).toBe('<!doctype html>shell');
     await reported;
     expect(pageInbox).toEqual([
       {
@@ -324,5 +329,202 @@ describe('app service worker', () => {
         message: 'The quota has been exceeded.',
       },
     ]);
+  });
+
+  it('As a product, I fetch an HTML file from my archive and it comes back byte for byte', async () => {
+    // Given an archive holding an HTML file beside the page
+    const scope = startWorker(origin);
+    const template = '<html><head><title>part</title></head><body>part</body></html>';
+    await setArchive(scope, { 'index.html': '<html></html>', 'template.html': template });
+
+    // When the product fetches it
+    const response = await request(scope, '/template.html');
+
+    // Then it arrives typed as HTML and untouched
+    expect(response?.headers.get('Content-Type')).toBe('text/html');
+    expect(await response?.text()).toBe(template);
+  });
+
+  it('As a user, I navigate inside the product and the sandbox page loads from the network', async () => {
+    // Given an archive holding the sub-page
+    const scope = startWorker(origin);
+    await setArchive(scope, { 'index.html': '<html></html>', 'docs/index.html': '<p>docs</p>' });
+
+    // When the browser navigates to it
+    const response = await request(scope, '/docs/', 'navigate');
+
+    // Then the worker leaves it to the network
+    expect(response).toBeUndefined();
+  });
+
+  it('As a user, I request a path holding a broken escape and it reaches the network instead of failing in the worker', async () => {
+    // Given a worker holding an archive, and one restarted over it
+    const first = startWorker(origin);
+    await setArchive(first, { 'index.html': '<html></html>' });
+    const restarted = startWorker(origin);
+
+    // When each is asked for the path
+    const live = await request(first, '/bad%E0%A4%A.js');
+    const afterRestart = await request(restarted, '/bad%E0%A4%A.js');
+
+    // Then the live worker lets it through, and the restarted one fetches it
+    expect(live).toBeUndefined();
+    expect(await afterRestart?.text()).toBe('<!doctype html>shell');
+  });
+
+  it('As a product, I fetch a file whose name holds an escaped space and it is served from my archive', async () => {
+    // Given an archive holding a file with a space in its name
+    const scope = startWorker(origin);
+    await setArchive(scope, { 'index.html': '<html></html>', 'my file.js': 'spaced()' });
+
+    // When the product asks for it escaped
+    const response = await request(scope, '/my%20file.js');
+
+    // Then the worker decodes the path and serves the file
+    expect(await response?.text()).toBe('spaced()');
+  });
+
+  it('As a product that ships a src folder, I fetch its files and they come from my archive', async () => {
+    // Given an archive with a src folder and an @ path, off the dev server
+    const scope = startWorker(origin);
+    await setArchive(scope, { 'index.html': '<html></html>', 'src/main.js': 'main()', '@scope/x.js': 'x()' });
+
+    // When the product asks for both
+    const source = await request(scope, '/src/main.js');
+    const scoped = await request(scope, '/@scope/x.js');
+
+    // Then both come from the archive
+    expect(await source?.text()).toBe('main()');
+    expect(await scoped?.text()).toBe('x()');
+  });
+
+  it("As a dotli developer on the dev server, I load the sandbox's own modules and they reach the network", async () => {
+    // Given a dev server worker whose archive ships the same module path
+    const scope = startWorker(origin, true);
+    await setArchive(scope, { 'index.html': '<html></html>', 'src/main.js': 'main()' });
+
+    // When the module is asked for
+    const source = await request(scope, '/src/main.js');
+
+    // Then the worker leaves it to the network
+    expect(source).toBeUndefined();
+  });
+
+  it('As a visitor on a deep link whose product routed to another path, I load a lazy chunk and it comes from the archive root', async () => {
+    // Given a product page written at /docs/intro, with its assets at the archive root
+    const scope = startWorker(origin);
+    await setArchive(scope, { 'index.html': '<html></html>', 'assets/x.js': 'x()' }, '/docs/');
+
+    // When the product has routed its page to /settings and its script imports a chunk beside itself
+    const chunk = await request(scope, '/docs/assets/x.js');
+
+    // Then the chunk comes from the archive, typed by its own name, with no network call
+    expect(await chunk?.text()).toBe('x()');
+    expect(chunk?.headers.get('Content-Type')).toBe('application/javascript');
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("As a product on a deep link, my dedicated worker imports a module beside its own script and it comes from the archive's folder", async () => {
+    // Given a product page written at /docs/intro, whose worker script is assets/worker.js
+    const scope = startWorker(origin);
+    await setArchive(
+      scope,
+      { 'index.html': '<html></html>', 'assets/worker.js': 'work()', 'assets/lib.js': 'lib()' },
+      '/docs/',
+    );
+
+    // When the worker, open at /docs/assets/worker.js, imports ./lib.js
+    const lib = await request(scope, '/docs/assets/lib.js');
+
+    // Then the module comes from the archive's assets folder, not its root
+    expect(await lib?.text()).toBe('lib()');
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it('As a product that ships a file at the deep path itself, I request it from a deep link and get that file', async () => {
+    // Given a page written at /docs/intro, and an archive holding both the deep path and the same name at the root
+    const scope = startWorker(origin);
+    await setArchive(
+      scope,
+      { 'index.html': '<html></html>', 'docs/assets/x.js': 'deep()', 'assets/x.js': 'root()' },
+      '/docs/',
+    );
+
+    // When the page asks for the deep path
+    const response = await request(scope, '/docs/assets/x.js');
+
+    // Then the exact path wins
+    expect(await response?.text()).toBe('deep()');
+  });
+
+  it('As a product page written at the root, I request a path the archive lacks and the worker leaves it to the network', async () => {
+    // Given a page written at /intro, whose directory is the archive root itself
+    const scope = startWorker(origin);
+    await setArchive(scope, { 'index.html': '<html></html>', 'assets/x.js': 'x()' }, '/');
+
+    // When it asks for a path below a folder
+    const response = await request(scope, '/docs/assets/x.js');
+
+    // Then the worker does not answer, so the request goes to the network as it was
+    expect(response).toBeUndefined();
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it('As a visitor on a deep link after the browser restarted the idle worker, I load a relative asset and it comes from the archive root', async () => {
+    // Given a worker restarted over an archive the page, written at /docs/intro, handed to the one before it
+    await setArchive(startWorker(origin), { 'index.html': '<html></html>', 'assets/x.js': 'x()' }, '/docs/');
+    const restarted = startWorker(origin);
+
+    // When the page asks for its chunk
+    const chunk = await request(restarted, '/docs/assets/x.js');
+
+    // Then the restarted worker serves it from the archive and the directory it read back
+    expect(await chunk?.text()).toBe('x()');
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it('As a visitor who opens the product at the root after a deep link, a restarted worker no longer remaps', async () => {
+    // Given a page written at /docs/intro, then a later one written at the root, and a restart after both
+    const first = startWorker(origin);
+    await setArchive(first, { 'index.html': '<html></html>', 'assets/x.js': 'x()' }, '/docs/');
+    await setArchive(first, { 'index.html': '<html></html>', 'assets/x.js': 'x()' }, '/');
+    const restarted = startWorker(origin);
+
+    // When the page asks for a path under the old deep link
+    const response = await request(restarted, '/docs/assets/x.js');
+
+    // Then the last handoff's directory holds, so the request goes to the network as it was
+    expect(await response?.text()).toBe('<!doctype html>shell');
+    expect(network).toHaveBeenCalledOnce();
+    expect(network.mock.calls[0]?.[0]).toMatchObject({ url: `${ORIGIN}/docs/assets/x.js` });
+  });
+
+  it('As a visitor on a deep link, I navigate to a sub-path and the sandbox page loads from the network, never remapped', async () => {
+    // Given a page written at /docs/intro, and an archive holding the root file the sub-path would remap to
+    const scope = startWorker(origin);
+    await setArchive(scope, { 'index.html': '<html></html>', 'guide/index.html': '<p>guide</p>' }, '/docs/');
+
+    // When the browser navigates to the sub-path
+    const response = await request(scope, '/docs/guide/', 'navigate');
+
+    // Then the worker leaves it to the network
+    expect(response).toBeUndefined();
+  });
+
+  it('As a visitor on a deep link, I request a path with a broken escape under it and it reaches the network', async () => {
+    // Given a page written at /docs/intro, in a live worker and in one restarted over it
+    const first = startWorker(origin);
+    await setArchive(first, { 'index.html': '<html></html>' }, '/docs/');
+    const restarted = startWorker(origin);
+
+    // When each is asked for a path under the deep link whose escape does not decode
+    const live = await request(first, '/docs/bad%E0%A4%A.js');
+    const afterRestart = await request(restarted, '/docs/bad%E0%A4%A.js');
+
+    // Then the live worker lets it through, and the restarted one fetches it as it was
+    expect(live).toBeUndefined();
+    expect(await afterRestart?.text()).toBe('<!doctype html>shell');
+    expect(network).toHaveBeenCalledOnce();
+    expect(network.mock.calls[0]?.[0]).toMatchObject({ url: `${ORIGIN}/docs/bad%E0%A4%A.js` });
   });
 });

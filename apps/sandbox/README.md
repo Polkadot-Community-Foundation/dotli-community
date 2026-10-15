@@ -23,16 +23,21 @@ resolution. See the root [README](../../README.md) for the product as a whole.
 - One load fetches and verifies the content, hands an archive to the service worker and writes the page. It never
   throws, so the caller learns which step failed.
 - Blocks come from the host parent through a bridge. Progress and completion go back to the host the same way.
-- The service worker serves the archive, injects the sandbox checker and keeps the archive in IndexedDB for restarts.
-  The page side registers it and checks its version. The packed archive reaches the controlling worker by a handoff.
+- The service worker serves the archive's files byte for byte and keeps the archive in IndexedDB for restarts.
+  Navigations go to the network, since the page writes the product's index.html into its own window. A page written at a
+  deep link resolves its relative URLs under its own directory. The handoff names the directory the page is written at,
+  and the worker keeps it beside the archive, for restarts too. When a request that is not a navigation misses the
+  archive, the worker reads that directory as the archive root and looks again, whichever page or product worker asked
+  and wherever its router has moved it since. An exact match always wins, and the last handoff's directory holds. Only
+  on the dev server do the sandbox's own module paths skip the archive. The page side registers it and checks its
+  version. The packed archive reaches the controlling worker by a handoff.
 - After a load the origin's stores are purged of anything the product left behind.
 - The password dialog comes with the sandbox's own UI. Its dialogs are `ModalView` data, with an icon component, that
   the shared dialog renders.
 - The error page and the retry screen come with that chunk. A failed chunk load is not cached, so the next need loads it
   again. While it is unavailable, a failure or retry shows a message with a Reload button from the static page, which
   needs no chunk. The retry screen draws the brand's petal mark.
-- A small helper for product sub-pages is a real module that the service worker inlines as a classic script. The service
-  worker is built by the page's own config, after the page, into one file at the root.
+- The service worker is built by the page's own config, after the page, into one file at the root.
 - The checker is a real module inlined as a classic script, so it runs before any product script. Its reports use the
   violation message of the wire protocol. A normal build drops it, and the page loads the injector lazily.
 

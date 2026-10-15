@@ -57,6 +57,18 @@ describe('fetchFromIpfs', () => {
     // the CID so a report says which gateway failed on what
     await expect(fetchFromIpfs(CID, GATEWAY, fetchMock)).rejects.toThrow(`HTTP 502 from gw.example for ${CID}`);
   });
+
+  it('As a visitor, I hit a gateway that answers with an error page and its transfer is stopped, not left open', async () => {
+    // Given a gateway that answers with an error status and a body
+    fetchMock.mockResolvedValue(new Response('<h1>Bad gateway</h1>', { status: 502 }));
+
+    // When it fetches the block
+    const fetched = fetchFromIpfs(CID, GATEWAY, fetchMock);
+
+    // Then the fetch fails and the transfer it started is aborted
+    await expect(fetched).rejects.toThrow('HTTP 502');
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
 });
 
 describe('fetchCarFromIpfs', () => {
@@ -95,5 +107,58 @@ describe('fetchCarFromIpfs', () => {
     // When it fetches the archive
     // Then it rejects rather than returning a bad body, naming the gateway and the CID
     await expect(fetchCarFromIpfs(CID, GATEWAY, fetchMock)).rejects.toThrow(`HTTP 502 from gw.example for ${CID}`);
+  });
+});
+
+describe('gateway limits', () => {
+  const TIGHT = { stallMs: 1, maxBytes: 4 };
+
+  it('As a visitor, I load from a gateway that never answers and the load fails as stalled, so I can retry', async () => {
+    // Given a gateway that never sends its headers
+    fetchMock.mockReturnValue(new Promise<Response>(() => undefined));
+
+    // When the block is fetched
+    const fetched = fetchFromIpfs(CID, GATEWAY, fetchMock, TIGHT);
+
+    // Then the fetch fails as stalled
+    await expect(fetched).rejects.toMatchObject({ name: 'ContentGatewayStalledError' });
+  });
+
+  it('As a visitor, I load from a gateway that stops sending mid-body and the load fails as stalled', async () => {
+    // Given a gateway that sends one part of the body and then nothing
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+      },
+    });
+    fetchMock.mockResolvedValue(new Response(body, { status: 200 }));
+
+    // When the archive is fetched
+    const fetched = fetchCarFromIpfs(CID, GATEWAY, fetchMock, TIGHT);
+
+    // Then the fetch fails as stalled
+    await expect(fetched).rejects.toMatchObject({ name: 'ContentGatewayStalledError' });
+  });
+
+  it('As a visitor, I load a gateway response larger than the cap and it fails instead of filling memory', async () => {
+    // Given a gateway that sends more bytes than allowed
+    fetchMock.mockResolvedValue(new Response(new Uint8Array(10), { status: 200 }));
+
+    // When the archive is fetched
+    const fetched = fetchCarFromIpfs(CID, GATEWAY, fetchMock, TIGHT);
+
+    // Then the fetch fails as too large
+    await expect(fetched).rejects.toMatchObject({ name: 'ContentGatewayTooLargeError' });
+  });
+
+  it('As a visitor, I load a response within the limits and it arrives whole', async () => {
+    // Given a gateway that sends exactly as many bytes as allowed
+    fetchMock.mockResolvedValue(new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }));
+
+    // When the block is fetched
+    const { data } = await fetchFromIpfs(CID, GATEWAY, fetchMock, TIGHT);
+
+    // Then every byte arrives
+    expect(Array.from(data)).toEqual([1, 2, 3, 4]);
   });
 });
