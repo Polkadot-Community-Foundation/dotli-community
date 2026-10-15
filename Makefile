@@ -36,7 +36,7 @@ CERT_DOMAINS_dev-test     := testnet.li *.testnet.li *.app.testnet.li
 
 VALID_ENVS := polkadot paseo dev-paseo fyi-paseo dev-test
 
-RATE_LIMITED_ENVS := paseo dev-test
+RATE_LIMITED_ENVS := polkadot paseo dev-test
 
 # Cut from SENTRY_DSN, shaped https://<key>@<ingest-host>/<project-id>.
 SENTRY_DSN ?=
@@ -59,9 +59,12 @@ APT_PACKAGES := nginx libnginx-mod-http-brotli-filter libnginx-mod-http-brotli-s
 build: link-truapi-local
 	npm run build
 
-# Deploys ship the .br and .gz siblings that nginx's brotli_static and gzip_static serve.
-# --force: link-truapi-local changes node_modules, which Turbo does not hash, so a cached dist could be stale.
-build-prod: link-truapi-local
+# Deploys ship the .br and .gz siblings that nginx's brotli_static and gzip_static serve. They build against the
+# pinned @parity/truapi: `npm ci` reinstalls from the lockfile, which also drops a link left by `make build` or
+# `npm run link:truapi`. --force, because Turbo does not hash node_modules, so a dist cached from a linked build
+# would otherwise be reused.
+build-prod:
+	npm ci
 	npm run build:prod -- --force
 
 link-truapi-local:

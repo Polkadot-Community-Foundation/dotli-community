@@ -51,6 +51,18 @@ If neither is set, `make deploy` / `make provision` fails fast with a message te
 deploys do not use these: the GitHub Actions path reads `DEPLOY_HOST` / `DEPLOY_USER` from repository secrets via the
 `ci-deploy` target.
 
+CI trusts only the host key in the `DEPLOY_KNOWN_HOSTS` secret (masked in logs, so the host stays as private as
+`DEPLOY_HOST`), set for the repository, or per GitHub environment when environments deploy to different boxes. Without
+it every deploy, nginx deploy and certificate renewal stops at the trust step. Its host field must be exactly the
+`DEPLOY_HOST` secret. Take the line from a machine you trust and check its fingerprint against the box's own key before
+saving it:
+
+```sh
+ssh-keyscan -t ed25519 <DEPLOY_HOST>                             # the line to save
+ssh-keyscan -t ed25519 <DEPLOY_HOST> | ssh-keygen -lf -          # its fingerprint
+ssh <user>@<DEPLOY_HOST> 'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'  # must match
+```
+
 ## What `make provision` does
 
 `Makefile:81` chains these targets in order:
@@ -64,8 +76,9 @@ deploys do not use these: the GitHub Actions path reads `DEPLOY_HOST` / `DEPLOY_
 4. `provision-cert` — issues a Let's Encrypt cert via DNS-01 covering the apex, `*.<base>`, and `*.app.<base>`.
    `--keep-until-expiring --expand` makes re-runs cheap.
 5. `provision-renewal` — enables `certbot.timer` for auto-renewal.
-6. `deploy` — runs `npm run build:prod` on your machine, forced since a linked TrUAPI checkout is invisible to Turbo,
-   and rsyncs the `dist/` outputs into the env's web root.
+6. `deploy` — reinstalls the pinned dependencies with `npm ci`, which also drops a local TrUAPI link, runs
+   `npm run build:prod` on your machine, forced so Turbo cannot reuse a dist cached from a linked build, and rsyncs the
+   `dist/` outputs into the env's web root.
 7. `deploy-nginx` — renders `nginx/nginx.conf.template` for the env (envsubst) and installs it plus `nginx/snippets/`
    into `/etc/nginx/`, runs `nginx -t`, and reloads nginx. Preview the result with `make render-nginx ENV=<env>`.
 

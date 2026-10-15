@@ -183,8 +183,11 @@ a restart takes effect immediately. Bypass the entrypoint
 apply.
 
 Outside the container the same path is served from `$DOTLI_NETWORK` by the vite
-dev servers (via the plugin) and by `scripts/preview-server.ts`, so runtime config
-is testable without building an image:
+dev servers (via the plugin), by `scripts/preview-server.ts` and by the tarball's
+`serve.mjs`, with the container's headers: same-origin only and no CORS, since the
+config can name private RPC endpoints. Each reads the variable once at start, so a
+value that is not JSON stops the server there. Runtime config is testable without
+building an image:
 
 ```sh
 DOTLI_NETWORK='{"enabled":["previewnet"]}' npm run preview
@@ -271,6 +274,10 @@ The image is built on native runners per architecture (`linux/amd64`,
 `linux/arm64`) and joined into one manifest list. There is no macOS container
 platform — Apple Silicon runs `linux/arm64`. `latest` only moves for a real,
 non-prerelease publish, so backfilling an old tag by hand cannot repoint it.
+
+The image has no `.git`, so the workflow passes the tag's version and commit as the `RELEASE_VERSION` and
+`RELEASE_COMMIT` build arguments, and `host_version.json` and the diagnostics report the release. A local
+`docker build` without them reports the package version and `dev`. The tarball reads both from its tag checkout.
 
 ## Related
 
