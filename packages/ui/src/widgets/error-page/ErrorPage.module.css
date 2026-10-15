@@ -55,12 +55,12 @@
 }
 
 .glyph[data-warning] {
-  background: color-mix(in srgb, var(--chrome-warn) 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chrome-warn) 30%, transparent);
+  background: var(--chrome-warn-fill);
+  box-shadow: inset 0 0 0 1px var(--chrome-warn-ring);
   color: var(--chrome-warn);
 }
 
-.glyph svg {
+.glyph-icon {
   display: block;
 }
 
@@ -184,7 +184,7 @@
 }
 
 /* A caller's icon may carry its own size. */
-.retry-icon svg {
+.action-icon {
   display: block;
   width: 16px;
   height: 16px;

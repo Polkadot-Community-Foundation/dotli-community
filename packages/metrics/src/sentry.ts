@@ -151,6 +151,8 @@ export function initSentry(source: SentrySource): void {
     metrics: Sentry.metrics,
     setTag: Sentry.setTag,
     addBreadcrumb: Sentry.addBreadcrumb,
+    // The structural view keeps the parent span opaque and passes unset options as `undefined`, which the SDK's exact
+    // optional types refuse though it reads them as absent.
   } as unknown as Parameters<typeof m.bind>[0]);
   m.setDefaults({ source, env });
   const commit = import.meta.env.VITE_COMMIT_SHA;
@@ -161,7 +163,7 @@ export function initSentry(source: SentrySource): void {
 
   if ((dsn === undefined || dsn === '') && env !== 'development') {
     // eslint-disable-next-line no-console -- error reporting is off, so the console is the only place to say so
-    console.warn(`[dot.li sentry] VITE_SENTRY_DSN missing in env "${env}" — error reporting is DISABLED.`);
+    console.warn(`[dot.li sentry] VITE_SENTRY_DSN missing in env "${env}". Error reporting is DISABLED.`);
   }
 
   // Handled failures leave a breadcrumb trail in production regardless of `DEBUG`.

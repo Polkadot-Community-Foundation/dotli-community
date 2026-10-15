@@ -7,9 +7,14 @@ import type { DockPosition } from './model/dock-storage.js';
 import type { PanelSection } from './model/section-storage.js';
 import { exportFilename } from './model/export.js';
 import { PanelEffectsContext } from './effects.js';
-import { copyText } from './shared/copy.js';
+import { Announce } from './shared/Announce.js';
+import { COPY_STATUS, copyText, type CopyOutcome } from './shared/copy.js';
+import { createFlash } from './shared/flash.js';
 import { Button } from './shared/Button.js';
 import { SectionTabs } from './SectionTabs.js';
+import { CheckIcon } from './icons/CheckIcon.js';
+import { ChevronDownIcon } from './icons/ChevronDownIcon.js';
+import { ChevronUpIcon } from './icons/ChevronUpIcon.js';
 import { CloseIcon } from './icons/CloseIcon.js';
 import { CopyIcon } from './icons/CopyIcon.js';
 import { DockBottomIcon } from './icons/DockBottomIcon.js';
@@ -36,28 +41,21 @@ export function Header(props: {
   onToggleDock: () => void;
   onToggleCollapse: () => void;
 }): JSX.Element {
-  const [copyMark, setCopyMark] = createSignal<string | null>(null);
-  const [copyDisabled, setCopyDisabled] = createSignal(false);
-  const flashTimers = new Set<number>();
-  onCleanup(() => {
-    for (const id of flashTimers) {
-      window.clearTimeout(id);
-    }
-  });
-
-  const flashCopy = (mark: string): void => {
-    flush(() => {
-      setCopyMark(mark);
-      setCopyDisabled(true);
-    });
-    const id = window.setTimeout(() => {
-      flashTimers.delete(id);
+  const [copyOutcome, setCopyOutcome] = createSignal<CopyOutcome | null>(null);
+  const [copyBusy, setCopyBusy] = createSignal(false);
+  const copyFlash = createFlash<CopyOutcome>({
+    ms: COPY_FLASH_MS,
+    onChange: outcome => {
       flush(() => {
-        setCopyMark(null);
-        setCopyDisabled(false);
+        setCopyOutcome(outcome);
+        setCopyBusy(outcome !== null);
       });
-    }, COPY_FLASH_MS);
-    flashTimers.add(id);
+    },
+  });
+  onCleanup(copyFlash.dispose);
+  const copyStatus = (): string => {
+    const outcome = copyOutcome();
+    return outcome === null ? '' : COPY_STATUS[outcome];
   };
 
   const effects = useContext(PanelEffectsContext);
@@ -68,13 +66,12 @@ export function Header(props: {
 
   const copyToClipboard = (): void => {
     // Synchronous, so a rapid second click cannot start another write.
-    flush(() => setCopyDisabled(true));
-    void copyText(effects.writeClipboard, props.exportJson()).then(outcome => {
-      flashCopy(outcome === 'copied' ? '✓' : '✕');
-    });
+    flush(() => setCopyBusy(true));
+    void copyText(effects.writeClipboard, props.exportJson()).then(copyFlash.show);
   };
 
   const dockLabel = (): string => (props.dock === 'right' ? 'Dock to bottom' : 'Dock to right');
+  const collapseLabel = (): string => (props.collapsed ? 'Expand' : 'Collapse');
   const events = (): boolean => props.section === 'truapi';
   const clearable = (): boolean => events() || props.section === 'resolution';
 
@@ -107,13 +104,16 @@ export function Header(props: {
         hidden={!events()}
         title="Copy to clipboard"
         label="Copy to clipboard"
-        disabled={copyDisabled()}
+        disabled={copyBusy()}
         onClick={copyToClipboard}
       >
-        <Show when={copyMark()} fallback={<CopyIcon />}>
-          {copyMark()}
+        <Show when={copyOutcome()} fallback={<CopyIcon />}>
+          {outcome =>
+            outcome() === 'copied' ? <CheckIcon testId="td-copy-done" /> : <CloseIcon testId="td-copy-failed" />
+          }
         </Show>
       </Button>
+      <Announce testId="td-copy-status">{copyStatus()}</Announce>
       <Button
         testId="td-dock"
         icon
@@ -124,8 +124,15 @@ export function Header(props: {
       >
         {props.dock === 'right' ? <DockBottomIcon /> : <DockRightIcon />}
       </Button>
-      <Button testId="td-collapse" icon title="Collapse" onClick={props.onToggleCollapse}>
-        {props.collapsed ? '▲' : '▼'}
+      <Button
+        testId="td-collapse"
+        icon
+        title={collapseLabel()}
+        label={collapseLabel()}
+        expanded={!props.collapsed}
+        onClick={props.onToggleCollapse}
+      >
+        {props.collapsed ? <ChevronUpIcon /> : <ChevronDownIcon />}
       </Button>
       <Button testId="td-close" icon title="Hide" label="Hide" onClick={props.onExit}>
         <CloseIcon />

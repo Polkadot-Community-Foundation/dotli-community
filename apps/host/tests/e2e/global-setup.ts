@@ -127,13 +127,13 @@ function assertFreshDist(): void {
       const distMtime = statSync(distIndex).mtimeMs;
       if (distMtime < lockMtime) {
         throw new Error(
-          `apps/${app}/dist is older than package-lock.json — run \`npm run build\` from the repo root before re-running e2e.`,
+          `apps/${app}/dist is older than package-lock.json. Run \`npm run build\` from the repo root before re-running e2e.`,
         );
       }
     }
   } catch (e) {
     if (e instanceof Error && e.message.includes('ENOENT')) {
-      throw new Error('dist directories missing — run `npm run build` from the repo root before running e2e.', {
+      throw new Error('dist directories missing. Run `npm run build` from the repo root before running e2e.', {
         cause: e,
       });
     }
@@ -154,7 +154,7 @@ export default async function globalSetup(_config: FullConfig): Promise<() => Pr
     );
     process.exit(1);
   }
-  console.log(`[globalSetup] signing-host version: ${version} — pairing once.`);
+  console.log(`[globalSetup] signing-host version: ${version}, pairing once.`);
 
   await killStaleSigningHost();
 
@@ -164,6 +164,7 @@ export default async function globalSetup(_config: FullConfig): Promise<() => Pr
   });
   let lastErr: unknown = null;
 
+  // A plain loop, since the e2e setup imports no workspace runtime package.
   for (let attempt = 1; attempt <= PAIR_ATTEMPTS; attempt++) {
     try {
       const badgeTimeoutMs = attempt === 1 ? USER_BADGE_TIMEOUT_MS : RETRY_BADGE_TIMEOUT_MS;
@@ -190,6 +191,7 @@ export default async function globalSetup(_config: FullConfig): Promise<() => Pr
       lastErr = e;
       console.warn(`[globalSetup] attempt ${String(attempt)}/${String(PAIR_ATTEMPTS)} failed: ${(e as Error).message}`);
       if (attempt < PAIR_ATTEMPTS) {
+        // Gives a signing host that just failed time to release its state before the next pair.
         await new Promise(r => setTimeout(r, PAIR_ATTEMPT_BACKOFF_MS));
       }
     }

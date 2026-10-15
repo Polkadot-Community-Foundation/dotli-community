@@ -8,9 +8,9 @@ command works for the first boot and for later top-ups.
 ### Remote server
 
 - Ubuntu 24.04+ (Noble).
-- The SSH user must have **passwordless `sudo`** — the provisioning steps run `sudo` non-interactively over SSH (no
-  TTY), so a password prompt makes them fail. Either grant the user `NOPASSWD` sudo (e.g. a drop-in in
-  `/etc/sudoers.d/`), or connect as `root` directly (`REMOTE=root@<ip>`).
+- The SSH user must have **passwordless `sudo`**. The provisioning steps run `sudo` non-interactively over SSH (no TTY),
+  so a password prompt makes them fail. Either grant the user `NOPASSWD` sudo (e.g. a drop-in in `/etc/sudoers.d/`), or
+  connect as `root` directly (`REMOTE=root@<ip>`).
 - Reachable over SSH from your machine without a password (key-based auth).
 - Public IP with ports `22`, `80`, and `443` open (the firewall step opens these via `ufw`).
 
@@ -18,7 +18,7 @@ command works for the first boot and for later top-ups.
 
 - The zone for the env's base domain (e.g. `paseo.li`) managed in Cloudflare.
 - `A` / `AAAA` records pointing to the box for the apex.
-- A Cloudflare API token scoped to **Zone → DNS → Edit** on that zone.
+- A Cloudflare API token with the **Zone / DNS / Edit** permission on that zone.
 
 **Important:** The token needs to exist for all the time this is hosted as it will be required to renew the
 certificates.
@@ -51,35 +51,23 @@ If neither is set, `make deploy` / `make provision` fails fast with a message te
 deploys do not use these: the GitHub Actions path reads `DEPLOY_HOST` / `DEPLOY_USER` from repository secrets via the
 `ci-deploy` target.
 
-CI trusts only the host key in the `DEPLOY_KNOWN_HOSTS` secret (masked in logs, so the host stays as private as
-`DEPLOY_HOST`), set for the repository, or per GitHub environment when environments deploy to different boxes. Without
-it every deploy, nginx deploy and certificate renewal stops at the trust step. Its host field must be exactly the
-`DEPLOY_HOST` secret. Take the line from a machine you trust and check its fingerprint against the box's own key before
-saving it:
-
-```sh
-ssh-keyscan -t ed25519 <DEPLOY_HOST>                             # the line to save
-ssh-keyscan -t ed25519 <DEPLOY_HOST> | ssh-keygen -lf -          # its fingerprint
-ssh <user>@<DEPLOY_HOST> 'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'  # must match
-```
-
 ## What `make provision` does
 
 `Makefile:81` chains these targets in order:
 
-1. `provision-prereqs` — apt-installs nginx (with brotli modules), certbot, the Cloudflare DNS plugin, rsync, ufw, curl;
-   removes the default nginx site.
-2. `provision-firewall` — allows `OpenSSH` and `Nginx Full`, then enables `ufw`. SSH is whitelisted before enable so you
+1. `provision-prereqs`: apt-installs nginx (with brotli modules), certbot, the Cloudflare DNS plugin, rsync, ufw and
+   curl, and removes the default nginx site.
+2. `provision-firewall`: allows `OpenSSH` and `Nginx Full`, then enables `ufw`. SSH is whitelisted before enable so you
    don't lock yourself out.
-3. `provision-cloudflare-creds` — writes `/etc/letsencrypt/cloudflare.ini` (`0600`, `root:root`) from the token you pass
+3. `provision-cloudflare-creds`: writes `/etc/letsencrypt/cloudflare.ini` (`0600`, `root:root`) from the token you pass
    in.
-4. `provision-cert` — issues a Let's Encrypt cert via DNS-01 covering the apex, `*.<base>`, and `*.app.<base>`.
+4. `provision-cert`: issues a Let's Encrypt cert via DNS-01 covering the apex, `*.<base>`, and `*.app.<base>`.
    `--keep-until-expiring --expand` makes re-runs cheap.
-5. `provision-renewal` — enables `certbot.timer` for auto-renewal.
-6. `deploy` — reinstalls the pinned dependencies with `npm ci`, which also drops a local TrUAPI link, runs
+5. `provision-renewal`: enables `certbot.timer` for auto-renewal.
+6. `deploy`: reinstalls the pinned dependencies with `npm ci`, which also drops a local TrUAPI link, runs
    `npm run build:prod` on your machine, forced so Turbo cannot reuse a dist cached from a linked build, and rsyncs the
    `dist/` outputs into the env's web root.
-7. `deploy-nginx` — renders `nginx/nginx.conf.template` for the env (envsubst) and installs it plus `nginx/snippets/`
+7. `deploy-nginx`: renders `nginx/nginx.conf.template` for the env (envsubst) and installs it plus `nginx/snippets/`
    into `/etc/nginx/`, runs `nginx -t`, and reloads nginx. Preview the result with `make render-nginx ENV=<env>`.
 
 ## Run it

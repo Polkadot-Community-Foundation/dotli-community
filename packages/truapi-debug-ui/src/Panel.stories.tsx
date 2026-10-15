@@ -11,7 +11,6 @@ import {
   debugPanel,
   debugPanelBeforeEach,
   detailRows,
-  nextFrame,
   panel,
   part,
   rowByTag,
@@ -87,8 +86,10 @@ export const Default: Story = {
         await expect(part(id)).toHaveAttribute('title', title);
         await expect(part(id).querySelector('svg')).not.toBeNull();
       }
-      await expect(part('td-collapse')).toHaveTextContent('▼');
+      await expect(header.getByRole('button', { name: 'Collapse' })).toBe(part('td-collapse'));
       await expect(part('td-collapse')).toHaveAttribute('title', 'Collapse');
+      await expect(part('td-collapse')).toHaveAttribute('aria-expanded', 'true');
+      await expect(part('td-collapse').querySelector('svg')).not.toBeNull();
     });
     await step('Then the filters start wide open', async () => {
       const filters = within(part('td-filters'));
@@ -98,7 +99,8 @@ export const Default: Story = {
         ['system', true],
       ]);
       const dirs = filters.getAllByTestId('td-dir');
-      await expect(dirs.map(d => d.textContent)).toEqual(['both', '▶ out', '◀ in']);
+      await expect(dirs.map(d => d.textContent)).toEqual(['both', 'out', 'in']);
+      await expect(dirs.map(d => d.querySelector('svg') !== null)).toEqual([false, true, true]);
       await expect(dirs.map(d => d.hasAttribute('data-active'))).toEqual([true, false, false]);
       const chips = filters.getAllByTestId('td-product-chip');
       await expect(chips.map(c => c.textContent)).toEqual(['all']);
@@ -128,7 +130,8 @@ export const StartCollapsed: Story = {
   play: async ({ step }) => {
     await step('Then the panel mounts header-only', async () => {
       await expect(panel()).toHaveAttribute('data-collapsed');
-      await expect(part('td-collapse')).toHaveTextContent('▲');
+      await expect(part('td-collapse')).toHaveAccessibleName('Expand');
+      await expect(part('td-collapse')).toHaveAttribute('aria-expanded', 'false');
       await expect(part('td-resize-handle')).toHaveAttribute('data-disabled');
       await expect(part('td-filters')).toHaveAttribute('hidden');
     });
@@ -152,9 +155,9 @@ export const TruapiRows: Story = {
         await expect(counts()).toBe('5 events');
         const request = within(rowByTag('system_handshake_request'));
         await expect(rowByTag('system_handshake_request')).not.toHaveAttribute('data-system');
-        await expect(rowByTag('system_handshake_request')).toHaveAttribute('role', 'listitem');
+        await expect(rowByTag('system_handshake_request')).toHaveAttribute('role', 'option');
         await expect(request.getByTestId('td-time')).toHaveTextContent('12:34:56.789');
-        await expect(request.getByTestId('td-arrow-out')).toHaveTextContent('▶');
+        await expect(request.getByTestId('td-arrow-out')).toHaveAccessibleName('outgoing');
         await expect(request.queryByTestId('td-arrow-in')).toBeNull();
         await expect(request.getByTestId('td-product')).toHaveTextContent('app.dot');
         await expect(request.getByTestId('td-product')).not.toHaveAttribute('data-anon');
@@ -164,7 +167,7 @@ export const TruapiRows: Story = {
         await expect(request.queryByTestId('td-latency')).toBeNull();
 
         const response = within(rowByTag('system_handshake_response'));
-        await expect(response.getByTestId('td-arrow-in')).toHaveTextContent('◀');
+        await expect(response.getByTestId('td-arrow-in')).toHaveAccessibleName('incoming');
         await expect(response.getByTestId('td-tag')).toHaveAttribute('data-kind', 'response');
         await expect(response.getByTestId('td-latency')).toHaveTextContent('+50ms');
         await expect(response.getByTestId('td-summary')).toHaveTextContent('ok=true');
@@ -249,31 +252,32 @@ export const ChainResponseDetail: Story = {
   },
 };
 
-/** As a developer using the debug panel, I pause the list so new messages add no rows, and resume so they show again. */
+/** As a developer using the debug panel, I pause the list so new calls add no rows while the reply to a call I already see still lands, and resume so new calls show again. */
 export const PauseResume: Story = {
   play: async ({ userEvent, step }) => {
     const { truapi } = debugPanel();
-    await step('Given one row', async () => {
+    await step('Given one call waiting for its reply', async () => {
       truapi({ tag: 'before_request', requestId: 'r1' });
       await waitFor(() => expect(rows()).toHaveLength(1));
     });
-    await step('When I pause and a message arrives', async () => {
+    await step('When I pause, a new call starts and the waiting call is answered', async () => {
       await userEvent.click(part('td-pause'));
       truapi({ tag: 'while_paused_request', requestId: 'r2' });
-      await nextFrame();
+      truapi({ tag: 'before_response', requestId: 'r1', direction: 'incoming' });
     });
-    await step('Then no new row shows', async () => {
+    await step('Then only the reply shows, and the call no longer reads pending', async () => {
+      await waitFor(() => expect(rowTags()).toEqual(['before_request', 'before_response']));
       await expect(part('td-pause')).toHaveTextContent('Resume');
       await expect(part('td-pause')).toHaveAttribute('data-active');
-      await expect(rowTags()).toEqual(['before_request']);
-      await expect(counts()).toBe('1 events');
+      await expect(counts()).toBe('2 events');
+      await waitFor(() => expect(rowByTag('before_request').querySelector('[data-testid="td-pending"]')).toBeNull());
     });
     await step('When I resume and a message arrives', async () => {
       await userEvent.click(part('td-pause'));
       truapi({ tag: 'after_request', requestId: 'r3' });
     });
     await step('Then it shows', async () => {
-      await waitFor(() => expect(rowTags()).toEqual(['before_request', 'after_request']));
+      await waitFor(() => expect(rowTags()).toEqual(['before_request', 'before_response', 'after_request']));
       await expect(part('td-pause')).toHaveTextContent('Pause');
       await expect(part('td-pause')).not.toHaveAttribute('data-active');
     });
@@ -410,7 +414,8 @@ export const CopyFlashesCheck: Story = {
       await userEvent.click(copy());
     });
     await step('Then the filtered JSON is on the clipboard and the button flashes a check mark', async () => {
-      await waitFor(() => expect(copy()).toHaveTextContent('✓'));
+      await waitFor(() => expect(within(copy()).getByTestId('td-copy-done')).toBeInTheDocument());
+      await expect(part('td-copy-status')).toHaveTextContent('Copied');
       await expect(copy()).toBeDisabled();
       await expect(effects.writeClipboard).toHaveBeenCalledTimes(1);
       const exported = JSON.parse(effects.writeClipboard.mock.calls[0]?.[0] ?? '{}') as {
@@ -426,7 +431,8 @@ export const CopyFlashesCheck: Story = {
     });
     await step('Then the button comes back after the flash', async () => {
       await waitFor(() => expect(copy()).toBeEnabled());
-      await expect(copy()).not.toHaveTextContent('✓');
+      await expect(within(copy()).queryByTestId('td-copy-done')).toBeNull();
+      await expect(part('td-copy-status').textContent).toBe('');
       await expect(copy().querySelector('svg')).not.toBeNull();
     });
   },
@@ -445,7 +451,8 @@ export const CopyRefusedFlashesCross: Story = {
       await userEvent.click(copy());
     });
     await step('Then the button flashes a cross', async () => {
-      await waitFor(() => expect(copy()).toHaveTextContent('✕'));
+      await waitFor(() => expect(within(copy()).getByTestId('td-copy-failed')).toBeInTheDocument());
+      await expect(part('td-copy-status')).toHaveTextContent('Copy failed');
       await expect(copy()).toBeDisabled();
     });
     await step('Then the button comes back after the flash', async () => {
@@ -639,7 +646,7 @@ export const RowClickHighlightsGroup: Story = {
           product: 'app.dot',
           tag: 'system_handshake_request',
           requestId: 'req-aa req-aaa-111',
-          group: '2 events — system_handshake_response +50ms',
+          group: '2 events: system_handshake_response +50ms',
         });
         await expect(part('td-detail-pre').textContent).toBe(JSON.stringify({ version: 1 }, null, 2));
       });
@@ -649,7 +656,7 @@ export const RowClickHighlightsGroup: Story = {
       await step('Then the response is selected and the request paired', async () => {
         await expect(rowByTag('system_handshake_response')).toHaveAttribute('data-selection', 'selected');
         await expect(rowByTag('system_handshake_request')).toHaveAttribute('data-selection', 'paired');
-        await expect(detailRows()['group']).toBe('2 events — system_handshake_request −50ms');
+        await expect(detailRows()['group']).toBe('2 events: system_handshake_request −50ms');
       });
       await step('When I click a row of another group', () => {
         rowByTag('boot.started').click();
@@ -684,7 +691,7 @@ export const SystemDetailExplains: Story = {
         'Host boot started (mode: direct, chain: smoldot, content: helia).',
       );
       const explanation = part('td-detail-explanation');
-      await expect(explanation.querySelector('summary')).toHaveTextContent('What is this? — Host boot started');
+      await expect(explanation.querySelector('summary')).toHaveTextContent('What is this? (Host boot started)');
       await expect(explanation.querySelector('code')).toHaveTextContent('main()');
       await expect(part('td-detail-pre')).toHaveTextContent('"smoldot"');
     });
@@ -776,9 +783,8 @@ export const DetailNotRebuilt: Story = {
     await step('When events stream in', async () => {
       for (let i = 0; i < 5; i++) {
         debugPanel().system('boot', 'topbar_ready', 'flow-boot-1');
-        await nextFrame();
+        await waitFor(() => expect(rows()).toHaveLength(4 + i));
       }
-      await waitFor(() => expect(rows()).toHaveLength(8));
     });
     await step('Then the detail pane is the same and still open', async () => {
       await expect(part('td-detail').querySelector('details')).toBe(explanation);
@@ -807,6 +813,33 @@ export const SelectionSurvivesFilter: Story = {
   },
 };
 
+/** As a developer using the debug panel with a screen reader, I step through the events with the arrow keys and hear which one is selected, until a filter hides it. */
+export const ListAnnouncesSelection: Story = {
+  play: async ({ userEvent, step }) => {
+    await seeded();
+    const list = part('td-list');
+    await step('When I focus the list and press the down arrow', async () => {
+      list.focus();
+      await userEvent.keyboard('{ArrowDown}');
+    });
+    await step('Then the first event is the selected option and the list points at it', async () => {
+      await expect(list).toHaveAttribute('role', 'listbox');
+      await expect(list).toHaveAccessibleName('Events');
+      const options = within(list).getAllByRole('option');
+      await expect(options.map(option => option.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+      await expect(list).toHaveAttribute('aria-activedescendant', options[0]?.id);
+    });
+    await step('When a filter hides the selected event', async () => {
+      await userEvent.click(part('td-tag-input'));
+      await userEvent.paste('boot');
+    });
+    await step('Then the list points at no option', async () => {
+      await waitFor(() => expect(rowTags()).toEqual(['boot.started']));
+      await expect(list).not.toHaveAttribute('aria-activedescendant');
+    });
+  },
+};
+
 /** As a developer using the debug panel, I see a small list keep only the newest messages and count the dropped ones. */
 export const SmallCapacity: Story = {
   parameters: { debugPanel: { capacity: 5 } },
@@ -814,7 +847,7 @@ export const SmallCapacity: Story = {
     await step('When eight messages arrive', async () => {
       for (let i = 0; i < 8; i++) {
         debugPanel().truapi({ tag: `ev${String(i)}_request`, requestId: `r${String(i)}` });
-        await nextFrame();
+        await waitFor(() => expect(rowTags().at(-1)).toBe(`ev${String(i)}_request`));
       }
     });
     await step('Then the newest five show and the dropped ones are counted', async () => {
@@ -840,14 +873,15 @@ export const PendingBadgeCountsUp: Story = {
       });
       await step('Then it shows a pending badge', async () => {
         await expect(badge()).not.toHaveAttribute('hidden');
-        await expect(badge()?.textContent).toMatch(/^⟳ \d+ms pending$/);
+        await expect(badge()?.textContent).toMatch(/^\d+ms pending$/);
+        await expect(badge()?.querySelector('svg')).not.toBeNull();
         await expect(badge()).not.toHaveAttribute('data-slow');
       });
       await step('Then it counts up each second, and turns slow', async () => {
         clock.advance(980);
-        await expect(badge()).toHaveTextContent('⟳ 1.0s pending');
+        await expect(badge()).toHaveTextContent('1.0s pending');
         clock.advance(2000);
-        await expect(badge()).toHaveTextContent('⟳ 3.0s pending');
+        await expect(badge()).toHaveTextContent('3.0s pending');
         await expect(badge()).toHaveAttribute('data-slow');
       });
       await step('When the reply lands', () => {
@@ -881,9 +915,8 @@ export const StreamingClickKeepsNode: Story = {
             direction: 'incoming',
           });
         }
-        await nextFrame();
+        await waitFor(() => expect(rows()).toHaveLength(3 + 10 * (f + 1)));
       }
-      await waitFor(() => expect(rows()).toHaveLength(103));
     });
     await step('Then the rows, the selection and the detail keep their nodes', async () => {
       for (const [i, node] of before.entries()) {

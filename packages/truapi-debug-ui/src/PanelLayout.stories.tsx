@@ -13,7 +13,6 @@ import {
   drag,
   expectPhone,
   grab,
-  nextFrame,
   panel,
   part,
 } from './testing/stories/debug-panel-fixtures.js';
@@ -184,7 +183,7 @@ export const CollapseRestoresHeight: Story = {
     });
     await step('Then only the header shows', async () => {
       await expect(panel()).toHaveAttribute('data-collapsed');
-      await expect(part('td-collapse')).toHaveTextContent('▲');
+      await expect(part('td-collapse')).toHaveAttribute('aria-expanded', 'false');
       await expect(box(panel()).height).toBeLessThan(368);
     });
     const collapsed = box(panel()).height;
@@ -199,7 +198,7 @@ export const CollapseRestoresHeight: Story = {
     });
     await step('Then the dragged height comes back', async () => {
       await expect(panel()).not.toHaveAttribute('data-collapsed');
-      await expect(part('td-collapse')).toHaveTextContent('▼');
+      await expect(part('td-collapse')).toHaveAttribute('aria-expanded', 'true');
       await expect(box(panel()).height).toBeCloseTo(368, 0);
     });
   },
@@ -412,13 +411,44 @@ export const FrameRefitsOnDrag: Story = {
   play: async ({ step }) => {
     mountDocked('bottom', { topbar: true });
     const held = grab(part('td-resize-handle'));
-    await step('When I drag the panel edge', async () => {
+    await step('When I drag the panel edge', () => {
       held.to(0, window.innerHeight - 268);
-      await nextFrame();
     });
     await step('Then the panel reports its new room on the next frame', async () => {
       await waitFor(() => expect(room().bottom).toBeCloseTo(268, 0));
       held.release();
+    });
+  },
+};
+
+/** As a developer using the debug panel with a keyboard, I resize the panel and its panes with the arrow keys and hear each new size. */
+export const KeyboardResize: Story = {
+  play: async ({ userEvent, step }) => {
+    const handle = part('td-resize-handle');
+    const splitter = part('td-body-splitter');
+    const height = box(panel()).height;
+    const left = box(part('td-views')).width;
+    await step('Then both dividers are named, focusable and report their size', async () => {
+      await expect(handle).toHaveAttribute('tabindex', '0');
+      await expect(handle).toHaveAccessibleName('Resize the panel');
+      await expect(handle).toHaveAttribute('aria-valuenow', String(Math.round(height)));
+      await expect(splitter).toHaveAccessibleName('Resize the panes');
+      await expect(splitter).toHaveAttribute('aria-valuemin', '220');
+    });
+    await step('When I focus the edge and press the up arrow, then Shift and the up arrow', async () => {
+      handle.focus();
+      await userEvent.keyboard('{ArrowUp}{Shift>}{ArrowUp}{/Shift}');
+    });
+    await step('Then the panel grows by a small and a large step and reports it', async () => {
+      await expect(box(panel()).height).toBeCloseTo(height + 80, 0);
+      await expect(handle).toHaveAttribute('aria-valuenow', String(Math.round(height + 80)));
+    });
+    await step('When I focus the splitter and press the right arrow', async () => {
+      splitter.focus();
+      await userEvent.keyboard('{ArrowRight}');
+    });
+    await step('Then the list pane widens by a step', async () => {
+      await expect(box(part('td-views')).width).toBeCloseTo(left + 16, -1);
     });
   },
 };

@@ -1,9 +1,7 @@
 /* Copyright 2026 Parity Technologies (UK) Ltd. */
 /* SPDX-License-Identifier: AGPL-3.0-only */
 
-/* Modal (components/floating) draws the dialog, scrim and card. .surface only adds the card's size cap. */
-
-/* Same cap as Popover.module.css. */
+/* Keeps the card clear of the topbar and the bottom inset, and scrolls what does not fit. */
 :where(.surface) {
   max-width: calc(100vw - 2 * var(--sp-3) - var(--safe-left) - var(--safe-right));
   max-height: calc(
@@ -62,7 +60,7 @@
 
 .qr {
   --qr-gap: 10px;
-  /* The drawn code's side, read by qrSize() in AuthModal.tsx. */
+  /* The drawn code's side, quiet zone included. Script reads it, so it stays a whole px length. */
   --qr-size: 218px;
   display: flex;
   flex-direction: column;
@@ -111,7 +109,7 @@
   background: var(--qr-bg);
   transform: translate(-50%, -50%);
 }
-.badge > span {
+.badge-mark {
   display: grid;
   place-items: center;
   width: var(--sp-8);
@@ -120,7 +118,7 @@
   background: var(--qr-ink);
   color: var(--qr-bg);
 }
-.badge svg {
+.badge-icon {
   width: 18px;
   height: 18px;
 }
@@ -230,12 +228,12 @@
     height: var(--h-control);
     border-radius: var(--r-sm);
   }
-  .badge > span {
+  .badge-mark {
     width: var(--h-control-sm);
     height: var(--h-control-sm);
     border-radius: var(--r-xs);
   }
-  .badge svg {
+  .badge-icon {
     width: 20px;
     height: 20px;
   }
