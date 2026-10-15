@@ -9,7 +9,7 @@ export {
   type AsyncTaskPoolParams,
 } from './async-task-pool.js';
 export { endpointHost, gatewayUnreachable } from './error-copy.js';
-export { errorName, fullErrorChain, named, serializeError } from './errors.js';
+export { errorMessage, errorName, fullErrorChain, named, serializeError, toError } from './errors.js';
 export { deleteIdb, idbRequest, idbTransaction, openIdb } from './idb.js';
 export {
   deleteAllDatabases,
@@ -21,8 +21,11 @@ export {
 export { fromHex, toHex } from './hex.js';
 export { bindLogSink, log, type LogLevel } from './log.js';
 export { formatRate, formatSize } from './byte-size.js';
+export { createLazyLoad } from './lazy-load.js';
 export { createListenerSet, type ListenerSet, type ListenerSetOptions } from './listener-set.js';
 export { dur, elapsed } from './perf.js';
+export { noop } from './noop.js';
+export { createPendingReplies, type PendingReplies } from './pending-replies.js';
 export { randomId } from './random-id.js';
 export { createStatusCell, type StatusCell, type StatusCellOptions } from './status-cell.js';
 export {

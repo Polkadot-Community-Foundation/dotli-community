@@ -5,10 +5,11 @@
 
 import type { PreimageHost } from '@parity/truapi-host';
 import { bitswapGet } from '@dotli/bitswap';
-import { hashToCid, fetchFromIpfs, assertBlockMatchesCid } from '@dotli/content';
+import { hashToCid, fetchFromIpfs, loadVerify } from '@dotli/content';
 import { getBackend, type Backend } from '@dotli/config';
 import { captureException, m, reportExpected, spans as S } from '@dotli/metrics';
-import { createAsyncTaskPool, serializeError, log, toHex } from '@dotli/shared';
+import { createAsyncTaskPool, createLazyLoad, serializeError, log, noop, toHex } from '@dotli/shared';
+import { reportLazyMiss } from '../../lazy-miss.js';
 import { createResultStream } from './result-stream.js';
 
 const POLL_INTERVAL_MS = 10_000;
@@ -25,6 +26,8 @@ export type PreimageFetch = (cid: string, signal: AbortSignal) => Promise<Preima
 
 export interface PreimageDeps {
   fetchBlock: PreimageFetch;
+  /** The loader of the hashing chunk. Defaults to the content package's. */
+  loadVerify?: typeof loadVerify;
 }
 
 export interface BlockSources {
@@ -58,13 +61,16 @@ class PreimageMismatch extends Error {}
 /** Not found yet, so the poll goes on. */
 class PreimageMiss extends Error {}
 
-function noop(): void {
-  return;
-}
-
 function createPreimageLookupSubscribe(label: string, deps: PreimageDeps): Required<PreimageHost>['lookupPreimage'] {
   // One attempt per key at a time, since a bitswap lookup can outlive the poll interval and a second subscription to
   // the key would open another retry budget for the same block.
+  // The chunk loads on first use, so the bridge chunk carries no hashing code. A failed load is retried with the poll,
+  // and the first miss is reported since the poll itself acts on mismatches only.
+  const verify = createLazyLoad(deps.loadVerify ?? loadVerify, {
+    onFirstMiss: err => {
+      reportLazyMiss('content', 'preimage_verify_load', err);
+    },
+  });
   const polls = createAsyncTaskPool({
     poolSize: 1,
     retryCount: Number.POSITIVE_INFINITY,
@@ -116,6 +122,7 @@ function createPreimageLookupSubscribe(label: string, deps: PreimageDeps): Requi
         if (block.data.length === 0) {
           throw new PreimageMiss(`Preimage not found via ${block.source}`);
         }
+        const { assertBlockMatchesCid } = await verify();
         try {
           assertBlockMatchesCid(cid, block.data);
         } catch (err) {

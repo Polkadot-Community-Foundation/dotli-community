@@ -38,8 +38,10 @@ flowchart LR
 
 - Param contract: `SANDBOX_SCHEMA_VERSION`, `SANDBOX_CONTRACT_PARAMS`, `validateSandboxParams`.
 - Messages: `parseHostToSandboxMessage`, `postToHost`, `parseApiViolationMessage`, `ApiViolationMessage`,
-  `SandboxToHostMessage`, `HostToSandboxMessage`, `LoadingStatusMessage`, `SandboxDebugEvent`,
-  `SandboxDebugEventMessage`, `SandboxRecoverMessage`, `BitswapGetMessage`, `BitswapAbortMessage`,
-  `BitswapResultMessage`.
+  `SandboxToHostMessage` (each member named through `SandboxMessageOf`), `HostToSandboxMessage`, `BitswapResultMessage`.
 - Channel: `startSandboxChannel`, `SandboxChannel`, `StartedSandboxChannel`, `SandboxChannelOptions`, `SandboxSender`,
   `SandboxMessageType`, `SandboxMessageOf`.
+
+### `@dotli/sandbox-wire/contract-params`
+
+The param contract alone, `SANDBOX_SCHEMA_VERSION` and `SANDBOX_CONTRACT_PARAMS`, for Node tooling. It imports nothing.

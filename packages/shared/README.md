@@ -30,6 +30,11 @@ listener set, the sync store, the status cell and a few formatting helpers.
   before, and rejects naming every part it left behind. A browser that cannot list its databases fails that part.
 - Web storage that the browser blocks or that is full reads as empty and drops writes, in one adapter, so no module
   wraps storage itself.
+- A pending-replies table pairs a request with the reply that carries its id. A settled id leaves the table, so a late
+  reply settles nothing, and a dead channel fails every open wait at once.
+- A lazy load runs one load at a time and keeps what it loaded for every later caller. A failed load rejects the caller
+  that ran it and is not kept, so the next caller loads again, and only the first failure is passed to the caller's
+  report hook.
 - A status cell is the status a layer publishes upward, over one listener set. Setting an equal value is ignored.
 - The logger writes to the console only in debug builds, read from the `VITE_APP_DEBUG` build flag at load so the first
   log of every entry point honours it. Warn, error and event always reach the sink bound with `bindLogSink`.
@@ -39,16 +44,17 @@ listener set, the sync store, the status cell and a few formatting helpers.
 
 ### `@dotli/shared`
 
-- Concurrency and state: `createAsyncTaskPool`, `createListenerSet`, `ListenerSet`, `ListenerSetOptions`,
-  `createSyncStore`, `StoreListenerError`, `registerStoreStateReset`, `shallowEqual`, `createStatusCell`,
-  `toAbortError`.
-- Logging and errors: `log`, `bindLogSink`, `serializeError`, `fullErrorChain`, `errorName`, `named`, `endpointHost`,
-  `gatewayUnreachable`.
+- Concurrency and state: `createAsyncTaskPool`, `createLazyLoad`, `createListenerSet`, `ListenerSet`,
+  `ListenerSetOptions`, `createSyncStore`, `StoreListenerError`, `registerStoreStateReset`, `shallowEqual`,
+  `createStatusCell`, `toAbortError`, `createPendingReplies`, `PendingReplies`.
+- Logging and errors: `log`, `bindLogSink`, `serializeError`, `fullErrorChain`, `errorName`, `errorMessage`, `toError`,
+  `named`, `endpointHost`, `gatewayUnreachable`.
 - Storage: `safeStorage`, `pageLocalStorage`, `pageSessionStorage`, `SafeStorage`.
 - IndexedDB: `openIdb`, `idbRequest`, `idbTransaction`, `deleteIdb`.
 - Origin wipe: `wipeOriginStores`, `deleteAllDatabases`, `OriginWipeError`, `OriginStores`, `OriginWipePart`.
 - Byte counts as people read them: `formatSize`, `formatRate`.
-- Encoding and timing: `toHex`, `fromHex`, `dur`, `elapsed`, `withTimeout`, `sleep`, `randomId`, `Timers`, `realTimers`.
+- Encoding and timing: `toHex`, `fromHex`, `dur`, `elapsed`, `withTimeout`, `sleep`, `randomId`, `noop`, `Timers`,
+  `realTimers`.
 
 ### `@dotli/shared/testing`
 

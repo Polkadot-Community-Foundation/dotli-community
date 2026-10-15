@@ -67,22 +67,22 @@ and no data source.
 - Stores: the modal store (`openModal`, `refuseModals`, which answers every dialog with its refusal while the overlays
   cannot render, and the types `ModalView`, `ModalOutcome`, `ModalEntry`, `ModalField`, `ModalButton`,
   `ModalButtonVariant`) and the toast store (`toastsStore` and the type `ToastEntry`).
-- Page helpers: `focusables`, `preloadWhenIdle` with `IdleScheduler`, `isPhoneViewport`, `watchPhoneViewport`,
-  `prefersReducedMotion` and the type `StatusTone`.
+- Page helpers: `focusables`, `runWhenIdle` and `preloadWhenIdle` with `IdleScheduler`, `isPhoneViewport`,
+  `watchPhoneViewport`, `prefersReducedMotion` and the type `StatusTone`.
 - Helpers: `useStore`, `startDrag`, `focusLostOrInside`, `focusTrigger`.
 - Roots: `mountRoot` with `MountRootOptions`, `RootBoundary`, `ensureOverlayRoot`.
 - Screens and overlays: `showErrorPage` and `showError` with the types `ErrorAction`, `ErrorPageContent`, `ErrorText`
   and `ShowErrorPage`, `ErrorFrame` and `ErrorDetail` with `ErrorFrameProps`, `showScreen`, `clearScreen`,
   `pageContentStore` and the type `PageContent`, `Overlays`, `showNotification` with the types `NotificationParams` and
-  `ShowNotification`, and `listenForChunkFailures` with `ChunkFailureDeps` (a failure is counted as `chunk.preload`) and
-  `offerReload`.
+  `ShowNotification`, `createReloadOffer`, the page's one reload offer, and `listenForChunkFailures` with
+  `ChunkFailureDeps` (a failure is counted as `chunk.preload`).
 
 ### `@dotli/ui/testing`
 
 Fakes for other packages' specs, stories and functional tests. Never imported by shipped code.
 
 - Modal store: `modalsStore`, `shownModal`, `chooseModalButton`, `dismissModal`. Modal and toast state reset with the
-  store registry's reset. Toasts: `bindToastPage`. Viewport: `PHONE_QUERY`, `resetPhoneViewport`.
+  store registry's reset. Toasts: `bindToastPage`. Viewport: `PHONE_QUERY`.
 - Other: `settle`, the page queries `appears`, `byId`, `byTestId`, `query`, and `installPopoverPolyfill` for functional
   tests under happy-dom.
 
