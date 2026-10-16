@@ -6,7 +6,7 @@ import { activeSettings } from './active-settings.js';
 export const NetworkName = {
   PASEO: 'paseo-next-v2',
   PREVIEWNET: 'previewnet',
-  /** PCF fork: the public products devnet (dev-dot.li / dot.li gateways). */
+  /** The public products devnet (dev-dot.li and dot.li gateways). */
   DEVNET: 'devnet',
 } as const;
 
@@ -67,7 +67,7 @@ export interface ServicesConfig extends FixedServicesConfig {
   readonly people: ChainService;
   readonly dotns: DotnsContracts;
   /**
-   * PCF fork: `false` when truapi-provider's bundled catalog cannot serve this
+   * `false` when truapi-provider's bundled catalog cannot serve this
    * network's parachains, leaving `rpc-gateway` as the only working transport.
    * Absent means supported.
    */
@@ -167,9 +167,7 @@ const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
     },
     people: {
       genesis: '0xe6c30d6e148f250b887105237bcaa5cb9f16dd203bf7b5b9d4f1da7387cb86ec',
-      // Statement store (device sync / chat) requires a full node exposing the
-      // `statement_*` RPC. All three People RPCs now expose it (verified via
-      // rpc_methods), so the app can load-balance across them safely.
+      // Statement store (device sync, chat) needs the `statement_*` RPC, which all three expose.
       rpcs: [
         'wss://people-paseo.gatotech.network',
         'wss://rpc.interweb-it.com/people-paseo',
@@ -349,9 +347,6 @@ export const NETWORK_KEY = 'dotli:network';
 const VALID_NETWORKS: ReadonlySet<string> = new Set<Network>([
   NetworkName.PASEO,
   NetworkName.PREVIEWNET,
-  // PCF fork: devnet is a first-class network here (dev-dot.li). Upstream has no
-  // entry for it, so a sync that rewrites this set drops it and every devnet build
-  // fails at startup on VITE_NETWORKS.
   NetworkName.DEVNET,
 ]);
 
@@ -441,7 +436,7 @@ export function getActiveServicesConfig(): ServicesConfig {
 }
 
 /**
- * PCF fork: whether the light-client transports can serve the active network.
+ * Whether the light-client transports can serve the active network.
  * True when no network is configured, so callers keep upstream's behaviour there.
  */
 export function activeNetworkSupportsLightClient(): boolean {

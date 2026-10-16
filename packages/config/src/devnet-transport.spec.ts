@@ -1,9 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// PCF fork: devnet's parachains are not in truapi-provider's catalog, so the
-// light-client transports cannot serve it. Own file because the network
-// override below is module state and would leak into the other suites.
+// Devnet's parachains are not in truapi-provider's catalog, so the light client cannot serve it. Own file: the network
+// override is module state and would leak into the other suites.
 
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { activeSettings, setSettings } from './active-settings.js';

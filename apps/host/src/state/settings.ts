@@ -22,7 +22,7 @@ export interface SettingsState {
   network: Network;
   enabledNetworks: Network[];
   sharedWorkerAvailable: boolean;
-  /** PCF fork: whether the active network can be reached through a light client. */
+  /** Whether the active network can be reached through a light client. */
   lightClientAvailable: boolean;
   /** Whether the backend verifies chain data. */
   verified: boolean;
