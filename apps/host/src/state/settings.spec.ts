@@ -33,6 +33,7 @@ describe('settings store', () => {
       // The networks the test build enables, and Node has no SharedWorker.
       enabledNetworks: ['paseo-next-v2', 'previewnet'],
       sharedWorkerAvailable: false,
+      lightClientAvailable: true,
       verified: false,
     });
   });
