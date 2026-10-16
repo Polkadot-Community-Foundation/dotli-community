@@ -1,28 +1,26 @@
-# Build the image from clean sources; everything below is regenerated in the
-# builder stage or is irrelevant to it.
-.git
 node_modules
 **/node_modules
+dist
 **/dist
-.turbo
-**/.turbo
-.vite
-**/.vite
-.cache
+.git
 coverage
-test-results
-**/test-results
+*.log
+
+# Local state stays out of the image. Vite reads `.env` through envDir, and a turbo cache could restore an old dist.
 .env
 .env.*
+!.env.example
 deploy.env
-*.log
-.DS_Store
-docs
-README.md
-LICENSE
-THIRD_PARTY_NOTICES.md
-CODE_OF_CONDUCT.md
-CONTRIBUTING.md
-SECURITY.md
-
-dist
+**/.turbo
+**/.astro
+**/storybook-static
+**/test-results
+**/playwright-report
+**/.vrt
+**/.vitest
+apps/host/tests/performance/results
+.idea
+.vscode
+.claude
+.superpowers
+docs/superpowers

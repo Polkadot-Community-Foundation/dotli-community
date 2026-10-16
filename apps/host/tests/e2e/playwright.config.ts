@@ -1,90 +1,45 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { defineConfig } from "@playwright/test";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
-import { baseConfig } from "../playwright.base.config";
+import { defineConfig } from '@playwright/test';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { parseEnv } from 'node:util';
+import { baseConfig, previewServer } from '../playwright.base.config.js';
 
-const repoRoot = resolve(import.meta.dirname, "../../../..");
+const repoRoot = resolve(import.meta.dirname, '../../../..');
 
-// Load repo-root .env (bun's autoload only picks the cwd one).
-try {
-  const env = readFileSync(resolve(repoRoot, ".env"), "utf-8");
-  for (const line of env.split("\n")) {
-    const m = /^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (!m) continue;
-    const [, key, raw] = m;
-    if (process.env[key]) continue;
-    process.env[key] = raw.replace(/^['"]|['"]$/g, "");
-  }
-} catch {
-  /* no .env, env must already be set */
-}
-
-const localProductUrl = process.env.E2E_PRODUCT_URL;
-
-// Stale-dist guard. The preview server serves built artifacts from
-// `apps/{host,sandbox,protocol}/dist`. If those are older than the lockfile
-// we're almost certainly running against an out-of-date build. The symptoms
-// look like obscure SDK byte-parity bugs but the fix is `bun run build`. CI
-// is unaffected because it always builds fresh. This only fires for local
-// repeat runs.
-if (process.env.CI !== "true") {
-  try {
-    const lockMtime = statSync(resolve(repoRoot, "bun.lock")).mtimeMs;
-    for (const app of ["host", "sandbox", "protocol"]) {
-      const distIndex = resolve(repoRoot, `apps/${app}/dist/index.html`);
-      const distMtime = statSync(distIndex).mtimeMs;
-      if (distMtime < lockMtime) {
-        throw new Error(
-          `apps/${app}/dist is older than bun.lock — run \`bun run build\` from the repo root before re-running e2e.`,
-        );
-      }
+// Playwright runs from apps/host, so it never sees the repo-root .env. A value the shell set wins.
+const envFile = resolve(repoRoot, '.env');
+if (existsSync(envFile)) {
+  for (const [key, value] of Object.entries(parseEnv(readFileSync(envFile, 'utf-8')))) {
+    if (value !== undefined && (process.env[key] ?? '') === '') {
+      process.env[key] = value;
     }
-  } catch (e) {
-    if (e instanceof Error && e.message.includes("ENOENT")) {
-      throw new Error(
-        "dist directories missing — run `bun run build` from the repo root before running e2e.",
-      );
-    }
-    throw e;
   }
 }
 
-const dotliWebServer = {
-  command: "bun ../../../../scripts/preview-server.ts",
-  url: `http://localhost:${process.env.PORT ?? "5173"}`,
-  reuseExistingServer: true,
-  timeout: 30_000,
-};
+const localProductUrl = process.env['E2E_PRODUCT_URL'];
 
-const webServer: Array<
-  typeof dotliWebServer & {
-    cwd?: string;
-  }
-> = [dotliWebServer];
+const dotliWebServer = { ...previewServer, url: `http://localhost:${process.env['PORT'] ?? '5173'}` };
+
+const webServer: (typeof dotliWebServer & {
+  cwd?: string;
+})[] = [dotliWebServer];
 if (localProductUrl !== undefined) {
   const productUrl = new URL(localProductUrl);
-  if (
-    productUrl.protocol !== "http:" ||
-    (productUrl.hostname !== "localhost" && productUrl.hostname !== "127.0.0.1")
-  ) {
-    throw new Error(
-      `E2E_PRODUCT_URL must be a loopback HTTP URL, got ${localProductUrl}`,
-    );
+  if (productUrl.protocol !== 'http:' || (productUrl.hostname !== 'localhost' && productUrl.hostname !== '127.0.0.1')) {
+    throw new Error(`E2E_PRODUCT_URL must be a loopback HTTP URL, got ${localProductUrl}`);
   }
-  const hostPlaygroundRoot = resolve(
-    process.env.E2E_PRODUCT_REPO ??
-      resolve(repoRoot, "../../../host-playground"),
-  );
-  if (!existsSync(resolve(hostPlaygroundRoot, "package.json"))) {
+  // Beside this checkout, unless set. A relative path is read from the repo root, as the link scripts read it.
+  const hostPlaygroundRoot = resolve(repoRoot, process.env['E2E_PRODUCT_REPO'] ?? '../host-playground');
+  if (!existsSync(resolve(hostPlaygroundRoot, 'package.json'))) {
     throw new Error(
       `host-playground checkout not found at ${hostPlaygroundRoot}. Set E2E_PRODUCT_REPO=/path/to/host-playground.`,
     );
   }
   webServer.unshift({
-    command: `yarn dev --port ${productUrl.port || "80"}`,
+    command: `yarn dev --port ${productUrl.port || '80'}`,
     cwd: hostPlaygroundRoot,
     url: productUrl.origin,
     reuseExistingServer: true,
@@ -95,20 +50,19 @@ if (localProductUrl !== undefined) {
 export default defineConfig({
   ...baseConfig,
   webServer,
-  testDir: ".",
-  // Co-locate traces with results.json (configDir-relative). The default is
-  // packageJsonDir/test-results, which the CI upload step doesn't cover.
-  outputDir: "test-results",
+  testDir: '.',
+  // Beside results.json, since the CI upload step doesn't cover the default packageJsonDir/test-results.
+  outputDir: 'test-results',
   timeout: 60_000,
   retries: 1,
   workers: 1,
   globalTimeout: 30 * 60_000,
   // globalSetup returns the teardown closure that stops the signing host.
-  globalSetup: "./global-setup.ts",
+  globalSetup: './global-setup.ts',
   use: {
     ...baseConfig.use,
-    trace: "retain-on-failure",
-    video: "off",
+    trace: 'retain-on-failure',
+    video: 'off',
   },
-  reporter: [["list"], ["json", { outputFile: "test-results/results.json" }]],
+  reporter: [['list'], ['json', { outputFile: 'test-results/results.json' }]],
 });

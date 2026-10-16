@@ -1,28 +1,16 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// dot.li content-addressing verification.
-//
-// A CID is the hash of its block's bytes, so recomputing that hash and
-// comparing it to the CID turns an untrusted transport (a malicious or
-// compromised IPFS gateway, or any MITM with a valid TLS cert for the
-// gateway host) into a content-addressed one: substituted bytes no longer
-// hash to the requested CID and are rejected.
-//
-// Used to wrap the gateway block source so every block in the fetched DAG
-// is verified, to hash-check the raw-codec plain GET, and to spot-check the
-// bitswap root block as defense-in-depth (see fetch.ts).
+// Recomputing each block's hash against its CID makes an untrusted gateway content-addressed.
 
-import { sha256 } from "@noble/hashes/sha2.js";
-import { blake2b } from "@noble/hashes/blake2.js";
-import { equals as bytesEqual } from "multiformats/bytes";
-import type { CID } from "multiformats/cid";
-import type { BlockSource } from "./archive";
-
-// Multihash codes we can recompute. sha2-256 is IPFS's default; blake2b-256
-// (0xb220) is what dot.li's bulletin/preimage path uses (see preimage.ts).
-const SHA2_256 = 0x12;
-const BLAKE2B_256 = 0xb220;
+import { sha256 } from '@noble/hashes/sha2.js';
+import { blake2b } from '@noble/hashes/blake2.js';
+import { equals as bytesEqual } from 'multiformats/bytes';
+import { CID } from 'multiformats/cid';
+import { log, named } from '@dotli/shared';
+import type { BlockSource } from './archive.js';
+import { BLAKE2B_256, SHA2_256 } from './codecs.js';
+import { CONTENT_ERRORS } from './errors.js';
 
 function recomputeDigest(multihashCode: number, bytes: Uint8Array): Uint8Array {
   switch (multihashCode) {
@@ -31,33 +19,36 @@ function recomputeDigest(multihashCode: number, bytes: Uint8Array): Uint8Array {
     case BLAKE2B_256:
       return blake2b(bytes, { dkLen: 32 });
     default:
-      // Fail closed: a hash we can't recompute is content we can't verify.
-      throw new Error(
-        `Cannot verify content: unsupported multihash code 0x${multihashCode.toString(16)}`,
+      // Fail closed, since a hash we cannot recompute is content we cannot verify.
+      throw named(
+        new Error(`Cannot verify content: unsupported multihash code 0x${multihashCode.toString(16)}`),
+        CONTENT_ERRORS.VERIFICATION,
       );
   }
 }
 
-/**
- * Assert that `bytes` is the content addressed by `cid`: recompute the
- * multihash digest and compare it to the CID's. Throws on mismatch, or on a
- * hash function we can't recompute (fail closed rather than serve
- * unverifiable bytes).
- */
+/** Throws on a mismatch, or on a hash function it cannot recompute. */
 export function assertBlockMatchesCid(cid: CID, bytes: Uint8Array): void {
   const expected = cid.multihash.digest;
   const actual = recomputeDigest(cid.multihash.code, bytes);
   if (!bytesEqual(actual, expected)) {
-    throw new Error(
-      `Content hash mismatch for ${cid.toString()} — refusing tampered content`,
+    throw named(
+      new Error(`Content hash mismatch for ${cid.toString()}, refusing tampered content`),
+      CONTENT_ERRORS.VERIFICATION,
     );
   }
 }
 
-/**
- * Wrap a {@link BlockSource} so every block it returns is hash-verified
- * against the requesting CID before the DAG walker sees it.
- */
+/** `false` also for an unparseable CID or a hash it cannot recompute. */
+export function blockMatchesCid(cid: string, bytes: Uint8Array): boolean {
+  try {
+    assertBlockMatchesCid(CID.parse(cid), bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function verifyingBlockSource(source: BlockSource): BlockSource {
   return async (cid: CID): Promise<Uint8Array> => {
     const bytes = await source(cid);
@@ -66,37 +57,24 @@ export function verifyingBlockSource(source: BlockSource): BlockSource {
   };
 }
 
-/**
- * Wrap a {@link BlockSource} so only the root block is hash-verified against
- * `rootCid` — defense-in-depth for a transport that already verifies interior
- * blocks (smoldot's bitswap), without re-hashing the whole DAG.
- */
-export function rootVerifyingBlockSource(
-  rootCid: CID,
-  source: BlockSource,
-): BlockSource {
+/** Verifies only the root, for a source whose every block the host's relay already checked. */
+export function rootVerifyingBlockSource(rootCid: CID, source: BlockSource): BlockSource {
   return async (cid: CID): Promise<Uint8Array> => {
     const bytes = await source(cid);
     if (cid.equals(rootCid)) {
       assertBlockMatchesCid(cid, bytes);
+      log.event(`Root block ${cid.toString()} verified`, { flow: 'content', bytes: bytes.length });
     }
     return bytes;
   };
 }
 
-/**
- * Assert that a CAR's declared root CID is the content we requested.
- * Compares codec + multihash (ignoring CIDv0/v1 framing) so an attacker
- * cannot serve a self-consistent CAR built around a root other than the
- * on-chain CID.
- */
+/** Ignores CID version, so v0 and v1 of the same content match, while a self-consistent foreign CAR does not. */
 export function assertSameContentId(actual: CID, expected: CID): void {
-  if (
-    actual.code !== expected.code ||
-    !bytesEqual(actual.multihash.bytes, expected.multihash.bytes)
-  ) {
-    throw new Error(
-      `CAR root ${actual.toString()} does not match requested ${expected.toString()}`,
+  if (actual.code !== expected.code || !bytesEqual(actual.multihash.bytes, expected.multihash.bytes)) {
+    throw named(
+      new Error(`CAR root ${actual.toString()} does not match requested ${expected.toString()}`),
+      CONTENT_ERRORS.VERIFICATION,
     );
   }
 }

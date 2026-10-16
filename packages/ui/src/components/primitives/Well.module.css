@@ -1,0 +1,84 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* Every layout shares the left text inset of choices and callouts, so they line up. */
+
+:where(.well) {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--chrome-well);
+  box-shadow: var(--chrome-shadow-inset);
+  color: var(--chrome-text);
+}
+.well[data-layout='list'] {
+  padding: 0 var(--sp-3);
+}
+.well[data-layout='controls'] {
+  padding: 0 var(--sp-1_5) 0 var(--sp-3);
+}
+.well[data-layout='flush'] {
+  overflow: hidden;
+  padding: 0;
+}
+:where(.row) {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 40px;
+  font-size: var(--fs-body);
+}
+.row + .row {
+  border-top: 1px solid var(--chrome-line);
+}
+.rowLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:where(.callout) {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--sp-1_5);
+  color: var(--chrome-text-muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body);
+}
+.callout > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: var(--sp-hair);
+}
+.calloutText {
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  :where(.well) {
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--r-md);
+  }
+  .well[data-layout='list'] {
+    padding: 0 var(--sp-4);
+  }
+  .well[data-layout='controls'] {
+    padding: 0 var(--sp-2) 0 var(--sp-4);
+  }
+  :where(.row) {
+    gap: var(--sp-3);
+    min-height: var(--h-row);
+  }
+  :where(.callout) {
+    gap: var(--sp-2);
+  }
+  .callout > svg {
+    width: 16px;
+    height: 16px;
+  }
+}

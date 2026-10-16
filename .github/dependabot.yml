@@ -1,25 +1,41 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: "/"
+    directory: '/'
     schedule:
       interval: daily
-    assignees: ["BigTava", "leonardocustodio", "ba1uev", "justraman"]
-    reviewers: ["BigTava", "leonardocustodio", "ba1uev", "justraman"]
-    labels: ["dependencies"]
+    assignees: ['BigTava', 'leonardocustodio', 'ba1uev', 'justraman']
+    reviewers: ['BigTava', 'leonardocustodio', 'ba1uev', 'justraman']
+    labels: ['dependencies']
     groups:
       npm-packages:
         patterns:
-          - "*"
+          - '*'
 
   - package-ecosystem: github-actions
-    directory: "/"
+    directory: '/'
     schedule:
       interval: weekly
-    assignees: ["BigTava", "leonardocustodio", "ba1uev", "justraman"]
-    reviewers: ["BigTava", "leonardocustodio", "ba1uev", "justraman"]
-    labels: ["dependencies"]
+    assignees: ['BigTava', 'leonardocustodio', 'ba1uev', 'justraman']
+    reviewers: ['BigTava', 'leonardocustodio', 'ba1uev', 'justraman']
+    labels: ['dependencies']
     groups:
       gh-actions:
         patterns:
-          - "*"
+          - '*'
+
+  - package-ecosystem: docker
+    directory: '/'
+    schedule:
+      interval: weekly
+    assignees: ['BigTava', 'leonardocustodio', 'ba1uev', 'justraman']
+    reviewers: ['BigTava', 'leonardocustodio', 'ba1uev', 'justraman']
+    labels: ['dependencies']
+    # The image's Node major follows .nvmrc, which is bumped by hand.
+    ignore:
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
+    groups:
+      docker-images:
+        patterns:
+          - '*'

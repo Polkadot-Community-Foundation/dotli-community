@@ -1,8 +1,4 @@
-# gitleaks configuration for dot.li
-#
-# Extends the built-in gitleaks ruleset and narrows the known false
-# positives so an enforced scan stays signal-rich. See the Secret Scan
-# workflow in .github/workflows/secret-scan.yml.
+# The default ruleset, minus known false positives.
 
 title = "dot.li gitleaks config"
 
@@ -13,4 +9,27 @@ useDefault = true
 description = "Chain-spec genesis files embed public SS58 account addresses (prefix 5...) that trip the generic-api-key heuristic but are not secrets."
 paths = [
   '''packages/resolver/src/chain-specs/.*\.json$''',
+]
+
+[[allowlists]]
+description = "TRUAPI_WIRE_SCHEMA_HASH is the public TrUAPI wire-schema fingerprint (published in @parity/truapi) that vendored truapi builds embed; it trips generic-api-key but is not a secret."
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = [
+  '''TRUAPI_WIRE_SCHEMA_HASH\s*[:=]\s*["'][0-9a-f]{16}["']''',
+]
+
+[[allowlists]]
+description = "Seity contacts test vectors hold public registry lookup keys and content digests (32-byte hex hashes) that trip generic-api-key but are not secrets."
+targetRules = ["generic-api-key"]
+paths = [
+  '''packages/ui/tests/fixtures/seity-contacts-v\d+\.json$''',
+]
+
+[[allowlists]]
+description = "Resolver ABI tests use the placeholder 32-byte slot key 0x1234567890abcdef repeated four times. On one line with `key =` it trips generic-api-key, but it is not a secret."
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = [
+  '''0x(?:1234567890abcdef){4}''',
 ]

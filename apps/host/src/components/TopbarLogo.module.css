@@ -1,0 +1,71 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* Inset like the bar's icon buttons (8px plus the row's 6px). */
+.home {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-1_5);
+  box-sizing: border-box;
+  height: var(--h-bar-control);
+  margin: 0;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-full);
+  color: var(--chrome-text);
+  text-decoration: none;
+}
+.home:focus-visible {
+  outline: var(--chrome-focus-ring);
+  outline-offset: 2px;
+}
+.mark,
+.brand {
+  display: block;
+  flex: none;
+}
+/* Out of the flow, so the bar is laid out as it will be once the tag goes. */
+.beta {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  height: 12px;
+  padding: 0 var(--sp-hair);
+  border-radius: var(--r-full);
+  background: var(--chrome-fill-strong);
+  color: var(--chrome-text-muted);
+  font: var(--fw-semibold) 8px / 1 var(--font-sans);
+  letter-spacing: var(--ls-caps);
+  pointer-events: none;
+}
+/* Narrow pills: the mark alone, so the wordmark doesn't push actions into More. */
+@media (max-width: 620px) {
+  .home {
+    padding-right: var(--sp-3);
+  }
+  /* Out of sight but still the link's accessible name. */
+  .brand {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .beta {
+    right: 2px;
+  }
+}
+@media (max-width: 560px) {
+  .home {
+    justify-content: center;
+    width: var(--h-control);
+    padding: 0;
+  }
+  .mark {
+    width: auto;
+    height: 24px;
+  }
+}

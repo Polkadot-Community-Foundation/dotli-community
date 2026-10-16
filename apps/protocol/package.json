@@ -4,30 +4,31 @@
   "license": "AGPL-3.0-only",
   "version": "0.7.10",
   "type": "module",
+  "sideEffects": [
+    "./src/main.ts",
+    "./src/protocol-shared-worker.ts"
+  ],
   "scripts": {
-    "build": "tsc && bunx --bun vite build",
-    "build:prod": "tsc && bunx --bun vite build && bun ../../scripts/compress-dist.ts",
-    "lint": "bunx eslint src/",
+    "build": "vite build",
+    "build:prod": "vite build && node ../../scripts/compress-dist.ts",
+    "dev": "vite",
+    "lint": "eslint .",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@dotli/eslint-config": "workspace:*",
-    "@dotli/typescript-config": "workspace:*",
-    "@types/node": "^25.9.3",
-    "eslint": "^10.5.0",
-    "prettier": "^3.8.3",
-    "typescript": "~6.0.3",
-    "vite": "^8.0.16",
-    "vite-plugin-wasm": "^3.5.0"
+    "@config/eslint": "*",
+    "@config/typescript": "*",
+    "@config/vite": "*",
+    "@polkadot-api/json-rpc-provider": "^0.2.0"
   },
   "dependencies": {
-    "@dotli/config": "workspace:*",
-    "@dotli/metrics": "workspace:*",
-    "@dotli/protocol": "workspace:*",
-    "@dotli/resolver": "workspace:*",
-    "@dotli/shared": "workspace:*",
-    "@polkadot-api/json-rpc-provider": "^0.2.0",
-    "@sentry/browser": "^10.57.0",
-    "@sentry/vite-plugin": "^5.2.0"
+    "@dotli/chains": "*",
+    "@dotli/config": "*",
+    "@dotli/metrics": "*",
+    "@dotli/protocol": "*",
+    "@dotli/resolver": "*",
+    "@dotli/shared": "*",
+    "@dotli/storage": "*"
   }
 }
