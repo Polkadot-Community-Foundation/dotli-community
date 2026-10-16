@@ -64,10 +64,9 @@ deploys do not use these: the GitHub Actions path reads `DEPLOY_HOST` / `DEPLOY_
 4. `provision-cert`: issues a Let's Encrypt cert via DNS-01 covering the apex, `*.<base>`, and `*.app.<base>`.
    `--keep-until-expiring --expand` makes re-runs cheap.
 5. `provision-renewal`: enables `certbot.timer` for auto-renewal.
-6. `deploy`: ensures bun on the remote (`provision-bun`), rsyncs the repo to `$(REMOTE_BUILD_PATH)` on the box, runs
-   `bun install --frozen-lockfile && bun run build:prod` **on the remote** (the box is sized for the build;
-   `VITE_NETWORKS` is injected per-env via `VITE_NETWORKS_<env>`), then installs the three `dist/` outputs into the
-   env's web root.
+6. `deploy`: ensures Node 24+ on the remote (`provision-node`), rsyncs the repo to `$(REMOTE_BUILD_PATH)` on the box,
+   runs `npm ci && npm run build:prod` **on the remote** (the box is sized for the build; `VITE_NETWORKS` is injected
+   per-env via `VITE_NETWORKS_<env>`), then installs the three `dist/` outputs into the env's web root.
 7. `deploy-nginx`: renders `nginx/nginx.conf.template` for the env (envsubst) and installs it plus `nginx/snippets/`
    into `/etc/nginx/`, runs `nginx -t`, and reloads nginx. Preview the result with `make render-nginx ENV=<env>`.
 
