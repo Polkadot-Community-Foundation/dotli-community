@@ -14,31 +14,18 @@ REMOTE_BUILD_PATH := /tmp/dotli-build
 # Node major for the on-box build (package.json `engines`).
 NODE_MAJOR := 24
 
-# Per-env build config injected into the on-box `build:prod`. VITE_NETWORKS is
-# required by the app (packages/config/src/network.ts throws without it). CI
-# passes the equivalent via the GitHub Environment `NETWORKS` var.
-# dot.li (the summit slot) serves the products devnet since 2026-07-30; the summit
-# chains are retired. Revert to `summit` only if that network comes back.
+# Networks for the on-box `build:prod`, which requires VITE_NETWORKS. The `summit` slot is dot.li, which serves the
+# devnet like dev-dot.li.
 VITE_NETWORKS_summit := devnet
-# devnet = the public products testnet (gateway dev-dot.li). The `devnet`
-# network entry must exist in packages/config/src/network.ts before build:prod.
 VITE_NETWORKS_devnet := devnet
 
-# Brand variant for the host shell's favicon and install icons, from
-# polkadot-app-brand-assets (apps/host/public/brand/<variant>). Unset = the
-# stock Polkadot icons; dev-dot.li flies the DEV tile so a devnet tab is
-# recognisable next to a production one.
+# Icon variant for the host shell (apps/host/public/brand/<variant>); unset keeps the stock icons.
 VITE_BRAND_VARIANT_devnet := devnet
 
-# Download target for the "Get Polkadot Desktop" banner (same for every gateway).
-# Overrides the app's hardcoded fallback; keep in sync with .env.example.
+# Target of the "Get Polkadot Desktop" banner, for every gateway.
 VITE_DESKTOP_DOWNLOAD_URL := https://github.com/Polkadot-Community-Foundation/polkadot-desktop-community/releases/latest
 
-# NOTE: summit serves dot.li — the same domain as the legacy `polkadot` env.
-# This is deliberate (dot.li is being cut over to Summit): the two envs target
-# different boxes (REMOTE_PRD vs REMOTE_SUMMIT), so their cert/nginx file
-# names never collide on one machine. The `polkadot` rows describe the
-# pre-cutover box and remain for reference/rollback.
+# `summit` and upstream's `polkadot` both serve dot.li, from different boxes.
 
 # Site filename in /etc/nginx/sites-available/
 SITE_polkadot      := dot.li
@@ -169,13 +156,8 @@ renew-cert: _require-env
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	ssh -o ServerAliveInterval=30 $(REMOTE_TARGET) 'sudo certbot renew -v --non-interactive --no-random-sleep-on-renew --cert-name $(SITE_$(ENV)) && sudo nginx -t && sudo systemctl reload nginx && sudo certbot certificates --cert-name $(SITE_$(ENV))'
 
-# ====================================================================
-# On-box build deploy. The repo is rsynced to $(REMOTE_BUILD_PATH) on the
-# remote, `npm run build:prod` runs there (the box is sized for it), then
-# only the resulting dist directories are rsynced into the nginx-served
-# paths. Keeps the heavy build off this machine; VITE_NETWORKS is injected
-# per-env (see VITE_NETWORKS_<env>).
-# ====================================================================
+# Builds on the remote: rsyncs the repo to $(REMOTE_BUILD_PATH), runs `npm run build:prod` there with the env's
+# VITE_* values, then installs the three dist directories into the nginx-served paths.
 deploy: _require-env provision-node
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	$(eval REMOTE_PATH   := $(DEPLOY_PATH_$(ENV)))

@@ -1,21 +1,9 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// PCF fork: per-deployment brand variant for the host shell's icons.
-//
-// `VITE_BRAND_VARIANT` names a directory under `public/brand/`, and the assets
-// there replace the favicon, the install (PWA) icons and the social preview
-// image. Unset — every upstream build, and any gateway that does not ask for a
-// variant — keeps the stock Polkadot icons.
-//
-// Icons only. The topbar logo is part of the UI package and stays the same on
-// every gateway, so the browser tab and the installed app are what carry the
-// network's identity.
-//
-// The assets come from `polkadot-app-brand-assets` (`variants/<channel>/png`),
-// whose design language is a white tile for a test network plus a three-letter
-// channel label — `DEV` for the products devnet. Re-copy them from that repo
-// rather than editing here; it is the source of truth.
+// Per-deployment brand variant for the host shell's icons. `VITE_BRAND_VARIANT` names a directory under
+// `public/brand/` whose assets replace the favicon, the PWA icons and the social preview image; unset keeps the stock
+// icons. The assets are copied from `polkadot-app-brand-assets`.
 
 /** The variant this build targets, or `""` for the stock icons. */
 const BRAND_VARIANT: string = (process.env['VITE_BRAND_VARIANT'] ?? '').trim();

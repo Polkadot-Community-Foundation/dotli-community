@@ -239,10 +239,8 @@ describe('validateSandboxParams: resolution id', () => {
   });
 });
 
-describe('devnet is a valid network on the fork', () => {
-  // Regression: upstream's network rename rewrote VALID_NETWORKS without the fork's
-  // devnet entry, so every dev-dot.li build died on "unknown network" at startup
-  // while the error text still listed devnet as valid.
+describe('devnet is a valid network', () => {
+  // VALID_NETWORKS must include devnet, or every dev-dot.li build fails at startup.
   it('As dev-dot.li, when the host propagates network=devnet, the sandbox accepts it', () => {
     const params = search({
       [SANDBOX_CONTRACT_PARAMS.network]: NetworkName.DEVNET,

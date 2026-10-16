@@ -53,8 +53,7 @@ export function parseBackend(raw: string | null): Backend | null {
 
 /** This context's backend, or the default before boot sets the settings. */
 export function getBackend(): Backend {
-  // PCF fork: the stored choice is kept, not overwritten, so it applies again
-  // on a network that supports the light client.
+  // The stored choice is kept, so it applies again on a network that supports the light client.
   if (!activeNetworkSupportsLightClient()) {
     return 'rpc-gateway';
   }
