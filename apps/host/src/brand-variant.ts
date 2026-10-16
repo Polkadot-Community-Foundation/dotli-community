@@ -17,10 +17,8 @@
 // channel label — `DEV` for the products devnet. Re-copy them from that repo
 // rather than editing here; it is the source of truth.
 
-import type { Plugin } from 'vite';
-
 /** The variant this build targets, or `""` for the stock icons. */
-export const BRAND_VARIANT: string = (process.env.VITE_BRAND_VARIANT ?? '').trim();
+const BRAND_VARIANT: string = (process.env['VITE_BRAND_VARIANT'] ?? '').trim();
 
 const FAVICON = 'favicon-64.png';
 const ICON_192 = 'icon-192.png';
@@ -56,24 +54,9 @@ export function brandSocialImage(): string {
   return BRAND_VARIANT === '' ? '/icon-512.png' : asset(ICON_512);
 }
 
-/**
- * Point the document's `rel="icon"` at the variant's favicon.
- *
- * Rewrites the tag rather than adding one: two `rel="icon"` links let the
- * browser pick, and it usually prefers the SVG, which is the icon this is
- * replacing.
- */
-export function brandFavicon(): Plugin {
-  return {
-    name: 'dotli-brand-favicon',
-    transformIndexHtml: {
-      order: 'pre',
-      handler(html: string): string {
-        if (BRAND_VARIANT === '') {
-          return html;
-        }
-        return html.replace(/<link rel="icon"[^>]*>/, `<link rel="icon" type="image/png" href="${asset(FAVICON)}" />`);
-      },
-    },
-  };
+/** The `rel="icon"` link: the variant's PNG favicon, or the stock SVG. */
+export function brandFavicon(): { type: string; href: string } {
+  return BRAND_VARIANT === ''
+    ? { type: 'image/svg+xml', href: '/favicon.svg' }
+    : { type: 'image/png', href: asset(FAVICON) };
 }
