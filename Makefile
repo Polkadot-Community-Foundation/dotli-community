@@ -11,6 +11,9 @@ REMOTE_SUMMIT ?=
 # Scratch dir on the remote where the repo is rsynced and built (on-box build).
 REMOTE_BUILD_PATH := /tmp/dotli-build
 
+# Node major for the on-box build (package.json `engines`).
+NODE_MAJOR := 24
+
 # Per-env build config injected into the on-box `build:prod`. VITE_NETWORKS is
 # required by the app (packages/config/src/network.ts throws without it). CI
 # passes the equivalent via the GitHub Environment `NETWORKS` var.
@@ -92,7 +95,7 @@ TRUAPI_HOST_LOCAL_PACKAGE := $(TRUAPI_REPO)/js/packages/truapi-host/package.json
 # The brotli module is split across two packages on noble, both auto-loaded. curl and ca-certificates back certbot.
 APT_PACKAGES := nginx libnginx-mod-http-brotli-filter libnginx-mod-http-brotli-static certbot python3-certbot-dns-cloudflare rsync ufw curl ca-certificates
 
-.PHONY: build build-prod link-truapi-local provision-bun provision provision-prereqs provision-firewall provision-cloudflare-creds provision-cert provision-renewal renew-cert deploy ci-deploy deploy-nginx render-nginx _require-env _require-env-name
+.PHONY: build build-prod link-truapi-local provision-node provision provision-prereqs provision-firewall provision-cloudflare-creds provision-cert provision-renewal renew-cert deploy ci-deploy deploy-nginx render-nginx _require-env _require-env-name
 
 build: link-truapi-local
 	npm run build
@@ -148,16 +151,16 @@ provision-renewal: _require-env
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	ssh $(REMOTE_TARGET) 'sudo systemctl enable --now certbot.timer'
 
-# Ensure bun is present on the remote (the on-box build needs it).
-provision-bun: _require-env
+# Ensure Node $(NODE_MAJOR)+ is present on the remote (the on-box build needs it).
+provision-node: _require-env
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	ssh $(REMOTE_TARGET) 'set -euo pipefail; \
-		if ! command -v bun >/dev/null 2>&1; then \
-			curl -fsSL https://bun.sh/install | bash; \
-			sudo ln -sf "$$HOME/.bun/bin/bun" /usr/local/bin/bun; \
-			sudo ln -sf "$$HOME/.bun/bin/bunx" /usr/local/bin/bunx; \
+		major=$$(node --version 2>/dev/null | sed "s/^v\([0-9]*\).*/\1/"); \
+		if [ "$${major:-0}" -lt $(NODE_MAJOR) ]; then \
+			curl -fsSL https://deb.nodesource.com/setup_$(NODE_MAJOR).x | sudo -E bash -; \
+			sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; \
 		fi; \
-		bun --version'
+		node --version; npm --version'
 
 # certbot renews only when the cert is due. nginx reloads either way, since the timer's renewals never reload it.
 # Without a terminal certbot first waits a random delay of up to 8 minutes, which a run on demand has no use for.
@@ -168,12 +171,12 @@ renew-cert: _require-env
 
 # ====================================================================
 # On-box build deploy. The repo is rsynced to $(REMOTE_BUILD_PATH) on the
-# remote, `bun run build:prod` runs there (the box is sized for it), then
+# remote, `npm run build:prod` runs there (the box is sized for it), then
 # only the resulting dist directories are rsynced into the nginx-served
 # paths. Keeps the heavy build off this machine; VITE_NETWORKS is injected
 # per-env (see VITE_NETWORKS_<env>).
 # ====================================================================
-deploy: _require-env provision-bun
+deploy: _require-env provision-node
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	$(eval REMOTE_PATH   := $(DEPLOY_PATH_$(ENV)))
 	ssh $(REMOTE_TARGET) 'sudo install -d -m 0755 -o $$(whoami) -g $$(id -gn) $(REMOTE_BUILD_PATH) $(REMOTE_PATH) $(REMOTE_PATH)/host $(REMOTE_PATH)/app $(REMOTE_PATH)/protocol'
@@ -185,6 +188,7 @@ deploy: _require-env provision-bun
 		--exclude='packages/*/dist/' \
 		--exclude='test-results/' \
 		--exclude='.vite/' \
+		--exclude='.astro/' \
 		--exclude='.cache/' \
 		--exclude='coverage/' \
 		--exclude='.env' \
@@ -192,7 +196,7 @@ deploy: _require-env provision-bun
 		--exclude='.DS_Store' \
 		--exclude='*.log' \
 		./ $(REMOTE_TARGET):$(REMOTE_BUILD_PATH)/
-	ssh $(REMOTE_TARGET) 'set -euo pipefail; cd $(REMOTE_BUILD_PATH) && bun install --frozen-lockfile && VITE_NETWORKS=$(VITE_NETWORKS_$(ENV)) VITE_BRAND_VARIANT=$(VITE_BRAND_VARIANT_$(ENV)) VITE_DESKTOP_DOWNLOAD_URL=$(VITE_DESKTOP_DOWNLOAD_URL) bun run build:prod'
+	ssh $(REMOTE_TARGET) 'set -euo pipefail; cd $(REMOTE_BUILD_PATH) && HUSKY=0 npm ci --no-audit --no-fund && VITE_NETWORKS=$(VITE_NETWORKS_$(ENV)) VITE_BRAND_VARIANT=$(VITE_BRAND_VARIANT_$(ENV)) VITE_DESKTOP_DOWNLOAD_URL=$(VITE_DESKTOP_DOWNLOAD_URL) npm run build:prod'
 	ssh $(REMOTE_TARGET) "set -euo pipefail; \
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/host/dist/     $(REMOTE_PATH)/host/; \
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/sandbox/dist/  $(REMOTE_PATH)/app/; \
