@@ -5,64 +5,43 @@
 // light-client transports cannot serve it. Own file because the network
 // override below is module state and would leak into the other suites.
 
-import { describe, it, expect, beforeEach } from "vitest";
-import {
-  BACKEND_KEY,
-  configureModeStorage,
-  defaultBackend,
-  getBackend,
-  type ModeStorage,
-} from "@dotli/config/mode";
-import {
-  NetworkName,
-  activeNetworkSupportsLightClient,
-  setNetworkOverride,
-} from "@dotli/config/network";
+import { describe, expect, it, onTestFinished } from 'vitest';
+import { activeSettings, setSettings } from './active-settings.js';
+import { defaultBackend, getBackend } from './mode.js';
+import { NetworkName, activeNetworkSupportsLightClient, type Network } from './network.js';
+import { getSettings } from './settings.js';
+import type { Backend } from './mode.js';
 
-function makeMemoryStorage(): ModeStorage & { map: Map<string, string> } {
-  const map = new Map<string, string>();
-  return {
-    map,
-    getItem: (key) => map.get(key) ?? null,
-    setItem: (key, value) => {
-      map.set(key, value);
-    },
-    removeItem: (key) => {
-      map.delete(key);
-    },
-  };
+function useNetwork(network: Network, backend?: Backend): void {
+  const settings = getSettings();
+  onTestFinished(setSettings({ ...settings, network, backend: backend ?? settings.backend }));
 }
 
-describe("devnet transport", () => {
-  let storage: ReturnType<typeof makeMemoryStorage>;
+describe('devnet transport', () => {
+  it('As a devnet host, I report that the light client cannot serve the network', () => {
+    useNetwork(NetworkName.DEVNET);
 
-  beforeEach(() => {
-    storage = makeMemoryStorage();
-    configureModeStorage(storage);
-    setNetworkOverride(NetworkName.DEVNET);
-  });
-
-  it("marks devnet as unsupported by the light client", () => {
     expect(activeNetworkSupportsLightClient()).toBe(false);
   });
 
-  it("defaults to rpc-gateway", () => {
-    expect(defaultBackend()).toBe("rpc-gateway");
-    expect(getBackend()).toBe("rpc-gateway");
-    expect(storage.map.has(BACKEND_KEY)).toBe(false);
+  it('As a devnet host, I default to the trusted providers', () => {
+    useNetwork(NetworkName.DEVNET);
+
+    expect(defaultBackend()).toBe('rpc-gateway');
   });
 
-  it("serves rpc-gateway over a stored light-client choice without erasing it", () => {
-    storage.setItem(BACKEND_KEY, "smoldot-direct");
-    expect(getBackend()).toBe("rpc-gateway");
-    expect(storage.getItem(BACKEND_KEY)).toBe("smoldot-direct");
+  it('As a devnet host, I serve the trusted providers over a stored light-client choice without erasing it', () => {
+    useNetwork(NetworkName.DEVNET, 'smoldot-direct');
+
+    expect(getBackend()).toBe('rpc-gateway');
+    expect(activeSettings()?.backend).toBe('smoldot-direct');
   });
 
-  it("keeps the light client on networks whose chains the catalog carries", () => {
-    setNetworkOverride(NetworkName.PASEO);
+  it('As a host on a network the catalog carries, I keep the light client', () => {
+    useNetwork(NetworkName.PASEO, 'smoldot-direct');
+
     expect(activeNetworkSupportsLightClient()).toBe(true);
-    expect(defaultBackend()).toBe("smoldot-direct");
-    storage.setItem(BACKEND_KEY, "smoldot-direct");
-    expect(getBackend()).toBe("smoldot-direct");
+    expect(defaultBackend()).toBe('smoldot-direct');
+    expect(getBackend()).toBe('smoldot-direct');
   });
 });

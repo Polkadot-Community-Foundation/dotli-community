@@ -17,16 +17,14 @@
 // channel label — `DEV` for the products devnet. Re-copy them from that repo
 // rather than editing here; it is the source of truth.
 
-import type { Plugin } from "vite";
+import type { Plugin } from 'vite';
 
 /** The variant this build targets, or `""` for the stock icons. */
-export const BRAND_VARIANT: string = (
-  process.env.VITE_BRAND_VARIANT ?? ""
-).trim();
+export const BRAND_VARIANT: string = (process.env.VITE_BRAND_VARIANT ?? '').trim();
 
-const FAVICON = "favicon-64.png";
-const ICON_192 = "icon-192.png";
-const ICON_512 = "icon-512.png";
+const FAVICON = 'favicon-64.png';
+const ICON_192 = 'icon-192.png';
+const ICON_512 = 'icon-512.png';
 
 function asset(file: string): string {
   return `/brand/${BRAND_VARIANT}/${file}`;
@@ -39,23 +37,23 @@ export function brandManifestIcons(): {
   type: string;
   purpose?: string;
 }[] {
-  const icon192 = BRAND_VARIANT === "" ? "/icon-192.png" : asset(ICON_192);
-  const icon512 = BRAND_VARIANT === "" ? "/icon-512.png" : asset(ICON_512);
+  const icon192 = BRAND_VARIANT === '' ? '/icon-192.png' : asset(ICON_192);
+  const icon512 = BRAND_VARIANT === '' ? '/icon-512.png' : asset(ICON_512);
   return [
-    { src: icon192, sizes: "192x192", type: "image/png" },
-    { src: icon512, sizes: "512x512", type: "image/png" },
+    { src: icon192, sizes: '192x192', type: 'image/png' },
+    { src: icon512, sizes: '512x512', type: 'image/png' },
     {
       src: icon512,
-      sizes: "512x512",
-      type: "image/png",
-      purpose: "any maskable",
+      sizes: '512x512',
+      type: 'image/png',
+      purpose: 'any maskable',
     },
   ];
 }
 
 /** The social preview image: the variant's, or the stock one. */
 export function brandSocialImage(): string {
-  return BRAND_VARIANT === "" ? "/icon-512.png" : asset(ICON_512);
+  return BRAND_VARIANT === '' ? '/icon-512.png' : asset(ICON_512);
 }
 
 /**
@@ -67,17 +65,14 @@ export function brandSocialImage(): string {
  */
 export function brandFavicon(): Plugin {
   return {
-    name: "dotli-brand-favicon",
+    name: 'dotli-brand-favicon',
     transformIndexHtml: {
-      order: "pre",
+      order: 'pre',
       handler(html: string): string {
-        if (BRAND_VARIANT === "") {
+        if (BRAND_VARIANT === '') {
           return html;
         }
-        return html.replace(
-          /<link rel="icon"[^>]*>/,
-          `<link rel="icon" type="image/png" href="${asset(FAVICON)}" />`,
-        );
+        return html.replace(/<link rel="icon"[^>]*>/, `<link rel="icon" type="image/png" href="${asset(FAVICON)}" />`);
       },
     },
   };
