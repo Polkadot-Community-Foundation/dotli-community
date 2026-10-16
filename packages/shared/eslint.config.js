@@ -1,9 +1,12 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { config } from "@dotli/eslint-config/vite";
+/// <reference types="node" />
 
-export default [
+import { defineConfig } from 'eslint/config';
+import { config, importBans, onlyAllowedScopes } from '@config/eslint/vite';
+
+export default defineConfig([
   ...config,
   {
     languageOptions: {
@@ -12,4 +15,10 @@ export default [
       },
     },
   },
-];
+  ...importBans([
+    onlyAllowedScopes(
+      ['@config/eslint'],
+      'Shared is the bottom layer and imports no workspace package. A helper that needs one belongs to its owner.',
+    ),
+  ]),
+]);

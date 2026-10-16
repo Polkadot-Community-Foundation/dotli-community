@@ -1,29 +1,21 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-/**
- * Persistent IDB queue for `notification.push` with `scheduledAt`.
- *
- * Lives on the product origin, shared across same-origin tabs of the same
- * product. Fire-time coordination across those tabs happens in the
- * scheduler runtime (packages/ui) via Web Locks and a BroadcastChannel.
- *
- * Two stores are touched in a single tx on schedule. The
- * `scheduled_notifications` store (keyPath hostId, autoIncrement) holds
- * the records. The `notification_counters` store (keyPath productId)
- * holds the monotonic per-product `next` value, so each schedule returns
- * a stable, unique `perProductId` for TrUAPI notification callbacks.
- */
+// Queue for `notification.push` with `scheduledAt`, shared by the product's same-origin tabs.
+// The host's scheduler coordinates which tab fires.
 
-import { getDb } from "./db";
-import {
-  SCHEDULED_NOTIFICATIONS_MAX_AGE_MS,
-  SCHEDULED_NOTIFICATIONS_PER_PRODUCT_CAP,
-} from "@dotli/config/config";
+import { pageIdb, type DotliIdb } from './db.js';
+import { idbTransaction } from '@dotli/shared';
 
-const RECORD_STORE = "scheduled_notifications";
-const COUNTER_STORE = "notification_counters";
-const BY_PRODUCT_ID = "byProductId";
+/** Drop scheduled notifications older than this many ms past `scheduledAt`. */
+const SCHEDULED_NOTIFICATIONS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** Pending scheduled notifications per product before `schedule` returns ScheduleLimitReached. */
+const SCHEDULED_NOTIFICATIONS_PER_PRODUCT_CAP = 20;
+
+const RECORD_STORE = 'scheduled_notifications';
+const COUNTER_STORE = 'notification_counters';
+const BY_PRODUCT_ID = 'byProductId';
 
 export interface ScheduledNotificationRecord {
   hostId: number;
@@ -43,135 +35,88 @@ export interface ScheduleRequest {
   scheduledAt: number;
 }
 
-export type ScheduleResult =
-  | { ok: true; id: number }
-  | { ok: false; error: "ScheduleLimitReached" };
+export type ScheduleResult = { ok: true; id: number } | { ok: false; error: 'ScheduleLimitReached' };
 
 interface CounterEntry {
   productId: string;
   next: number;
 }
 
-/**
- * Atomically: enforce per-product cap, bump per-product counter, insert
- * record. All three operations run inside one readwrite tx so concurrent
- * schedules from sibling tabs cannot allocate duplicate ids or exceed the
- * cap.
- */
-export function schedule(req: ScheduleRequest): Promise<ScheduleResult> {
-  return new Promise((resolve, reject) => {
-    void getDb().then((db) => {
-      const tx = db.transaction([RECORD_STORE, COUNTER_STORE], "readwrite");
-      const records = tx.objectStore(RECORD_STORE);
-      const counters = tx.objectStore(COUNTER_STORE);
-      const byProduct = records.index(BY_PRODUCT_ID);
-
-      let result: ScheduleResult | null = null;
-
-      const countReq = byProduct.count(IDBKeyRange.only(req.productId));
-      countReq.onsuccess = () => {
-        if (countReq.result >= SCHEDULED_NOTIFICATIONS_PER_PRODUCT_CAP) {
-          result = { ok: false, error: "ScheduleLimitReached" };
-          tx.abort();
-          return;
-        }
-
-        const counterReq = counters.get(req.productId);
-        counterReq.onsuccess = () => {
-          const current = counterReq.result as CounterEntry | undefined;
-          const next = (current?.next ?? 0) + 1;
-          counters.put({
-            productId: req.productId,
-            next,
-          } satisfies CounterEntry);
-
-          // hostId is autoIncrement, so it is omitted from the record.
-          const insertReq = records.add({
-            perProductId: next,
-            productId: req.productId,
-            title: req.title,
-            text: req.text,
-            deeplink: req.deeplink,
-            scheduledAt: req.scheduledAt,
-          });
-          insertReq.onsuccess = () => {
-            result = { ok: true, id: next };
+/** The scheduled notification queue over `idb`, the page's own by default. */
+export function createScheduledNotifications(idb: DotliIdb = pageIdb) {
+  /**
+   * One transaction for cap check, counter bump and insert, so sibling tabs cannot duplicate ids or overshoot the cap.
+   */
+  async function schedule(req: ScheduleRequest): Promise<ScheduleResult> {
+    const db = await idb.connect();
+    // An object, since the compiler cannot see the body assign the result before it is read after the transaction.
+    const outcome: { result: ScheduleResult | null } = { result: null };
+    try {
+      await idbTransaction(db, [RECORD_STORE, COUNTER_STORE], 'readwrite', tx => {
+        const records = tx.objectStore(RECORD_STORE);
+        const counters = tx.objectStore(COUNTER_STORE);
+        const countReq = records.index(BY_PRODUCT_ID).count(idb.keyRange().only(req.productId));
+        countReq.onsuccess = () => {
+          if (countReq.result >= SCHEDULED_NOTIFICATIONS_PER_PRODUCT_CAP) {
+            outcome.result = { ok: false, error: 'ScheduleLimitReached' };
+            tx.abort();
+            return;
+          }
+          const counterReq = counters.get(req.productId);
+          counterReq.onsuccess = () => {
+            const current = counterReq.result as CounterEntry | undefined;
+            const next = (current?.next ?? 0) + 1;
+            counters.put({ productId: req.productId, next } satisfies CounterEntry);
+            const insertReq = records.add({
+              perProductId: next,
+              productId: req.productId,
+              title: req.title,
+              text: req.text,
+              deeplink: req.deeplink,
+              scheduledAt: req.scheduledAt,
+            });
+            insertReq.onsuccess = () => {
+              outcome.result = { ok: true, id: next };
+            };
           };
         };
-      };
+      });
+    } catch (err: unknown) {
+      // The cap aborts the transaction on purpose.
+      if (outcome.result?.ok === false) {
+        return outcome.result;
+      }
+      throw err;
+    }
+    if (outcome.result === null) {
+      throw new Error('schedule tx completed without a result');
+    }
+    return outcome.result;
+  }
 
-      tx.oncomplete = () => {
-        if (result) {
-          resolve(result);
-        } else {
-          reject(new Error("schedule tx completed without a result"));
-        }
-      };
-      tx.onerror = () => {
-        // The ScheduleLimitReached path aborts on purpose, so surface the
-        // result rather than the abort error.
-        if (result?.ok === false) {
-          resolve(result);
-        } else {
-          reject(tx.error ?? new Error("schedule tx errored"));
-        }
-      };
-      tx.onabort = () => {
-        if (result?.ok === false) {
-          resolve(result);
-        } else {
-          reject(tx.error ?? new Error("schedule tx aborted"));
-        }
-      };
-    }, reject);
-  });
-}
-
-/**
- * Bump the per-product counter without persisting a record. Used by the
- * immediate-fire path so the returned NotificationId is still monotonic.
- */
-export function allocateId(productId: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    void getDb().then((db) => {
-      const tx = db.transaction(COUNTER_STORE, "readwrite");
+  /** Bump the counter without a record, so an immediate notification still gets a monotonic id. */
+  async function allocateId(productId: string): Promise<number> {
+    const db = await idb.connect();
+    let allocated = 0;
+    await idbTransaction(db, COUNTER_STORE, 'readwrite', tx => {
       const counters = tx.objectStore(COUNTER_STORE);
-      let allocated = 0;
-
       const get = counters.get(productId);
       get.onsuccess = () => {
         const current = get.result as CounterEntry | undefined;
         allocated = (current?.next ?? 0) + 1;
         counters.put({ productId, next: allocated } satisfies CounterEntry);
       };
+    });
+    return allocated;
+  }
 
-      tx.oncomplete = () => {
-        resolve(allocated);
-      };
-      tx.onerror = () => {
-        reject(tx.error ?? new Error("allocateId tx errored"));
-      };
-    }, reject);
-  });
-}
-
-/**
- * Idempotent. Returns true if a matching record was deleted, false if no
- * such (productId, perProductId) pair existed (already fired or never
- * scheduled).
- */
-export function cancel(
-  productId: string,
-  perProductId: number,
-): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    void getDb().then((db) => {
-      const tx = db.transaction(RECORD_STORE, "readwrite");
-      const records = tx.objectStore(RECORD_STORE);
-      const byProduct = records.index(BY_PRODUCT_ID);
-      let deleted = false;
-
-      const cursorReq = byProduct.openCursor(IDBKeyRange.only(productId));
+  /** Idempotent. Resolves `false` when the notification already fired or never existed. */
+  async function cancel(productId: string, perProductId: number): Promise<boolean> {
+    const db = await idb.connect();
+    let deleted = false;
+    await idbTransaction(db, RECORD_STORE, 'readwrite', tx => {
+      const byProduct = tx.objectStore(RECORD_STORE).index(BY_PRODUCT_ID);
+      const cursorReq = byProduct.openCursor(idb.keyRange().only(productId));
       cursorReq.onsuccess = () => {
         const cursor = cursorReq.result;
         if (!cursor) {
@@ -185,24 +130,15 @@ export function cancel(
         }
         cursor.continue();
       };
+    });
+    return deleted;
+  }
 
-      tx.oncomplete = () => {
-        resolve(deleted);
-      };
-      tx.onerror = () => {
-        reject(tx.error ?? new Error("cancel tx errored"));
-      };
-    }, reject);
-  });
-}
-
-export function removeById(hostId: number): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    void getDb().then((db) => {
-      const tx = db.transaction(RECORD_STORE, "readwrite");
+  async function removeById(hostId: number): Promise<boolean> {
+    const db = await idb.connect();
+    let existed = false;
+    await idbTransaction(db, RECORD_STORE, 'readwrite', tx => {
       const records = tx.objectStore(RECORD_STORE);
-      let existed = false;
-
       const getReq = records.get(hostId);
       getReq.onsuccess = () => {
         if (getReq.result !== undefined) {
@@ -210,24 +146,17 @@ export function removeById(hostId: number): Promise<boolean> {
           existed = true;
         }
       };
+    });
+    return existed;
+  }
 
-      tx.oncomplete = () => {
-        resolve(existed);
-      };
-      tx.onerror = () => {
-        reject(tx.error ?? new Error("removeById tx errored"));
-      };
-    }, reject);
-  });
-}
-
-export function listAll(): Promise<ScheduledNotificationRecord[]> {
-  return new Promise((resolve, reject) => {
-    void getDb().then((db) => {
-      const tx = db.transaction(RECORD_STORE, "readonly");
-      const out: ScheduledNotificationRecord[] = [];
-
-      const cursorReq = tx.objectStore(RECORD_STORE).openCursor();
+  async function collect(
+    open: (store: IDBObjectStore) => IDBRequest<IDBCursorWithValue | null>,
+  ): Promise<ScheduledNotificationRecord[]> {
+    const db = await idb.connect();
+    const out: ScheduledNotificationRecord[] = [];
+    await idbTransaction(db, RECORD_STORE, 'readonly', tx => {
+      const cursorReq = open(tx.objectStore(RECORD_STORE));
       cursorReq.onsuccess = () => {
         const cursor = cursorReq.result;
         if (!cursor) {
@@ -236,63 +165,21 @@ export function listAll(): Promise<ScheduledNotificationRecord[]> {
         out.push(cursor.value as ScheduledNotificationRecord);
         cursor.continue();
       };
+    });
+    return out;
+  }
 
-      tx.oncomplete = () => {
-        resolve(out);
-      };
-      tx.onerror = () => {
-        reject(tx.error ?? new Error("listAll tx errored"));
-      };
-    }, reject);
-  });
-}
+  function listAll(): Promise<ScheduledNotificationRecord[]> {
+    return collect(store => store.openCursor());
+  }
 
-export function listForProduct(
-  productId: string,
-): Promise<ScheduledNotificationRecord[]> {
-  return new Promise((resolve, reject) => {
-    void getDb().then((db) => {
-      const tx = db.transaction(RECORD_STORE, "readonly");
-      const byProduct = tx.objectStore(RECORD_STORE).index(BY_PRODUCT_ID);
-      const out: ScheduledNotificationRecord[] = [];
-
-      const cursorReq = byProduct.openCursor(IDBKeyRange.only(productId));
-      cursorReq.onsuccess = () => {
-        const cursor = cursorReq.result;
-        if (!cursor) {
-          return;
-        }
-        out.push(cursor.value as ScheduledNotificationRecord);
-        cursor.continue();
-      };
-
-      tx.oncomplete = () => {
-        resolve(out);
-      };
-      tx.onerror = () => {
-        reject(tx.error ?? new Error("listForProduct tx errored"));
-      };
-    }, reject);
-  });
-}
-
-/**
- * Delete every record whose `scheduledAt` is older than `now - maxAgeMs`.
- * Returns the number of records removed.
- */
-export function removeStale(
-  now: number,
-  maxAgeMs: number = SCHEDULED_NOTIFICATIONS_MAX_AGE_MS,
-): Promise<number> {
-  const cutoff = now - maxAgeMs;
-  return new Promise((resolve, reject) => {
-    void getDb().then((db) => {
-      const tx = db.transaction(RECORD_STORE, "readwrite");
-      const records = tx.objectStore(RECORD_STORE);
-      const idx = records.index("byScheduledAt");
-      let removed = 0;
-
-      const cursorReq = idx.openCursor(IDBKeyRange.upperBound(cutoff, true));
+  async function removeStale(now: number, maxAgeMs: number = SCHEDULED_NOTIFICATIONS_MAX_AGE_MS): Promise<number> {
+    const cutoff = now - maxAgeMs;
+    const db = await idb.connect();
+    let removed = 0;
+    await idbTransaction(db, RECORD_STORE, 'readwrite', tx => {
+      const idx = tx.objectStore(RECORD_STORE).index('byScheduledAt');
+      const cursorReq = idx.openCursor(idb.keyRange().upperBound(cutoff, true));
       cursorReq.onsuccess = () => {
         const cursor = cursorReq.result;
         if (!cursor) {
@@ -302,13 +189,14 @@ export function removeStale(
         removed += 1;
         cursor.continue();
       };
+    });
+    return removed;
+  }
 
-      tx.oncomplete = () => {
-        resolve(removed);
-      };
-      tx.onerror = () => {
-        reject(tx.error ?? new Error("removeStale tx errored"));
-      };
-    }, reject);
-  });
+  return { schedule, allocateId, cancel, removeById, listAll, removeStale };
 }
+
+export type ScheduledNotifications = ReturnType<typeof createScheduledNotifications>;
+
+export const { schedule, allocateId, cancel, removeById, listAll, removeStale }: ScheduledNotifications =
+  createScheduledNotifications();

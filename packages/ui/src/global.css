@@ -1,0 +1,295 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* Nothing here resets elements, each module resets its own. The chrome is dark only, data-theme is the
+   product's preference. */
+
+:root {
+  --text-strong: #f4f4f5;
+  --text: #dadbe0;
+  --text-secondary: #a9abb3;
+  --text-muted: #9ea1aa;
+  --text-faint: #80838a;
+  --bg-page: #0b0c0f;
+  --surface: #1a1b20;
+  --fill-subtle: rgba(255, 255, 255, 0.04);
+  --fill: rgba(255, 255, 255, 0.07);
+  --fill-strong: rgba(255, 255, 255, 0.12);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.16);
+  --border-focus: rgba(255, 255, 255, 0.48);
+  --inverse-bg: #f7f7f8;
+  --inverse-bg-hover: #ffffff;
+  --inverse-fg: #0b0c0f;
+  --danger: var(--chrome-err-text);
+  --neutral-solid: #8c8f98;
+
+  /* Global because an app writes them into a product's custom chat message inline styles. */
+  --chat-fg-primary: #f4f4f5;
+  --chat-fg-secondary: #a9abb3;
+  --chat-fg-tertiary: #83868e;
+  --chat-bg-surface-main: #1a1b20;
+  --chat-bg-surface-container: rgba(255, 255, 255, 0.07);
+  --chat-bg-surface-nested: rgba(255, 255, 255, 0.13);
+  --chat-fg-success: var(--chrome-ok-text);
+  --chat-fg-error: var(--chrome-err-text);
+  --chat-fg-warning: var(--chrome-warn-text);
+
+  /* `viewport-fit=cover` needs an inset per edge. Inline styles set from JS repeat the px fallback,
+     because they do not ship with this file. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* The product frame runs under the floating pill. */
+  --topbar-height: calc(var(--topbar-inset) + var(--h-bar) + var(--topbar-inset) + var(--safe-top));
+  /* What the bar and the insets leave of the screen, wherever the bar is. */
+  --content-top: var(--topbar-height);
+  --content-bottom: var(--safe-bottom);
+  --content-height: calc(100dvh - var(--content-top) - var(--content-bottom));
+}
+
+/* Phones put the bar at the foot. The page paints the glass's opaque bottom stop because Safari tints its
+   toolbar from it, which never collapses over the product's iframe. */
+@media (max-width: 560px) {
+  body[data-host] {
+    --bg-page: #121317;
+  }
+  :root {
+    --topbar-height: calc(var(--h-bar) + var(--safe-bottom));
+    --content-top: var(--safe-top);
+    --content-bottom: var(--topbar-height);
+  }
+  /* The landing page has no bar. --content-height is declared again because a custom property resolves
+     the others where it is declared. */
+  body[data-landing] {
+    --content-bottom: var(--safe-bottom);
+    --content-height: calc(100dvh - var(--content-top) - var(--content-bottom));
+  }
+}
+
+/* Contrast is APCA Lc against the lightest the glass gets, --chrome-top over a white product page (#32343a). */
+:root {
+  --chrome-top: rgba(44, 46, 52, 0.97);
+  --chrome-bottom: rgba(18, 19, 23, 0.98);
+  --chrome-glass: linear-gradient(180deg, var(--chrome-top) 0%, var(--chrome-bottom) 100%);
+  --chrome-blur: blur(32px) saturate(150%);
+  --chrome-solid: #282a30;
+  --chrome-well: rgba(0, 0, 0, 0.3);
+  --chrome-well-strong: rgba(0, 0, 0, 0.48);
+  --chrome-fill: rgba(255, 255, 255, 0.07);
+  --chrome-fill-strong: rgba(255, 255, 255, 0.12);
+  --chrome-line: rgba(255, 255, 255, 0.08);
+  --chrome-ring-subtle: rgba(255, 255, 255, 0.06);
+  --chrome-ring: rgba(255, 255, 255, 0.16);
+  --chrome-ring-strong: rgba(255, 255, 255, 0.48);
+
+  --chrome-text: #f4f4f5; /* Lc 95 */
+  --chrome-text-muted: #d4d5db; /* Lc 75, 78 on --chrome-well */
+  --chrome-on-primary: #0b0c0f; /* Lc 85 on --chrome-primary */
+  --chrome-primary: linear-gradient(180deg, #f7f7f8 0%, #dadbe0 100%);
+  --chrome-primary-hover: linear-gradient(180deg, #ffffff 0%, #f4f4f5 100%);
+  --chrome-avatar: linear-gradient(160deg, #585b62 0%, #2c2e34 100%); /* initials Lc 81 */
+  --chrome-focus: #78a9ff;
+  --chrome-focus-ring: 2px solid var(--chrome-focus);
+
+  /* Status marks, Lc 45 or more on their own tint. Berlin hues at one lightness and chroma, so no tone outshouts another. */
+  --chrome-ok: #6bc880;
+  --chrome-warn: #e69f42;
+  --chrome-err: #fa8b85;
+  --chrome-info: #7eafff;
+  --chrome-idle: #aaacb4;
+  --chrome-action: #ffffff;
+  --chrome-action-dim: #5f6269; /* Lc 15 */
+  --chrome-ok-text: #b5edbf; /* Lc 75 on its tint */
+  --chrome-warn-text: #ffd9ae; /* Lc 75 on its tint */
+  --chrome-err-text: #ffd5d1; /* Lc 75 on its tint */
+  --chrome-tint: 16%;
+  --chrome-tint-strong: 22%;
+  /* A red tint, never solid red, so the primary action stays the brightest. */
+  --chrome-danger-fill: color-mix(in srgb, var(--chrome-err) var(--chrome-tint), transparent);
+  --chrome-danger-fill-strong: color-mix(in srgb, var(--chrome-err) var(--chrome-tint-strong), transparent);
+  --chrome-danger-ring: color-mix(in srgb, var(--chrome-err) 45%, transparent);
+  --chrome-warn-fill: color-mix(in srgb, var(--chrome-warn) 12%, transparent);
+  --chrome-warn-ring: color-mix(in srgb, var(--chrome-warn) 30%, transparent);
+  --chrome-danger-text: #ffdad7; /* Lc 75 on --chrome-danger-fill-strong */
+
+  --chrome-shadow-pop:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.09), 0 24px 48px rgba(0, 0, 0, 0.32),
+    0 2px 8px rgba(0, 0, 0, 0.2);
+  --chrome-shadow-bar:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 18px 44px rgba(0, 0, 0, 0.28),
+    0 2px 6px rgba(0, 0, 0, 0.18);
+  --chrome-shadow-capsule:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.09), 0 6px 18px rgba(0, 0, 0, 0.18);
+  /* No ring at the foot, which rests on the bar. */
+  --chrome-shadow-sheet:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    inset 1px 0 0 rgba(255, 255, 255, 0.09), inset -1px 0 0 rgba(255, 255, 255, 0.09), 0 -12px 40px rgba(0, 0, 0, 0.3);
+  --chrome-shadow-raised:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --chrome-shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 0 0 1px var(--chrome-ring-subtle);
+  --chrome-shadow-primary: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --chrome-shadow-knob: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --chrome-shadow-tile: 0 8px 24px rgba(0, 0, 0, 0.3);
+
+  --chrome-scrim: rgba(0, 0, 0, 0.48);
+  --chrome-scrim-light: rgba(0, 0, 0, 0.06); /* behind a desktop popover */
+  /* Black on white, so phones can scan it. */
+  --qr-bg: #ffffff;
+  --qr-ink: #0b0c0f;
+}
+/* Unblurred, the translucent glass would let the page show through. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --chrome-glass: var(--chrome-solid);
+  }
+}
+
+/* A mark that may go without data-tone sets its own default --tone, so it never takes an ancestor's. */
+[data-tone='ok'] {
+  --tone: var(--chrome-ok);
+}
+[data-tone='warn'] {
+  --tone: var(--chrome-warn);
+}
+[data-tone='err'] {
+  --tone: var(--chrome-err);
+}
+[data-tone='info'] {
+  --tone: var(--chrome-info);
+}
+[data-tone='idle'] {
+  --tone: var(--chrome-idle);
+}
+/* Nothing in use: white, apart from every tone that judges a connection. */
+[data-tone='quiet'] {
+  --tone: var(--text-strong);
+}
+
+/* 44 px is the touch minimum. */
+:root {
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --fs-label: 11px;
+  --fs-caption: 12px;
+  --fs-small: 13px;
+  --fs-body: 14px;
+  --fs-title: 15px;
+  /* A popover's or prompt's title, the title size on phones. */
+  --fs-pop-title: 14px;
+  --fs-title-lg: 17px;
+  --fs-h2: 20px;
+  --fs-h1: 24px;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --lh-tight: 1.3;
+  --lh-body: 1.5;
+  --ls-caps: 0.08em;
+  --ls-tight: -0.01em;
+
+  --sp-hair: 2px;
+  --sp-1: 4px;
+  --sp-1_5: 6px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-14: 56px;
+
+  --r-hair: 2px;
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 24px;
+  --r-xl: 28px;
+  --r-full: 999px;
+
+  --h-chip: 18px;
+  --h-row-xs: 24px;
+  --h-row-sm: 32px;
+  --h-control-sm: 36px;
+  --h-control: 44px;
+  --h-row: 48px;
+  --h-control-lg: 52px;
+  --h-row-lg: 56px;
+  --h-tile: 72px;
+  /* Desktop is not touch, so its bar is smaller than the phone bar below. */
+  --h-bar: 48px;
+  --h-bar-control: 36px;
+  --topbar-inset: 10px;
+
+  /* Desktop sizes. Phones take the boards' sizes below. */
+  --w-pop-sm: 260px;
+  --w-pop-md: 320px;
+  --w-pop-lg: 360px;
+  --w-pop-xl: 680px;
+  --pop-gap: 10px;
+  --r-pop: 20px;
+  /* Phones' toasts are full width. */
+  --w-toast: 340px;
+  --w-landing: 300px;
+
+  --ease-spring: cubic-bezier(0.2, 0.9, 0.25, 1.08);
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-fast: 0.15s;
+  --dur: 0.26s;
+  --dur-morph: 0.46s;
+  /* The pill's content waits for the morph. */
+  --delay-content: 0.2s;
+  --loop: 1.4s;
+}
+
+/* Desktop chrome type is a step under the page's, since desktop is not touch. The scheme is set here, not
+   on :root, which would change how the browser paints the product frame's backdrop. */
+[data-chrome] {
+  color-scheme: dark;
+  --fs-small: 12px;
+  --fs-body: 13px;
+}
+
+@media (max-width: 560px) {
+  :root {
+    --h-bar: 60px;
+    --h-bar-control: 44px;
+    --w-pop-sm: 300px;
+    --w-pop-md: 360px;
+    --w-pop-lg: 400px;
+    --w-pop-xl: 760px;
+    --pop-gap: 12px;
+    --r-pop: var(--r-lg);
+    --fs-pop-title: var(--fs-title);
+  }
+  [data-chrome] {
+    --fs-small: 13px;
+    --fs-body: 14px;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+  /* macOS's default smoothing draws light text on the dark chrome a weight heavier than designed. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* An attribute, not an inline style, so the page's own inline overflow survives the dialog. */
+body[data-scroll-locked] {
+  overflow: hidden !important;
+}
+
+:focus-visible {
+  outline: 2px solid var(--text-muted);
+  outline-offset: 2px;
+}
+/* For chrome elements that do not draw --chrome-focus-ring themselves. */
+:where([data-chrome], [data-chrome] *):focus-visible {
+  outline-color: var(--chrome-text-muted);
+}

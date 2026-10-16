@@ -1,0 +1,35 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* :where() so a consumer's class wins whatever the load order. */
+:where(.surface) {
+  max-width: calc(100vw - 24px - var(--safe-left) - var(--safe-right));
+  /* dvh tracks the visible area as mobile browser chrome shows and hides. */
+  max-height: calc(
+    100dvh - var(--topbar-bottom, var(--topbar-height)) - var(--pop-gap) - var(--sp-4) - var(--safe-bottom)
+  );
+  overflow-y: auto;
+}
+
+.loading {
+  display: grid;
+  place-items: center;
+  min-height: 80px;
+}
+.loading .spinner {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  .loading {
+    min-height: 96px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading .spinner {
+    animation: none;
+  }
+}

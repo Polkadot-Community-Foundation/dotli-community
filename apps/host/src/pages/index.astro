@@ -1,0 +1,34 @@
+---
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// The shell around a product, on its `<label>.<BASE_DOMAIN>` host. The bare host's root serves landing.astro instead.
+import PageHead from '../components/PageHead.astro';
+import Shell from '../components/Shell.astro';
+import { LoadingScreen } from '../islands/LoadingScreen.jsx';
+import { Overlays } from '../islands/Overlays.jsx';
+import { TopbarReveal } from '../islands/TopbarReveal.jsx';
+import s from './index.module.css';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <PageHead />
+  </head>
+  <body data-host>
+    <Shell />
+
+    {/* Outside `#app`, whose content the product replaces. */}
+    <LoadingScreen client:load />
+
+    <div id="app" class={s['app']}></div>
+    {/* After the app frame, so it is one Tab past it. */}
+    <TopbarReveal client:idle />
+    {/* Marked, so a full-page screen keeps it. */}
+    <div data-overlays>
+      <Overlays client:idle={{ timeout: 1000 }} />
+    </div>
+    <script src="../main.ts"></script>
+  </body>
+</html>

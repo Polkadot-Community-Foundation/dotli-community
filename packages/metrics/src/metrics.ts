@@ -1,47 +1,30 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Performance metrics for smoldot/protocol lifecycle.
-//
-// Controlled via VITE_METRICS env var:
-//   VITE_METRICS=true   spans, measurements, and counters sent to Sentry
-//   VITE_METRICS unset  all calls are no-ops (zero overhead)
-//
-// Usage:
-//   import { m } from "@dotli/metrics/metrics";
-//   await m.span("smoldot.relay_chain", async () => { ... });
-//   m.measure("smoldot.sync_duration", 2356);
-//   m.count("protocol.mode", { mode: "shared-worker", outcome: "ok" });
-//
-// Approved attribute schema (`MetricAttributes`):
-//   - `mode`      legacy DotliMode preset label ("p2p-shared-worker" etc.)
-//   - `provider`  concrete provider name ("smoldot", "rpc", "helia", ...)
-//   - `chain`     relay or parachain name ("relay", "asset-hub", ...)
-//   - `source`    emitting module ("host", "worker", "sandbox", ...)
-//   - `env`       deployment environment ("production", "staging", ...)
-//   - `outcome`   "ok" | "error" | "timeout" | "miss" | "hit"
-//   - `reason`    short error class tag when `outcome !== "ok"`
-//
-// Unknown keys are still accepted (TypeScript `& Record<string,string>`) so
-// existing call sites compile. The named keys are the ones dashboards slice
-// on, so keep new attributes within the schema.
+// Sentry spans and metrics. Every call is a no-op unless VITE_METRICS is "true".
 
-/** Known metric attribute keys. Keep dashboards in sync with this list. */
+/** Keep dashboards in sync with this list. */
 export type MetricOutcome =
-  | "ok"
-  | "error"
-  | "timeout"
-  | "miss"
-  | "hit"
-  | "pending"
+  | 'ok'
+  | 'error'
+  | 'timeout'
+  | 'miss'
+  | 'hit'
+  | 'pending'
   // Bitswap
-  | "not-found"
-  | "invalid-cid"
-  | "aborted"
+  | 'not-found'
+  | 'invalid-cid'
+  | 'aborted'
   // Manifest reader
-  | "empty"
-  | "invalid";
+  | 'empty'
+  | 'invalid'
+  | 'unsupported-version'
+  // Cache revalidation
+  | 'match'
+  | 'update'
+  | 'cleared';
 
+/** Dashboards slice on the named keys, so keep new attributes within them. */
 export type MetricAttributes = {
   mode?: string;
   provider?: string;
@@ -50,14 +33,14 @@ export type MetricAttributes = {
   env?: string;
   outcome?: MetricOutcome;
   reason?: string;
+  owner?: string;
 } & Record<string, string>;
 
 interface MetricOptions {
   unit?: string;
-  attributes?: Record<string, string>;
+  attributes?: Record<string, string> | undefined;
 }
 
-/** The slice of a Sentry span the tracing helpers below drive. */
 interface SentrySpan {
   setAttributes: (attrs: Record<string, SpanValue>) => void;
   end: (endTime?: number) => void;
@@ -68,16 +51,14 @@ export type SpanValue = string | number | boolean;
 interface SentryLike {
   startSpan: <T>(
     opts: { op: string; name: string },
-    fn: (
-      span: { setAttribute: (key: string, value: string) => void } | undefined,
-    ) => T,
+    fn: (span: { setAttribute: (key: string, value: string) => void } | undefined) => T,
   ) => T;
   startInactiveSpan: (opts: {
     name: string;
     op?: string;
-    startTime?: number;
+    startTime?: number | undefined;
     parentSpan?: unknown;
-    forceTransaction?: boolean;
+    forceTransaction?: boolean | undefined;
     attributes?: Record<string, SpanValue>;
   }) => SentrySpan;
   setMeasurement: (name: string, value: number, unit: string) => void;
@@ -91,228 +72,109 @@ interface SentryLike {
     category: string;
     message: string;
     level?: string;
-    data?: Record<string, unknown>;
+    data?: Record<string, unknown> | undefined;
   }) => void;
 }
 
-// Sentry resolves once at first use so the metrics package never forces a
-// Sentry import. The host app must initialize Sentry before any metric calls
-// fire.
-//
-// `sentry()` re-probes as long as `_sentry` is null. Memoizing the first null
-// result would keep an app that initializes Sentry after the first metric call
-// silent forever, so a late `initSentry` or `m.bind` still activates the
-// pipeline the next time any metric fires.
-
-let _sentry: SentryLike | null = null;
-
-function sentry(): SentryLike | null {
-  if (_sentry !== null) {
-    return _sentry;
-  }
-  try {
-    const hub = (globalThis as Record<string, unknown>).__SENTRY_HUB__;
-    if (hub !== undefined && hub !== null) {
-      _sentry = hub as SentryLike;
-    }
-    // eslint-disable-next-line no-restricted-syntax -- globalThis access can throw in restrictive contexts; we retry on next call instead of capturing (a capture would itself run through the metrics pipeline we're trying to probe).
-  } catch {
-    /* probe failure, try again next time */
-  }
-  if (_sentry === null) {
-    warnUnboundOnce();
-  }
-  return _sentry;
-}
-
-// Single "metrics enabled but no Sentry bound" warning across the
-// session. Without this, VITE_METRICS=true + a missing `m.bind()` call
-// produces a silent flat-line on every dashboard. One console.warn is
-// cheap, and we keep it always-on (not gated by DEBUG) so an operator
-// with the devtools open notices before the pipeline is cold for hours.
-let _unboundWarned = false;
-function warnUnboundOnce(): void {
-  if (_unboundWarned || !ENABLED) {
-    return;
-  }
-  _unboundWarned = true;
-  console.warn(
-    "[dot.li metrics] VITE_METRICS=true but Sentry is not bound — every metric will silently no-op until `initSentry()` / `m.bind()` runs. Check your app entry point.",
-  );
-}
+// Bound by `initSentry`, or by a test's recorder.
+let bound: SentryLike | null = null;
 
 /**
- * Bind a live Sentry instance. Call this from the app entry point
- * after `Sentry.init()` so the metrics package can record spans.
- *
- * ```ts
- * import * as Sentry from "@sentry/browser";
- * import { m } from "@dotli/metrics/metrics";
- * Sentry.init({ ... });
- * m.bind(Sentry);
- * ```
+ * Bind a live Sentry after `Sentry.init()`. Returns a function that restores the binding before, so unbind in reverse
+ * order. Pass the functions, not the namespace: a namespace value keeps every SDK export in the bundle.
  */
-function bind(s: SentryLike): void {
-  _sentry = s;
-  _unboundWarned = false;
+function bind(s: SentryLike): () => void {
+  const previous = bound;
+  bound = s;
+  return () => {
+    bound = previous;
+  };
 }
 
-const ENABLED = (import.meta.env.VITE_METRICS as string | undefined) === "true";
-
-// Apps register session-level context (e.g. `dotli_mode`) via `setDefaults()`.
-// Every metric emitted afterwards carries these attributes, so dashboards can
-// slice per-mode without touching each call site. Per-call attributes still
-// win on collision.
+const ENABLED = import.meta.env.VITE_METRICS === 'true';
 
 let defaultAttrs: Record<string, string> = {};
 
-function mergeAttrs(
-  attrs?: Record<string, string>,
-): Record<string, string> | undefined {
+function mergeAttrs(attrs?: Record<string, string>): Record<string, string> | undefined {
   if (attrs === undefined) {
     return Object.keys(defaultAttrs).length > 0 ? defaultAttrs : undefined;
   }
   return { ...defaultAttrs, ...attrs };
 }
 
-/**
- * Wrap a sync or async function in a Sentry performance span.
- * When metrics are disabled, the function runs without instrumentation.
- * The wrapped function receives the active span so callers can attach
- * attributes synchronously inside the body (e.g. `dotli.chain_backend`
- * on a resolve span).
- */
+/** Run `fn` inside a Sentry span, handing it the span so it can attach attributes. */
+function span<T>(name: string, fn: (span: { setAttribute: (key: string, value: string) => void } | undefined) => T): T;
 function span<T>(
   name: string,
-  fn: (
-    span: { setAttribute: (key: string, value: string) => void } | undefined,
-  ) => T,
-): T;
-function span<T>(
-  name: string,
-  fn: (
-    span: { setAttribute: (key: string, value: string) => void } | undefined,
-  ) => Promise<T>,
+  fn: (span: { setAttribute: (key: string, value: string) => void } | undefined) => Promise<T>,
 ): Promise<T>;
 function span<T>(
   name: string,
-  fn: (
-    span: { setAttribute: (key: string, value: string) => void } | undefined,
-  ) => T | Promise<T>,
+  fn: (span: { setAttribute: (key: string, value: string) => void } | undefined) => T | Promise<T>,
 ): T | Promise<T> {
   if (!ENABLED) {
     return fn(undefined);
   }
-  const s = sentry();
+  const s = bound;
   if (s === null) {
     return fn(undefined);
   }
-  return s.startSpan({ op: "dotli", name: `dotli.${name}` }, (currentSpan) =>
-    fn(currentSpan),
-  );
+  return s.startSpan({ op: 'dotli', name: `dotli.${name}` }, currentSpan => fn(currentSpan));
 }
 
-/**
- * Record a numeric measurement on the current Sentry transaction.
- * Measurements appear in Sentry's performance dashboard.
- */
-function measure(
-  name: string,
-  value: number,
-  unit: "millisecond" | "second" | "byte" | "none" = "millisecond",
-): void {
+function measure(name: string, value: number, unit: 'millisecond' | 'second' | 'byte' | 'none' = 'millisecond'): void {
   if (!ENABLED) {
     return;
   }
-  sentry()?.setMeasurement(`dotli.${name}`, value, unit);
+  bound?.setMeasurement(`dotli.${name}`, value, unit);
 }
 
-/**
- * Increment a counter metric. Counters track event frequency.
- *
- * `attributes` follows the approved `MetricAttributes` schema. Prefer the
- * named keys (`mode`, `provider`, `chain`, `source`, `outcome`,
- * `reason`) so dashboards can slice consistently.
- */
 function count(name: string, attributes?: MetricAttributes): void {
   if (!ENABLED) {
     return;
   }
-  sentry()?.metrics.count(`dotli.${name}`, 1, {
+  bound?.metrics.count(`dotli.${name}`, 1, {
     attributes: mergeAttrs(attributes),
   });
 }
 
-/**
- * Record a distribution (histogram) value. Use for latency distributions.
- */
-function distribution(
-  name: string,
-  value: number,
-  unit = "millisecond",
-  attributes?: MetricAttributes,
-): void {
+function distribution(name: string, value: number, unit = 'millisecond', attributes?: MetricAttributes): void {
   if (!ENABLED) {
     return;
   }
-  sentry()?.metrics.distribution(`dotli.${name}`, value, {
+  bound?.metrics.distribution(`dotli.${name}`, value, {
     unit,
     attributes: mergeAttrs(attributes),
   });
 }
 
-/**
- * Record a gauge value (last-write-wins). Use for current state values.
- */
-function gauge(
-  name: string,
-  value: number,
-  unit = "none",
-  attributes?: MetricAttributes,
-): void {
+function gauge(name: string, value: number, unit = 'none', attributes?: MetricAttributes): void {
   if (!ENABLED) {
     return;
   }
-  sentry()?.metrics.gauge(`dotli.${name}`, value, {
+  bound?.metrics.gauge(`dotli.${name}`, value, {
     unit,
     attributes: mergeAttrs(attributes),
   });
 }
 
-/**
- * Set a tag on the current Sentry scope. Tags are searchable in Sentry.
- */
 function tag(key: string, value: string): void {
   if (!ENABLED) {
     return;
   }
-  sentry()?.setTag(`dotli.${key}`, value);
+  bound?.setTag(`dotli.${key}`, value);
 }
 
 /**
- * Register session-wide default attributes. Every `count`, `distribution`,
- * and `gauge` emitted afterwards picks these up automatically, so `source`,
- * `mode`, or any similar slice from the canonical `MetricAttributes` schema
- * doesn't need to be threaded through every call site.
- *
- * Keys passed here MUST be bare schema keys (`source`, `mode`, `chain`,
- * `provider`, etc.). The metrics layer owns the `dotli.`-prefix mirroring
- * to Sentry tags internally. Passing an already-prefixed key produces
- * `dotli.dotli_<name>` in Sentry and silently drifts from the schema.
- *
- * Each entry is mirrored to the Sentry scope as a `dotli.<key>` tag, so
- * error events inherit the same context for filtering. Per-call attributes
- * passed directly to `count` / `distribution` / `gauge` still win on key
- * collision.
- *
- * Call once per app at boot, after mode / context is known.
+ * Add session-wide attributes to every later metric, mirrored to the Sentry scope as `dotli.<key>` tags.
+ * Per-call attributes win. Pass bare keys: a prefixed one ends up as `dotli.dotli_<name>`.
  */
 function setDefaults(attrs: Record<string, string>): void {
   if (!ENABLED) {
     return;
   }
   defaultAttrs = { ...defaultAttrs, ...attrs };
-  const s = sentry();
+  const s = bound;
   if (s === null) {
     return;
   }
@@ -321,27 +183,16 @@ function setDefaults(attrs: Record<string, string>): void {
   }
 }
 
-/**
- * Remove session-wide default attributes. Without this, switching chain
- * backend mid-session would leak the old `dotli_chain_backend` tag into
- * every subsequent metric, corrupting dashboards for the new mode.
- *
- * When `keys` is omitted, every registered default is cleared. When
- * `keys` is supplied, only those attributes are removed (and their
- * Sentry tags reset to the empty string, since Sentry has no `removeTag`).
- */
+/** Remove session-wide defaults, all of them when `keys` is omitted, so a mid-session switch leaks no stale tag. */
 function clearDefaults(keys?: readonly string[]): void {
   if (!ENABLED) {
     return;
   }
-  const targets: string[] =
-    keys === undefined ? Object.keys(defaultAttrs) : [...keys];
-  const s = sentry();
+  const targets: string[] = keys === undefined ? Object.keys(defaultAttrs) : [...keys];
+  const s = bound;
   for (const key of targets) {
-    // Clear the scope tag by setting it to an empty string. Sentry has
-    // no remove primitive, so dashboards filtering on a non-empty value
-    // will stop picking up stale values.
-    s?.setTag(`dotli.${key}`, "");
+    // Sentry has no tag removal, and an empty value drops out of non-empty filters.
+    s?.setTag(`dotli.${key}`, '');
   }
   if (keys === undefined) {
     defaultAttrs = {};
@@ -359,16 +210,8 @@ function clearDefaults(keys?: readonly string[]): void {
 let resolutionId: string | null = null;
 
 /**
- * Correlate one page load across every realm it runs in.
- *
- * A resolution spans three origins: the host shell, the protocol iframe and
- * the sandbox. Each boots its own Sentry client and so its own trace. The
- * host mints the id and threads it to the other two over the URL contracts
- * they already have. Each realm calls this on boot, so one
- * `dotli.resolution_id` search returns all three.
- *
- * The id is stored even when metrics are stripped, because the realms that
- * pass it on read it back from here. Only the Sentry tagging is conditional.
+ * Correlate one page load across host, protocol iframe and sandbox, each with its own Sentry trace.
+ * Stored even when metrics are off, because the realms that pass it on read it back from here.
  */
 export function setResolutionId(id: string): void {
   resolutionId = id;
@@ -380,25 +223,17 @@ export function getResolutionId(): string | null {
   return resolutionId;
 }
 
-/**
- * A span that outlives the call that opened it.
- *
- * `span()` covers work that fits inside one function. A resolution does not:
- * its shape is decided by events arriving over postMessage from another realm,
- * so the span for "the relay is connecting" opens on one message and closes on
- * a later one, with nothing on the stack in between.
- */
+/** A span that outlives its call, for work that opens and closes on separate messages. */
 export interface SpanHandle {
-  /** Attach attributes. Safe to call after `end`, where it is ignored. */
+  /** Ignored after `end`. */
   setAttributes: (attrs: Record<string, SpanValue>) => void;
-  /** Open a span parented to this one. */
   child: (name: string, opts?: OpenSpanOptions) => SpanHandle;
-  /** Close the span. Repeat calls are ignored, so a failure path can end a span the success path already ended. */
+  /** Repeat calls are ignored, so a failure path can end a span the success path already ended. */
   end: (endTime?: number) => void;
 }
 
 export interface OpenSpanOptions {
-  /** Epoch milliseconds. Omit for "now". */
+  /** Epoch milliseconds, defaults to now. */
   startTime?: number;
   attributes?: Record<string, SpanValue>;
   /** Present the span as its own transaction in Sentry rather than a nested row. */
@@ -415,17 +250,25 @@ const NOOP_HANDLE: SpanHandle = {
   },
 };
 
+// `captureException` makes the span active so the error joins its trace. Weak so the span dies with its handle.
+const sentrySpans = new WeakMap<SpanHandle, SentrySpan>();
+
+/** Package-private. Undefined for an inert handle. */
+export function sentrySpanOf(handle: SpanHandle): unknown {
+  return sentrySpans.get(handle);
+}
+
 function wrap(sentrySpan: SentrySpan): SpanHandle {
   let ended = false;
-  return {
-    setAttributes: (attrs) => {
+  const handle: SpanHandle = {
+    setAttributes: attrs => {
       if (ended) {
         return;
       }
       sentrySpan.setAttributes(attrs);
     },
     child: (name, opts) => open(name, { ...opts, parent: sentrySpan }),
-    end: (endTime) => {
+    end: endTime => {
       if (ended) {
         return;
       }
@@ -433,32 +276,25 @@ function wrap(sentrySpan: SentrySpan): SpanHandle {
       sentrySpan.end(endTime);
     },
   };
+  sentrySpans.set(handle, sentrySpan);
+  return handle;
 }
 
-/**
- * Open a span and hand back a handle that closes it later.
- *
- * Returns an inert handle whenever metrics are off or Sentry is unbound, so
- * callers never branch on whether telemetry is live.
- */
-function open(
-  name: string,
-  opts?: OpenSpanOptions & { parent?: unknown },
-): SpanHandle {
+/** Open a span closed later. Inert when metrics are off or Sentry is unbound, so callers never branch. */
+function open(name: string, opts?: OpenSpanOptions & { parent?: unknown }): SpanHandle {
   if (!ENABLED) {
     return NOOP_HANDLE;
   }
-  const s = sentry();
+  const s = bound;
   if (s === null) {
     return NOOP_HANDLE;
   }
   return wrap(
     s.startInactiveSpan({
       name: `dotli.${name}`,
-      op: "dotli",
+      op: 'dotli',
       startTime: opts?.startTime,
-      // `null` means "no parent", which is what makes a root a root. Leaving it
-      // undefined would silently adopt whatever span happens to be active.
+      // `null` makes a root. Undefined would silently adopt whatever span is active.
       parentSpan: opts?.root === true ? null : opts?.parent,
       forceTransaction: opts?.root,
       attributes: { ...defaultAttrs, ...opts?.attributes },
@@ -466,25 +302,18 @@ function open(
   );
 }
 
-/**
- * Add a breadcrumb for debugging context. Breadcrumbs appear in error reports.
- */
 function breadcrumb(message: string, data?: Record<string, unknown>): void {
   if (!ENABLED) {
     return;
   }
-  sentry()?.addBreadcrumb({
-    category: "dotli",
+  bound?.addBreadcrumb({
+    category: 'dotli',
     message,
-    level: "info",
+    level: 'info',
     data,
   });
 }
 
-/**
- * Start a manual timer. Returns a function that, when called,
- * records the elapsed duration as both a measurement and distribution.
- */
 function timer(name: string): () => number {
   if (!ENABLED) {
     return () => 0;
@@ -499,30 +328,17 @@ function timer(name: string): () => number {
 }
 
 export const m = {
-  /** Whether metrics collection is active */
   enabled: ENABLED,
-  /** Bind a live Sentry instance after Sentry.init() */
   bind,
-  /** Wrap a function in a performance span */
   span,
-  /** Open a span that is closed later, by a different call */
   open,
-  /** Record a numeric measurement */
   measure,
-  /** Increment a counter */
   count,
-  /** Record a distribution (histogram) value */
   distribution,
-  /** Record a gauge value */
   gauge,
-  /** Set a searchable tag */
   tag,
-  /** Set session-wide default attributes (also mirrored to scope tags) */
   setDefaults,
-  /** Remove session-wide defaults (all, or a specific subset) */
   clearDefaults,
-  /** Add a debugging breadcrumb */
   breadcrumb,
-  /** Start a manual timer, returns a stop function */
   timer,
 } as const;

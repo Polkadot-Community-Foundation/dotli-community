@@ -1,164 +1,69 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// dot.li shared IndexedDB connection.
-//
-// Single "dotli" database with stores for CID cache and smoldot chain data.
-// Pre-opened during HTML parse via an inline <script> (window.__dotliDb).
-//
-// The pre-opened-handle path does not silently fall back to a fresh open
-// when it rejects. A silent fallback would hide quota errors,
-// upgrade-blocked, or origin-denied situations from operators. We log and
-// capture the underlying rejection before falling back, so the warm-start
-// failure is visible even though we still return a working DB.
+// The one "dotli" IndexedDB connection, opened on first use.
 
-import { log } from "@dotli/shared/log";
-import { captureException } from "@dotli/metrics/sentry";
+import { createAsyncTaskPool, openIdb } from '@dotli/shared';
+import { DB_NAME, DB_VERSION, upgradeDotliDb } from './schema.js';
 
-declare global {
-  interface Window {
-    __dotliDb?: Promise<IDBDatabase>;
+/**
+ * A connection closing under unload or another tab's upgrade, or an open blocked by an older tab.
+ * The next access reopens, so these are not faults.
+ */
+export function isExpectedDbError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
   }
-}
-
-const DB_NAME = "dotli";
-const DB_VERSION = 4;
-
-let dbPromise: Promise<IDBDatabase> | null = null;
-
-// Monotonic counter bumped every time a DB handle is replaced. Callers
-// that cache a resolved handle and then hold a transaction open across
-// an async boundary can check the generation to detect "the handle I
-// was handed just got invalidated by onclose" instead of silently
-// operating against a half-closed connection.
-let dbGeneration = 0;
-
-function openFresh(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains("cids")) {
-        db.createObjectStore("cids", { keyPath: "label" });
-      }
-      if (!db.objectStoreNames.contains("chains")) {
-        db.createObjectStore("chains", { keyPath: "chain" });
-      }
-      // v2: scheduled notifications + per-product id counters.
-      if (!db.objectStoreNames.contains("scheduled_notifications")) {
-        const store = db.createObjectStore("scheduled_notifications", {
-          keyPath: "hostId",
-          autoIncrement: true,
-        });
-        store.createIndex("byProductId", "productId", { unique: false });
-        store.createIndex("byScheduledAt", "scheduledAt", { unique: false });
-      }
-      if (!db.objectStoreNames.contains("notification_counters")) {
-        // keyPath: "productId". Value: { productId, next: number }.
-        db.createObjectStore("notification_counters", { keyPath: "productId" });
-      }
-      // v3: product chat rooms and messages.
-      if (!db.objectStoreNames.contains("chat_rooms")) {
-        db.createObjectStore("chat_rooms", {
-          keyPath: ["productId", "roomId"],
-        });
-      }
-      if (!db.objectStoreNames.contains("chat_messages")) {
-        const store = db.createObjectStore("chat_messages", {
-          keyPath: "seq",
-          autoIncrement: true,
-        });
-        store.createIndex("byRoom", ["productId", "roomId"], {
-          unique: false,
-        });
-      }
-      // v4: product chat bot identities.
-      if (!db.objectStoreNames.contains("chat_bots")) {
-        db.createObjectStore("chat_bots", {
-          keyPath: ["productId", "botId"],
-        });
-      }
-    };
-    req.onsuccess = () => {
-      resolve(req.result);
-    };
-    req.onerror = () => {
-      // Preserve the IDBError name + cause so callers can distinguish
-      // VersionError / QuotaExceededError / InvalidStateError instead of
-      // seeing one opaque message.
-      const cause = req.error;
-      reject(
-        new Error(
-          `Failed to open dotli DB: ${cause?.name ?? "unknown"}`,
-          cause ? { cause } : undefined,
-        ),
-      );
-    };
-    // A still-open tab on an older schema blocks the upgrade. Blocked fires
-    // neither onsuccess nor onerror, so reject rather than hang forever.
-    req.onblocked = () => {
-      reject(new Error("Failed to open dotli DB: blocked by another tab"));
-    };
-  });
+  if (err.message.includes('blocked by another tab')) {
+    return true;
+  }
+  // Browsers word the message differently ("is closing", "is no longer usable").
+  return (err.name === 'InvalidStateError' || err.name === 'AbortError') && /clos|no longer/i.test(err.message);
 }
 
 /**
- * Get the shared database connection.
- * Reuses the pre-opened connection from window.__dotliDb if available.
- *
- * If the pre-opened handle rejects, the warm-start failure is logged and
- * captured to Sentry before we fall back to a fresh open, so the operator
- * can see *why* the optimization didn't fire instead of silently losing
- * the signal.
+ * One connection shared by every read, opened by `open` on first use. A connection that closes, or that another tab's
+ * upgrade asks to close, is dropped, and a failed open is not retried: the next read opens again, which is when it can
+ * succeed.
  */
-export function getDb(): Promise<IDBDatabase> {
-  if (dbPromise !== null) {
-    return dbPromise;
-  }
-
-  // Pick up the pre-opened connection from the inline HTML script
-  if (typeof window !== "undefined" && window.__dotliDb) {
-    dbPromise = window.__dotliDb.catch((err: unknown) => {
-      log.error(
-        "[dot.li db] Pre-opened DB handle rejected; falling back to fresh open:",
-        err,
-      );
-      captureException(err, { kind: "db_pre_opened_rejected" });
-      return openFresh();
-    });
-  } else {
-    dbPromise = openFresh();
-  }
-
-  const thisGeneration = ++dbGeneration;
-
-  // Reset on close so we re-open on next access. If the close fires while
-  // the same generation is still current, clear the cached promise so the
-  // next getDb() opens a fresh handle. If a later getDb() already bumped
-  // the generation (racing refresh), leave it alone. Otherwise we'd null
-  // out a newer, valid promise.
-  void dbPromise
-    .then((db) => {
-      db.onclose = () => {
-        if (dbGeneration === thisGeneration) {
-          dbPromise = null;
+export function createDbConnection(open: () => Promise<IDBDatabase>): () => Promise<IDBDatabase> {
+  let current: IDBDatabase | null = null;
+  // Reads that overlap an open wait for it instead of opening their own.
+  const opens = createAsyncTaskPool({ poolSize: 1 });
+  return () =>
+    opens.call(async () => {
+      if (current !== null) {
+        return current;
+      }
+      const db = await open();
+      current = db;
+      // Only this handle's own close drops it, so a late close of a replaced one keeps the newer.
+      const release = (): void => {
+        if (current === db) {
+          current = null;
         }
       };
-      // Another tab wants to upgrade the schema. Close so it is not blocked
-      // and drop the cached handles so the next access reopens.
+      db.onclose = release;
       db.onversionchange = () => {
         db.close();
-        if (dbGeneration === thisGeneration) {
-          dbPromise = null;
-        }
-        if (typeof window !== "undefined") {
-          delete window.__dotliDb;
-        }
+        release();
       };
-    })
-    .catch(() => {
-      /* fire-and-forget */
+      return db;
     });
-
-  return dbPromise;
 }
+
+/**
+ * The page's one connection. `indexedDB` is read at each open, as a context without it, such as the build, still
+ * loads this module.
+ */
+const getDb = createDbConnection(() => openIdb(indexedDB, DB_NAME, DB_VERSION, upgradeDotliDb));
+
+/** The IndexedDB a store reads and writes: its connection, and key ranges of the same implementation. */
+export interface DotliIdb {
+  connect: () => Promise<IDBDatabase>;
+  /** Read at use, as a context without IndexedDB, such as the build, still loads the stores. */
+  keyRange: () => typeof IDBKeyRange;
+}
+
+/** The page's own IndexedDB. */
+export const pageIdb: DotliIdb = { connect: getDb, keyRange: () => IDBKeyRange };

@@ -16,30 +16,26 @@ jobs:
   perf:
     name: Continuous Integration
     runs-on: ubuntu-latest
+    # Iterations that never finish loading would otherwise run the spec's own timeouts for hours.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: "1.3.13"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: bunx --bun playwright install --with-deps chromium
+      - name: Setup Playwright
+        uses: ./.github/actions/setup-playwright
 
       - name: Build
-        run: bunx --bun turbo run build
+        env:
+          # Required, or the host throws on boot and every iteration times out.
+          VITE_NETWORKS: paseo-next-v2,previewnet
+        run: npx turbo run build
 
-      # ── PR: download baseline from main ────────────────────────
       - name: Download baseline from main
         if: github.event_name == 'pull_request'
         id: baseline
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
+        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
         with:
           name: perf-baseline
           workflow: perf.yml
@@ -55,31 +51,32 @@ jobs:
             echo "HAVE_BASE=true" >> "$GITHUB_ENV"
           else
             echo "HAVE_BASE=false" >> "$GITHUB_ENV"
-            echo "::warning::No baseline found — run will be recorded without comparison"
+            echo "::warning::No baseline found. The run will be recorded without comparison"
           fi
 
-      # ── Run perf tests ─────────────────────────────────────────
-      # On main: long run (baseline). On PR: shorter run (compare).
       - name: Run perf tests (baseline)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: apps/host
         env:
-          PERF_RUNS: "20"
-          PERF_SAVE_BASE: "1"
-          PERF_DOMAIN_A: explore
+          PERF_RUNS: '20'
+          PERF_SAVE_BASE: '1'
+          PERF_DOMAIN_A: browse
           PERF_DOMAIN_B: host-playground
-        run: bunx --bun playwright test --config=tests/performance/playwright.config.ts tests/performance/cold-start.spec.ts || true
+        run:
+          npx playwright test --config=tests/performance/playwright.config.ts tests/performance/cold-start.spec.ts ||
+          true
 
       - name: Run perf tests (PR)
         if: github.event_name == 'pull_request'
         working-directory: apps/host
         env:
-          PERF_RUNS: "10"
-          PERF_DOMAIN_A: explore
+          PERF_RUNS: '10'
+          PERF_DOMAIN_A: browse
           PERF_DOMAIN_B: host-playground
-        run: bunx --bun playwright test --config=tests/performance/playwright.config.ts tests/performance/cold-start.spec.ts || true
+        run:
+          npx playwright test --config=tests/performance/playwright.config.ts tests/performance/cold-start.spec.ts ||
+          true
 
-      # ── main: upload baseline artifact ─────────────────────────
       - name: Upload baseline artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -89,11 +86,10 @@ jobs:
           retention-days: 90
           overwrite: true
 
-      # ── PR: build comparison report and comment ────────────────
       - name: Generate comparison
         if: github.event_name == 'pull_request' && env.HAVE_BASE == 'true'
         working-directory: apps/host
-        run: bun tests/performance/compare.ts --markdown > /tmp/perf-comment.md || true
+        run: node tests/performance/compare.ts --markdown > /tmp/perf-comment.md || true
 
       - name: Generate standalone report
         if: github.event_name == 'pull_request' && env.HAVE_BASE != 'true'

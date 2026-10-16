@@ -1,30 +1,23 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { defineConfig } from "vitest/config";
-import { resolve } from "node:path";
+import { defineConfig } from 'vitest/config';
+import solid from '@solidjs/vite-plugin';
+import { inlineScript } from '@config/vite/inline-script';
+import { TEST_DEFINES } from '@config/vite/test-defines';
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      "@dotli/config": resolve(
-        import.meta.dirname,
-        "../../packages/config/src",
-      ),
-      "@dotli/shared": resolve(
-        import.meta.dirname,
-        "../../packages/shared/src",
-      ),
-    },
-  },
+  // The checker injector inlines its head script, bundled as the build does.
+  plugins: [inlineScript(), solid()],
   test: {
-    include: ["tests/**/*.test.ts"],
-    environment: "happy-dom",
     globals: false,
+    name: 'sandbox:unit',
+    include: ['src/**/*.spec.{ts,tsx}'],
+    environment: 'node',
   },
   define: {
-    "import.meta.env.DEV": "false",
-    "import.meta.env.VITE_APP_DEBUG": '"true"',
-    "import.meta.env.VITE_NETWORKS": '"paseo-next-v2,previewnet"',
+    ...TEST_DEFINES,
+    'import.meta.env.DEV': 'false',
+    'import.meta.env.VITE_APP_DEBUG': '"true"',
   },
 });

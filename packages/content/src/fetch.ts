@@ -1,59 +1,32 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// dot.li content fetching.
-//
-// Two paths:
-//   - bitswap-rpc: smoldot's `bitswap_v1_get` via the protocol bridge.
-//     dag-pb directories are walked block-by-block locally using the
-//     UnixFS walker in `archive.ts`.
-//   - gateway: HTTPS fetch from a trusted IPFS gateway (CAR for dag-pb,
-//     plain GET for raw).
-//
-// UnixFS walking lives in `archive.ts`, driven by an injected `BlockSource`.
+import { dur, errorName, log } from '@dotli/shared';
 
-import { dur } from "@dotli/shared/perf";
-import { log } from "@dotli/shared/log";
-import { m } from "@dotli/metrics/metrics";
-import * as S from "@dotli/metrics/spans";
-import { CID } from "multiformats/cid";
+import { m, spans as S } from '@dotli/metrics';
+import { CID } from 'multiformats/cid';
 
 export type StatusCallback = (status: string) => void;
 
-/**
- * Async block source for the bitswap-rpc fetch path. Given a CID string,
- * returns the raw block bytes. Smoldot internally hash-verifies before
- * returning.
- */
 export type BitswapBlockSource = (cid: string) => Promise<Uint8Array>;
 
-import {
-  isCarFile,
-  parseIpfsResponse,
-  walkUnixFsDag,
-  type ArchiveFiles,
-  type BlockSource,
-} from "./archive";
-import { fetchFromIpfs, fetchCarFromIpfs } from "./ipfs";
-import { assertBlockMatchesCid, rootVerifyingBlockSource } from "./verify";
+import { isCarFile, parseIpfsResponse, walkUnixFsDag, type ArchiveFiles, type BlockSource } from './archive.js';
+import { DAG_PB, RAW } from './codecs.js';
+import { defaultGateway, fetchFromIpfs, fetchCarFromIpfs, gatewayHost } from './ipfs.js';
+import { assertBlockMatchesCid, rootVerifyingBlockSource, verifyingBlockSource } from './verify.js';
 
-// CID codec constants
-const CODEC_DAG_PB = 0x70;
-const CODEC_RAW = 0x55;
-
-/**
- * Fetch content via smoldot's `bitswap_v1_get`, walking dag-pb directories
- * block-by-block locally. Smoldot hash-verifies each block before returning.
- */
 async function fetchViaBitswapRpc(
   cidString: string,
   blockSource: BitswapBlockSource,
   onStatus?: StatusCallback,
 ): Promise<FetchResult> {
   const rootCid = CID.parse(cidString);
-  log.warn(
-    `[dot.li fetch] bitswap-rpc: codec=0x${rootCid.code.toString(16)}, hash=0x${rootCid.multihash.code.toString(16)}, version=${String(rootCid.version)}`,
-  );
+  log.event(`Fetching ${cidString} via bitswap`, {
+    flow: 'content',
+    codec: `0x${rootCid.code.toString(16)}`,
+    hash: `0x${rootCid.multihash.code.toString(16)}`,
+    version: rootCid.version,
+  });
 
   let blockCount = 0;
   const tracedSource: BlockSource = async (cid: CID) => {
@@ -61,11 +34,12 @@ async function fetchViaBitswapRpc(
     const stopRpc = m.timer(S.CONTENT_BITSWAP_RPC);
     try {
       const bytes = await blockSource(cid.toString());
-      m.count(S.CONTENT_BITSWAP_RPC, { outcome: "ok" });
+      m.count(S.CONTENT_BITSWAP_RPC, { outcome: 'ok' });
       return bytes;
     } catch (err) {
       m.count(S.CONTENT_BITSWAP_RPC, {
-        outcome: classifyBitswapError(err),
+        outcome: isAbort(err) ? 'aborted' : 'error',
+        reason: errorName(err) ?? 'unknown',
       });
       throw err;
     } finally {
@@ -73,191 +47,177 @@ async function fetchViaBitswapRpc(
     }
   };
 
-  // Defense-in-depth: don't trust smoldot's bitswap_v1_get verification
-  // blindly — re-check that the root block hashes to the on-chain root CID.
-  // Interior blocks are left to smoldot to avoid re-hashing the whole DAG on
-  // this default path (the root check alone anchors the rest of the DAG,
-  // since every link is followed by CID).
-  const rootVerifyingSource = rootVerifyingBlockSource(rootCid, tracedSource);
-
-  if (rootCid.code === CODEC_RAW) {
-    onStatus?.("Fetching block via bitswap...");
-    const bytes = await rootVerifyingSource(rootCid);
-    if (isCarFile(bytes)) {
-      // Some uploaders pack a CAR archive under a raw-codec CID. Honor that
-      // and unpack into a multi-file archive instead of presenting the raw
-      // CAR bytes as `index.html`.
-      const files = await parseIpfsResponse(bytes);
-      m.count(S.CONTENT_BITSWAP_BLOCKS, { count: String(blockCount) });
-      return toFetchResult(files);
-    }
-    m.count(S.CONTENT_BITSWAP_BLOCKS, { count: String(blockCount) });
-    return { type: "single", content: bytes };
-  }
-
-  if (rootCid.code === CODEC_DAG_PB) {
-    onStatus?.("Walking dag-pb via bitswap...");
-    const files = await walkUnixFsDag(rootCid, rootVerifyingSource);
-    m.count(S.CONTENT_BITSWAP_BLOCKS, { count: String(blockCount) });
-    return toFetchResult(files);
-  }
-
-  throw new Error(
-    `bitswap-rpc: unsupported root CID codec 0x${rootCid.code.toString(16)} (${cidString})`,
-  );
+  // The host's relay checked every block. Re-hashing the root ties the walk to the CID this sandbox was given.
+  const result = await readViaBitswap(rootCid, rootVerifyingBlockSource(rootCid, tracedSource), onStatus);
+  m.distribution(S.CONTENT_BITSWAP_BLOCKS, blockCount, 'none');
+  return result;
 }
 
-function classifyBitswapError(
-  err: unknown,
-): "not-found" | "invalid-cid" | "timeout" | "aborted" | "error" {
-  if (err instanceof Error) {
-    const msg = err.message;
-    if (msg.includes("not found")) {
-      return "not-found";
-    }
-    if (msg.includes("invalid CID")) {
-      return "invalid-cid";
-    }
-    if (msg.includes("timed out")) {
-      return "timeout";
-    }
-    if (msg.includes("aborted")) {
-      return "aborted";
-    }
+/** Walks from the root over a source that already verifies what it returns. */
+async function readViaBitswap(
+  rootCid: CID,
+  verifiedSource: BlockSource,
+  onStatus?: StatusCallback,
+): Promise<FetchResult> {
+  if (rootCid.code === RAW) {
+    onStatus?.('Fetching block via bitswap...');
+    return readRawRoot(await verifiedSource(rootCid));
   }
-  return "error";
+
+  if (rootCid.code === DAG_PB) {
+    onStatus?.('Walking dag-pb via bitswap...');
+    return toFetchResult(await walkUnixFsDag(rootCid, verifiedSource));
+  }
+
+  throw new Error(`bitswap-rpc: unsupported root CID codec 0x${rootCid.code.toString(16)} (${rootCid.toString()})`);
 }
 
 /**
- * Fetch content via IPFS gateway.
- *
- * No silent CAR-to-plain fallback. The CID codec deterministically decides
- * which transport is correct:
- *   - DAG-PB (0x70): UnixFS directory or chunked file, request CAR.
- *   - RAW    (0x55): single raw block, plain HTTP GET.
- * Any other codec is a hard failure and we don't guess. Any transport
- * failure surfaces with the original cause.
+ * A raw root may hold a whole site packed as one CAR. Its bytes already match the root, and the CAR's own blocks are
+ * hashed as it is read.
  */
+async function readRawRoot(bytes: Uint8Array): Promise<FetchResult> {
+  return isCarFile(bytes) ? toFetchResult(await parseIpfsResponse(bytes)) : { type: 'single', content: bytes };
+}
+
+/** A frame's teardown rejects its fetches by the platform's abort name, which is not a failure. */
+function isAbort(err: unknown): boolean {
+  return errorName(err) === 'AbortError';
+}
+
 async function fetchViaGateway(
   cidString: string,
+  fetchImpl: typeof fetch,
   onStatus?: StatusCallback,
 ): Promise<FetchResult> {
   const stopGw = m.timer(S.CONTENT_GATEWAY);
   try {
-    const cid = CID.parse(cidString);
-    if (cid.code === CODEC_DAG_PB) {
-      onStatus?.("Fetching archive from IPFS gateway...");
-      log.warn(`[dot.li fetch] Gateway: requesting CAR (codec dag-pb)...`);
-      const gatewayStart = performance.now();
-      const carBuffer = await fetchCarFromIpfs(cidString);
-      log.warn(
-        `[dot.li fetch] Gateway CAR: fetched ${String(Math.round(carBuffer.length / 1024))} KB in ${dur(gatewayStart)}`,
-      );
-      onStatus?.("Parsing content...");
-      // Untrusted transport: bind the CAR to the on-chain CID — its declared
-      // root must match `cid` and every block is hash-verified.
-      const files = await parseIpfsResponse(carBuffer, cid);
-      return toFetchResult(files);
-    }
-    if (cid.code === CODEC_RAW) {
-      onStatus?.("Fetching content via IPFS gateway...");
-      log.warn(`[dot.li fetch] Gateway: plain GET (codec raw)...`);
-      const gatewayStart = performance.now();
-      const { data } = await fetchFromIpfs(cidString);
-      log.warn(
-        `[dot.li fetch] Gateway: fetched ${String(Math.round(data.length / 1024))} KB in ${dur(gatewayStart)}`,
-      );
-      // Untrusted transport: the bytes must hash to the requested raw CID.
-      assertBlockMatchesCid(cid, data);
-      return { type: "single", content: data };
-    }
-    throw new Error(
-      `Unsupported CID codec for gateway fetch: 0x${cid.code.toString(16)} (cid=${cidString})`,
-    );
+    return await readViaGateway(cidString, fetchImpl, onStatus);
   } finally {
     stopGw();
   }
 }
 
-export type FetchResult =
-  | { type: "single"; content: Uint8Array }
-  | { type: "archive"; files: ArchiveFiles };
+async function readViaGateway(
+  cidString: string,
+  fetchImpl: typeof fetch,
+  onStatus?: StatusCallback,
+): Promise<FetchResult> {
+  const cid = CID.parse(cidString);
+  const gateway = defaultGateway();
+  const host = gatewayHost(gateway);
+  if (cid.code === DAG_PB) {
+    onStatus?.('Fetching archive from IPFS gateway...');
+    log.event(`Requesting CAR of ${cidString} from ${host}`, { flow: 'content', gateway: host });
+    const gatewayStart = performance.now();
+    const carBuffer = await fetchCarFromIpfs(cidString, gateway, fetchImpl);
+    log.event(`Fetched ${String(Math.round(carBuffer.length / 1024))} KB CAR from ${host} in ${dur(gatewayStart)}`, {
+      flow: 'content',
+      gateway: host,
+      bytes: carBuffer.length,
+    });
+    onStatus?.('Parsing content...');
+    // Untrusted transport, so the CAR is bound to the requested CID.
+    const files = await parseIpfsResponse(carBuffer, cid);
+    return toFetchResult(files);
+  }
+  if (cid.code === RAW) {
+    onStatus?.('Fetching content via IPFS gateway...');
+    log.event(`Requesting raw block ${cidString} from ${host}`, { flow: 'content', gateway: host });
+    const gatewayStart = performance.now();
+    const { data } = await fetchFromIpfs(cidString, gateway, fetchImpl);
+    log.event(`Fetched ${String(Math.round(data.length / 1024))} KB from ${host} in ${dur(gatewayStart)}`, {
+      flow: 'content',
+      gateway: host,
+      bytes: data.length,
+    });
+    // Untrusted transport.
+    assertBlockMatchesCid(cid, data);
+    log.event(`Block ${cidString} verified`, { flow: 'content', bytes: data.length });
+    return readRawRoot(data);
+  }
+  throw new Error(`Unsupported CID codec for gateway fetch: 0x${cid.code.toString(16)} (cid=${cidString})`);
+}
 
-/**
- * Fetch content by CID using the specified mode.
- *
- * - `bitswapBlockSource` (preferred when set): smoldot's `bitswap_v1_get`
- *   via the protocol bridge.
- * - `useGateway: true`: HTTPS fetch from IPFS gateway.
- * - default: throws. The caller must pick one of the two paths.
- *
- * No fallback between modes. If the chosen path fails, it fails.
- */
+export type FetchResult = { type: 'single'; content: Uint8Array } | { type: 'archive'; files: ArchiveFiles };
+
+/** Fetch over bitswap when a block source is given, else the gateway. No fallback between the two. */
 export async function fetchArchive(
   cidString: string,
   onStatus?: StatusCallback,
   options?: {
     useGateway?: boolean;
+    /** The gateway path's network. The page's own `fetch` when not given. */
+    gatewayFetch?: typeof fetch;
     bitswapBlockSource?: BitswapBlockSource;
   },
 ): Promise<FetchResult> {
-  performance.mark("dotli:fetch:start");
+  performance.mark('dotli:fetch:start');
   const stopFetch = m.timer(S.CONTENT_FETCH);
   const blockSource = options?.bitswapBlockSource;
-  const method =
-    blockSource !== undefined
-      ? "bitswap-rpc"
-      : options?.useGateway === true
-        ? "gateway"
-        : null;
+  const method = blockSource !== undefined ? 'bitswap-rpc' : options?.useGateway === true ? 'gateway' : null;
   if (method === null) {
     stopFetch();
-    throw new Error(
-      "fetchArchive requires either `bitswapBlockSource` or `useGateway: true`",
-    );
+    throw new Error('fetchArchive requires either `bitswapBlockSource` or `useGateway: true`');
   }
-  m.tag("content_method", method);
+  m.tag('content_method', method);
 
   try {
     const result =
       blockSource !== undefined
         ? await fetchViaBitswapRpc(cidString, blockSource, onStatus)
-        : await fetchViaGateway(cidString, onStatus);
-    performance.mark("dotli:fetch:end");
-    log.warn(`[dot.li fetch] Content fetched via ${method}`);
+        : await fetchViaGateway(cidString, options?.gatewayFetch ?? fetch, onStatus);
+    performance.mark('dotli:fetch:end');
     measureContentSize(result);
     stopFetch();
     return result;
   } catch (err) {
-    performance.mark("dotli:fetch:end");
+    performance.mark('dotli:fetch:end');
     stopFetch();
-    if (err instanceof Error) {
-      log.error(`[dot.li fetch] ${method} failed: ${err.message}`);
+    if (isAbort(err)) {
+      // The sandbox ends this load as torn down, so it is a breadcrumb rather than an error.
+      log.event(`Fetch of ${cidString} stopped as its frame went away`, { flow: 'content', method });
+    } else {
+      log.child({ flow: 'content' }).error(`[dot.li fetch] ${method} failed for ${cidString}:`, err);
     }
     throw err;
   }
 }
 
+/**
+ * Like `fetchArchive` but without marks and metrics, for reads that are not a product load.
+ *
+ * Its block source may bypass the host's relay, so every block is hashed here.
+ */
+export async function readArchiveFiles(
+  cidString: string,
+  transport: { blockSource: BitswapBlockSource } | { gateway: true; fetch?: typeof fetch },
+): Promise<ArchiveFiles> {
+  const result =
+    'blockSource' in transport
+      ? await readViaBitswap(
+          CID.parse(cidString),
+          verifyingBlockSource(cid => transport.blockSource(cid.toString())),
+        )
+      : await readViaGateway(cidString, transport.fetch ?? fetch);
+  return result.type === 'single' ? { 'index.html': result.content } : result.files;
+}
+
 function measureContentSize(result: FetchResult): void {
-  if (result.type === "single") {
-    m.distribution(S.CONTENT_SIZE, result.content.length, "byte");
+  if (result.type === 'single') {
+    m.distribution(S.CONTENT_SIZE, result.content.length, 'byte');
   } else {
-    const totalSize = Object.values(result.files).reduce(
-      (sum, buf) => sum + buf.length,
-      0,
-    );
-    m.distribution(S.CONTENT_SIZE, totalSize, "byte");
+    const totalSize = Object.values(result.files).reduce((sum, buf) => sum + buf.length, 0);
+    m.distribution(S.CONTENT_SIZE, totalSize, 'byte');
   }
 }
 
 function toFetchResult(files: ArchiveFiles): FetchResult {
   const keys = Object.keys(files);
-  if (keys.length === 1 && keys[0] === "index.html") {
-    return { type: "single", content: files["index.html"] };
+  const index = files['index.html'];
+  if (keys.length === 1 && index !== undefined) {
+    return { type: 'single', content: index };
   }
-  log.warn(
-    `[dot.li] Loaded archive with ${String(keys.length)} file(s):`,
-    keys,
-  );
-  return { type: "archive", files };
+  log.event(`Archive has ${String(keys.length)} files`, { flow: 'content', files: keys.length });
+  return { type: 'archive', files };
 }

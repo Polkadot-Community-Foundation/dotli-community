@@ -1,9 +1,0 @@
-{
-  "name": "@dotli/typescript-config",
-  "version": "0.7.10",
-  "private": true,
-  "license": "AGPL-3.0-only",
-  "publishConfig": {
-    "access": "public"
-  }
-}
