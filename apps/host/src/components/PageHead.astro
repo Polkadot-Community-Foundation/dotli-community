@@ -5,6 +5,7 @@
 // The head tags the shell and the landing page share.
 import { RUNTIME_NETWORK_CONFIG_PATH } from '@config/vite/runtime-network-config';
 import { socialMetaAttributes } from '@config/vite/social-meta';
+import { brandFavicon, brandSocialImage } from '../brand-variant.js';
 
 const TITLE = 'Polkadot - The decentralized web, in your browser';
 const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
@@ -15,9 +16,10 @@ const socialMeta = socialMetaAttributes({
   description:
     'A decentralized web browser that runs in your browser. Open any Polkadot app with trustless, client-side resolution and no servers in the loop.',
   siteName: 'Polkadot Web',
-  image: '/icon-512.png',
+  image: brandSocialImage(),
   imageAlt: 'Polkadot logo',
 });
+const favicon = brandFavicon();
 ---
 
 {runtimeNetworkConfig && <script is:inline src={RUNTIME_NETWORK_CONFIG_PATH}></script>}
@@ -28,7 +30,7 @@ const socialMeta = socialMetaAttributes({
   content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
 />
 <title>{TITLE}</title>
-<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="icon" type={favicon.type} href={favicon.href} />
 {socialMeta.map(attrs => (
   <meta {...attrs} />
 ))}

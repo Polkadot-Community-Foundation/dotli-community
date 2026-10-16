@@ -143,56 +143,45 @@ const BUILTIN_NETWORK_SERVICES: Record<NetworkName, ServicesConfig> = {
     },
   },
   [NetworkName.DEVNET]: {
-    label: "Polkadot Products Devnet",
-    description: "Public products testnet (dev-dot.li gateway)",
+    label: 'Polkadot Products Devnet',
+    description: 'Public products testnet (dev-dot.li gateway)',
     // truapi-provider's catalog carries the Paseo relay but only the Paseo Next
     // parachains, so connecting to this AH/People/Bulletin rejects and the host
     // reports a smoldot crash. RPC until the catalog includes them.
     lightClient: false,
     relay: {
-      genesis:
-        "0x374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd",
-      rpcs: [
-        "wss://paseo-rpc.n.dwellir.com",
-        "wss://paseo.dotters.network",
-        "wss://paseo.ibp.network",
-      ],
+      genesis: '0x374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd',
+      rpcs: ['wss://paseo-rpc.n.dwellir.com', 'wss://paseo.dotters.network', 'wss://paseo.ibp.network'],
       blockTimeMs: 6000,
     },
     assethub: {
-      genesis:
-        "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2",
-      rpcs: [
-        "wss://asset-hub-paseo-rpc.n.dwellir.com",
-        "wss://sys.turboflakes.io/asset-hub-paseo",
-      ],
+      genesis: '0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2',
+      rpcs: ['wss://asset-hub-paseo-rpc.n.dwellir.com', 'wss://sys.turboflakes.io/asset-hub-paseo'],
       blockTimeMs: 2000,
     },
     bulletin: {
-      genesis:
-        "0xe101f0fa4627d29a257645e02be86d80378fea1a2bf8fa6a918d150ebc760a59",
-      rpcs: ["wss://bulletin-paseo.tservices.es:8443"],
-      ipfsGateways: ["https://devnet-ipfs.api.polkadotcommunity.foundation"],
+      genesis: '0xe101f0fa4627d29a257645e02be86d80378fea1a2bf8fa6a918d150ebc760a59',
+      rpcs: ['wss://bulletin-paseo.tservices.es:8443'],
+      ipfsGateways: ['https://devnet-ipfs.api.polkadotcommunity.foundation'],
       blockTimeMs: 6000,
     },
     people: {
-      genesis:
-        "0xe6c30d6e148f250b887105237bcaa5cb9f16dd203bf7b5b9d4f1da7387cb86ec",
+      genesis: '0xe6c30d6e148f250b887105237bcaa5cb9f16dd203bf7b5b9d4f1da7387cb86ec',
       // Statement store (device sync / chat) requires a full node exposing the
       // `statement_*` RPC. All three People RPCs now expose it (verified via
       // rpc_methods), so the app can load-balance across them safely.
       rpcs: [
-        "wss://people-paseo.gatotech.network",
-        "wss://rpc.interweb-it.com/people-paseo",
-        "wss://people-paseo.rotko.net",
+        'wss://people-paseo.gatotech.network',
+        'wss://rpc.interweb-it.com/people-paseo',
+        'wss://people-paseo.rotko.net',
       ],
       blockTimeMs: 2000,
     },
     dotns: {
-      DOTNS_REGISTRY: "0xb052E5EfC5ADEff1f21d48DEfb5169Cb394A1a73",
-      DOTNS_CONTENT_RESOLVER: "0x7e75491ecfb04900EB05ee63CABA2B33900aABB5",
+      DOTNS_REGISTRY: '0xb052E5EfC5ADEff1f21d48DEfb5169Cb394A1a73',
+      DOTNS_CONTENT_RESOLVER: '0x7e75491ecfb04900EB05ee63CABA2B33900aABB5',
       STORAGE_SLOTS: { REGISTRY_RECORDS: 0, CONTENTHASH: 0, TEXT_RECORDS: 1 },
-      TLD: "dot",
+      TLD: 'dot',
     },
   },
 };
@@ -451,9 +440,18 @@ export function getActiveServicesConfig(): ServicesConfig {
   return NETWORK_NAME_TO_SERVICES_CONFIG[getNetwork()];
 }
 
-/** PCF fork: whether the light-client transports can serve the active network. */
+/**
+ * PCF fork: whether the light-client transports can serve the active network.
+ * True when no network is configured, so callers keep upstream's behaviour there.
+ */
 export function activeNetworkSupportsLightClient(): boolean {
-  return getActiveServicesConfig().lightClient !== false;
+  let config: ServicesConfig;
+  try {
+    config = getActiveServicesConfig();
+  } catch {
+    return true;
+  }
+  return config.lightClient !== false;
 }
 
 /** The active network's fields no override can change, for a context that never sees the runtime config. */

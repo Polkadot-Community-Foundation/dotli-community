@@ -2,7 +2,7 @@
   "name": "@dotli/truapi-debug-ui",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.6.0",
+  "version": "0.11.2",
   "type": "module",
   "sideEffects": [
     "**/*.css"

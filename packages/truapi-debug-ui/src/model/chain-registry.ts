@@ -8,7 +8,11 @@ function buildRegistry(): ReadonlyMap<string, string> {
   const out = new Map<string, string>();
   for (const cfg of Object.values(NETWORK_NAME_TO_SERVICES_CONFIG)) {
     for (const role of CHAIN_ROLES) {
-      out.set(cfg[role].genesis.toLowerCase(), `${cfg.label} ${CHAIN_ROLE_LABELS[role]}`);
+      const genesis = cfg[role].genesis.toLowerCase();
+      // A genesis several networks share keeps the first network's name.
+      if (!out.has(genesis)) {
+        out.set(genesis, `${cfg.label} ${CHAIN_ROLE_LABELS[role]}`);
+      }
     }
   }
   return out;
