@@ -9,6 +9,8 @@ import type { Network, Settings } from '@dotli/config';
 export interface SavedSettings extends Settings {
   enabledNetworks: readonly Network[];
   sharedWorkerAvailable: boolean;
+  /** PCF fork: whether the active network can be reached through a light client. */
+  lightClientAvailable: boolean;
   /** Whether the backend verifies chain data. */
   verified: boolean;
 }

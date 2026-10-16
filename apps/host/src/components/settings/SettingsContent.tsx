@@ -128,7 +128,9 @@ function SettingsPanel(props: SettingsContentProps & { saved: SavedSettings }): 
   };
 
   const networks = saved.enabledNetworks;
-  const unavailable = (value: Backend): boolean => value === 'smoldot-shared-worker' && !saved.sharedWorkerAvailable;
+  const lightClientOff = (value: Backend): boolean => value !== 'rpc-gateway' && !saved.lightClientAvailable;
+  const workerOff = (value: Backend): boolean => value === 'smoldot-shared-worker' && !saved.sharedWorkerAvailable;
+  const unavailable = (value: Backend): boolean => lightClientOff(value) || workerOff(value);
 
   return (
     <Surface width="lg" padded>
@@ -187,9 +189,11 @@ function SettingsPanel(props: SettingsContentProps & { saved: SavedSettings }): 
                   <Choice
                     title={BACKEND_LABELS[transport.value]}
                     description={
-                      unavailable(transport.value)
-                        ? 'Unavailable in this browser or private window'
-                        : transport.description
+                      lightClientOff(transport.value)
+                        ? 'Not available on this network yet'
+                        : workerOff(transport.value)
+                          ? 'Unavailable in this browser or private window'
+                          : transport.description
                     }
                     chip={transport.recommended ? <Chip tone="ok">Recommended</Chip> : undefined}
                     selected={backend() === transport.value}

@@ -16,6 +16,7 @@ const SAVED: SavedSettings = {
   network: 'paseo-next-v2',
   enabledNetworks: ['paseo-next-v2'],
   sharedWorkerAvailable: true,
+  lightClientAvailable: true,
   verified: true,
 };
 

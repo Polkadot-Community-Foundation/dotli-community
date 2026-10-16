@@ -29,6 +29,7 @@ export {
   NETWORK_KEY,
   NETWORK_NAME_TO_SERVICES_CONFIG,
   NetworkName,
+  activeNetworkSupportsLightClient,
   chainRoleForGenesis,
   getActiveChainRoles,
   getActiveCoreGatewayChains,
