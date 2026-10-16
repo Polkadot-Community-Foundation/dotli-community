@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Primitives and what the page gives them.
+export { Accordion, type AccordionProps } from './components/primitives/Accordion.js';
 export { Button, ButtonLink, type ButtonVariant } from './components/primitives/Button.js';
 export { Chip } from './components/primitives/Chip.js';
 export { IconButton } from './components/primitives/IconButton.js';
@@ -9,6 +10,7 @@ export { IconTile } from './components/primitives/IconTile.js';
 export { Choice } from './components/primitives/Choice.js';
 export { SectionLabel, Stack } from './components/primitives/SectionLabel.js';
 export { SegmentedControl, type SegmentOption } from './components/primitives/SegmentedControl.js';
+export { StepSlider, type StepSliderProps, type StepSliderStop } from './components/primitives/StepSlider.js';
 export { Spinner } from './components/primitives/Spinner.js';
 export { StatusDot } from './components/primitives/StatusDot.js';
 export { Hint, Surface, SurfaceFoot, SurfaceHead } from './components/primitives/Surface.js';

@@ -6,7 +6,7 @@ import type { JSX } from '@solidjs/web';
 import type { Backend } from '@dotli/config';
 import { formatRate, formatSize } from '@dotli/shared';
 import { InfoIcon } from '@dotli/ui/icons';
-import { Callout, StatusDot, Surface, SurfaceHead, Well } from '@dotli/ui';
+import { Accordion, Callout, StatusDot, Surface, SurfaceHead, Well } from '@dotli/ui';
 import { ChainGroup } from './ChainGroup.js';
 import type { NetworkHealth } from './network-health.js';
 import type { ChainView, NetworkView } from './chains.js';
@@ -98,14 +98,17 @@ export function ChainsContent(props: ChainsContentProps): JSX.Element {
         {chain => <ChainGroup chain={chain()} sinceLast={sinceLast(chain())} />}
       </For>
       <Show when={otherChains().length > 0}>
-        <details class={s['other']} data-testid="chains-other">
-          <summary class={s['otherSummary']} data-testid="chains-other-summary">
-            Other chains ({otherChains().length})
-          </summary>
-          <For each={otherChains()} keyed={chain => chain.key}>
-            {chain => <ChainGroup chain={chain()} sinceLast={sinceLast(chain())} />}
-          </For>
-        </details>
+        <Accordion
+          title={`Other chains (${String(otherChains().length)})`}
+          testId="chains-other"
+          summaryTestId="chains-other-summary"
+        >
+          <div class={s['other']}>
+            <For each={otherChains()} keyed={chain => chain.key}>
+              {chain => <ChainGroup chain={chain()} sinceLast={sinceLast(chain())} />}
+            </For>
+          </div>
+        </Accordion>
       </Show>
       <div class={s['transfer']}>
         <p class={s['transferRow']} data-testid="chains-transfer-row">

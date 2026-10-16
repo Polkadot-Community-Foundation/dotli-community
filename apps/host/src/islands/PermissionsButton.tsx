@@ -15,8 +15,8 @@ export function PermissionsButton(): JSX.Element {
     product: productStore,
     state: productPermissions.state,
     refresh: productPermissions.refresh,
-    choose: productPermissions.choose,
-    reset: productPermissions.reset,
+    pending: productPermissions.pending,
+    change: productPermissions.change,
   });
   return <PermissionsItem {...panel} />;
 }

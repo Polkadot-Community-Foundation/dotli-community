@@ -11,3 +11,13 @@
     gap: var(--sp-3);
   }
 }
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+@media (max-width: 560px) {
+  .groups {
+    gap: var(--sp-3);
+  }
+}
