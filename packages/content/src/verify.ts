@@ -9,11 +9,8 @@ import { equals as bytesEqual } from 'multiformats/bytes';
 import { CID } from 'multiformats/cid';
 import { log, named } from '@dotli/shared';
 import type { BlockSource } from './archive.js';
+import { BLAKE2B_256, SHA2_256 } from './codecs.js';
 import { CONTENT_ERRORS } from './errors.js';
-
-// IPFS defaults to sha2-256. The Bulletin chain and preimages use blake2b-256.
-const SHA2_256 = 0x12;
-const BLAKE2B_256 = 0xb220;
 
 function recomputeDigest(multihashCode: number, bytes: Uint8Array): Uint8Array {
   switch (multihashCode) {
@@ -36,7 +33,7 @@ export function assertBlockMatchesCid(cid: CID, bytes: Uint8Array): void {
   const actual = recomputeDigest(cid.multihash.code, bytes);
   if (!bytesEqual(actual, expected)) {
     throw named(
-      new Error(`Content hash mismatch for ${cid.toString()} — refusing tampered content`),
+      new Error(`Content hash mismatch for ${cid.toString()}, refusing tampered content`),
       CONTENT_ERRORS.VERIFICATION,
     );
   }

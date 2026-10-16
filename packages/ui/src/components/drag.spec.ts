@@ -1,35 +1,10 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, expect, it, vi } from 'vitest';
-import { createSelectionLock, startDrag, type DragTarget } from './drag.js';
-
-/** A drag handle over a plain event target, with the capture it was asked for. */
-class FakeHandle extends EventTarget implements DragTarget {
-  readonly captured: number[] = [];
-  readonly capturable: boolean;
-  constructor(capturable = true) {
-    super();
-    this.capturable = capturable;
-  }
-  setPointerCapture(pointerId: number): void {
-    if (!this.capturable) {
-      throw new DOMException('No active pointer', 'NotFoundError');
-    }
-    this.captured.push(pointerId);
-  }
-}
-
-// Node has no PointerEvent, so a plain event carries the fields a drag reads.
-function pointer(target: EventTarget, type: string, x = 0, pointerId = 7): void {
-  target.dispatchEvent(Object.assign(new Event(type), { pointerId, clientX: x }));
-}
-
-/** A selection lock that records each change the page would see. */
-function recordedLock(): { lock: ReturnType<typeof createSelectionLock>; locks: boolean[] } {
-  const locks: boolean[] = [];
-  return { lock: createSelectionLock(locked => locks.push(locked)), locks };
-}
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { bindCaptureSink } from '@dotli/metrics';
+import { createDrags, startDrag } from './drag.js';
+import { FakeHandle, pointer, recordedLock } from './drag.fake.js';
 
 const DOWN = { pointerId: 7 };
 
@@ -53,6 +28,7 @@ describe('startDrag', () => {
     expect(target.captured).toEqual([7]);
     expect(moves).toEqual([10, 20]);
     expect(end).toHaveBeenCalledTimes(1);
+    expect(end).toHaveBeenCalledWith(true);
     expect(locks).toEqual([true, false]);
   });
 
@@ -71,6 +47,7 @@ describe('startDrag', () => {
     // Then
     expect(moves).toEqual([10]);
     expect(end).toHaveBeenCalledTimes(1);
+    expect(end).toHaveBeenCalledWith(false);
   });
 
   it('As a component unmounting mid-drag, the returned stop ends the drag once', () => {
@@ -128,5 +105,88 @@ describe('startDrag', () => {
     expect(second).toEqual([20, 30]);
     expect(afterFirstLifts).toEqual([true]);
     expect(locks).toEqual([true, false]);
+  });
+});
+
+describe('createDrags', () => {
+  it('As a component unmounting under two fingers, I stop my drags and both end with text selection back', () => {
+    // Given two drags whose pointers never lift, as when the handle leaves the page under them
+    const target = new FakeHandle();
+    const ends: number[] = [];
+    const { lock, locks } = recordedLock();
+    const drags = createDrags(lock);
+    drags.start(target, { pointerId: 1 }, { move: () => undefined, end: () => ends.push(1) });
+    drags.start(target, { pointerId: 2 }, { move: () => undefined, end: () => ends.push(2) });
+
+    // When the component cleans up
+    drags.stopAll();
+    pointer(target, 'pointerup', 0, 1);
+
+    // Then each drag ended once and the page is selectable again
+    expect(ends).toEqual([1, 2]);
+    expect(locks).toEqual([true, false]);
+  });
+
+  it('As a component whose drag already ended, I stop my drags and only the one still going ends', () => {
+    // Given one drag that ended on its own pointerup and one still held
+    const target = new FakeHandle();
+    const ends: number[] = [];
+    const { lock, locks } = recordedLock();
+    const drags = createDrags(lock);
+    drags.start(target, { pointerId: 1 }, { move: () => undefined, end: () => ends.push(1) });
+    drags.start(target, { pointerId: 2 }, { move: () => undefined, end: () => ends.push(2) });
+    pointer(target, 'pointerup', 0, 1);
+
+    // When the component cleans up
+    drags.stopAll();
+    drags.stopAll();
+
+    // Then the ended drag did not end again, and the held one ended
+    expect(ends).toEqual([1, 2]);
+    expect(locks).toEqual([true, false]);
+  });
+
+  it('As a component unmounting mid-drag, I stop my drags and each hears it was not released', () => {
+    // Given a drag still held
+    const target = new FakeHandle();
+    const ends: boolean[] = [];
+    const drags = createDrags(recordedLock().lock);
+    drags.start(target, { pointerId: 1 }, { move: () => undefined, end: released => ends.push(released) });
+
+    // When the component cleans up
+    drags.stopAll();
+
+    // Then the drag ended as cancelled, so it commits nothing
+    expect(ends).toEqual([false]);
+  });
+
+  it('As a component whose drag end throws, I stop my drags and the others still end, with the throw reported', () => {
+    // Given two held drags, the first of which throws as it ends
+    const captured: unknown[] = [];
+    onTestFinished(bindCaptureSink({ exception: err => captured.push(err), expected: () => undefined }));
+    const target = new FakeHandle();
+    const ends: number[] = [];
+    const { lock, locks } = recordedLock();
+    const drags = createDrags(lock);
+    const broke = new Error('end broke');
+    drags.start(
+      target,
+      { pointerId: 1 },
+      {
+        move: () => undefined,
+        end: () => {
+          throw broke;
+        },
+      },
+    );
+    drags.start(target, { pointerId: 2 }, { move: () => undefined, end: () => ends.push(2) });
+
+    // When the component cleans up
+    drags.stopAll();
+
+    // Then the second drag ended, every hold is free and the throw was reported
+    expect(ends).toEqual([2]);
+    expect(locks).toEqual([true, false]);
+    expect(captured).toEqual([broke]);
   });
 });
