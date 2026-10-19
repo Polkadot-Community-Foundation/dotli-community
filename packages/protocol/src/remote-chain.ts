@@ -1,25 +1,50 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// JSON-RPC connections to the chains the protocol frame runs.
+// Which chains the protocol frame serves, and JSON-RPC connections to them.
 
 import type { JsonRpcConnection, JsonRpcMessage, JsonRpcRequest } from '@polkadot-api/json-rpc-provider';
-import { captureException, reportListener } from '@dotli/metrics';
-import { log, serializeError } from '@dotli/shared';
+import { captureException, m, reportListener, spans as S } from '@dotli/metrics';
+import { errorName, log, named, randomId, serializeError } from '@dotli/shared';
 import { chainHaltedError, jsonRpcError, type RemoteChainHalt } from '@dotli/chains';
-import { ProtocolRequestError } from './errors.js';
-import type { ProtocolFrame } from './frame.js';
-import { isRemoteChainConnectable } from './remote-chain-support.js';
-import { createRequestId, type FrameRpc } from './rpc.js';
+import {
+  getActiveCoreGatewaySupportedGenesisHashes,
+  getActiveGatewaySupportedGenesisHashes,
+  getActiveSupportedGenesisHashes,
+  getBackend,
+} from '@dotli/config';
+
+import type { FrameRpc } from './rpc.js';
+import { protocolSchema, type ProtocolTransport } from './schema.js';
+
+import { subscribe } from './subscription.js';
+
+const { chain } = protocolSchema.sections;
+
+/**
+ * Wider than the advertised `isRemoteChainSupported`, since gateway mode keeps Bulletin connectable for bitswap's
+ * content fetches through the frame.
+ */
+export function isRemoteChainConnectable(genesisHash: string): boolean {
+  const supported =
+    getBackend() === 'rpc-gateway' ? getActiveCoreGatewaySupportedGenesisHashes() : getActiveSupportedGenesisHashes();
+  return supported.has(genesisHash.toLowerCase());
+}
+
+export function isRemoteChainSupported(genesisHash: string): boolean {
+  // Gateway mode bridges a curated RPC subset, while smoldot can run any configured chain.
+  const supported =
+    getBackend() === 'rpc-gateway' ? getActiveGatewaySupportedGenesisHashes() : getActiveSupportedGenesisHashes();
+  return supported.has(genesisHash.toLowerCase());
+}
 
 interface RemoteChainConnection {
   onMessage: (message: JsonRpcMessage) => void;
   /** Told once when the chain behind this connection halts. */
   onHalt: ((reason: RemoteChainHalt) => void) | null;
+  /** What the consumer sent before the frame accepted the connection, in order. */
   pendingMessages: JsonRpcRequest[];
   connected: boolean;
-  /** The frame's loss count when this connection was opened. */
-  openedAfterLosses: number;
 }
 
 /** `null` for a notification, which has no `id` to answer. */
@@ -38,6 +63,10 @@ function guardConsumer(label: 'halt' | 'message', call: () => void): void {
     reportListener('protocol', `remote_chain.${label}`)(err);
   }
 }
+
+/** What a connect that the consumer left before it connected settles with. */
+const disconnectedError = (): Error =>
+  named(new Error('Chain disconnected before it connected'), 'ChainDisconnectedError');
 
 /** Unsent messages get the retryable halt error on a chain halt, and a plain close error on a dead frame. */
 function haltRemote(connection: RemoteChainConnection, reason: RemoteChainHalt): void {
@@ -74,59 +103,109 @@ export type RemoteChainProvider = (
   onHalt?: (reason: RemoteChainHalt) => void,
 ) => JsonRpcConnection;
 
-export interface RemoteChainsDeps {
-  frame: Pick<ProtocolFrame, 'whenUp' | 'onEnvelope' | 'onLost' | 'losses'>;
-  rpc: FrameRpc;
-}
-
-export function createRemoteChains({ frame, rpc }: RemoteChainsDeps) {
+export function createRemoteChains(rpc: FrameRpc) {
   const chainConnections = new Map<string, RemoteChainConnection>();
 
-  frame.onEnvelope(msg => {
-    if (msg.kind === 'chain-message') {
-      const conn = chainConnections.get(msg.connectionId);
-      // A message already on its way when its connection halted or closed, which the provider contract ignores.
-      if (!conn) {
-        log.debug(`[dot.li protocol] chain-message for a closed connection: ${msg.connectionId}`);
-        return;
-      }
-      let parsed: JsonRpcMessage;
-      try {
-        parsed = JSON.parse(msg.message) as JsonRpcMessage;
-      } catch (err: unknown) {
-        captureException(err, { flow: 'protocol', step: 'chain_message_parse' });
-        log.error(`[dot.li protocol] chain-message JSON parse failed (conn=${msg.connectionId.slice(-8)}):`, err);
-        return;
-      }
-      guardConsumer('message', () => {
-        conn.onMessage(parsed);
-      });
+  /** Hands one chain message to its connection. One that is not JSON is reported and dropped. */
+  function deliver(connectionId: string, connection: RemoteChainConnection, message: string): void {
+    let parsed: JsonRpcMessage;
+    try {
+      parsed = JSON.parse(message) as JsonRpcMessage;
+    } catch (err: unknown) {
+      captureException(err, { flow: 'protocol', step: 'chain_message_parse' });
+      log.error(`[dot.li protocol] chain-message JSON parse failed (conn=${connectionId.slice(-8)}):`, err);
+      m.count(S.PROTOCOL_CHAIN_MESSAGE, { outcome: 'error', reason: errorName(err) ?? 'unknown' });
       return;
     }
-    if (msg.kind === 'chain-halt') {
-      const halted = chainConnections.get(msg.connectionId);
-      chainConnections.delete(msg.connectionId);
-      if (halted !== undefined) {
-        haltRemote(halted, 'chain');
-      }
-    }
-  });
-
-  // After the status changed, so a `'frame'` listener that dials again finds the frame down. A connection a status
-  // listener opened on this loss waits for the next frame, so it is kept.
-  frame.onLost(() => {
-    const lossCount = frame.losses();
-    const orphaned = [...chainConnections].filter(([, connection]) => connection.openedAfterLosses < lossCount);
-    for (const [id, connection] of orphaned) {
-      chainConnections.delete(id);
-      haltRemote(connection, 'frame');
-    }
-  });
-
-  function postDisconnect(connectionId: string): void {
-    void rpc.request('chainDisconnect', { connectionId }).catch((error: unknown) => {
-      log.warn('[dot.li protocol] Remote disconnect failed:', error);
+    guardConsumer('message', () => {
+      connection.onMessage(parsed);
     });
+  }
+
+  /** Not yet halted or disconnected. Whoever removes it tells the consumer. */
+  function isOpen(connectionId: string, connection: RemoteChainConnection): boolean {
+    return chainConnections.get(connectionId) === connection;
+  }
+
+  /** Sends one message once the frame accepted the connection. A refusal reaches the consumer as its answer. */
+  function send(connectionId: string, connection: RemoteChainConnection, message: JsonRpcRequest): void {
+    void rpc.request(chain.send, { connectionId, message: JSON.stringify(message) }).catch((error: unknown) => {
+      // A papi client re-follows on the `stop` that comes before the halt, and the frame refuses that send for a
+      // connection it has already forgotten.
+      if (!isOpen(connectionId, connection)) {
+        return;
+      }
+      log.error('[dot.li protocol] Remote chain send failed:', error);
+      const errResponse = buildJsonRpcError(message, serializeError(error));
+      if (errResponse !== null) {
+        connection.onMessage(errResponse);
+      }
+    });
+  }
+
+  /**
+   * Subscribes the chain once the frame is ready. Sends wait for `connected`. The connect has its own budget, and
+   * running out of it unsubscribes, which disconnects a connection a busy frame may still accept. Returns the
+   * consumer's disconnect.
+   */
+  function open(genesisHash: string, connectionId: string, remote: RemoteChainConnection): () => void {
+    const leave = new AbortController();
+    const connect = (transport: ProtocolTransport, signal: AbortSignal): Promise<void> =>
+      new Promise((resolve, reject) => {
+        subscribe(
+          transport,
+          chain.connect,
+          { genesisHash, connectionId },
+          {
+            receive: event => {
+              if (event.tag === 'message') {
+                deliver(connectionId, remote, event.value);
+                return;
+              }
+              if (remote.connected || !isOpen(connectionId, remote)) {
+                return;
+              }
+              remote.connected = true;
+              resolve();
+              for (const message of remote.pendingMessages.splice(0)) {
+                send(connectionId, remote, message);
+              }
+            },
+            // A clean end is the chain halting. An error is a refusal, a connect that ran out of budget, or a frame
+            // that went down, and halts like a dead frame so a caching consumer drops it.
+            end: error => {
+              if (!remote.connected) {
+                reject(error ?? new Error('Chain halted before it connected'));
+              }
+              if (!isOpen(connectionId, remote)) {
+                return;
+              }
+              // Removed first, so a send made during the halt is answered at once, not queued and lost.
+              chainConnections.delete(connectionId);
+              if (error !== null && !remote.connected) {
+                log.error('[dot.li protocol] Failed to connect remote chain:', error);
+              }
+              haltRemote(remote, error === null ? 'chain' : 'frame');
+            },
+          },
+          { signal },
+        );
+      });
+    void rpc.call(chain.connect, connect, { signal: leave.signal }).catch((error: unknown) => {
+      // Counted on the call's trail. A connection still open never subscribed, since the frame did not come up, and
+      // halts like a dead frame. Otherwise the subscription's end, or the consumer's disconnect, already acted on it.
+      if (!isOpen(connectionId, remote)) {
+        return;
+      }
+      log.error('[dot.li protocol] Failed to connect remote chain:', error);
+      chainConnections.delete(connectionId);
+      haltRemote(remote, 'frame');
+    });
+    // A consumer that leaves before `connected` ends the connect as a disconnect, so its trail still ends. A connect
+    // still queued is never sent, one the frame has is closed there, and one the frame is not up for never goes out.
+    return () => {
+      leave.abort(disconnectedError());
+    };
   }
 
   /** Null when the frame cannot connect this chain. */
@@ -136,73 +215,19 @@ export function createRemoteChains({ frame, rpc }: RemoteChainsDeps) {
     }
 
     return (onMessage, onHalt): JsonRpcConnection => {
-      const connectionId = createRequestId();
+      const connectionId = randomId();
       const remote: RemoteChainConnection = {
         onMessage,
         onHalt: onHalt ?? null,
         pendingMessages: [],
         connected: false,
-        openedAfterLosses: frame.losses(),
       };
-
       chainConnections.set(connectionId, remote);
-      // Not yet halted or disconnected. Whoever removes it tells the consumer.
-      const isOpen = (): boolean => chainConnections.get(connectionId) === remote;
-
-      void frame
-        .whenUp('ready')
-        .then(async () => {
-          // Disconnected before the connect is posted: the frame never hears of it.
-          if (!isOpen()) {
-            return;
-          }
-          await rpc.request('chainConnect', { genesisHash, connectionId });
-          // Disconnected while the connect was in flight: it is closed in the
-          // frame now that the connect settled, not before, or the frame would
-          // keep a connection opened after its disconnect.
-          if (!isOpen()) {
-            postDisconnect(connectionId);
-            return;
-          }
-          remote.connected = true;
-          for (const message of remote.pendingMessages) {
-            void rpc
-              .request('chainSend', {
-                connectionId,
-                message: JSON.stringify(message),
-              })
-              .catch((error: unknown) => {
-                if (!isOpen()) {
-                  return;
-                }
-                const errResponse = buildJsonRpcError(message, serializeError(error));
-                if (errResponse !== null) {
-                  onMessage(errResponse);
-                }
-              });
-          }
-          remote.pendingMessages = [];
-        })
-        .catch((error: unknown) => {
-          // A frame too busy to answer in time may still accept the connect and would hold its slot for good, even
-          // when the consumer has already disconnected. A refusal, a dead frame or a connect never posted holds
-          // nothing, and a disconnect would boot a frame for it.
-          if (error instanceof ProtocolRequestError && error.name === 'ProtocolTimeoutError') {
-            postDisconnect(connectionId);
-          }
-          if (!isOpen()) {
-            return;
-          }
-          // Halts like a dead frame so a caching consumer drops it. Removed first so a send made during
-          // the halt is answered at once, not queued and lost.
-          log.error('[dot.li protocol] Failed to connect remote chain:', error);
-          chainConnections.delete(connectionId);
-          haltRemote(remote, 'frame');
-        });
+      const disconnect = open(genesisHash, connectionId, remote);
 
       return {
         send(message) {
-          if (!isOpen()) {
+          if (!isOpen(connectionId, remote)) {
             const errResponse = buildJsonRpcError(message, 'Chain connection is closed');
             if (errResponse !== null) {
               onMessage(errResponse);
@@ -213,34 +238,14 @@ export function createRemoteChains({ frame, rpc }: RemoteChainsDeps) {
             remote.pendingMessages.push(message);
             return;
           }
-          void rpc
-            .request('chainSend', {
-              connectionId,
-              message: JSON.stringify(message),
-            })
-            .catch((error: unknown) => {
-              // A papi client re-follows on the `stop` that comes before
-              // `chain-halt`, and the frame refuses that send for a connection it
-              // has already forgotten.
-              if (!isOpen()) {
-                return;
-              }
-              const reason = serializeError(error);
-              log.error('[dot.li protocol] Remote chain send failed:', error);
-              const errResponse = buildJsonRpcError(message, reason);
-              if (errResponse !== null) {
-                onMessage(errResponse);
-              }
-            });
+          send(connectionId, remote, message);
         },
         disconnect() {
-          const wasOpen = isOpen();
-          chainConnections.delete(connectionId);
-          // Not accepted yet: a connect not posted is never posted, and one in
-          // flight is closed in the frame once it settles.
-          if (wasOpen && remote.connected) {
-            postDisconnect(connectionId);
+          if (!isOpen(connectionId, remote)) {
+            return;
           }
+          chainConnections.delete(connectionId);
+          disconnect();
         },
       };
     };

@@ -7,10 +7,12 @@
 // step, so the step sequence is not asserted. The content-shown flag and the branding are covered by the topbar
 // autohide and product branding specs.
 
+import { bindRecordingSentry, type RecordedMetric } from '@dotli/metrics/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flush } from 'solid-js';
 import type { Backend } from '@dotli/config';
-import { bindCaptureSink, m, type CaptureContext } from '@dotli/metrics';
+import { bindCaptureSink, type CaptureContext } from '@dotli/metrics';
+import { ProtocolVersionMismatchError } from '@dotli/protocol';
 import type { ExecutableManifest, ManifestResult, ResolvePhase } from '@dotli/resolver';
 import { resetAllStoresForTests } from '@dotli/shared/testing';
 import type { CachedManifests } from '@dotli/storage';
@@ -38,31 +40,18 @@ function workerManifest(
   return { kind: 'ok', value: { $v: 1, appVersion: [1, 0, 0], ...value }, raw: '' };
 }
 
-/** The resolution span's attributes as the trace sets them, through a Sentry bound until `restore`. */
-function recordResolution(): { root: () => Record<string, unknown> | undefined; restore: () => void } {
-  const roots: Record<string, unknown>[] = [];
-  const inert = (): void => undefined;
-  const sentry: unknown = {
-    startInactiveSpan: (opts: { name: string; attributes?: Record<string, unknown> }) => {
-      const attributes: Record<string, unknown> = { ...opts.attributes };
-      if (opts.name === 'dotli.resolution') {
-        roots.push(attributes);
-      }
-      return {
-        setAttributes: (next: Record<string, unknown>) => {
-          Object.assign(attributes, next);
-        },
-        end: inert,
-      };
-    },
-    startSpan: <T>(_opts: unknown, fn: (span: undefined) => T): T => fn(undefined),
-    setMeasurement: inert,
-    metrics: { count: inert, distribution: inert, gauge: inert },
-    setTag: inert,
-    addBreadcrumb: inert,
+/** The resolution span's attributes as the trace sets them, and every distribution, through a Sentry bound until `restore`. */
+function recordResolution(): {
+  root: () => Record<string, unknown> | undefined;
+  distributions: RecordedMetric[];
+  restore: () => void;
+} {
+  const recording = bindRecordingSentry();
+  return {
+    root: () => recording.spans.filter(span => span.name === 'dotli.resolution').at(-1)?.attributes,
+    distributions: recording.distributions,
+    restore: recording.restore,
   };
-  const restore = m.bind(sentry as Parameters<typeof m.bind>[0]);
-  return { root: () => roots.at(-1), restore };
 }
 
 interface Options {
@@ -78,6 +67,8 @@ interface Options {
   failToShow?: Error;
   /** The sandbox never says anything. It speaks at once without it. */
   silentSandbox?: boolean;
+  /** A protocol frame refused this page's wire version before the load asked, so its listener hears it at once. */
+  latchedMismatch?: ProtocolVersionMismatchError;
 }
 
 function harness(options: Options = {}) {
@@ -87,6 +78,8 @@ function harness(options: Options = {}) {
   const revalidated: [string, string, boolean][] = [];
   const recorded: string[] = [];
   let forgotten = 0;
+  const mismatchListeners: ((error: ProtocolVersionMismatchError) => void)[] = [];
+  const sandboxListeners = new Set<() => void>();
   const published = options.published ?? {};
   const names: NameSource = {
     resolveProduct: vi.fn((label: string, onPhase?: (phase: ResolvePhase) => void) => {
@@ -101,15 +94,19 @@ function harness(options: Options = {}) {
   const frame = {
     setPageProduct: vi.fn(),
     render: vi.fn<LoaderFrame['render']>(() => Promise.resolve()),
+    halt: vi.fn(),
     onContentDone: callback => {
       contentDone.push(callback);
     },
     onContentProgress: () => () => undefined,
     onSandboxHeard: listener => {
+      sandboxListeners.add(listener);
       if (options.silentSandbox !== true) {
         queueMicrotask(listener);
       }
-      return () => undefined;
+      return () => {
+        sandboxListeners.delete(listener);
+      };
     },
   } satisfies LoaderFrame;
   const cidCache = {
@@ -146,6 +143,14 @@ function harness(options: Options = {}) {
         forgotten += 1;
       },
     },
+    onProtocolVersionMismatch: listener => {
+      if (options.latchedMismatch !== undefined) {
+        listener(options.latchedMismatch);
+      } else {
+        mismatchListeners.push(listener);
+      }
+      return () => undefined;
+    },
   });
   return {
     loader,
@@ -157,6 +162,14 @@ function harness(options: Options = {}) {
     revalidated,
     recorded,
     forgotten: () => forgotten,
+    /** How many listeners still hear the sandbox. */
+    sandboxListening: () => sandboxListeners.size,
+    /** A protocol frame rebuilt from a newer release refusing this page's wire. */
+    refuseWire: (error: ProtocolVersionMismatchError) => {
+      for (const listener of mismatchListeners.splice(0)) {
+        listener(error);
+      }
+    },
     reportContent: (outcome: ContentOutcome, failedStep?: string) => {
       for (const callback of contentDone.splice(0)) {
         callback(outcome, failedStep);
@@ -170,6 +183,7 @@ describe('createProductLoader', () => {
   const debug: DotliDebugEvent[] = [];
   const undo: (() => void)[] = [];
   let resolution: () => Record<string, unknown> | undefined;
+  let recorded: ReturnType<typeof recordResolution>;
 
   const events = (): string[] => debug.map(event => `${event.layer}:${event.event}`);
 
@@ -193,9 +207,9 @@ describe('createProductLoader', () => {
         expected: () => undefined,
       }),
     );
-    const recorder = recordResolution();
-    undo.push(recorder.restore);
-    resolution = recorder.root;
+    recorded = recordResolution();
+    undo.push(recorded.restore);
+    resolution = recorded.root;
   });
 
   afterEach(() => {
@@ -395,7 +409,10 @@ describe('createProductLoader', () => {
   it('As a visitor whose app frame never starts, I see the failure screen after its deadline instead of a loading bar for good', async () => {
     // Given
     vi.useFakeTimers();
-    const { loader, failures, reportContent } = harness({ published: { doom: 'bafy-base' }, silentSandbox: true });
+    const { loader, frame, failures, reportContent } = harness({
+      published: { doom: 'bafy-base' },
+      silentSandbox: true,
+    });
     await loader.load('doom');
 
     // When
@@ -407,6 +424,65 @@ describe('createProductLoader', () => {
     expect(failures.map(failure => failure.error.kind)).toEqual(['sandbox-silent']);
     expect(captured).toContainEqual(expect.objectContaining({ step: 'content' }));
     expect(resolution()).toMatchObject({ outcome: 'error', error_kind: 'sandbox-silent' });
+    expect(frame.halt).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['for the first time', {}],
+    ['from the CID cache', { cached: { cid: 'bafy-cached', manifests: NO_CACHED_MANIFESTS } }],
+  ])(
+    'As a visitor whose protocol frame refused this page during the render %s, I see the reload screen and the load ends there',
+    async (_path, given) => {
+      // Given
+      const {
+        loader,
+        frame,
+        failures,
+        recorded: recents,
+        forgotten,
+        sandboxListening,
+        reportContent,
+      } = harness({
+        published: { doom: 'bafy-base' },
+        latchedMismatch: new ProtocolVersionMismatchError('the frame speaks a newer wire'),
+        silentSandbox: true,
+        ...given,
+      });
+
+      // When
+      await loader.load('doom');
+      reportContent('loaded');
+
+      // Then
+      expect(failures.map(failure => failure.error.kind)).toEqual(['protocol-version-mismatch']);
+      expect(frame.halt).toHaveBeenCalledTimes(1);
+      expect(forgotten()).toBe(0);
+      expect(recents).toEqual([]);
+      expect(events()).not.toContain('boot:ready');
+      expect(resolution()).toMatchObject({ outcome: 'error', error_kind: 'protocol-version-mismatch' });
+      expect(events().filter(event => event === 'boot:failed')).toEqual(['boot:failed']);
+      expect(
+        recorded.distributions.filter(
+          metric => metric.name === 'dotli.e2e.slow_path' && metric.attributes?.['outcome'] === 'ok',
+        ),
+      ).toEqual([]);
+      expect(sandboxListening()).toBe(0);
+    },
+  );
+
+  it('As a visitor with the app open, a protocol frame rebuilt from a newer release takes the app down under the reload screen', async () => {
+    // Given
+    const { loader, frame, failures, refuseWire, reportContent } = harness({ published: { doom: 'bafy-base' } });
+    await loader.load('doom');
+
+    // When
+    refuseWire(new ProtocolVersionMismatchError('the frame speaks a newer wire'));
+    reportContent('loaded');
+
+    // Then
+    expect(failures.map(failure => failure.error.kind)).toEqual(['protocol-version-mismatch']);
+    expect(frame.halt).toHaveBeenCalledTimes(1);
+    expect(resolution()).toMatchObject({ outcome: 'error', error_kind: 'protocol-version-mismatch' });
   });
 
   it('As a visitor on a gateway, I am shown the app as trusted', async () => {

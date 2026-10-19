@@ -9,7 +9,7 @@
 import { getActiveTldSuffix, getNetwork, isVerifiedSession, withActiveTld, type Backend } from '@dotli/config';
 import { bitswapGet } from '@dotli/bitswap';
 import { captureException, m, spans as S } from '@dotli/metrics';
-import { protocolClient } from '@dotli/protocol';
+import { protocolClient, type ProtocolVersionMismatchError } from '@dotli/protocol';
 import { createAsyncTaskPool, dur, elapsed, errorMessage, log, randomId, serializeError } from '@dotli/shared';
 import type { CachedManifests } from '@dotli/storage';
 import { emitDotliDebugEvent } from '@dotli/truapi-debug';
@@ -40,6 +40,8 @@ export interface LoaderFrame {
   setPageProduct: (product: { label: string }) => void;
   /** Mounts the product's sandbox on this content. Settles once the sandbox owns the download. */
   render: ProductFrame['render'];
+  /** Takes the product down for good under the failure screen, which nothing the frame does later clears. */
+  halt: ProductFrame['halt'];
   /** Called once, for the first outcome the sandbox reports on its content. */
   onContentDone: (callback: (outcome: ContentOutcome, failedStep: string | undefined) => void) => void;
   /** The content fetch's progress, as the sandbox's blocks pass through this window. Returns its unsubscribe. */
@@ -79,6 +81,11 @@ export interface ProductLoaderOptions {
   /** The names this visitor opened, kept in the store every subdomain shares. */
   recents: Pick<RecentLabels, 'record'>;
   failureScreen: LoaderFailureScreen;
+  /**
+   * Hears once that a protocol frame refused this page's wire version, at once if one already did. Returns its
+   * unsubscribe.
+   */
+  onProtocolVersionMismatch: (listener: (error: ProtocolVersionMismatchError) => void) => () => void;
 }
 
 export interface ProductLoader {
@@ -198,6 +205,22 @@ async function loadProduct(label: string, options: ProductLoaderOptions): Promis
     setProductError();
     options.failureScreen.show({ error, cause: err, label, backend });
   };
+  /**
+   * Ends a load whose product is already on screen, which only a reload can bring back, so the frame stops showing it
+   * again. A screen that fails is reported here, since nothing waits on the load anymore.
+   */
+  const failAfterHandoff = (err: unknown, failure: string): void => {
+    if (resolveFailed) {
+      return;
+    }
+    frame.halt();
+    try {
+      failLoad(err);
+    } catch (screenError: unknown) {
+      captureException(screenError, { flow: 'resolve', step: 'failure_screen' });
+      log.error(`[dot.li] The failure screen for ${failure} failed:`, screenError);
+    }
+  };
   // The content fetch outlives the handoff, so the trace waits for the sandbox's report. Subscribed before the
   // handoff, since a cached archive can report before it returns.
   const settleOnContent = (): void => {
@@ -216,24 +239,27 @@ async function loadProduct(label: string, options: ProductLoaderOptions): Promis
       trace.finish('content_error', failedStep !== undefined ? { failedStep } : {});
     });
   };
-  const render = async (cid: string, manifests: ProductManifests): Promise<void> => {
+  /** Resolves false when a failure heard during the render already ended the load, so nothing after it runs. */
+  const render = async (cid: string, manifests: ProductManifests): Promise<boolean> => {
     progress.contentFetch();
     enterStep('render_handoff');
     settleOnContent();
     const sandbox = watchSandbox(frame.onSandboxHeard);
     await frame.render({ mode: 'subdomain', label, cid, base: options.base, chat, ...manifestFacts(manifests) });
+    // A protocol frame rebuilt while the app is open can come from a newer release. It refuses this page for good, and
+    // the app would sit there with no chain or store, so the reload screen replaces it.
+    options.onProtocolVersionMismatch(err => {
+      failAfterHandoff(err, 'a protocol version mismatch');
+    });
+    if (resolveFailed) {
+      sandbox.stop();
+      return false;
+    }
     // From the handoff, since the render before it can wait on the shared store for as long as the protocol frame is down.
     void sandbox.expectWithin().catch((err: unknown) => {
-      if (resolveFailed) {
-        return;
-      }
-      try {
-        failLoad(err);
-      } catch (screenError: unknown) {
-        captureException(screenError, { flow: 'resolve', step: 'failure_screen' });
-        log.error('[dot.li] The failure screen for a silent sandbox failed:', screenError);
-      }
+      failAfterHandoff(err, 'a silent sandbox');
     });
+    return true;
   };
   const rendered = (manifests: ProductManifests): void => {
     options.failureScreen.forget();
@@ -280,10 +306,13 @@ async function loadProduct(label: string, options: ProductLoaderOptions): Promis
         cidCache.revalidateLater(label, cached.cid, false);
         throw err;
       }
-      await m.span(S.E2E_FAST, async () => {
+      const live = await m.span(S.E2E_FAST, () => {
         settleShield();
-        await render(cached.cid, cachedManifests);
+        return render(cached.cid, cachedManifests);
       });
+      if (!live) {
+        return;
+      }
       rendered(cachedManifests);
       performance.mark('dotli:main:end');
       log.event('Sandbox mounted', {
@@ -378,7 +407,9 @@ async function loadProduct(label: string, options: ProductLoaderOptions): Promis
     }
 
     settleShield();
-    await render(cid, manifests);
+    if (!(await render(cid, manifests))) {
+      return;
+    }
     rendered(manifests);
 
     m.distribution(S.E2E_SLOW, performance.now() - coldStartMs, 'millisecond', {
