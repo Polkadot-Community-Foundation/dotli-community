@@ -18,9 +18,13 @@ export interface ModalProps {
   /** The sheet head's title, and the name when nothing labels the card. */
   title: string;
   labelledBy?: string | undefined;
+  /** The id of what describes the card or sheet, which focus on it reads. */
+  describedBy?: string | undefined;
   initialFocus?: (() => HTMLElement | undefined) | undefined;
   /** Overrides what held focus at opening, for a trigger the browser may not focus on click. */
   restoreFocus?: (() => HTMLElement | undefined) | undefined;
+  /** Moves focus to the card or sheet each time its value changes after opening, for content swapped in place. */
+  refocusOn?: (() => unknown) | undefined;
   placement?: 'center' | 'topbar-end';
   scrim?: 'dark' | 'light';
   id?: string | undefined;
@@ -28,6 +32,8 @@ export interface ModalProps {
   class?: string | undefined;
   /** On the card or sheet, with `-backdrop`, `-scrim` and `-sheet-*` variants. */
   testId: string;
+  /** False hides the sheet head's close button. A swipe still closes. Default true. */
+  closable?: boolean | undefined;
   /** Receives the frame. */
   frameRef?: (el: HTMLDivElement) => void;
   children: JSX.Element;
@@ -64,6 +70,21 @@ function ModalRoot(props: ModalProps): JSX.Element {
     }
   });
 
+  let opened = false;
+  createEffect(
+    () => props.refocusOn?.(),
+    () => {
+      if (!opened) {
+        opened = true;
+        return;
+      }
+      const surface = frame?.querySelector('[data-modal-surface]');
+      if (surface instanceof HTMLElement) {
+        surface.focus();
+      }
+    },
+  );
+
   // Created under InSheet once, so Surface follows the form rather than keep the one it was made in.
   const content = children(() => <InSheet value={phone}>{props.children}</InSheet>);
   const layout = (): 'center' | 'sheet' | 'topbar-end' => (phone() ? 'sheet' : (props.placement ?? 'center'));
@@ -96,6 +117,7 @@ function ModalRoot(props: ModalProps): JSX.Element {
             data-state={props.open ? 'open' : 'closed'}
             data-testid={props.testId}
             data-placement={props.placement ?? 'center'}
+            aria-describedby={props.describedBy}
             tabindex="-1"
           >
             {content()}
@@ -110,6 +132,8 @@ function ModalRoot(props: ModalProps): JSX.Element {
           testId={props.testId}
           open={props.open}
           closeLabel="Close"
+          closable={props.closable}
+          describedBy={props.describedBy}
           body={{ class: s['sheetScroll'] }}
         >
           <div class={s['sheetBody']}>{content()}</div>

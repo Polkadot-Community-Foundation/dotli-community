@@ -330,3 +330,17 @@ export const PREIMAGE_LOOKUP = 'preimage.lookup';
  * the backend no longer serves the chain, `halted` when the new lease halted at once, or the error's name.
  */
 export const TRUAPI_CHAIN_REOPEN = 'truapi_chain.reopen';
+
+/**
+ * Count. A phone-bound request a waiting step followed to its end. Tagged `outcome` (`ok, refused, aborted, error,
+ * gone, undecodable, unmatchable`) and `reason` (the method). A claim's end carries `background`, and a claim whose
+ * answer did not decode ends as `undecodable`. A request that did not decode and a review that matched no request are
+ * counted on their own, without `background`.
+ */
+export const PHONE_REQUEST = 'signing.phone_request';
+
+/**
+ * A view an answered dialog was to hand its place to that could not be built, so the dialog closed instead. Tagged
+ * `outcome` (error) and `reason` (the error's name).
+ */
+export const MODAL_HANDOFF = 'modal.handoff';

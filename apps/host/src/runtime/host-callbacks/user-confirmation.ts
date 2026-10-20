@@ -26,15 +26,21 @@ import type {
   RawPayload,
   RingLocationJunction,
 } from '@parity/truapi';
-import { toHex } from '@dotli/shared';
+import { withActiveTld } from '@dotli/config';
+import { deferred, toHex } from '@dotli/shared';
 import { ERRORS } from '../errors.js';
-import type { BlockingModalScope } from '../blocking-modal-queue.js';
-import type { ModalButton, ModalField, ModalView } from '@dotli/ui';
+import type { BlockingModalScope, HoldSlot } from '../blocking-modal-queue.js';
+import type { ModalButton, ModalField, ModalHandoff, ModalView } from '@dotli/ui';
 import { SignIcon } from '../../components/icons/SignIcon.js';
+import { phoneWaitingView, WAITING_BACKGROUND } from '../../components/signing/phone-waiting-view.js';
 import type { HostPrompts } from '../host-prompts.js';
+import { PHONE_METHODS } from '../phone-methods.js';
+import { reportPhoneEnd } from '../phone-report.js';
+import type { PhoneRequestTracker } from '../phone-requests.js';
+import { phoneReviewMatch } from '../phone-review-match.js';
 
-/** The prompts a confirmation asks through. */
-type ConfirmationPrompts = Pick<HostPrompts, 'confirmPreimage' | 'confirmReview'>;
+/** The prompts a confirmation asks through and tells its outcome on. */
+type ConfirmationPrompts = Pick<HostPrompts, 'confirmPreimage' | 'confirmReview' | 'notify'>;
 
 interface ConfirmationCopy {
   title: string;
@@ -47,6 +53,9 @@ type ConfirmationField = ModalField;
 
 type ConfirmationDecision = 'accepted' | 'accepted-once' | 'rejected' | 'dismissed';
 
+/** The step an answered review hands its place to, if any. */
+type ReviewHandoff = (decision: ConfirmationDecision) => ModalHandoff | undefined;
+
 /** PreimageSubmit gets its own modal. */
 type ModalReview = Exclude<UserConfirmationReview, { tag: 'PreimageSubmit' }>;
 
@@ -57,6 +66,7 @@ function showConfirmationModal(
   signal: AbortSignal,
   allowOnce: boolean,
   prompts: ConfirmationPrompts,
+  handoff: ReviewHandoff,
 ): Promise<ConfirmationDecision> {
   const buttons: ModalButton<ConfirmationDecision>[] = [
     // Every cancel here rejects the core's request, so it is drawn destructive.
@@ -86,6 +96,7 @@ function showConfirmationModal(
       dismissResult: 'dismissed',
     },
     signal,
+    handoff,
   );
 }
 
@@ -353,12 +364,64 @@ async function handleConfirmationReview(
   signal: AbortSignal,
   allowOnce: boolean,
   prompts: ConfirmationPrompts,
+  handoff: ReviewHandoff,
 ): Promise<ConfirmationDecision> {
-  const decision = await showConfirmationModal(label, confirmationCopy(review), review, signal, allowOnce, prompts);
+  const decision = await showConfirmationModal(
+    label,
+    confirmationCopy(review),
+    review,
+    signal,
+    allowOnce,
+    prompts,
+    handoff,
+  );
   if (decision === 'dismissed' && review.tag === 'IdentityDisclosure') {
     throw new Error(ERRORS.IDENTITY_DISCLOSURE_DISMISSED);
   }
   return decision;
+}
+
+// Temporary: the core does not report phone requests to the host, so this infers them from relayed frames. Remove once https://github.com/paritytech/trinity-user-agents/issues/1552 lands.
+/**
+ * Swaps an accepted review for the waiting step while its request is on the way to the phone. The step holds the
+ * prompt slot until the user sends it to the background or the request ends, and its end shows a toast.
+ */
+function phoneWaitHandoff(
+  label: string,
+  review: ModalReview,
+  requests: PhoneRequestTracker,
+  notify: HostPrompts['notify'],
+  signal: AbortSignal,
+  hold: HoldSlot,
+): ReviewHandoff {
+  return decision => {
+    if (decision !== 'accepted' && decision !== 'accepted-once') {
+      return undefined;
+    }
+    const matches = phoneReviewMatch(review);
+    const claim = matches === undefined ? undefined : requests.claim(matches);
+    if (claim === undefined) {
+      return undefined;
+    }
+    const { method } = claim.request;
+    const { title, icon } = confirmationCopy(review);
+    const answered = new AbortController();
+    let background = false;
+    void claim.ended.then(outcome => {
+      answered.abort();
+      reportPhoneEnd({ method, outcome, background, title, app: withActiveTld(label) }, notify);
+    });
+    const closed = deferred<undefined>();
+    hold(closed.promise);
+    return {
+      view: phoneWaitingView({ title, ...(icon === undefined ? {} : { icon }), ask: PHONE_METHODS[method].ask }),
+      signal: AbortSignal.any([signal, answered.signal]),
+      closed: result => {
+        background = result === WAITING_BACKGROUND;
+        closed.resolve(undefined);
+      },
+    };
+  };
 }
 
 function permissionDecision(decision: ConfirmationDecision): PermissionDecision {
@@ -379,21 +442,36 @@ export function createUserConfirmationAdapters(
   label: string,
   prompts: ConfirmationPrompts,
   modalScope: BlockingModalScope,
+  phoneRequests: PhoneRequestTracker,
 ): Required<UserConfirmationHost> {
+  const confirm = (
+    review: ModalReview,
+    signal: AbortSignal,
+    allowOnce: boolean,
+    hold: HoldSlot,
+  ): Promise<ConfirmationDecision> =>
+    handleConfirmationReview(
+      label,
+      review,
+      signal,
+      allowOnce,
+      prompts,
+      phoneWaitHandoff(label, review, phoneRequests, prompts.notify, signal, hold),
+    );
   return {
     // Per-action reviews confirm a single operation, so there is no lifetime
     // to choose and the modal keeps two buttons.
     confirmUserAction: review =>
-      modalScope.enqueue(async signal =>
+      modalScope.enqueue(async (signal, hold) =>
         review.tag === 'PreimageSubmit'
           ? handlePreimageSubmitReview(label, review.value, signal, prompts)
-          : (await handleConfirmationReview(label, review, signal, false, prompts)) === 'accepted',
+          : (await confirm(review, signal, false, hold)) === 'accepted',
       ),
     // The core stores AllowAlways and Deny, and honours AllowOnce for this request only.
     confirmPermission: review =>
-      modalScope.enqueue(async signal => {
+      modalScope.enqueue(async (signal, hold) => {
         if (review.tag !== 'PreimageSubmit') {
-          return permissionDecision(await handleConfirmationReview(label, review, signal, true, prompts));
+          return permissionDecision(await confirm(review, signal, true, hold));
         }
         // The dialog's Allow lasts one request, so its Cancel does too, where a Deny would be stored for good.
         if (!(await handlePreimageSubmitReview(label, review.value, signal, prompts))) {

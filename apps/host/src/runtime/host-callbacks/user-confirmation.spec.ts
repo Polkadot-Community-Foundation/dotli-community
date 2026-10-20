@@ -2,23 +2,35 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { UserConfirmation } from '@parity/truapi-host';
-import { afterEach, describe, expect, it } from 'vitest';
-import { createBlockingModalCoordinator } from '../blocking-modal-queue.js';
+import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
+import { bindRecordingSentry, recordCaptures, type RecordingSentry } from '@dotli/metrics/testing';
+import { spans as S } from '@dotli/metrics';
+import { withActiveTld } from '@dotli/config';
+import { createBlockingModalCoordinator, type BlockingModalCoordinator } from '../blocking-modal-queue.js';
+import type { HostPrompts } from '../host-prompts.js';
+import { requestFrame, responseFrame } from '../phone-requests.fake.js';
+import { createPhoneRequestTracker, type PhoneRequestTracker } from '../phone-requests.js';
 import { createUserConfirmationAdapters as createAdapters } from './user-confirmation.js';
 import type { ModalButton, ModalButtonVariant, ModalView } from '@dotli/ui';
 import { SignIcon } from '../../components/icons/SignIcon.js';
+import { phoneWaitingView } from '../../components/signing/phone-waiting-view.js';
 import { createFakePrompts } from '../host-prompts.fake.js';
+import { recordLog, resetAllStoresForTests } from '@dotli/shared/testing';
 
 type UserConfirmationReview = Parameters<Required<UserConfirmation>['confirmUserAction']>[0];
 
 let page = createFakePrompts();
 
-/** The adapters with their dialogs shown through the page's fake prompts. */
-function createUserConfirmationAdapters(label: string): ReturnType<typeof createAdapters> {
-  return createAdapters(label, page.prompts, createBlockingModalCoordinator().createScope());
+/** The adapters with their dialogs shown through the page's fake prompts, with no request on the way to a phone. */
+function createUserConfirmationAdapters(
+  label: string,
+  phoneRequests: PhoneRequestTracker = createPhoneRequestTracker(),
+): ReturnType<typeof createAdapters> {
+  return createAdapters(label, page.prompts, createBlockingModalCoordinator().createScope(), phoneRequests);
 }
 
 afterEach(() => {
+  resetAllStoresForTests();
   page = createFakePrompts();
 });
 
@@ -856,5 +868,464 @@ describe('user confirmation modal', () => {
 
     // Then
     await expect(confirmation).resolves.toBe(false);
+  });
+});
+
+const productAccount = { dotNsIdentifier: 'product.dot', derivationIndex: { tag: 'Index' as const, value: 0 } };
+
+function signRequest(nonce: `0x${string}`) {
+  return {
+    account: productAccount,
+    payload: {
+      blockHash: '0x01' as const,
+      blockNumber: '0x02' as const,
+      era: '0x03' as const,
+      genesisHash: '0x04' as const,
+      method: '0x05' as const,
+      nonce,
+      specVersion: '0x07' as const,
+      tip: '0x08' as const,
+      transactionVersion: '0x09' as const,
+      signedExtensions: [],
+      version: 4,
+    },
+  };
+}
+
+function signReview(nonce: `0x${string}`): UserConfirmationReview {
+  return {
+    tag: 'SignPayload',
+    value: { tag: 'Product', value: { callingProductId: 'product.dot', request: signRequest(nonce) } },
+  };
+}
+
+const SIGNED = { ok: { signature: '0x01' } };
+const REJECTED = { domain: { tag: 'Rejected' } };
+
+/** A paired phone's adapters, whose product frame relays through `tap`. */
+function pairedPhone({
+  prompts = page.prompts,
+  coordinator = createBlockingModalCoordinator(),
+  tracker = createPhoneRequestTracker({
+    reportUndecodable: (method, error) => {
+      throw new Error(`${method} frame did not decode`, { cause: error });
+    },
+  }),
+}: { prompts?: HostPrompts; coordinator?: BlockingModalCoordinator; tracker?: PhoneRequestTracker } = {}) {
+  const tap = tracker.connect();
+  const scope = coordinator.createScope();
+  const adapters = createAdapters('localhost:3000', prompts, scope, tracker);
+  return { tracker, tap, scope, ...adapters };
+}
+
+/** A paired phone whose sign request the user signed in the dialog, so the review goes to the phone. */
+async function signedForPhone(options?: Parameters<typeof pairedPhone>[0]) {
+  const phone = pairedPhone(options);
+  phone.tap.fromProduct(requestFrame('a', 'signPayload', signRequest('0x06')));
+  const confirmation = phone.confirmUserAction(signReview('0x06'));
+  await modalShown();
+  press('sign');
+  return { ...phone, confirmation };
+}
+
+/** Resolves on the next metric recorded, so a spec waits on the count rather than polling. */
+function nextRecord(): { sentry: RecordingSentry; recorded: Promise<void> } {
+  let record = (): void => undefined;
+  const recorded = new Promise<void>(resolve => {
+    record = resolve;
+  });
+  return { sentry: bindRecordingSentry({ onFinished: onTestFinished, onRecord: record }), recorded };
+}
+
+/** Whether the dialog on screen is the waiting step. */
+function waiting(): boolean {
+  return page.shownReview().buttons[0]?.label === 'Wait in background';
+}
+
+describe('waiting on the phone', () => {
+  it('As a product, my approval reaches the core while the dialog waits on the phone', async () => {
+    // Given
+    const { tap, confirmUserAction } = pairedPhone();
+    tap.fromProduct(requestFrame('a', 'signPayload', signRequest('0x06')));
+    const confirmation = confirmUserAction(signReview('0x06'));
+    await modalShown();
+
+    // When
+    press('sign');
+
+    // Then
+    await expect(confirmation).resolves.toBe(true);
+    expect(waiting()).toBe(true);
+    expect(shownDialog().title).toBe('Sign Transaction');
+    expect(shownDialog().icon).toBe(SignIcon);
+  });
+
+  it('As a user, the waiting step closes when the phone signs and I see it signed', async () => {
+    // Given
+    const sentry = bindRecordingSentry({ onFinished: onTestFinished });
+    const { tap, confirmation } = await signedForPhone();
+    await confirmation;
+
+    // When
+    tap.fromCore(responseFrame('a', 'signPayload', SIGNED));
+
+    // Then
+    const notices = await page.noticesShown(1);
+    expect(page.pending()).toEqual([]);
+    expect(notices.map(n => n.text)).toEqual(['Sign Transaction: signed in Polkadot App']);
+    expect(notices[0]?.label).toBe(withActiveTld('localhost:3000'));
+    expect(sentry.counted(S.PHONE_REQUEST)).toEqual([{ outcome: 'ok', reason: 'signPayload', background: 'no' }]);
+  });
+
+  it('As a user, I wait in background and still hear the outcome', async () => {
+    // Given
+    const sentry = bindRecordingSentry({ onFinished: onTestFinished });
+    const { tap, confirmation } = await signedForPhone();
+    await confirmation;
+
+    // When
+    page.settleReview('background');
+
+    // Then
+    expect(page.pending()).toEqual([]);
+
+    // When
+    tap.fromCore(responseFrame('a', 'signPayload', REJECTED));
+
+    // Then
+    const notices = await page.noticesShown(1);
+    expect(page.pending()).toEqual([]);
+    expect(notices.map(n => n.text)).toEqual(['Rejected in Polkadot App']);
+    expect(sentry.counted(S.PHONE_REQUEST)).toEqual([{ outcome: 'refused', reason: 'signPayload', background: 'yes' }]);
+  });
+
+  it('As a user, I press Escape on the waiting step and it goes to the background, rejecting nothing', async () => {
+    // Given
+    const sentry = bindRecordingSentry({ onFinished: onTestFinished });
+    const { tap, confirmation } = await signedForPhone();
+
+    // When
+    dismissModal();
+
+    // Then
+    await expect(confirmation).resolves.toBe(true);
+    expect(page.pending()).toEqual([]);
+    expect(page.notices).toEqual([]);
+
+    // When
+    tap.fromCore(responseFrame('a', 'signPayload', SIGNED));
+
+    // Then
+    const notices = await page.noticesShown(1);
+    expect(notices.map(n => n.text)).toEqual(['Sign Transaction: signed in Polkadot App']);
+    expect(sentry.counted(S.PHONE_REQUEST)).toEqual([{ outcome: 'ok', reason: 'signPayload', background: 'yes' }]);
+  });
+
+  it('As a user, the next prompt shows once I send the wait to the background', async () => {
+    // Given
+    const { tap, confirmUserAction } = pairedPhone();
+    tap.fromProduct(requestFrame('a', 'signPayload', signRequest('0x06')));
+    tap.fromProduct(requestFrame('b', 'signPayload', signRequest('0x07')));
+    const first = confirmUserAction(signReview('0x06'));
+    const second = confirmUserAction(signReview('0x07'));
+    await modalShown();
+
+    // When
+    press('sign');
+
+    // Then
+    await expect(first).resolves.toBe(true);
+    expect(page.pending()).toHaveLength(1);
+    expect(waiting()).toBe(true);
+
+    // When
+    page.settleReview('background');
+
+    // Then
+    await page.promptShown(prompt => prompt.kind === 'review' && prompt.dialog.buttons[0]?.label === 'Cancel');
+    expect(page.pending()).toHaveLength(1);
+
+    // When
+    press('sign');
+
+    // Then
+    await expect(second).resolves.toBe(true);
+    expect(waiting()).toBe(true);
+  });
+
+  it('As a user, a torn down host closes the waiting step, frees the prompt slot and still counts the request once', async () => {
+    // Given
+    const coordinator = createBlockingModalCoordinator();
+    const { tracker, scope, confirmation } = await signedForPhone({ coordinator });
+    await expect(confirmation).resolves.toBe(true);
+    const next = createAdapters(
+      'localhost:3000',
+      page.prompts,
+      coordinator.createScope(),
+      createPhoneRequestTracker(),
+    ).confirmUserAction(signReview('0x07'));
+
+    // When
+    scope.dispose();
+
+    // Then
+    await page.promptShown(prompt => prompt.kind === 'review' && prompt.dialog.buttons[0]?.label === 'Cancel');
+    expect(page.pending()).toHaveLength(1);
+    press('sign');
+    await expect(next).resolves.toBe(true);
+
+    // When
+    const { sentry, recorded } = nextRecord();
+    tracker.dispose();
+    await recorded;
+
+    // Then
+    expect(sentry.counted(S.PHONE_REQUEST)).toEqual([{ outcome: 'gone', reason: 'signPayload', background: 'no' }]);
+    expect(page.notices).toEqual([]);
+  });
+
+  it('As a user, a toast that fails to show is reported and the request is still counted', async () => {
+    // Given
+    const errors: unknown[] = [];
+    const captured = recordCaptures({ onFinished: onTestFinished, errors });
+    const { sentry, recorded } = nextRecord();
+    const { tap, confirmation } = await signedForPhone({
+      prompts: {
+        ...page.prompts,
+        notify: () => {
+          throw new Error('toast stack gone');
+        },
+      },
+    });
+    await expect(confirmation).resolves.toBe(true);
+
+    // When
+    tap.fromCore(responseFrame('a', 'signPayload', SIGNED));
+    await recorded;
+
+    // Then
+    expect(sentry.counted(S.PHONE_REQUEST)).toEqual([{ outcome: 'ok', reason: 'signPayload', background: 'no' }]);
+    await page.screenCleared();
+    expect(captured.map(c => c.step)).toEqual(['phone_request_notice']);
+    expect(errors).toEqual([new Error('toast stack gone')]);
+  });
+
+  it('As a user, an answer that does not decode ends the wait, is reported and is counted once as undecodable', async () => {
+    // Given
+    const sentry = bindRecordingSentry({ onFinished: onTestFinished });
+    const captured = recordCaptures({ onFinished: onTestFinished });
+    recordLog({ onFinished: onTestFinished });
+    const { tap, confirmation } = await signedForPhone({ tracker: createPhoneRequestTracker() });
+    await expect(confirmation).resolves.toBe(true);
+    const answer = responseFrame('a', 'signPayload', SIGNED);
+
+    // When
+    tap.fromCore(answer.subarray(0, answer.length - 3));
+
+    // Then
+    const notices = await page.noticesShown(1);
+    expect(page.pending()).toEqual([]);
+    expect(notices.map(n => n.text)).toEqual(["Polkadot App didn't complete the request: undecodable"]);
+    expect(captured.map(c => c.step)).toEqual(['phone_request']);
+    expect(sentry.counted(S.PHONE_REQUEST)).toEqual([
+      { outcome: 'undecodable', reason: 'signPayload', background: 'no' },
+    ]);
+  });
+
+  it('As a user, a review whose phone lookup throws closes as today and answers the core', async () => {
+    // Given
+    recordCaptures({ onFinished: onTestFinished });
+    recordLog({ onFinished: onTestFinished });
+    const tracker = createPhoneRequestTracker();
+    const { confirmUserAction } = pairedPhone({
+      tracker: {
+        ...tracker,
+        claim: () => {
+          throw new Error('tracker broken');
+        },
+      },
+    });
+    const confirmation = confirmUserAction(signReview('0x06'));
+    await modalShown();
+
+    // When
+    press('sign');
+
+    // Then
+    await expect(confirmation).resolves.toBe(true);
+    expect(page.pending()).toEqual([]);
+  });
+
+  it('As a user, a phone answer already in as the step opens closes it at once with one toast', async () => {
+    // Given
+    const { tap, confirmUserAction } = pairedPhone();
+    tap.fromProduct(requestFrame('a', 'signPayload', signRequest('0x06')));
+    const confirmation = confirmUserAction(signReview('0x06'));
+    await modalShown();
+
+    // When
+    press('sign');
+    tap.fromCore(responseFrame('a', 'signPayload', SIGNED));
+
+    // Then
+    await expect(confirmation).resolves.toBe(true);
+    await page.screenCleared();
+    const notices = await page.noticesShown(1);
+    expect(notices.map(n => n.text)).toEqual(['Sign Transaction: signed in Polkadot App']);
+  });
+
+  it('As a user, a torn down connection closes the waiting step without a toast', async () => {
+    // Given
+    const sentry = bindRecordingSentry({ onFinished: onTestFinished });
+    const { tracker, confirmation } = await signedForPhone();
+    await confirmation;
+
+    // When
+    tracker.dispose();
+
+    // Then
+    await page.screenCleared();
+    expect(page.notices).toEqual([]);
+    expect(sentry.counted(S.PHONE_REQUEST)).toEqual([{ outcome: 'gone', reason: 'signPayload', background: 'no' }]);
+  });
+
+  it('As a local wallet, signing closes the dialog as today', async () => {
+    // Given a local wallet core, whose tracker is disposed as it has no phone
+    const tracker = createPhoneRequestTracker();
+    tracker.dispose();
+    tracker.connect().fromProduct(requestFrame('a', 'signPayload', signRequest('0x06')));
+    const confirmation = createUserConfirmationAdapters('localhost:3000', tracker).confirmUserAction(
+      signReview('0x06'),
+    );
+    await modalShown();
+
+    // When
+    press('sign');
+
+    // Then
+    await expect(confirmation).resolves.toBe(true);
+    expect(page.pending()).toEqual([]);
+  });
+
+  it('As a local wallet, a review that cannot be matched to a request reports nothing', async () => {
+    // Given a local wallet core's disposed tracker, and a review whose request would not encode
+    const sentry = bindRecordingSentry({ onFinished: onTestFinished });
+    const captured = recordCaptures({ onFinished: onTestFinished });
+    const tracker = createPhoneRequestTracker();
+    tracker.dispose();
+    const confirmation = createUserConfirmationAdapters('localhost:3000', tracker).confirmUserAction({
+      tag: 'SignVrf',
+      value: {
+        callingProductId: 'product.dot',
+        request: { account: productAccount, transcriptLabel: '0xaa', items: [{} as never] },
+      },
+    });
+    await modalShown();
+
+    // When
+    press('sign');
+
+    // Then
+    await expect(confirmation).resolves.toBe(true);
+    expect(page.pending()).toEqual([]);
+    expect(sentry.counted(S.PHONE_REQUEST)).toEqual([]);
+    expect(captured).toEqual([]);
+  });
+
+  it('As a product, a request that never reached the frame closes the dialog as today', async () => {
+    // Given
+    const { confirmUserAction } = pairedPhone();
+    const confirmation = confirmUserAction(signReview('0x06'));
+    await modalShown();
+
+    // When
+    press('sign');
+
+    // Then
+    await expect(confirmation).resolves.toBe(true);
+    expect(page.pending()).toEqual([]);
+  });
+
+  it('As a user, rejecting a review that went to the phone closes the dialog as today', async () => {
+    // Given
+    const { tap, confirmUserAction } = pairedPhone();
+    tap.fromProduct(requestFrame('a', 'signPayload', signRequest('0x06')));
+    const confirmation = confirmUserAction(signReview('0x06'));
+    await modalShown();
+
+    // When
+    press('cancel');
+
+    // Then
+    await expect(confirmation).resolves.toBe(false);
+    expect(page.pending()).toEqual([]);
+  });
+
+  it('As a user granting an allowance, I wait on my phone and hear it was granted', async () => {
+    // Given
+    const resources = [{ tag: 'SmartContractAllowance' as const, value: { tag: 'Index' as const, value: 1 } }];
+    const { tap, confirmUserAction } = pairedPhone();
+    tap.fromProduct(requestFrame('a', 'requestResourceAllocation', { resources }));
+    const confirmation = confirmUserAction({
+      tag: 'ResourceAllocation',
+      value: { callingProductId: 'product.dot', resources },
+    });
+    await modalShown();
+
+    // When
+    press('sign');
+
+    // Then
+    await expect(confirmation).resolves.toBe(true);
+    expect(waiting()).toBe(true);
+    expect(shownDialog().title).toBe('Resource Allocation');
+
+    // When
+    tap.fromCore(responseFrame('a', 'requestResourceAllocation', { ok: { outcomes: ['Allocated'] } }));
+
+    // Then
+    const notices = await page.noticesShown(1);
+    expect(page.pending()).toEqual([]);
+    expect(notices.map(n => n.text)).toEqual(['Allowance granted']);
+  });
+
+  it('As a user granting an allowance, the waiting step asks me to approve on my phone, not to sign', async () => {
+    // Given
+    const resources = [{ tag: 'SmartContractAllowance' as const, value: { tag: 'Index' as const, value: 1 } }];
+    const { tap, confirmUserAction } = pairedPhone();
+    tap.fromProduct(requestFrame('a', 'requestResourceAllocation', { resources }));
+    void confirmUserAction({ tag: 'ResourceAllocation', value: { callingProductId: 'product.dot', resources } });
+    await modalShown();
+
+    // When
+    press('sign');
+
+    // Then
+    expect(waiting()).toBe(true);
+    expect(shownDialog().body).toBe(phoneWaitingView({ title: 'Resource Allocation', ask: 'approve' }).body);
+    expect(shownDialog().body).not.toBe(phoneWaitingView({ title: 'Resource Allocation', ask: 'sign' }).body);
+  });
+
+  it('As a user, allowing account access once waits on the phone and the core hears AllowOnce', async () => {
+    // Given
+    const { tap, confirmPermission } = pairedPhone();
+    tap.fromProduct(
+      requestFrame('a', 'getAccount', {
+        productAccountId: { dotNsIdentifier: 'other-product.dot', derivationIndex: { tag: 'Index', value: 0 } },
+      }),
+    );
+    const decision = confirmPermission({
+      tag: 'AccountAccess',
+      value: { requestingProductId: 'product.dot', targetProductId: 'other-product.dot' },
+    });
+    await modalShown();
+
+    // When
+    press('sign');
+
+    // Then
+    await expect(decision).resolves.toBe('AllowOnce');
+    expect(waiting()).toBe(true);
+    expect(shownDialog().title).toBe('Account Access');
   });
 });

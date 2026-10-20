@@ -24,7 +24,12 @@ export type MetricOutcome =
   | 'update'
   | 'cleared'
   // Protocol wire
-  | 'refused';
+  | 'refused'
+  // Phone requests: the connection ended before the phone answered, a frame did not decode, or a review could not
+  // be matched
+  | 'gone'
+  | 'undecodable'
+  | 'unmatchable';
 
 /** Dashboards slice on the named keys, so keep new attributes within them. */
 export type MetricAttributes = {
