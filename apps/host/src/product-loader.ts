@@ -9,7 +9,7 @@
 import { getActiveTldSuffix, getNetwork, isVerifiedSession, withActiveTld, type Backend } from '@dotli/config';
 import { bitswapGet } from '@dotli/bitswap';
 import { captureException, m, spans as S } from '@dotli/metrics';
-import { protocolClient } from '@dotli/protocol';
+import { protocolClient, type ProtocolVersionMismatchError } from '@dotli/protocol';
 import { createAsyncTaskPool, dur, elapsed, errorMessage, log, randomId, serializeError } from '@dotli/shared';
 import type { CachedManifests } from '@dotli/storage';
 import { emitDotliDebugEvent } from '@dotli/truapi-debug';
@@ -21,6 +21,7 @@ import { startLoadProgress, type LoadEvents } from './load-progress.js';
 import { assertLaunchable, fromCache, manifestFacts, toCache, type ProductManifests } from './manifest-gate.js';
 import type { NameSource } from './name-source.js';
 import { showNoContentError } from './no-content-page.js';
+import { watchSandbox } from './sandbox-watch.js';
 import { applyProductBranding } from './product-branding.js';
 import type { RecentLabels } from './recent-labels.js';
 import { startResolutionTrace, type CidCacheResult } from './resolution-trace.js';
@@ -39,10 +40,14 @@ export interface LoaderFrame {
   setPageProduct: (product: { label: string }) => void;
   /** Mounts the product's sandbox on this content. Settles once the sandbox owns the download. */
   render: ProductFrame['render'];
+  /** Takes the product down for good under the failure screen, which nothing the frame does later clears. */
+  halt: ProductFrame['halt'];
   /** Called once, for the first outcome the sandbox reports on its content. */
   onContentDone: (callback: (outcome: ContentOutcome, failedStep: string | undefined) => void) => void;
   /** The content fetch's progress, as the sandbox's blocks pass through this window. Returns its unsubscribe. */
   onContentProgress: LoadEvents['onContentProgress'];
+  /** Hears each message the sandbox sends about its load. Returns its unsubscribe. */
+  onSandboxHeard: (listener: () => void) => () => void;
 }
 
 /** The CID cache for this network. Writes and checks wait for the page to be idle, so they never hold a render back. */
@@ -76,6 +81,11 @@ export interface ProductLoaderOptions {
   /** The names this visitor opened, kept in the store every subdomain shares. */
   recents: Pick<RecentLabels, 'record'>;
   failureScreen: LoaderFailureScreen;
+  /**
+   * Hears once that a protocol frame refused this page's wire version, at once if one already did. Returns its
+   * unsubscribe.
+   */
+  onProtocolVersionMismatch: (listener: (error: ProtocolVersionMismatchError) => void) => () => void;
 }
 
 export interface ProductLoader {
@@ -161,9 +171,58 @@ async function loadProduct(label: string, options: ProductLoaderOptions): Promis
     };
   };
 
+  let resolveFailed = false;
+  /** Reports the failure and shows its screen. Throws what the screen threw. */
+  const failLoad = (err: unknown): void => {
+    resolveFailed = true;
+    // One verdict drives both the report and the error page, so `error_kind` counts exactly the screens shown.
+    const error = describeError(err, backend !== 'rpc-gateway');
+    // Reported before rendering, in case rendering throws, and while the trace is still open, so the error lands in it.
+    const dependency = backend === 'rpc-gateway' ? 'asset-hub-rpc' : 'smoldot';
+    captureException(err, {
+      flow: 'resolve',
+      step,
+      span: trace.span,
+      tags: {
+        outcome: 'error',
+        error_kind: error.kind,
+        dependency,
+        cid_cache: cidCacheResult,
+        ...smoldotDbCacheTags(),
+        chain_backend: backend,
+      },
+    });
+    trace.finish('error', { reason: errorMessage(err), errorKind: error.kind });
+    log.debug(`[dot.li] Resolution failed via ${dependency}: ${serializeError(err)}`);
+    emitDotliDebugEvent({
+      layer: 'boot',
+      event: 'failed',
+      flowId,
+      timestamp: Date.now(),
+      payload: { label, reason: errorMessage(err), dependency },
+    });
+    // Once for the failed load, however many times the user moves between its error screens.
+    setProductError();
+    options.failureScreen.show({ error, cause: err, label, backend });
+  };
+  /**
+   * Ends a load whose product is already on screen, which only a reload can bring back, so the frame stops showing it
+   * again. A screen that fails is reported here, since nothing waits on the load anymore.
+   */
+  const failAfterHandoff = (err: unknown, failure: string): void => {
+    if (resolveFailed) {
+      return;
+    }
+    frame.halt();
+    try {
+      failLoad(err);
+    } catch (screenError: unknown) {
+      captureException(screenError, { flow: 'resolve', step: 'failure_screen' });
+      log.error(`[dot.li] The failure screen for ${failure} failed:`, screenError);
+    }
+  };
   // The content fetch outlives the handoff, so the trace waits for the sandbox's report. Subscribed before the
   // handoff, since a cached archive can report before it returns.
-  let resolveFailed = false;
   const settleOnContent = (): void => {
     frame.onContentDone((outcome, failedStep) => {
       if (resolveFailed) {
@@ -180,11 +239,27 @@ async function loadProduct(label: string, options: ProductLoaderOptions): Promis
       trace.finish('content_error', failedStep !== undefined ? { failedStep } : {});
     });
   };
-  const render = async (cid: string, manifests: ProductManifests): Promise<void> => {
+  /** Resolves false when a failure heard during the render already ended the load, so nothing after it runs. */
+  const render = async (cid: string, manifests: ProductManifests): Promise<boolean> => {
     progress.contentFetch();
     enterStep('render_handoff');
     settleOnContent();
+    const sandbox = watchSandbox(frame.onSandboxHeard);
     await frame.render({ mode: 'subdomain', label, cid, base: options.base, chat, ...manifestFacts(manifests) });
+    // A protocol frame rebuilt while the app is open can come from a newer release. It refuses this page for good, and
+    // the app would sit there with no chain or store, so the reload screen replaces it.
+    options.onProtocolVersionMismatch(err => {
+      failAfterHandoff(err, 'a protocol version mismatch');
+    });
+    if (resolveFailed) {
+      sandbox.stop();
+      return false;
+    }
+    // From the handoff, since the render before it can wait on the shared store for as long as the protocol frame is down.
+    void sandbox.expectWithin().catch((err: unknown) => {
+      failAfterHandoff(err, 'a silent sandbox');
+    });
+    return true;
   };
   const rendered = (manifests: ProductManifests): void => {
     options.failureScreen.forget();
@@ -231,10 +306,13 @@ async function loadProduct(label: string, options: ProductLoaderOptions): Promis
         cidCache.revalidateLater(label, cached.cid, false);
         throw err;
       }
-      await m.span(S.E2E_FAST, async () => {
+      const live = await m.span(S.E2E_FAST, () => {
         settleShield();
-        await render(cached.cid, cachedManifests);
+        return render(cached.cid, cachedManifests);
       });
+      if (!live) {
+        return;
+      }
       rendered(cachedManifests);
       performance.mark('dotli:main:end');
       log.event('Sandbox mounted', {
@@ -329,7 +407,9 @@ async function loadProduct(label: string, options: ProductLoaderOptions): Promis
     }
 
     settleShield();
-    await render(cid, manifests);
+    if (!(await render(cid, manifests))) {
+      return;
+    }
     rendered(manifests);
 
     m.distribution(S.E2E_SLOW, performance.now() - coldStartMs, 'millisecond', {
@@ -345,36 +425,7 @@ async function loadProduct(label: string, options: ProductLoaderOptions): Promis
     handedOff();
     ready('slow');
   } catch (err) {
-    resolveFailed = true;
     performance.mark('dotli:main:end');
-    // One verdict drives both the report and the error page, so `error_kind` counts exactly the screens shown.
-    const error = describeError(err, backend !== 'rpc-gateway');
-    // Reported before rendering, in case rendering throws, and while the trace is still open, so the error lands in it.
-    const dependency = backend === 'rpc-gateway' ? 'asset-hub-rpc' : 'smoldot';
-    captureException(err, {
-      flow: 'resolve',
-      step,
-      span: trace.span,
-      tags: {
-        outcome: 'error',
-        error_kind: error.kind,
-        dependency,
-        cid_cache: cidCacheResult,
-        ...smoldotDbCacheTags(),
-        chain_backend: backend,
-      },
-    });
-    trace.finish('error', { reason: errorMessage(err), errorKind: error.kind });
-    log.debug(`[dot.li] Resolution failed via ${dependency}: ${serializeError(err)}`);
-    emitDotliDebugEvent({
-      layer: 'boot',
-      event: 'failed',
-      flowId,
-      timestamp: Date.now(),
-      payload: { label, reason: errorMessage(err), dependency },
-    });
-    // Once for the failed load, however many times the user moves between its error screens.
-    setProductError();
-    options.failureScreen.show({ error, cause: err, label, backend });
+    failLoad(err);
   }
 }

@@ -27,6 +27,7 @@ import { coreStorage } from '../session/core-storage.js';
 import { createUserConfirmationAdapters } from './user-confirmation.js';
 import type { BlockingModalScope } from '../blocking-modal-queue.js';
 import type { HostPrompts } from '../host-prompts.js';
+import type { PhoneRequestTracker } from '../phone-requests.js';
 
 export interface CreateHostCallbacksOptions {
   label: string;
@@ -39,6 +40,8 @@ export interface CreateHostCallbacksOptions {
   local?: boolean | undefined;
   /** Whether the core still speaks for the session. */
   inService?: (() => boolean) | undefined;
+  /** What the core's confirmations claim the phone's requests from. A local wallet core's claims nothing. */
+  phoneRequests: PhoneRequestTracker;
 }
 
 /**
@@ -60,6 +63,7 @@ export function createHostCallbacks(options: CreateHostCallbacksOptions & HostCa
     blockingModalScope,
     local,
     inService,
+    phoneRequests,
     prompts,
     notifications,
     permissions,
@@ -91,7 +95,7 @@ export function createHostCallbacks(options: CreateHostCallbacksOptions & HostCa
         inService,
       }),
     },
-    userConfirmation: createUserConfirmationAdapters(label, prompts, blockingModalScope),
+    userConfirmation: createUserConfirmationAdapters(label, prompts, blockingModalScope, phoneRequests),
     theme: { subscribeTheme: createThemeSubscribe() },
     locale: { subscribeLocale: createLocaleSubscribe() },
     preimage: createPreimageAdapters(label),

@@ -8,6 +8,7 @@
 import { createMessagePortProvider, type WireProvider as Provider } from '@parity/truapi';
 import type { IframeHost, IframeHostOptions } from '@parity/truapi-host/web';
 import { BASE_DOMAIN, DEV_SANDBOX_PORT, getBackend, getNetwork } from '@dotli/config';
+import { sandboxLabel } from '@dotli/resolver';
 import { SANDBOX_CONTRACT_PARAMS, SANDBOX_SCHEMA_VERSION, type SandboxChannel } from '@dotli/sandbox-wire';
 import { captureException, getResolutionId, m, reportExpected, spans as S } from '@dotli/metrics';
 import { createAsyncTaskPool, log, noop, randomId, sleep } from '@dotli/shared';
@@ -105,6 +106,12 @@ export interface ProductFrame {
    * superseded it, and rejects when it could not be shown.
    */
   render(product: FrameProduct): Promise<void>;
+  /**
+   * Takes the product down for good under a failure screen the page shows: a render in flight is dropped, and the frame
+   * starts no render of its own again, so nothing it does clears that screen. The product stays mounted under it
+   * without its core, and a render asked from above starts afresh.
+   */
+  halt(): void;
 }
 
 interface MountedHost {
@@ -576,8 +583,18 @@ export function createProductFrame(deps: ProductFrameDeps): ProductFrame {
       });
   });
 
+  function halt(): void {
+    rendering.abort(new Error('The product failed for good'));
+    // Every render the frame starts on its own reads the product from here.
+    target = null;
+    setStatus('failed');
+    // The product stays on screen under the failure, but nothing serves it again, so its connection and lease go.
+    mounted?.releaseCore();
+  }
+
   return {
     render,
+    halt,
   };
 }
 
@@ -639,9 +656,9 @@ function appOrigin(label: string, location: PageLocation): string {
   const { hostname } = location;
   if (hostname.endsWith('.localhost') || hostname === 'localhost') {
     const port = import.meta.env.DEV ? DEV_SANDBOX_PORT : location.port;
-    return `http://${label}.app.localhost:${port}`;
+    return `http://${sandboxLabel(label)}.app.localhost:${port}`;
   }
-  return `https://${label}.app.${BASE_DOMAIN}`;
+  return `https://${sandboxLabel(label)}.app.${BASE_DOMAIN}`;
 }
 
 function getDeepPath(location: PageLocation, productBase: string): string {

@@ -225,12 +225,17 @@ async function openProduct({ label, base }: Extract<ShellRoute, { kind: 'product
     frame: {
       setPageProduct: bridgeModule.setPageProduct,
       render: product => shell.productFrame.render(product),
+      halt: () => {
+        shell.productFrame.halt();
+      },
       onContentDone: onSandboxDone,
       onContentProgress: listener => relay.onProgress(listener),
+      onSandboxHeard: listener => shell.sandboxChannel.on('dotli:loading-status', listener),
     },
     cidCache: pageCidCache(names),
     recents: { record: recordRecentLabel },
     failureScreen: loadFailureScreen,
+    onProtocolVersionMismatch: protocol.onProtocolVersionMismatch,
   });
   await loader.load(label);
 }

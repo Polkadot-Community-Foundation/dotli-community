@@ -11,6 +11,7 @@ import { captureException, m, reportListener, spans as S } from '@dotli/metrics'
 import { createAsyncTaskPool, createListenerSet, log, type AsyncTaskPool, type ListenerSet } from '@dotli/shared';
 import type { BlockingModalCoordinator } from './blocking-modal-queue.js';
 import type { BootCoreRuntime, BootedCoreRuntime } from './core-runtime.js';
+import { createPhoneRequestTracker, type PhoneRequestTracker } from './phone-requests.js';
 import { labelToProductId } from './runtime-config.js';
 
 export interface PageProduct {
@@ -62,6 +63,8 @@ export interface PageCoreDeps {
   coordinator: BlockingModalCoordinator;
   /** Boots replacement cores, with the retries a redial gets. */
   redials?: AsyncTaskPool;
+  /** Makes the tracker of each dialed core, which its connections' frames feed. Default: {@link createPhoneRequestTracker}. */
+  createPhoneRequests?: () => PhoneRequestTracker;
 }
 
 export interface PageCore {
@@ -78,6 +81,7 @@ interface Core {
   leases: number;
   faulted: boolean;
   downListeners: ListenerSet<undefined>;
+  phoneRequests: PhoneRequestTracker;
   dispose(): void;
 }
 
@@ -118,11 +122,13 @@ export function createPageCore(deps: PageCoreDeps): PageCore {
       ...(redial === undefined ? {} : { reason: redial }),
     });
     const blockingModalScope = deps.coordinator.createScope();
+    const phoneRequests = (deps.createPhoneRequests ?? createPhoneRequestTracker)();
     const dropped = new AbortController();
     let unsubscribeStore: (() => void) | null = null;
     const request = {
       product,
       blockingModalScope,
+      phoneRequests,
       isLive: () => cores.has(core),
       inService: () => cores.has(core) && !core.faulted,
     };
@@ -152,6 +158,10 @@ export function createPageCore(deps: PageCoreDeps): PageCore {
             m.count(S.WALLET_CORE_REDIAL, { outcome: 'aborted', reason: redial });
           }
           throw dropped.signal.reason;
+        }
+        // A local wallet core has no phone. Leases are handed out only after this runs, so no frame is tapped first.
+        if (booted.local) {
+          phoneRequests.dispose();
         }
         // A local wallet core holds its session in memory, so the stored one is not its to follow.
         if (!booted.local) {
@@ -208,6 +218,7 @@ export function createPageCore(deps: PageCoreDeps): PageCore {
       runtime,
       leases: 0,
       faulted: false,
+      phoneRequests,
       downListeners: createListenerSet<undefined>({ onListenerError: reportListener('wallet', 'page_core.down') }),
       dispose() {
         if (!cores.delete(core)) {
@@ -220,6 +231,7 @@ export function createPageCore(deps: PageCoreDeps): PageCore {
         dropped.abort(new Error('The page core was disposed'));
         unsubscribeStore?.();
         blockingModalScope.dispose();
+        phoneRequests.dispose();
       },
     };
     cores.add(core);
@@ -266,18 +278,44 @@ export function createPageCore(deps: PageCoreDeps): PageCore {
       throw error;
     }
     let closing = false;
+    const tap = core.phoneRequests.connect();
+    // The tracker only infers what it can, so a tap that fails is reported and the frame goes on as if untapped.
+    const tapped = (side: 'product' | 'core', message: Uint8Array): void => {
+      try {
+        if (side === 'product') {
+          tap.fromProduct(message);
+        } else {
+          tap.fromCore(message);
+        }
+      } catch (error) {
+        captureException(error, { flow: 'wallet', step: 'phone_request_tap', tags: { side } });
+        log.error(`[dot.li page-core] phone request tap failed on a frame from the ${side}:`, error);
+      }
+    };
+    const unsubscribeTap = provider.subscribe(message => {
+      tapped('core', message);
+    });
     // A deliberate close also fires close listeners. Any other close is the core going down.
     provider.subscribeClose?.(() => {
+      tap.close();
       if (!closing) {
         log.event('wallet core went down under a connection', { flow: 'wallet' });
         wentDown(core, 'closed');
       }
     });
     return {
-      provider,
+      provider: {
+        ...provider,
+        postMessage(message) {
+          provider.postMessage(message);
+          tapped('product', message);
+        },
+      },
       productId,
       close() {
         closing = true;
+        unsubscribeTap();
+        tap.close();
         provider.dispose();
       },
     };

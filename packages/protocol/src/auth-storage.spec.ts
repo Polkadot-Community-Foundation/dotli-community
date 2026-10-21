@@ -6,9 +6,8 @@ import { SITE_ID } from '@dotli/config';
 import {
   buildSharedAuthStorageKey,
   isSharedAuthOriginAllowed,
-  isSharedAuthRequestMethod,
   isSharedAuthSiteId,
-  isSharedWalletRequestMethod,
+  isSharedModeRequestMethod,
   isValidSharedAuthKey,
   SHARED_CORE_SESSION_KEY,
 } from './auth-storage.js';
@@ -70,24 +69,16 @@ describe('shared auth storage helpers', () => {
     expect(buildSharedAuthStorageKey('dot.li', 'UserSecrets')).toBe('TRUAPI_dot.li_UserSecrets');
   });
 
-  it('As the protocol frame, I route the shared auth methods to the auth store and nothing else', () => {
-    // When / Then
-    expect(isSharedAuthRequestMethod('authStorageRead')).toBe(true);
-    expect(isSharedAuthRequestMethod('authStorageWrite')).toBe(true);
-    expect(isSharedAuthRequestMethod('authStorageClear')).toBe(true);
-    expect(isSharedAuthRequestMethod('warmup')).toBe(false);
-  });
-
-  it('As the protocol frame, I route only the four local wallet methods to the wallet handler', () => {
+  it('As the protocol frame, I route the shared mode methods to the mode store and nothing else', () => {
     // Given
-    const wallet = ['localWalletRead', 'localWalletSave', 'localWalletIdentity', 'localWalletForget'] as const;
+    const mode = ['modeRead', 'modeWrite', 'modeClear'] as const;
 
     // When
-    const routed = wallet.map(method => isSharedWalletRequestMethod(method));
+    const routed = mode.map(method => isSharedModeRequestMethod(method));
 
     // Then
-    expect(routed).toEqual([true, true, true, true]);
-    expect(isSharedWalletRequestMethod('authStorageRead')).toBe(false);
-    expect(isSharedWalletRequestMethod('resolveDotName')).toBe(false);
+    expect(routed).toEqual([true, true, true]);
+    expect(isSharedModeRequestMethod('authRead')).toBe(false);
+    expect(isSharedModeRequestMethod('authChanges')).toBe(false);
   });
 });

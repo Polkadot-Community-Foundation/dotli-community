@@ -1,7 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetAllStoresForTests } from '@dotli/shared/testing';
 import type { ProductContext } from '@parity/truapi-host';
 import { createBlockingModalCoordinator } from '../blocking-modal-queue.js';
 import { createHostCallbacks } from './handlers.js';
@@ -9,6 +10,8 @@ import { SUBMIT_MAX_PER_WINDOW } from './rate-limit.js';
 import type { NotificationScheduler } from './push-notification.js';
 import type { HostPrompts } from '../host-prompts.js';
 import { createFakePrompts } from '../host-prompts.fake.js';
+import { requestFrame } from '../phone-requests.fake.js';
+import { createPhoneRequestTracker } from '../phone-requests.js';
 import { createPermissionAuthorizations } from '../permissions.js';
 import { createProductPermissions } from '../state/product-permissions.js';
 import { productStore } from '../state/product.js';
@@ -38,6 +41,10 @@ const scheduler: NotificationScheduler = {
   cancel: () => Promise.resolve(true),
 };
 
+afterEach(() => {
+  resetAllStoresForTests();
+});
+
 describe('blocking modal queue across host callbacks', () => {
   it('As a dotli integrator, I raise a user confirmation and a device permission prompt and the host shows them one at a time', async () => {
     // Given
@@ -46,6 +53,7 @@ describe('blocking modal queue across host callbacks', () => {
     const callbacks = createHostCallbacks({
       permissions: permissionsOfTest(),
       label: 'localhost:3000',
+      phoneRequests: createPhoneRequestTracker(),
       blockingModalScope: scope,
       prompts: page.prompts,
       notifications: scheduler,
@@ -81,6 +89,51 @@ describe('blocking modal queue across host callbacks', () => {
     expect(page.pending()).toEqual([]);
     scope.dispose();
   });
+
+  it("As a paired phone's product, the account access I am allowed waits on the phone before the next prompt", async () => {
+    // Given
+    const scope = createBlockingModalCoordinator().createScope();
+    const page = createFakePrompts();
+    const phoneRequests = createPhoneRequestTracker();
+    const tap = phoneRequests.connect();
+    const callbacks = createHostCallbacks({
+      permissions: permissionsOfTest(),
+      label: 'localhost:3000',
+      blockingModalScope: scope,
+      prompts: page.prompts,
+      notifications: scheduler,
+      phoneRequests,
+    });
+    tap.fromProduct(
+      requestFrame('a', 'getAccount', {
+        productAccountId: { dotNsIdentifier: 'other-product.dot', derivationIndex: { tag: 'Index', value: 0 } },
+      }),
+    );
+    const accountAccess = callbacks.userConfirmation.confirmUserAction({
+      tag: 'AccountAccess',
+      value: { requestingProductId: 'truapi-playground.dot', targetProductId: 'other-product.dot' },
+    });
+    const camera = callbacks.permissions.devicePermission(PRODUCT, 'Camera');
+    await page.promptShown(prompt => prompt.kind === 'review' && prompt.dialog.title === 'Account Access');
+
+    // When
+    page.chooseReviewButton('Allow');
+
+    // Then
+    await expect(accountAccess).resolves.toBe(true);
+    expect(page.pending()).toHaveLength(1);
+    expect(page.shownReview().buttons.map(b => b.label)).toEqual(['Wait in background']);
+
+    // When
+    page.chooseReviewButton('Wait in background');
+
+    // Then
+    await page.promptShown(prompt => prompt.kind === 'permission');
+    page.decide('granted');
+    await expect(camera).resolves.toEqual('AllowAlways');
+    scope.dispose();
+    phoneRequests.dispose();
+  });
 });
 
 describe('notifications across host callbacks', () => {
@@ -103,6 +156,7 @@ describe('notifications across host callbacks', () => {
     const { notifications } = createHostCallbacks({
       permissions: permissionsOfTest(),
       label: 'myapp',
+      phoneRequests: createPhoneRequestTracker(),
       blockingModalScope: createBlockingModalCoordinator().createScope(),
       notifications: scheduler,
       prompts: promptsWith(ask),
@@ -132,6 +186,7 @@ describe('prompt rate limiting across host callbacks', () => {
     const { permissions } = createHostCallbacks({
       permissions: permissionsOfTest(),
       label: 'myapp',
+      phoneRequests: createPhoneRequestTracker(),
       blockingModalScope: createBlockingModalCoordinator().createScope(),
       notifications: scheduler,
       prompts: promptsWith(ask),
@@ -155,6 +210,7 @@ describe('prompt rate limiting across host callbacks', () => {
     const { permissions, notifications } = createHostCallbacks({
       permissions: permissionsOfTest(),
       label: 'myapp',
+      phoneRequests: createPhoneRequestTracker(),
       blockingModalScope: createBlockingModalCoordinator().createScope(),
       notifications: scheduler,
       prompts: promptsWith(ask),
