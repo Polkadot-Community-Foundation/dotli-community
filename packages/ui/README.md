@@ -52,8 +52,9 @@ and no data source.
   one is shown, so what the screen covered can end itself. A view that throws is reported.
 - Toasts and dialogs are queued on the stores and show once the app has mounted `Overlays`, in a container it marks
   `data-overlays` so that a full-page screen keeps it.
-- The notifier always shows a toast. While the tab is hidden it also fires a system notification, when the browser has
-  one.
+- The notifier always shows a toast. While the tab is hidden or its window has lost focus, it also fires a system
+  notification, when the browser has one and the user allowed it. Without one, the toast stays in the page until closed,
+  so it is not lost unseen.
 - Every icon is a Solid component that draws an `<svg>` in `currentColor`, one module per icon. It keeps the size,
   stroke and geometry it was drawn at, and takes a `size` for another size, a `class` and a test id.
 - `mountRoot` renders a view inside a root boundary. A view that throws is reported once under the root's name and the
@@ -70,12 +71,18 @@ and no data source.
   `SegmentedControl`, `StepSlider`, `Spinner`, `StatusDot`, `Surface` (with `SurfaceHead`, `SurfaceFoot`, `Hint`),
   `Switch`, `Well`, `Callout`, `Row`, `Stack`, `SectionLabel`.
 - Floating layers: `Modal`, `Popover` and `usePopover`, `Tooltip`, plus the layer tracking (`LayerTracker`,
-  `ModalFocusFallback`).
+  `ModalFocusFallback`). A `Modal` whose content swaps in place names the value it swaps on with `refocusOn`, and focus
+  moves to its card or sheet each time that value changes.
 - Action group: `ActionGroup`, `ActionItem`, `ActionsContext`, `PINNED` for an item that never collapses, and the types
   `ActionGroupMorph`, `MoreIds`, `ActionAlert`, `ActionBar` and `ActionEntry`.
 - Stores: the modal store (`openModal`, `refuseModals`, which answers every dialog with its refusal while the overlays
   cannot render, and the types `ModalView`, `ModalOutcome`, `ModalEntry`, `ModalField`, `ModalButton`,
-  `ModalButtonVariant`) and the toast store (`toastsStore` and the type `ToastEntry`).
+  `ModalButtonVariant`, `ModalHandoff`) and the toast store (`toastsStore` and the type `ToastEntry`). `openModal` takes
+  an optional handoff: once the dialog is answered it returns the view that takes the dialog's place without closing it,
+  until a button, Escape, the scrim or its signal closes that view. The new view starts with an empty password field and
+  focus on the dialog, not a button, so a second press cannot answer it at once. A view's own `body` describes the
+  dialog, so a screen reader reads the new step when focus lands there. A handoff that throws is reported and the dialog
+  closes as without one. A view may draw its own `body` and set `closable: false` to hide the sheet's close button.
 - Page helpers: `focusables`, `runWhenIdle` and `preloadWhenIdle` with `IdleScheduler`, `isPhoneViewport`,
   `watchPhoneViewport`, `prefersReducedMotion` and the type `StatusTone`.
 - Helpers: `useStore`, `createDrags` with the type `Drags` (one owner for a component's pointer drags, which cancels
@@ -91,8 +98,9 @@ and no data source.
 
 Fakes for other packages' specs, stories and functional tests. Never imported by shipped code.
 
-- Modal store: `modalsStore`, `shownModal`, `chooseModalButton`, `dismissModal`. Modal and toast state reset with the
-  store registry's reset. Toasts: `bindToastPage`. Viewport: `PHONE_QUERY`.
+- Modal store: `modalsStore`, `settleModal` (answers a dialog by its id, as its buttons do), `shownModal`,
+  `chooseModalButton`, `dismissModal`. Modal and toast state reset with the store registry's reset. Toasts:
+  `bindToastPage`. Viewport: `PHONE_QUERY`.
 - Other: `settle`, the page queries `appears`, `byId`, `byTestId`, `query`, and `installPopoverPolyfill` for functional
   tests under happy-dom.
 

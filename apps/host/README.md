@@ -6,13 +6,13 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
 ## Responsibility
 
 - Route a page load to a product, a local or preview target, or the landing page. A product is named by its host
-  (`<label>.<domain>`) or, on the bare host, by the first path segment (`<domain>/<label>`), and gets only the path
-  after it.
+  (`<label>.<domain>`) or, on the bare host, by the first path segment (`<domain>/<name>`), and gets only the path after
+  it. A subname such as `pr16.my-app` opens by path only, since a wildcard certificate covers one label.
 - Take a `.dot` label to a product on screen, or to the screen that says why not.
 - Own the page chrome: topbar, URL pill, loading screen, settings, account, permissions and network views.
-- Own the domain building blocks the chrome composes: account, chat, permission, appearance and chain views and their
-  icons. Each takes props, reads no store and reports the user's intent through a callback, so the flow that composes it
-  owns the data.
+- Own the domain building blocks the chrome composes: account, chat, permission, appearance, signing and chain views and
+  their icons. Each takes props, reads no store and reports the user's intent through a callback, so the flow that
+  composes it owns the data.
 - Own the page state only the host reads: the network monitor behind the network panel (block bars, phases, peers,
   transfer and the health verdict) and the landing page's recently visited names.
 - Start the protocol iframe, the TrUAPI bridge and the auth controller.
@@ -48,13 +48,22 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
   page.
 - The page builds one route to the core's permission store and one permissions store over it. The product frame and the
   permission prompts get both, the menu reads the store and the diagnostics read the route. A product's newest
-  connection answers.
+  connection answers. A stored answer returns at once, and only a question waits its turn behind other dialogs.
 - The permissions panel sets an app's twelve permissions through four presets on a slider, with every permission under
   Advanced. The preset shown is the one closest to the statuses, never stored. Every change, from the panel or a prompt,
   goes through one write that retries, and a newer panel change supersedes an older one. A change announces once, and
   the frame reloads only when its `allow` attribute changes.
 - The auth controller drives the sign-in modal by writing its store. It holds the blocking-modal lease while the modal
   is up, so one blocking prompt shows at a time.
+- An approved review that goes to the paired phone waits there. Each core keeps a tracker that every connection to it
+  taps, both ways, so it infers the phone requests from the frames that pass. A tap that fails is reported and the frame
+  passes untouched. An approved review claims the request it belongs to. This is a temporary workaround, as the core
+  does not report phone requests to the host. Remove it once
+  [the core issue](https://github.com/paritytech/trinity-user-agents/issues/1552) lands. The core has its answer at
+  once, and the dialog swaps in place for a waiting step. The prompt queue lets a prompt hold its slot past its answer,
+  so the step keeps the slot until the user sends it to the background or the request ends. Each waited request ends
+  with one toast, and a torn down connection ends it with none. A local wallet core's tracker is disposed, so it claims
+  nothing and its dialogs close on their answer.
 - The toasts and dialogs are one idle island on each page. What boot queues before it hydrates shows once it does.
 - Components are imported where they are used. The startup size budgets in CI guard what each page loads first.
 - The bridge, and what a visit may never open, load on demand through a lazy loader, each in its own chunk: the bridge,
@@ -69,12 +78,18 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
   full-page screen ends the loading screen and the landing islands, and the product frame takes the screen down when it
   shows.
 - A flow takes as parameters what sits in another frame or origin (the name source, the product frame and what the
-  sandbox reports through it, the recent list) and what reloads or writes the page (the CID cache and the failure
-  screen). A cached copy that revalidation finds cleared is evicted, and the page reloads onto the cold path only once
-  the stale copy is gone. It imports the page's own state (the URL pill, the journey, the network monitor). Load
-  progress takes the loading screen as a parameter that defaults to the page's, since the page's draws on animation
-  frames, so its spec runs under Node. The product loader drives the page and is tested on one, in the functional suite.
-  The bridge chunk is where the page's real dialogs, notifications and frame layout are wired in.
+  sandbox reports through it, the protocol frame's version mismatch, the recent list) and what reloads or writes the
+  page (the CID cache and the failure screen). A cached copy that revalidation finds cleared is evicted, and the page
+  reloads onto the cold path only once the stale copy is gone. A sandbox that says nothing for 30 seconds after the
+  handoff fails the load, since a blocked origin or a page that never ran would otherwise leave the loading screen up
+  for good. It imports the page's own state (the URL pill, the journey, the network monitor). A protocol frame that
+  refuses the page's wire version, during the load or after the handoff, puts up the reload screen and ends the load
+  once, so nothing after it records success. Under that screen or the silent sandbox's, the product frame halts: it lets
+  go of the product's core and starts no render of its own, so nothing clears the screen until the user reloads or a new
+  render is asked for. Load progress takes the loading screen as a parameter that defaults to the page's, since the
+  page's draws on animation frames, so its spec runs under Node. The product loader drives the page and is tested on
+  one, in the functional suite. The bridge chunk is where the page's real dialogs, notifications and frame layout are
+  wired in.
 - The network monitor opens no chain. The bridge reports who holds each host chain and its best blocks to it, and the
   load progress reports phases, peers and transfer.
 - The recently visited names live in the store every subdomain shares, reached through the runtime's shared channel,
@@ -104,5 +119,6 @@ flowchart LR
 - The landing page, served for the bare host's root.
 - `npm run dev`, `build`, `build:prod`, `typecheck`, `lint`.
 - `npm test`: unit specs. `test:functional`, `test:e2e`, `test:e2e:local` and `test:perf*` run Playwright suites. A
-  local functional run needs `VITE_METRICS=true` in both the build and the run.
+  functional run needs the build the root `build:test` script makes, as CI does. It turns metrics on and gives Sentry a
+  DSN, without which Sentry sends nothing and the light client gauge never reaches the preview server.
 - Its component stories and their visual checks run in the one Storybook at the repo root.

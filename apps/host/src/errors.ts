@@ -1,13 +1,14 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ProtocolFatalError, ProtocolInitFailedError } from '@dotli/protocol';
+import { ProtocolFatalError, ProtocolInitFailedError, ProtocolVersionMismatchError } from '@dotli/protocol';
 import { getActiveServicesConfig, getBackend, BACKEND_LABELS, type Backend } from '@dotli/config';
 
 import { endpointHost, errorMessage, gatewayUnreachable } from '@dotli/shared';
 import type { ResolverErrorName } from '@dotli/resolver';
 import { ERROR_TITLES, HOST_ERRORS } from './error-copy.js';
 import { ManifestRejectedError } from './manifest-gate.js';
+import { SandboxSilentError } from './sandbox-watch.js';
 
 // Annotated, so renaming the resolver's error fails to compile here. Only the name survives postMessage.
 const NETWORK_SYNC_TIMEOUT: ResolverErrorName = 'NetworkSyncTimeoutError';
@@ -42,6 +43,7 @@ export type Recovery = 'switch-backend' | 'reload' | 'none';
 export type ErrorKind =
   | 'protocol-fatal'
   | 'protocol-init-failed'
+  | 'protocol-version-mismatch'
   | 'worker-init-timeout'
   | 'chain-spec-rejected'
   | 'module-fetch-failed'
@@ -59,6 +61,7 @@ export type ErrorKind =
   | 'hub-sync-timeout'
   | 'light-client-timeout'
   | 'rpc-timeout'
+  | 'sandbox-silent'
   | 'unknown';
 
 export interface ErrorDescription {
@@ -122,6 +125,26 @@ function classifyError(
   // A branch that forgets its `kind` is a compile error rather than an unkeyed error page.
   const msg = errorMessage(err);
 
+  // The app's origin never answered, which a blocker or a filtered network causes, not the network the app is on.
+  if (err instanceof SandboxSilentError) {
+    return {
+      kind: 'sandbox-silent',
+      title: ERROR_TITLES.APP_UNUSABLE,
+      message: HOST_ERRORS.SANDBOX_SILENT,
+      recovery: 'reload',
+      tips: ['Allowing dot.li sites in any content or ad blocker.', ...CONNECTIVITY_TIPS],
+    };
+  }
+  // This page and the protocol frame come from different releases. Only a reload brings them back together.
+  if (err instanceof ProtocolVersionMismatchError) {
+    return {
+      kind: 'protocol-version-mismatch',
+      title: ERROR_TITLES.HOST_UNAVAILABLE,
+      message: HOST_ERRORS.PROTOCOL_UPDATED,
+      recovery: 'reload',
+      tips: [],
+    };
+  }
   if (err instanceof ProtocolFatalError) {
     return {
       kind: 'protocol-fatal',

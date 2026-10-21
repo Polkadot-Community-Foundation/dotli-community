@@ -389,6 +389,29 @@ describe('product frame renders', () => {
     expect(url.hash).toBe('#boss');
   });
 
+  it('As a visitor who opened a subname, its sandbox loads on one hashed label a wildcard certificate covers', async () => {
+    // Given
+    location = { ...location, href: 'http://localhost:3000/pr16.back-me-up/', pathname: '/pr16.back-me-up/' };
+    const fakes = harness();
+
+    // When
+    await settle(
+      fakes,
+      {
+        mode: 'subdomain',
+        label: 'pr16.back-me-up',
+        cid: 'cid',
+        base: '/pr16.back-me-up',
+        chat: Promise.resolve(false),
+      },
+      0,
+    );
+
+    // Then
+    const url = new URL(nth(fakes.hosts, 0).options.iframeUrl);
+    expect(url.hostname).toMatch(/^sn--[0-9a-f]{59}\.app\.localhost$/);
+  });
+
   it('As a user who reset everything, only the first product frame after the reload purges the sandbox origin', async () => {
     // Given
     const fakes = harness();
@@ -586,6 +609,49 @@ describe('product frame app roots', () => {
     expect(disposePage.mock.invocationCallOrder[0]).toBeLessThan(nth(disposeLoading.mock.invocationCallOrder, 0));
     expect(fakes.onScreen()).toHaveLength(1);
     expect(frameView.mountsCleared()).toBe(1);
+  });
+});
+
+describe('product frame halted', () => {
+  it('As a visitor whose app failed for good, it lets go of its core, the failure screen stays up and nothing rebuilds the app under it', async () => {
+    // Given a product on screen, halted under the failure screen the page put up
+    const fakes = harness();
+    const rendered = fakes.frame.render(subdomainProduct('product'));
+    const live = await answerConnection(fakes, 0);
+    await rendered;
+    fakes.frame.halt();
+    const connectionClosedOnHalt = live.dispose.mock.calls.length;
+    const { disposeLoading, disposePage } = registerScreens();
+
+    // When its sandbox asks to be rebuilt, a device permission changes, and its core goes down
+    askToRecover(fakes);
+    fakes.announce({ label: 'product', permissions: ['Camera'] });
+    crash(live);
+
+    // Then its connection to the core closed with the halt, and the screen stays
+    expect(connectionClosedOnHalt).toBe(1);
+    expect(disposePage).not.toHaveBeenCalled();
+    expect(disposeLoading).not.toHaveBeenCalled();
+    expect(fakes.statuses()).toEqual(['connecting', 'connected', 'failed']);
+    expect(fakes.framesAsked()).toBe(1);
+  });
+
+  it('As a visitor whose app failed for good while it was being rebuilt, the rebuild is dropped and the failure screen stays up', async () => {
+    // Given a product on screen whose sandbox asked to be rebuilt
+    const fakes = harness();
+    await settle(fakes, subdomainProduct('product'), 0);
+    askToRecover(fakes);
+
+    // When the app fails for good under the failure screen, and the rebuild's frame then connects
+    fakes.frame.halt();
+    const { disposePage } = registerScreens();
+    await answerConnection(fakes, 1);
+    await fakes.changes.until(() => fakes.hosts.length === 2 && fakes.onScreen().length === 1);
+
+    // Then the rebuilt frame is dropped, and the product that was on screen stays under the screen
+    expect(disposePage).not.toHaveBeenCalled();
+    expect(fakes.onScreen()).toEqual([nth(fakes.hosts, 0)]);
+    expect(frameView.statuses.at(-1)).toBe('failed');
   });
 });
 

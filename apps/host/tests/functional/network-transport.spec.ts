@@ -45,7 +45,11 @@ const total = (points: readonly GaugePoint[]): number => points.reduce((sum, p) 
 /** Waits for the expected count, then holds for one Sentry flush. */
 async function settledGauge(request: APIRequestContext, page: Page, expected: number): Promise<GaugePoint[]> {
   await expect
-    .poll(async () => total(await readGauge(request)), { timeout: TIMEOUT_MS, intervals: [1_000] })
+    .poll(async () => total(await readGauge(request)), {
+      message: 'too few gauge points reached the Sentry tunnel. Build with npm run build:test',
+      timeout: TIMEOUT_MS,
+      intervals: [1_000],
+    })
     .toBeGreaterThanOrEqual(expected);
   // Proves a negative: no further report is on its way, and nothing marks that, so the wait is one Sentry flush.
   await page.waitForTimeout(SENTRY_FLUSH_HOLD_MS);
@@ -60,8 +64,6 @@ for (const [label, backend, expected] of [
     context,
     request,
   }) => {
-    // Without a metrics build the gauge is a no-op and reads zero, so a run without the flag fails here, not unseen.
-    expect(process.env['VITE_METRICS'], 'needs a VITE_METRICS=true build and run').toBe('true');
     test.setTimeout(TIMEOUT_MS * 4);
 
     // Given

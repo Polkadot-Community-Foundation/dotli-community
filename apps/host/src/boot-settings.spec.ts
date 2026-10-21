@@ -3,7 +3,8 @@
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { BACKEND_KEY, NETWORK_KEY, getSettings, setSettings, type Settings, type SharedSettings } from '@dotli/config';
-import { deferred, memoryStorage } from '@dotli/shared/testing';
+import { deferred } from '@dotli/shared';
+import { memoryStorage } from '@dotli/shared/testing';
 import { bootSettings, type SettingsBootDeps } from './boot-settings.js';
 import type { SettingsActions } from './settings-actions.js';
 
@@ -232,6 +233,23 @@ describe('bootSettings', () => {
       'smoldot-direct',
       'rpc-gateway',
     ]);
+  });
+
+  it('As a visitor whose shared settings change the frame, the shared store is written after the frame is rebuilt on them', async () => {
+    // Given the shared store on trusted providers, which this origin does not run yet
+    const boot = deps('', memoryStorage(), Promise.resolve({ backend: 'rpc-gateway', cache: null }));
+
+    // When
+    await bootSettings(boot);
+
+    // Then
+    expect(boot.configureFrame.mock.calls.map(([settings]) => settings.backend)).toEqual([
+      'smoldot-direct',
+      'rpc-gateway',
+    ]);
+    expect(boot.writeShared.mock.invocationCallOrder[0]).toBeGreaterThan(
+      boot.configureFrame.mock.invocationCallOrder[1] ?? Infinity,
+    );
   });
 
   it('As a returning visitor whose link resets my settings, the shared store is written on the frame that answered it and the reset reloads without rebuilding it', async () => {

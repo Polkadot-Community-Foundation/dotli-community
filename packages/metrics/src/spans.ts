@@ -101,6 +101,12 @@ export const APP_RUN = 'app.run';
 export const PROTOCOL_IFRAME_READY = 'protocol.iframe_ready';
 
 /**
+ * A protocol frame lost after it was ready, so the host rebuilds it. Tagged `outcome` (error) and `reason` (the error's
+ * name, `ProtocolPortReleasedError` for a tab the SharedWorker let go of while it was frozen).
+ */
+export const PROTOCOL_FRAME_LOST = 'protocol.frame_lost';
+
+/**
  * A listener that threw, so it missed that delivery. Tagged `outcome` (error), `reason` (the error's name) and `owner`
  * (whose listeners, such as `chain_pool.status` or `debug_bus.replay`).
  */
@@ -109,10 +115,48 @@ export const LISTENER_DELIVERY = 'listener.delivery';
 export const PROTOCOL_REQUEST = 'protocol.request';
 
 /**
+ * A protocol message dropped on receipt. Tagged `outcome` (refused), `side` (host, frame or worker) and `reason`:
+ * `malformed` for bytes that are no message, `invalid` for a message whose values its method refuses, `not_bytes` for
+ * data that is not an `ArrayBuffer`, which a host page of an earlier release sends, and `origin` for the first bytes from
+ * each page outside the frame's trust boundary.
+ */
+export const PROTOCOL_WIRE_REFUSED = 'protocol.wire_refused';
+
+/**
+ * A protocol message a side could not post, so its peer never hears it. Tagged `outcome` (error), `side` (host, frame or
+ * worker) and `reason` (the error's name).
+ */
+export const PROTOCOL_SERVE_POST = 'protocol.serve_post';
+
+/**
+ * A chain message from the protocol frame that the host could not parse, so its connection never hears it. Tagged
+ * `outcome` (error) and `reason` (the error's name).
+ */
+export const PROTOCOL_CHAIN_MESSAGE = 'protocol.chain_message';
+
+/**
+ * A feed the protocol frame ended while it stayed up, so the host reopens it after a backoff. Tagged `outcome` (error),
+ * `feed` (shared_auth or telemetry) and `reason` (the error's name, `ProtocolFeedEndedError` for an end without one).
+ */
+export const PROTOCOL_FEED_END = 'protocol.feed_end';
+
+/**
+ * The light client's byte meter could not be read on a tick, so the speed readout misses that reading. Counted once per
+ * run of failed reads. Tagged `outcome` (error) and `reason` (the error's name).
+ */
+export const PROTOCOL_NET_BYTES_READ = 'protocol.net_bytes_read';
+
+/**
  * One request as the SharedWorker served it, tagged with the asking tab's `resolution_id`.
  * Apart from `PROTOCOL_REQUEST` because it excludes the postMessage hops.
  */
 export const PROTOCOL_WORKER_REQUEST = 'protocol.worker_request';
+
+/**
+ * A heartbeat the protocol frame could not send the SharedWorker, so it stops answering the worker's beats and the
+ * worker lets go of its port. Tagged `outcome` (error) and `reason` (the error's name).
+ */
+export const PROTOCOL_WORKER_HEARTBEAT = 'protocol.worker_heartbeat';
 
 /**
  * A sandbox message handler on the host that threw. Tagged `outcome` (error) and `reason` (the error's name), as the
@@ -130,7 +174,7 @@ export const WASM_LOAD = 'wasm.load';
 
 /**
  * Shared-storage request rejected before touching `localStorage`. Tagged `store` and `reason`,
- * because the error envelope the listener answers with is easy to miss.
+ * because the failed answer the caller receives is easy to miss.
  */
 export const SHARED_STORAGE_REJECTED = 'shared_storage.rejected';
 
@@ -286,3 +330,17 @@ export const PREIMAGE_LOOKUP = 'preimage.lookup';
  * the backend no longer serves the chain, `halted` when the new lease halted at once, or the error's name.
  */
 export const TRUAPI_CHAIN_REOPEN = 'truapi_chain.reopen';
+
+/**
+ * Count. A phone-bound request a waiting step followed to its end. Tagged `outcome` (`ok, refused, aborted, error,
+ * gone, undecodable, unmatchable`) and `reason` (the method). A claim's end carries `background`, and a claim whose
+ * answer did not decode ends as `undecodable`. A request that did not decode and a review that matched no request are
+ * counted on their own, without `background`.
+ */
+export const PHONE_REQUEST = 'signing.phone_request';
+
+/**
+ * A view an answered dialog was to hand its place to that could not be built, so the dialog closed instead. Tagged
+ * `outcome` (error) and `reason` (the error's name).
+ */
+export const MODAL_HANDOFF = 'modal.handoff';

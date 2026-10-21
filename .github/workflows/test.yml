@@ -56,18 +56,12 @@ jobs:
       - name: Setup Node
         uses: ./.github/actions/setup-node
 
+      # The networks, metrics on, and a dummy Sentry DSN, never dialled, as `tunnel: "/t"` keeps envelopes same-origin.
       - name: Build
-        env:
-          # Required, or the host throws on boot and every test times out.
-          VITE_NETWORKS: paseo-next-v2,previewnet
-          # As deployed. network-transport.spec.ts fails without it.
-          VITE_METRICS: 'true'
-          # Sentry no-ops without a DSN. Never dialled, as `tunnel: "/t"` keeps envelopes same-origin.
-          VITE_SENTRY_DSN: http://publickey@127.0.0.1:5173/1
-        run: npm run build
+        run: npm run build:test
 
       - name: Upload the builds
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: apps/*/dist
@@ -90,15 +84,13 @@ jobs:
 
       # The artifact's root is apps/, the common folder of its paths.
       - name: Download the builds
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: apps
 
       - name: Run functional tests
         working-directory: apps/host
-        env:
-          VITE_METRICS: 'true'
         run: npm run test:functional
 
   # host-playground product tests, with pairing and signing handled headlessly by the truapi-host CLI.
@@ -137,7 +129,7 @@ jobs:
 
       # The artifact's root is apps/, the common folder of its paths.
       - name: Download the builds
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: apps
@@ -159,7 +151,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-product-results
           path: apps/host/tests/e2e/test-results/

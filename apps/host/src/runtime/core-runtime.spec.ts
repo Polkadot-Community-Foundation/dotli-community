@@ -10,6 +10,7 @@ import type {
 import { createBlockingModalCoordinator } from './blocking-modal-queue.js';
 import { createCoreRuntimeBoot, type CoreRuntimeDeps } from './core-runtime.js';
 import type { CreateHostCallbacksOptions } from './host-callbacks/handlers.js';
+import { createPhoneRequestTracker } from './phone-requests.js';
 import type { BootLocalWalletCore } from './local-wallet-core.js';
 import type { LocalWalletBoot } from './wallet-boot.js';
 
@@ -71,6 +72,7 @@ function harness(...reads: (LocalWalletBoot | null)[]): Harness {
 const request = {
   product: { label: 'doom' },
   blockingModalScope: createBlockingModalCoordinator().createScope(),
+  phoneRequests: createPhoneRequestTracker(),
   isLive: () => true,
   inService: () => true,
 };
@@ -123,6 +125,23 @@ describe('core runtime boot', () => {
     expect(callbackOptions).toEqual([expect.objectContaining({ local: true })]);
     expect(callbackOptions[0]?.inService).toBe(request.inService);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['As a Polkadot App user, my callbacks claim from the tracker my core was booted with', null],
+    [
+      'As a local wallet user, my callbacks get the tracker my core was booted with, which the page core disposes',
+      WALLET,
+    ],
+  ] as [string, LocalWalletBoot | null][])('%s', async (_name, read) => {
+    // Given
+    const { deps, callbackOptions } = harness(read);
+
+    // When
+    await createCoreRuntimeBoot(deps)(request);
+
+    // Then
+    expect(callbackOptions[0]?.phoneRequests).toBe(request.phoneRequests);
   });
 
   it('As a user on the landing page, I pair under the name the page asked for', async () => {

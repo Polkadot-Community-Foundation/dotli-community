@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { m } from '@dotli/metrics';
-import { memoryStorage, resetAllStoresForTests } from '@dotli/shared/testing';
+import { FakePage, memoryStorage, resetAllStoresForTests } from '@dotli/shared/testing';
 import { markContinuation, peekContinuation } from './continuation.js';
 import {
   createChainPhaseTracker,
@@ -70,22 +70,17 @@ function span(name: string): RecordedSpan | undefined {
   return spans.find(s => s.name === `dotli.${name}`);
 }
 
-/** Node has no PageTransitionEvent, so `persisted` is set by hand. */
-function pagehide(persisted: boolean): Event {
-  return Object.assign(new Event('pagehide'), { persisted });
-}
-
 function names(): string[] {
   return spans.map(s => s.name);
 }
 
 /** The page the trace runs in: where the visitor leaves from, the loading store and the tab's session storage. */
-let page: EventTarget;
+let page: FakePage;
 let session: Storage;
 
 function startResolutionTrace(opts: ResolutionTraceOptions): ResolutionTrace {
   return startOnPage(opts, {
-    lifecycle: page,
+    lifecycle: page.window,
     isVisible: () => true,
     readProgress: () => getLoadingState().progress,
     peekContinuation: () => peekContinuation(session),
@@ -96,7 +91,7 @@ beforeEach(() => {
   const fake = fakeSentry();
   spans = fake.spans;
   m.bind(fake.sentry as Parameters<typeof m.bind>[0]);
-  page = new EventTarget();
+  page = new FakePage();
   session = memoryStorage();
   resetAllStoresForTests();
 });
@@ -135,7 +130,7 @@ describe('A resolution is traced as one unit', () => {
     expect(names()).not.toContain('dotli.chain.bulletin');
 
     // When
-    trace.chainSync({ chain: 'bulletin', syncKind: 'connecting' });
+    trace.chainSync({ chain: 'bulletin', kind: 'connecting' });
 
     // Then
     expect(span('chain.bulletin')?.parent).toBe(span('resolution'));
@@ -146,14 +141,14 @@ describe('A resolution is traced as one unit', () => {
     const trace = startResolutionTrace(OPTS);
 
     // When
-    trace.chainSync({ chain: 'relay', syncKind: 'connecting' });
+    trace.chainSync({ chain: 'relay', kind: 'connecting' });
     trace.chainSync({
       chain: 'relay',
-      syncKind: 'warpSyncProgress',
+      kind: 'warpSyncProgress',
       at: 10,
       target: 20,
     });
-    trace.chainSync({ chain: 'relay', syncKind: 'bootstrapComplete' });
+    trace.chainSync({ chain: 'relay', kind: 'bootstrapComplete' });
 
     // Then
     const chain = span('chain.relay');
@@ -167,8 +162,8 @@ describe('A resolution is traced as one unit', () => {
     const trace = startResolutionTrace(OPTS);
 
     // When
-    trace.chainSync({ chain: 'relay', syncKind: 'connecting' });
-    trace.chainSync({ chain: 'relay', syncKind: 'bootstrapComplete' });
+    trace.chainSync({ chain: 'relay', kind: 'connecting' });
+    trace.chainSync({ chain: 'relay', kind: 'bootstrapComplete' });
 
     // Then
     expect(span('chain.relay.connecting')?.ended).toBe(true);
@@ -179,8 +174,8 @@ describe('A resolution is traced as one unit', () => {
     const trace = startResolutionTrace(OPTS);
 
     // When
-    trace.chainSync({ chain: 'assethub', syncKind: 'connecting' });
-    trace.chainSync({ chain: 'assethub', syncKind: 'bootstrapComplete' });
+    trace.chainSync({ chain: 'assethub', kind: 'connecting' });
+    trace.chainSync({ chain: 'assethub', kind: 'bootstrapComplete' });
     trace.finish('rendered');
 
     // Then
@@ -197,13 +192,13 @@ describe('A resolution is traced as one unit', () => {
     // When
     trace.chainSync({
       chain: 'relay',
-      syncKind: 'warpSyncProgress',
+      kind: 'warpSyncProgress',
       at: 974196,
       target: 1006056,
     });
     trace.chainSync({
       chain: 'relay',
-      syncKind: 'warpSyncProgress',
+      kind: 'warpSyncProgress',
       at: 1006053,
       target: 1006056,
     });
@@ -221,7 +216,7 @@ describe('A resolution is traced as one unit', () => {
   it('As a maintainer, I can read whether a chain started warm and who it was talking to', () => {
     // Given
     const trace = startResolutionTrace(OPTS);
-    trace.chainSync({ chain: 'relay', syncKind: 'connecting' });
+    trace.chainSync({ chain: 'relay', kind: 'connecting' });
 
     // When
     trace.chainDetail({
@@ -312,7 +307,7 @@ describe('A resolution reports how it ended', () => {
   it('As a maintainer, a chain that never finished cannot hold the trace open', () => {
     // Given
     const trace = startResolutionTrace(OPTS);
-    trace.chainSync({ chain: 'assethub', syncKind: 'connecting' });
+    trace.chainSync({ chain: 'assethub', kind: 'connecting' });
 
     // When
     trace.finish('abandoned');
@@ -420,7 +415,7 @@ describe('A resolution is one attempt of a journey', () => {
     startResolutionTrace(OPTS);
 
     // When
-    page.dispatchEvent(pagehide(true));
+    page.hide(true);
 
     // Then
     expect(span('resolution')?.attributes).toMatchObject({ outcome: 'abandoned', exit: 'bfcache' });
@@ -432,7 +427,7 @@ describe('A resolution is one attempt of a journey', () => {
     markContinuation('reload_button', session);
 
     // When
-    page.dispatchEvent(pagehide(false));
+    page.hide(false);
 
     // Then
     expect(span('resolution')?.attributes).toMatchObject({ outcome: 'abandoned', exit: 'reload_button' });
@@ -444,7 +439,7 @@ describe('A resolution is one attempt of a journey', () => {
     trace.finish('rendered');
 
     // When
-    page.dispatchEvent(pagehide(false));
+    page.hide(false);
 
     // Then
     expect(span('resolution')?.attributes['outcome']).toBe('rendered');
