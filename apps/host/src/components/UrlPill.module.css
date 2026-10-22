@@ -1,0 +1,70 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* Never shrinks, so the row holds still while the bar morphs. A long name ellipsizes. */
+.url {
+  display: flex;
+  flex: none;
+  max-width: 200px;
+}
+.url[hidden] {
+  display: none;
+}
+.pill {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1_5);
+  box-sizing: border-box;
+  min-width: 0;
+  height: var(--h-bar-control);
+  padding: 0 var(--sp-4) 0 var(--sp-3);
+  border-radius: var(--r-full);
+  background: var(--chrome-well);
+  box-shadow: var(--chrome-shadow-inset);
+  color: var(--chrome-text);
+  font: var(--fw-regular) 13px / 1 var(--font-sans);
+  user-select: none;
+  transition: background var(--dur-fast);
+}
+.pill:hover {
+  background: var(--chrome-well-strong);
+}
+/* The clip is the line box, so it is tall enough for descenders the pill's `line-height: 1` would cut. */
+.text {
+  min-width: 0;
+  overflow: hidden;
+  line-height: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.domain {
+  color: var(--chrome-text);
+  font-weight: var(--fw-semibold);
+}
+.tld {
+  color: var(--chrome-text-muted);
+}
+.localhost-icon {
+  display: none;
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  color: var(--chrome-text-muted);
+}
+/* A flex item, so `block` is what the icon showed as before. */
+.pill[data-localhost] .localhost-icon {
+  display: block;
+}
+.pill[data-localhost] .domain {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* Phones: the actions take the address's place. */
+@media (max-width: 560px) {
+  .url {
+    display: none;
+  }
+}

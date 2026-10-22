@@ -1,0 +1,93 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* The slide's --dur-morph must match SHEET_EXIT_MS. */
+.sheet {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  max-height: min(85dvh, var(--content-height));
+  overflow: hidden;
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  background: var(--chrome-top);
+  -webkit-backdrop-filter: var(--chrome-blur);
+  backdrop-filter: var(--chrome-blur);
+  box-shadow: var(--chrome-shadow-sheet);
+  color: var(--chrome-text);
+  font-family: var(--font-sans);
+  transform: translateY(100%);
+  transition: transform var(--dur-morph) var(--ease-out);
+}
+.sheet[data-state='open'] {
+  transform: translateY(0);
+}
+@starting-style {
+  .sheet[data-state='open'] {
+    transform: translateY(100%);
+  }
+}
+.sheet:focus-visible {
+  outline: none;
+}
+.sheet[data-dragging] {
+  transition: none;
+}
+/* In a hand-off the leaving sheet goes at once and the coming one starts in place. */
+.sheet[data-state='closed'][data-handoff] {
+  transition: none;
+}
+@starting-style {
+  .sheet[data-state='open'][data-handoff] {
+    transform: translateY(0);
+  }
+}
+
+.head {
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--sp-3);
+  padding: var(--sp-6) var(--sp-4) var(--sp-3) var(--sp-5);
+  touch-action: none;
+  cursor: grab;
+}
+.grabber {
+  position: absolute;
+  top: var(--sp-2);
+  left: 50%;
+  width: 36px;
+  height: var(--sp-1);
+  /* Half its width, centring it on `left: 50%`. */
+  margin-left: -18px;
+  border-radius: var(--r-full);
+  background: var(--chrome-ring-strong);
+}
+.title {
+  min-width: 0;
+  margin: 0;
+  color: var(--chrome-text);
+  font-size: var(--fs-title-lg);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  overflow-wrap: anywhere;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: var(--sp-4);
+}
+/* A menu's body takes focus for a pointer opening. Its rows carry the ring. */
+.body:focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet {
+    transition: none !important;
+  }
+}

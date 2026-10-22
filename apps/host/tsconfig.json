@@ -1,7 +1,17 @@
 {
-  "extends": [
-    "@dotli/typescript-config/base.json",
-    "@dotli/typescript-config/paths.json"
-  ],
-  "include": ["src", "tests"]
+  "extends": ["@config/typescript/base.json", "@config/typescript/solid.json", "astro/tsconfigs/strict"],
+  "compilerOptions": {
+    // Unit specs run under Node, so they may use ES2024 APIs such as Promise.withResolvers. tsconfig.shipped.json holds
+    // shipped code to the browsers' ES2022.
+    "lib": ["ES2024", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    ".astro/types.d.ts",
+    "src",
+    "tests",
+    "astro.config.ts",
+    "vitest.config.ts",
+    "eslint.config.js",
+    "sentry-check.ts"
+  ]
 }

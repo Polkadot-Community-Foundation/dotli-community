@@ -1,42 +1,19 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// dotli-internal debug events
-//
-// Events emitted by dotli host-side logic that is independent of the
-// TrUAPI transport: boot orchestration, resolver phases, render +
-// bridge-setup lifecycles, and backend failover decisions. These
-// complement the TrUAPI host-to-product message events.
-//
-// Events are point-in-time OR paired start/end. The consumer decides
-// rendering: multi-event flows (same `flowId`) become boxes, single-
-// event flows become pills.
+// The consumer renders multi-event flows (same `flowId`) as boxes and single-event flows as pills.
 
 export type DotliDebugEvent =
-  | BootEvent
-  | ResolveEvent
-  | RenderEvent
-  | BridgeEvent
-  | FailoverEvent
-  | MainEvent
-  | SandboxEvent
-  | ChainEvent;
+  BootEvent | ResolveEvent | RenderEvent | BridgeEvent | FailoverEvent | MainEvent | SandboxEvent | ChainEvent;
 
-/** Sandbox (<label>.app.dot.li) lifecycle. These events originate in the
- *  sandbox iframe and are forwarded to the host's debug bus via
- *  `postMessage({ type: "dotli:debug-event", event })`.
- *
- *  The sandbox-side flow is opaque to the host otherwise: the host
- *  creates the iframe, sets `iframe.src`, and then has to wait for the
- *  product to finish loading and start talking over the TrUAPI bridge.
- *  Typical "host is silent for 15 seconds" windows are actually the
- *  sandbox fetching the CID's archive from the bulletin chain and
- *  staging it in the service worker, fully invisible from the host
- *  unless these events are surfaced. */
+/**
+ * Forwarded from the sandbox iframe as `postMessage({ type: "dotli:debug-event", event })`.
+ * Without them the sandbox's content fetch is a silent gap on the host.
+ */
 export type SandboxEvent =
   | {
-      layer: "sandbox";
-      event: "started";
+      layer: 'sandbox';
+      event: 'started';
       flowId: string;
       timestamp: number;
       payload: {
@@ -45,8 +22,8 @@ export type SandboxEvent =
       };
     }
   | {
-      layer: "sandbox";
-      event: "sw_register_begin";
+      layer: 'sandbox';
+      event: 'sw_register_begin';
       flowId: string;
       timestamp: number;
       payload: {
@@ -55,8 +32,8 @@ export type SandboxEvent =
       };
     }
   | {
-      layer: "sandbox";
-      event: "sw_ready";
+      layer: 'sandbox';
+      event: 'sw_ready';
       flowId: string;
       timestamp: number;
       payload: {
@@ -65,19 +42,8 @@ export type SandboxEvent =
       };
     }
   | {
-      layer: "sandbox";
-      event: "cache_checked";
-      flowId: string;
-      timestamp: number;
-      payload: {
-        cid: string;
-        hit: boolean;
-        fileCount?: number;
-      };
-    }
-  | {
-      layer: "sandbox";
-      event: "fetch_begin";
+      layer: 'sandbox';
+      event: 'fetch_begin';
       flowId: string;
       timestamp: number;
       payload: {
@@ -86,8 +52,8 @@ export type SandboxEvent =
       };
     }
   | {
-      layer: "sandbox";
-      event: "helia_ready";
+      layer: 'sandbox';
+      event: 'helia_ready';
       flowId: string;
       timestamp: number;
       payload: {
@@ -96,46 +62,44 @@ export type SandboxEvent =
       };
     }
   | {
-      layer: "sandbox";
-      event: "status";
+      layer: 'sandbox';
+      event: 'status';
       flowId: string;
       timestamp: number;
       payload: {
         cid: string;
-        /** Human-readable status string that the sandbox uses to
-         *  update its own loading overlay; mirrored here so the
-         *  progress stream is visible in the system swimlane. */
+        /** Mirrors the sandbox's own loading overlay text. */
         message: string;
       };
     }
   | {
-      layer: "sandbox";
-      event: "fetch_complete";
+      layer: 'sandbox';
+      event: 'fetch_complete';
       flowId: string;
       timestamp: number;
       payload: {
         cid: string;
-        kind: "single" | "archive";
+        kind: 'single' | 'archive';
         durationMs: number;
       };
     }
   | {
-      layer: "sandbox";
-      event: "decrypt_started";
+      layer: 'sandbox';
+      event: 'decrypt_started';
       flowId: string;
       timestamp: number;
       payload: { cid: string };
     }
   | {
-      layer: "sandbox";
-      event: "decrypt_complete";
+      layer: 'sandbox';
+      event: 'decrypt_complete';
       flowId: string;
       timestamp: number;
       payload: { cid: string };
     }
   | {
-      layer: "sandbox";
-      event: "archive_stored";
+      layer: 'sandbox';
+      event: 'archive_stored';
       flowId: string;
       timestamp: number;
       payload: {
@@ -145,22 +109,21 @@ export type SandboxEvent =
       };
     }
   | {
-      layer: "sandbox";
-      event: "document_written";
+      layer: 'sandbox';
+      event: 'document_written';
       flowId: string;
       timestamp: number;
       payload: {
         cid: string;
         totalMs: number;
-        /** Decoded size of everything the dApp shipped, across both the
-         * cache-hit and fetch paths. */
+        /** Decoded size across both the cache-hit and fetch paths. */
         bytes?: number;
         fileCount?: number;
       };
     }
   | {
-      layer: "sandbox";
-      event: "failed";
+      layer: 'sandbox';
+      event: 'failed';
       flowId: string;
       timestamp: number;
       payload: {
@@ -169,49 +132,40 @@ export type SandboxEvent =
       };
     };
 
-/** Host main-thread diagnostics. Intended to reveal "what is the host
- *  doing right now" windows that would otherwise show as empty in the
- *  system swimlane. */
 export type MainEvent =
   | {
-      layer: "main";
-      event: "stall_detected";
+      layer: 'main';
+      event: 'stall_detected';
       flowId: string;
       timestamp: number;
       payload: {
-        /** How long the event loop was unable to service the tick
-         *  timer. Values above ~200ms mean the main thread was
-         *  blocked (synchronous work, frozen microtask chain,
-         *  heavy WASM init, etc.). */
+        /** Above about 200ms the main thread was blocked. */
         durationMs: number;
       };
     }
   | {
-      layer: "main";
-      event: "heartbeat";
+      layer: 'main';
+      event: 'heartbeat';
       flowId: string;
       timestamp: number;
       payload: {
-        /** Seconds since the monitor started. Useful for visualising
-         *  "we got this far without stalling". */
         uptimeSec: number;
       };
     }
   | {
-      layer: "main";
-      event: "monitor_stopped";
+      layer: 'main';
+      event: 'monitor_stopped';
       flowId: string;
       timestamp: number;
       payload: {
-        reason: "bridge_ready" | "max_duration";
+        reason: 'bridge_ready' | 'max_duration';
       };
     };
 
-/** High-level orchestration of the host's boot sequence (per tab). */
 export type BootEvent =
   | {
-      layer: "boot";
-      event: "started";
+      layer: 'boot';
+      event: 'started';
       flowId: string;
       timestamp: number;
       payload: {
@@ -221,22 +175,23 @@ export type BootEvent =
       };
     }
   | {
-      layer: "boot";
-      event: "protocol_warmup_started";
+      layer: 'boot';
+      event: 'protocol_warmup_started';
       flowId: string;
       timestamp: number;
-      payload: { subMode: "shared-worker" | "direct" | "rpc" };
+      /** The backend the frame boots on. The key is kept for saved archives. */
+      payload: { subMode: string };
     }
   | {
-      layer: "boot";
-      event: "topbar_ready";
+      layer: 'boot';
+      event: 'topbar_ready';
       flowId: string;
       timestamp: number;
       payload: Record<string, never>;
     }
   | {
-      layer: "boot";
-      event: "url_parsed";
+      layer: 'boot';
+      event: 'url_parsed';
       flowId: string;
       timestamp: number;
       payload: {
@@ -246,8 +201,8 @@ export type BootEvent =
       };
     }
   | {
-      layer: "boot";
-      event: "cid_cache_checked";
+      layer: 'boot';
+      event: 'cid_cache_checked';
       flowId: string;
       timestamp: number;
       payload: {
@@ -257,26 +212,37 @@ export type BootEvent =
       };
     }
   | {
-      layer: "boot";
-      event: "landing_page_shown";
+      layer: 'boot';
+      event: 'block_cache';
+      flowId: string;
+      timestamp: number;
+      payload: {
+        /** Blocks the relay answered from the host's block cache. */
+        hits: number;
+        misses: number;
+      };
+    }
+  | {
+      layer: 'boot';
+      event: 'landing_page_shown';
       flowId: string;
       timestamp: number;
       payload: Record<string, never>;
     }
   | {
-      layer: "boot";
-      event: "ready";
+      layer: 'boot';
+      event: 'ready';
       flowId: string;
       timestamp: number;
       payload: {
         label: string | null;
         totalMs: number;
-        path: "fast" | "slow" | "localhost";
+        path: 'fast' | 'slow' | 'localhost';
       };
     }
   | {
-      layer: "boot";
-      event: "failed";
+      layer: 'boot';
+      event: 'failed';
       flowId: string;
       timestamp: number;
       payload: {
@@ -286,32 +252,30 @@ export type BootEvent =
       };
     };
 
-/** Dot-name resolution. Covers both smoldot (P2P) and RPC paths. */
 export type ResolveEvent =
   | {
-      layer: "resolve";
-      event: "started";
+      layer: 'resolve';
+      event: 'started';
       flowId: string;
       timestamp: number;
       payload: {
         label: string;
-        source: "smoldot" | "rpc-gateway";
+        source: 'smoldot' | 'rpc-gateway';
       };
     }
   | {
-      layer: "resolve";
-      event: "phase";
+      layer: 'resolve';
+      event: 'phase';
       flowId: string;
       timestamp: number;
       payload: {
         label: string;
         phase: string;
-        message: string;
       };
     }
   | {
-      layer: "resolve";
-      event: "storage_read";
+      layer: 'resolve';
+      event: 'storage_read';
       flowId: string;
       timestamp: number;
       payload: {
@@ -321,58 +285,56 @@ export type ResolveEvent =
       };
     }
   | {
-      layer: "resolve";
-      event: "completed";
+      layer: 'resolve';
+      event: 'completed';
       flowId: string;
       timestamp: number;
       payload: {
         label: string;
-        source: "smoldot" | "rpc-gateway";
+        source: 'smoldot' | 'rpc-gateway';
         cid: string | null;
         durationMs: number;
       };
     }
   | {
-      layer: "resolve";
-      event: "failed";
+      layer: 'resolve';
+      event: 'failed';
       flowId: string;
       timestamp: number;
       payload: {
         label: string;
-        source: "smoldot" | "rpc-gateway";
+        source: 'smoldot' | 'rpc-gateway';
         reason: string;
       };
     };
 
-/** Iframe render lifecycle (renderIframe / renderAppSubdomain). */
 export type RenderEvent =
   | {
-      layer: "render";
-      event: "iframe_begin";
+      layer: 'render';
+      event: 'iframe_begin';
       flowId: string;
       timestamp: number;
       payload: {
         label: string;
         url: string;
-        mode: "iframe" | "subdomain" | "localhost";
+        mode: 'iframe' | 'subdomain' | 'localhost';
       };
     }
   | {
-      layer: "render";
-      event: "iframe_ready";
+      layer: 'render';
+      event: 'iframe_ready';
       flowId: string;
       timestamp: number;
       payload: {
         label: string;
-        mode: "iframe" | "subdomain" | "localhost";
+        mode: 'iframe' | 'subdomain' | 'localhost';
       };
     };
 
-/** Container bridge setup (TrUAPI bridge, per dApp iframe). */
 export type BridgeEvent =
   | {
-      layer: "bridge";
-      event: "setup_begin";
+      layer: 'bridge';
+      event: 'setup_begin';
       flowId: string;
       timestamp: number;
       payload: {
@@ -381,8 +343,8 @@ export type BridgeEvent =
       };
     }
   | {
-      layer: "bridge";
-      event: "setup_ready";
+      layer: 'bridge';
+      event: 'setup_ready';
       flowId: string;
       timestamp: number;
       payload: {
@@ -391,19 +353,19 @@ export type BridgeEvent =
       };
     }
   | {
-      layer: "bridge";
-      event: "iframe_load";
+      layer: 'bridge';
+      event: 'iframe_load';
       flowId: string;
       timestamp: number;
       payload: {
         label: string;
         productId: string;
-        mode: "iframe" | "subdomain";
+        mode: 'iframe' | 'subdomain';
       };
     }
   | {
-      layer: "bridge";
-      event: "first_inbound";
+      layer: 'bridge';
+      event: 'first_inbound';
       flowId: string;
       timestamp: number;
       payload: {
@@ -412,8 +374,8 @@ export type BridgeEvent =
       };
     }
   | {
-      layer: "bridge";
-      event: "first_outbound";
+      layer: 'bridge';
+      event: 'first_outbound';
       flowId: string;
       timestamp: number;
       payload: {
@@ -422,10 +384,10 @@ export type BridgeEvent =
       };
     };
 
-/** Backend failover decisions (chain backend switch on resolution error). */
+/** A chain backend switch after a resolution error. */
 export interface FailoverEvent {
-  layer: "failover";
-  event: "chain_backend";
+  layer: 'failover';
+  event: 'chain_backend';
   flowId: string;
   timestamp: number;
   payload: {
@@ -435,22 +397,15 @@ export interface FailoverEvent {
   };
 }
 
-/** Light-client lifecycle, per chain.
- *
- *  Only smoldot emits these: the RPC gateway runs no light client, so a
- *  gateway load produces none at all and the Resolution view says so rather
- *  than drawing four empty rows.
- *
- *  `phase` is the derived milestone the loading screen also uses, not
- *  the raw `LifecycleState` from smoldot. A phase is emitted when it changes, so
- *  consecutive events bound the interval the chain spent in the previous
- *  one. The peer count of a chain moves on its own schedule rather than with its
- *  phase, so `peers` carries each change; `bytes` is the light client's
- *  cumulative received total, sampled on a tick. */
+/**
+ * Emitted only by smoldot, so a gateway load has none.
+ * `phase` is the loading screen's derived milestone, emitted on change, not smoldot's raw state.
+ * `bytes` carries the cumulative received total, sampled on a tick.
+ */
 export type ChainEvent =
   | {
-      layer: "chain";
-      event: "phase";
+      layer: 'chain';
+      event: 'phase';
       flowId: string;
       timestamp: number;
       payload: {
@@ -463,18 +418,18 @@ export type ChainEvent =
       };
     }
   | {
-      layer: "chain";
-      event: "dbcache";
+      layer: 'chain';
+      event: 'dbcache';
       flowId: string;
       timestamp: number;
       payload: {
         chain: string;
-        dbCache: "hit" | "miss";
+        dbCache: 'hit' | 'miss';
       };
     }
   | {
-      layer: "chain";
-      event: "peers";
+      layer: 'chain';
+      event: 'peers';
       flowId: string;
       timestamp: number;
       payload: {
@@ -483,11 +438,20 @@ export type ChainEvent =
       };
     }
   | {
-      layer: "chain";
-      event: "bytes";
+      layer: 'chain';
+      event: 'bytes';
       flowId: string;
       timestamp: number;
       payload: {
         received: number;
       };
     };
+
+/** A TrUAPI frame as the bus carries it, before the panel's store gives it a sequence number. */
+export interface TruapiDebugMessageEvent {
+  kind: 'truapi';
+  direction: 'incoming' | 'outgoing';
+  productId?: string;
+  requestId: string;
+  payload: { tag: string; value: unknown };
+}

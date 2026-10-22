@@ -1,0 +1,70 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* :where() so a consumer's class wins whatever the load order. The UA's [popover] box is reset first so the
+   placement set after it holds. */
+:where(.layer) {
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  width: auto;
+  height: auto;
+  display: none;
+  position: fixed;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--r-pop);
+  background: var(--chrome-glass);
+  -webkit-backdrop-filter: var(--chrome-blur);
+  box-shadow: var(--chrome-shadow-pop);
+  color: var(--chrome-text);
+  font-family: var(--font-sans);
+  z-index: 1500;
+  opacity: 0;
+  transform: translateY(calc(-1 * var(--sp-2))) scale(0.97);
+  transform-origin: top right;
+  transition:
+    opacity var(--dur) var(--ease-spring),
+    transform var(--dur) var(--ease-spring),
+    display var(--dur) allow-discrete,
+    overlay var(--dur) allow-discrete;
+}
+@supports (backdrop-filter: blur(1px)) {
+  :where(.layer) {
+    backdrop-filter: var(--chrome-blur);
+  }
+}
+/* Overlaps the bar's bottom so the surface attaches to it. */
+:where(.topbarEnd) {
+  top: calc(var(--topbar-bottom, var(--topbar-height)) + var(--pop-gap));
+  right: var(--topbar-inline-end, calc(12px + var(--safe-right)));
+}
+:where(.triggerStart) {
+  position-area: bottom span-right;
+  margin-top: var(--pop-gap);
+  transform-origin: top left;
+}
+/* The surface takes focus itself when it holds nothing focusable, with no ring. */
+.layer:focus-visible {
+  outline: none;
+}
+/* Only the open `display` is in :where(), so a consumer's `[data-open]` rule can lay it out as flex or grid. */
+:where(.layer[data-open]) {
+  display: block;
+}
+.layer[data-open] {
+  opacity: 1;
+  transform: scale(1);
+}
+@starting-style {
+  .layer[data-open] {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--sp-2))) scale(0.97);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .layer {
+    transition: none !important;
+  }
+}

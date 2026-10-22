@@ -1,0 +1,28 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+.archive {
+  display: grid;
+  grid-template-columns: minmax(160px, 30%) 1fr;
+  min-height: 0;
+  overflow: hidden;
+}
+.archive[hidden] {
+  display: none;
+}
+/* A message in place of the archive spans both columns. */
+.whole {
+  grid-column: 1 / -1;
+}
+
+.sidebar {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  border-right: 1px solid var(--td-line);
+}
+.image {
+  display: block;
+  max-width: 100%;
+  background: repeating-conic-gradient(var(--td-line) 0% 25%, var(--td-line-strong) 0% 50%) 0 0 / 16px 16px;
+}

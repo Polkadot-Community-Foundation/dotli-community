@@ -2,36 +2,86 @@
 
 ### How to Test
 
-- **Unit and functional tests** live next to the file they test, named after it (e.g. `permissions.test.ts` alongside `permissions.ts`).
-- **Functional tests** live under `apps/host/tests/functional/` (resolution, loading, performance specs driven in-process against the preview server).
-- **E2E tests** live under `apps/host/tests/e2e/` (`truapi.spec.ts` exercises the full truapi surface against a real `host-playground.dot` build).
-- **Tests are user stories.** Name each test as a user story: `As a <role>, I <action> and <outcome>` for behaviour, or `As a <role>, <observable property>` for invariants.
-- **Structure with Given / When / Then.** Every multi-step test body uses `// Given`, `// When`, `// Then` comments to separate setup, action, and assertions.
+- **Where tests live** is set out in [AGENTS.md](AGENTS.md), under Tests. A unit test sits beside its module as
+  `src/foo.spec.ts` and runs under Node, with no DOM. A component is tested by a play function in its Storybook story.
+  Functional tests live in the package's `tests/` folder as `*.test.ts` and run under happy-dom. The Playwright suites
+  live under `apps/host/tests/functional/` (driven in-process against the preview server) and `apps/host/tests/e2e/`
+  (`truapi.spec.ts` exercises the full truapi surface against a real `host-playground.dot` build).
+- **Wait on signals, never sleep.** A test waits for the page to reach a state, as the example below waits for the
+  product's frame, never for a stretch of time.
+- **Tests are user stories.** Name each test as a user story: `As a <role>, I <action> and <outcome>` for behaviour, or
+  `As a <role>, <observable property>` for invariants.
+- **Structure with Given / When / Then.** Every multi-step test body uses `// Given`, `// When`, `// Then` comments to
+  separate setup, action, and assertions.
+- **Test selectors, not styles.** Tests find elements by `data-testid`, ARIA role or id, never by CSS class, because
+  module class names are hashed. Reusable components take an optional `testId` prop that becomes `data-testid` on their
+  root. In functional tests, use `byTestId(id, root)` from `@dotli/ui/testing`. In Playwright, use
+  `page.getByTestId(id)`.
+- **Don't check CSS in tests.** Don't write tests that check CSS (stylesheets, computed styles or class names). Check
+  styling visually.
 
 ```ts
-test("As a user using per-product smoldot, the host must only spawn one instance of the light client", async ({
+test('As a user using per-product smoldot, the host must only spawn one instance of the light client', async ({
   page,
 }) => {
   // Given
-  await setBackend(page, "smoldot-direct");
-  await mockProtocolIframe(page, successfulResolveResponse("bafyfake..."));
+  await setBackend(page, 'smoldot-direct');
+  await mockProtocolIframe(page, successfulResolveResponse('bafyfake...'));
   const workerUrls: string[] = [];
-  page.on("worker", (w) => {
+  page.on('worker', w => {
     workerUrls.push(w.url());
   });
 
   // When
-  await page.goto(HOST_URL, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(5_000);
+  await page.goto(HOST_URL, { waitUntil: 'domcontentloaded' });
+  await findAppFrame(page, 10_000);
 
   // Then
   const hostShellOrigin = `http://${DOMAIN}.localhost:${PORT}`;
   const hostShellSmoldotWorkers = workerUrls.filter(
-    (url) => url.startsWith(hostShellOrigin) && url.includes("smoldot_worker"),
+    url => url.startsWith(hostShellOrigin) && url.includes('smoldot_worker'),
   );
   expect(hostShellSmoldotWorkers).toEqual([]);
 });
 ```
+
+### Package boundaries
+
+What a package owns and exposes is in its `README.md`, and what it may import is in its `eslint.config.js`. A package
+exposes the entries its `package.json` lists under `exports`: most only `src/index.ts`, some also a `./testing` entry
+for other packages' tests. Never import another package's internal modules.
+
+- Inside a package, import relative paths with the `.js` extension (`./state/topbar.js`), as NodeNext resolution
+  requires. ESLint rejects a `.ts` extension, except in files Node loads directly.
+- A module loaded on demand gets a loader in `src/lazy.ts` (`loadBridge()`, typed `BridgeModule`), so it stays a
+  separate chunk.
+- Build-time code that Node runs (the Vite plugins) lives in `@config/vite`, one subpath per plugin
+  (`@config/vite/build-info`, …), so a consumer loads only the one it imports. CSS is exported as `./styles.css`.
+- Each `package.json` declares `sideEffects`. List a module there if it is imported only for its effects.
+
+### Styling
+
+Each component's styles live in a CSS module beside it (`Foo.module.css` next to `Foo.tsx`), imported as
+`import s from './Foo.module.css'`. Class names are kebab-case in CSS and read camelCase in TypeScript with bracket
+access (`s['signingModal']`). Bracket access is required by `noPropertyAccessFromIndexSignature` in tsconfig.
+
+- A module styles only the elements its component renders. To react to page-level state, use the attribute on `<html>`
+  or `<body>` through `:global(...)`, for example `:global([data-dock='right']) .sections`. Never target another
+  component's classes.
+- Colors come from the tokens in `packages/ui/src/global.css` (`var(--text-muted)`, `var(--surface)`, ...). Modules
+  contain no `[data-theme]` selectors, because the tokens switch with the theme.
+- `global.css` holds tokens and the page base only. It resets nothing. Each class sets its own `box-sizing`, margins and
+  padding where its element needs them. Don't use `*` or `.root *`.
+- Styles used by several components become a primitive in `packages/ui/src/components/primitives/` with its own module,
+  rather than a shared class.
+- State that tests or logic read is a `data-*` attribute, not a class.
+
+### Commit hook
+
+`npm install` sets up a husky pre-commit hook. It runs lint-staged, which formats the staged files with Prettier
+(`--ignore-unknown` skips the types it can't parse) and stages the result, then lints every workspace the commit touches
+(turbo's `--filter=[HEAD]`), each whole and with its own config. Skip it with `git commit --no-verify`. CI still checks
+everything.
 
 ### How to Document
 
@@ -39,15 +89,25 @@ Good documentation starts with a single, clear sentence. Everything else comes a
 
 #### Principles
 
-1. **Lead with one sentence.** The first line of any doc comment should explain _what_ the thing does, not _how_. Additional context goes after a blank line.
-2. **Don't restate the code.** If the function signature already tells the story, don't repeat it in prose. Document _why_, not _what_.
+1. **Lead with one sentence.** The first line of any doc comment should explain _what_ the thing does, not _how_.
+   Additional context goes after a blank line.
+2. **Don't restate the code.** If the function signature already tells the story, don't repeat it in prose. Document
+   _why_, not _what_.
 3. **Use examples.** A short usage example is worth more than a paragraph of explanation.
-4. **Link to related items.** Help readers navigate. Reference related functions, types, or modules directly rather than describing them.
-5. **Think about context.** If you're explaining too many foreign concepts to document one function, the API design may need work.
-6. **No code section separators.** Don't use `// -----------` or similar decorative dividers to split sections within a file. Let the code structure speak for itself.
-7. **No em-dashes, semicolons, prose-conjunction `+`, or Unicode arrows (`→`, `←`, `↔`).** Rewrite the sentence. Two short sentences read better than one long one with a dash, and arrows belong in diagrams (where `->` is fine if it's a real arrow, not a stand-in for "becomes" or "then").
-8. **No external spec citations in code comments.** Don't write "per RFC 0001" or "see EIP-137" inside a comment. Explain the rule itself. If a reader needs the spec, the commit message and the PR description are the right place. Code comments stand alone.
-9. **No "on-chain" in prose.** Say "network" or "remote" instead. The host already knows the data sits on a chain. Calling it "the network value" reads naturally; "the on-chain value" reads as crypto jargon.
+4. **Link to related items.** Help readers navigate. Reference related functions, types, or modules directly rather than
+   describing them.
+5. **Think about context.** If you're explaining too many foreign concepts to document one function, the API design may
+   need work.
+6. **No code section separators.** Don't use `// -----------` or similar decorative dividers to split sections within a
+   file. Let the code structure speak for itself.
+7. **No em-dashes, semicolons, prose-conjunction `+`, or Unicode arrows (`→`, `←`, `↔`).** Rewrite the sentence. Two
+   short sentences read better than one long one with a dash, and arrows belong in diagrams (where `->` is fine if it's
+   a real arrow, not a stand-in for "becomes" or "then").
+8. **No external spec citations in code comments.** Don't write "per RFC 0001" or "see EIP-137" inside a comment.
+   Explain the rule itself. If a reader needs the spec, the commit message and the PR description are the right place.
+   Code comments stand alone.
+9. **No "on-chain" in prose.** Say "network" or "remote" instead. The host already knows the data sits on a chain.
+   Calling it "the network value" reads naturally; "the on-chain value" reads as crypto jargon.
 
 #### TypeScript
 

@@ -1,0 +1,100 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { defineConfig } from 'astro/config';
+import { resolve } from 'node:path';
+import astroSolid from '@config/astro-solid';
+import { dotliApp } from '@config/vite/app';
+import { astroPwa } from '@config/vite/astro-pwa';
+import { readReleaseVersion } from '@config/vite/build-info';
+import { dependencyVersions } from '@config/vite/dependency-versions';
+import { spaFallback } from '@config/vite/spa-fallback';
+import { truapiSigningWorker } from '@config/vite/truapi-signing-worker';
+import { brandManifestIcons } from './src/brand-variant.js';
+
+const app = dotliApp(import.meta.dirname, 'host');
+
+// Direct dependencies only, so Diagnostics lists just what dot.li code imports. A missing one reads as "unknown".
+const dependencies = dependencyVersions(resolve(import.meta.dirname, '../..'), [
+  'polkadot-api',
+  '@polkadot-api/',
+  '@parity/truapi',
+]);
+const versionOf = (name: string): string => dependencies.find(dep => dep.name === name)?.version ?? 'unknown';
+const scoped = (prefix: string) => dependencies.filter(dep => dep.name.startsWith(prefix));
+
+export default defineConfig({
+  // Apart from the preview server's 5173, so a preview build's precaching service worker never serves this origin.
+  server: { port: 4321 },
+  // Its floating bar covers the phone bar.
+  devToolbar: { enabled: false },
+  base: app.base,
+  // nginx rate-limits and caches /assets/. `file` writes landing.html beside index.html, for the servers to pick by host.
+  build: { assets: 'assets', format: 'file' },
+  integrations: [
+    astroSolid(),
+    // src/pwa.ts prompts for updates.
+    astroPwa({
+      injectRegister: false,
+      registerType: 'prompt',
+      filename: 'host-sw.js',
+      manifest: {
+        name: 'Polkadot Web',
+        short_name: 'Polkadot Web',
+        description: 'Decentralized web browser for Polkadot',
+        theme_color: '#000000',
+        background_color: '#000000',
+        display: 'standalone',
+        start_url: '/',
+        icons: brandManifestIcons(),
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,wasm}'],
+        // Loaded only on demand. Precaching would make every installed shell download them after each release. The
+        // worker lives on product hosts only, which never show the landing page.
+        // The local wallet's signing worker, its wasm and its core module load only in local mode, and the debug
+        // panel and its wire describer only in debug mode.
+        globIgnores: [
+          '**/truapi_provider_bg*.wasm',
+          '**/truapi_verifiable_bg*.wasm',
+          'landing.html',
+          '**/truapi_signing_bg*.wasm',
+          '**/signing-worker*.js',
+          '**/local-wallet-core*.js',
+          '**/truapi-debug-panel*',
+          '**/debug-panel-host*',
+          '**/debug-wire-describe*',
+        ],
+        cleanupOutdatedCaches: true,
+        // Prompted updates need the waiting SW to sit idle until the user opts in.
+        skipWaiting: false,
+        clientsClaim: false,
+        maximumFileSizeToCacheInBytes: 32 * 1024 * 1024,
+        // /__preview needs nginx's COEP/COOP/CORP headers, and host_version.json must show the file, not the shell.
+        navigateFallbackDenylist: [/^\/__preview(\?|$|\/)/, /^\/host_version\.json$/],
+      },
+    }),
+  ],
+  vite: app.vite({
+    plugins: [spaFallback({ landing: '/landing' }), truapiSigningWorker()],
+    worker: {
+      plugins: () => [truapiSigningWorker()],
+    },
+    define: {
+      __DOTLI_VERSION__: JSON.stringify(readReleaseVersion(import.meta.dirname)),
+      // smoldot is compiled into truapi-provider's wasm, so the provider version identifies the light client.
+      __LIGHT_CLIENT_VERSION__: JSON.stringify(versionOf('@parity/truapi-provider')),
+      __POLKADOT_API_VERSION__: JSON.stringify(versionOf('polkadot-api')),
+      __POLKADOT_API_VERSIONS__: JSON.stringify(scoped('@polkadot-api/')),
+      __PARITY_TRUAPI_VERSIONS__: JSON.stringify(scoped('@parity/truapi')),
+    },
+    // Node would load the workspace sources to render the page, and cannot map their `.js` imports to `.ts` files.
+    ssr: { noExternal: [/^@dotli\//] },
+    server: {
+      headers: {
+        'Service-Worker-Allowed': '/',
+        'Access-Control-Allow-Origin': '*',
+      },
+    },
+  }),
+});

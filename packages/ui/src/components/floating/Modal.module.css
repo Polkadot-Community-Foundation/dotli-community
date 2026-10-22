@@ -1,0 +1,139 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+.card {
+  /* Positioned so it paints above the layer's fixed scrim. */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  box-sizing: border-box;
+  width: var(--w-pop-lg);
+  max-width: 100%;
+  max-height: calc(100dvh - 2 * var(--sp-6));
+  margin: 0;
+  padding: var(--sp-5);
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: var(--chrome-glass);
+  -webkit-backdrop-filter: var(--chrome-blur);
+  backdrop-filter: var(--chrome-blur);
+  box-shadow: var(--chrome-shadow-pop);
+  color: var(--chrome-text);
+  font-family: var(--font-sans);
+  animation: modal-in var(--dur) var(--ease-spring) both;
+  transition: opacity var(--dur) var(--ease-out);
+}
+/* Focused itself on open, with no ring for that. */
+.card:focus-visible {
+  outline: none;
+}
+/* Fades with the scrim while the layer stays up for the exit. */
+.card[data-state='closed'] {
+  opacity: 0;
+}
+
+/* The auth modal, in the place FloatingLayer's topbar-end takes. */
+.card[data-placement='topbar-end'] {
+  position: fixed;
+  top: calc(var(--topbar-bottom, var(--topbar-height)) + var(--pop-gap));
+  right: var(--topbar-inline-end, calc(12px + var(--safe-right)));
+  width: auto;
+  max-height: none;
+  padding: 0;
+  gap: 0;
+  animation: anchored-in var(--dur) var(--ease-spring) both;
+  transform-origin: top right;
+}
+
+/* A column so a tall review scrolls in the prompt's body with the answers in view. */
+.sheetScroll {
+  display: flex;
+  flex-direction: column;
+}
+.sheetBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  min-height: 0;
+  padding: var(--sp-1) var(--sp-4) var(--sp-4);
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  text-align: center;
+}
+.title {
+  margin: 0;
+  padding: 0;
+  font-size: var(--fs-title);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  overflow-wrap: anywhere;
+}
+
+/* The padding, given back by the margin, keeps an input's focus ring inside the scroll's clip. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-height: 0;
+  margin: calc(-1 * var(--sp-hair));
+  padding: var(--sp-hair);
+  overflow-y: auto;
+}
+
+.actions {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: var(--sp-1_5);
+  margin: 0;
+  padding: 0;
+}
+/* Narrow sides let "Always allow" fit in a third of the row. */
+.actions > * {
+  padding: 0 var(--sp-2);
+}
+
+/* The sheet head carries the title. */
+.sheetBody .head {
+  display: none;
+}
+.sheetBody .body {
+  gap: var(--sp-5);
+}
+.sheetBody .actions {
+  grid-auto-flow: row;
+  gap: var(--sp-2);
+}
+.sheetBody .actions > * {
+  padding: 0 var(--sp-3);
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--sp-2)) scale(0.96);
+  }
+}
+@keyframes anchored-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--sp-2))) scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The placement's own animation outranks the bare class. */
+  .card,
+  .card[data-placement] {
+    animation: none;
+    transition: none;
+  }
+}

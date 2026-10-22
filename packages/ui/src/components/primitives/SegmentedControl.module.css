@@ -1,0 +1,109 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* Pressed is a raised fill, never coloured text, to keep AAA contrast and every option's width. */
+
+:where(.seg) {
+  box-sizing: border-box;
+  display: flex;
+  flex: none;
+  gap: var(--sp-hair);
+  width: fit-content;
+  margin: 0;
+  padding: var(--sp-hair);
+  border-radius: var(--r-full);
+  background: var(--chrome-well);
+  box-shadow: var(--chrome-shadow-inset);
+}
+.seg[data-block] {
+  width: 100%;
+}
+.seg[data-block] > .option {
+  flex: 1;
+}
+.option {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1_5);
+  height: 24px;
+  margin: 0;
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--chrome-text-muted);
+  font: var(--fw-medium) var(--fs-caption) / 1 var(--font-sans);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast),
+    color var(--dur-fast),
+    box-shadow var(--dur-fast);
+}
+.option:hover {
+  color: var(--chrome-text);
+}
+.seg[aria-disabled='true'] > .option {
+  cursor: default;
+  opacity: 0.5;
+}
+.seg[aria-disabled='true'] > .option:hover {
+  color: var(--chrome-text-muted);
+}
+.seg[aria-disabled='true'] > .option[aria-pressed='true'] {
+  color: var(--chrome-text);
+}
+.option:focus-visible {
+  outline: var(--chrome-focus-ring);
+  outline-offset: 2px;
+}
+.option[aria-pressed='true'] {
+  background: var(--chrome-fill-strong);
+  box-shadow: var(--chrome-shadow-raised);
+  color: var(--chrome-text);
+}
+.option > svg {
+  flex: none;
+}
+@media (max-width: 560px) {
+  .option {
+    gap: var(--sp-2);
+    height: var(--h-row-sm);
+    padding: 0 var(--sp-3);
+  }
+}
+
+.seg[data-size='lg'] {
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--r-sm);
+}
+.seg[data-size='lg'] > .option {
+  flex-direction: column;
+  height: 60px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-small);
+}
+.seg[data-size='lg'] > .option > svg {
+  width: 16px;
+  height: 16px;
+}
+@media (max-width: 560px) {
+  .seg[data-size='lg'] {
+    border-radius: var(--r-md);
+  }
+  .seg[data-size='lg'] > .option {
+    height: var(--h-tile);
+    border-radius: var(--r-sm);
+  }
+  .seg[data-size='lg'] > .option > svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .option {
+    transition: none;
+  }
+}

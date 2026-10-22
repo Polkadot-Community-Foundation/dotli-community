@@ -1,95 +1,89 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Raw chainHead-backed contract-storage API.
-//
-// Reads a Revive contract slot via direct `chainHead_v1_storage` queries,
-// no runtime call or metadata exchange involved.
-//
-// A slot is read in two steps, mirroring `ReviveApi::get_storage`:
-//   1. read `Revive::AccountInfoOf[address]` from the MAIN trie, decode trie_id
-//   2. read `blake2_256(slot)` from the contract's CHILD trie trie_id
-//
-// Callers pin both `bestHash` and `trie_id` once per logical multi-slot read
-// (see `access-raw-storage.ts`). The API itself does NOT cache `trie_id`
-// across calls, because a contract redeploy would silently return stale
-// data otherwise.
+// Revive contract slots read straight from `chainHead_v1_storage`, with no runtime call or metadata.
+// Like `ReviveApi::get_storage`, the `trie_id` comes from `AccountInfoOf` in the main trie, then the slot
+// from that child trie. `trie_id` is never cached, because a redeploy would then return stale data.
 
-import type { SubstrateClient } from "@polkadot-api/substrate-client";
-import { StopError } from "@polkadot-api/substrate-client";
-import { Twox128, Blake2256, Hex } from "@polkadot-api/substrate-bindings";
-import { fromHex, toHex, mergeUint8 } from "@polkadot-api/utils";
+import type { SubstrateClient } from '@polkadot-api/substrate-client';
+import { DisjointError, OperationInaccessibleError, StopError } from '@polkadot-api/substrate-client';
+import { Twox128, Blake2256, Hex } from '@polkadot-api/substrate-bindings';
+import { mergeUint8 } from '@polkadot-api/utils';
+import { captureException, m, reportListener, spans as S } from '@dotli/metrics';
+import { createAsyncTaskPool, createListenerSet, errorName, fromHex, log, toHex } from '@dotli/shared';
 
 const enc = new TextEncoder();
 
-// Precomputed once: twox128("Revive") ++ twox128("AccountInfoOf").
-const ACCOUNT_INFO_OF_PREFIX = mergeUint8([
-  Twox128(enc.encode("Revive")),
-  Twox128(enc.encode("AccountInfoOf")),
-]);
+const ACCOUNT_INFO_OF_PREFIX = mergeUint8([Twox128(enc.encode('Revive')), Twox128(enc.encode('AccountInfoOf'))]);
 
-/** SCALE `Vec<u8>` decoder (compact length + bytes), shared across calls. */
 const decodeVecU8 = Hex().dec;
 
+const INACCESSIBLE_RETRY_WINDOW_MS = 30_000;
+
+// Failures past a read's window, which end its retries.
+const pastWindow = new WeakSet();
+
 /**
- * Error thrown when an `Api` operation runs after the underlying chainHead
- * follow has stopped. Callers should treat this as "redial needed",
- * distinct from a `null` "slot not set" result.
+ * A light client answers `operationInaccessible` just after syncing, before any peer served the proof. The raw client
+ * does not retry it as papi's observable client does. A read retries for 30 s from its first attempt, so a read no
+ * peer serves fails however long each attempt takes.
  */
+const inaccessibleReads = createAsyncTaskPool({
+  poolSize: Infinity,
+  retryCount: Number.POSITIVE_INFINITY,
+  retryDelay: 750,
+  retryIf: error => error instanceof OperationInaccessibleError && !pastWindow.has(error),
+});
+
+function readWithRetry<T>(read: () => Promise<T>, now: () => number): Promise<T> {
+  const started = now();
+  return inaccessibleReads.call(async () => {
+    try {
+      return await read();
+    } catch (error) {
+      if (error instanceof OperationInaccessibleError && now() - started >= INACCESSIBLE_RETRY_WINDOW_MS) {
+        pastWindow.add(error);
+      }
+      throw error;
+    }
+  });
+}
+
+/** The chainHead follow stopped, so the caller must redial. Distinct from a `null` unset slot. */
 export class ApiStoppedError extends Error {
   constructor(cause?: unknown) {
-    super("chainHead follow stopped", { cause });
-    this.name = "ApiStoppedError";
+    super('chainHead follow stopped', { cause });
+    this.name = 'ApiStoppedError';
   }
 }
 
 export interface Api {
-  /**
-   * Resolves once the chain head is initialized and a block is available.
-   * Rejects with `ApiStoppedError` if the follow dies before then.
-   */
   whenReady(): Promise<void>;
-  /** Latest known best-block hash, or `null` before the first `initialized`. */
-  bestHash(): string | null;
-  /**
-   * Walk `Revive::AccountInfoOf[contractAddress]` at `atHash`. Returns the
-   * contract's child-trie id, or `null` if the account is missing or not a
-   * Contract variant. Always queries the network. There is no cache.
-   */
-  resolveTrieId(
-    contractAddress: string,
-    atHash: string,
-  ): Promise<Uint8Array | null>;
-  /**
-   * Read a 32-byte EVM storage slot of a Revive contract. Optional `atHash`
-   * and `trieId` let callers pin a multi-slot read to a single block and trie
-   * id (avoids torn reads when smoldot emits `bestBlockChanged` mid-loop).
-   * `null` if unset.
-   */
+  /** Keeps the best block pinned until `read` settles. Multi-call reads must go through here. */
+  withBestBlock<T>(read: (hash: string) => Promise<T>): Promise<T>;
+  /** Resolves `null` when the account is missing or not a contract. */
+  resolveTrieId(contractAddress: string, atHash: string): Promise<Uint8Array | null>;
+  /** Pass `atHash` and `trieId` to pin a multi-slot read to one block. Resolves `null` when unset. */
   readSlot(
     contractAddress: string,
     slotKey: `0x${string}`,
     atHash?: string,
     trieId?: Uint8Array,
   ): Promise<Uint8Array | null>;
-  /**
-   * Subscribe to the chainHead follow stopping. Fires at most once. Returns
-   * an unsubscribe.
-   */
+  /** Fires at most once. */
   onStop(cb: () => void): () => void;
-  /** Stop the chainHead follow. The owning `SubstrateClient` is NOT destroyed. */
+  /** Leaves the owning `SubstrateClient` alive. */
   destroy(): void;
 }
 
-/**
- * Build an `Api` over an existing `SubstrateClient`. Opens its own
- * `chainHead` follow (`withRuntime: false`, no metadata fetch) and reads
- * from the best block. The caller owns the client's lifecycle.
- */
-export function createRawApi(client: SubstrateClient): Api {
+/** Opens its own `chainHead` follow without runtime. The caller owns the client. */
+export function createRawApi(
+  client: SubstrateClient,
+  { now = () => performance.now() }: { now?: () => number } = {},
+): Api {
   let bestHashRef: string | null = null;
   let stopped = false;
-  const stopCbs = new Set<() => void>();
+  const stops = createListenerSet<undefined>({ onListenerError: reportListener('resolve', 'resolver.stop') });
   let resolveReady: (() => void) | null = null;
   let rejectReady: ((err: unknown) => void) | null = null;
   const ready = new Promise<void>((res, rej) => {
@@ -103,38 +97,86 @@ export function createRawApi(client: SubstrateClient): Api {
     }
     stopped = true;
     if (rejectReady !== null) {
-      // Always wrap so callers can `instanceof ApiStoppedError` to
-      // distinguish "follow died" from a transient network error inside an
-      // operation. The original error is preserved as `cause`.
-      const wrapped =
-        err instanceof ApiStoppedError ? err : new ApiStoppedError(err);
+      const wrapped = err instanceof ApiStoppedError ? err : new ApiStoppedError(err);
       rejectReady(wrapped);
       rejectReady = null;
       resolveReady = null;
     }
-    for (const cb of stopCbs) {
-      try {
-        cb();
-        // eslint-disable-next-line no-restricted-syntax -- defensive multicast: one buggy subscriber must not block the others.
-      } catch {
-        /* ignore */
+    stops.emit(undefined);
+  }
+
+  // A server may stop a follow that lets pins pile up. Reads only target descendants of the newest finalized
+  // block, so blocks finality leaves behind or prunes are unpinned, once the last read holding them ends.
+  let newestFinalized: string | null = null;
+  const holds = new Map<string, number>();
+  const retiredWhileHeld = new Set<string>();
+
+  function unpin(hashes: string[]): void {
+    if (hashes.length === 0 || stopped) {
+      return;
+    }
+    follow.unpin(hashes).catch((err: unknown) => {
+      // The follow stopped, and its pins went with it.
+      if (err instanceof DisjointError) {
+        return;
+      }
+      captureException(err, { flow: 'resolve', step: 'unpin' });
+      log.error('[dot.li resolver] the light client refused an unpin:', err);
+      m.count(S.RESOLVE_UNPIN, { outcome: 'error', reason: errorName(err) ?? 'unknown' });
+    });
+  }
+
+  function retire(hashes: string[]): void {
+    const free: string[] = [];
+    for (const hash of hashes) {
+      if (holds.has(hash)) {
+        retiredWhileHeld.add(hash);
+      } else {
+        free.push(hash);
       }
     }
+    unpin(free);
+  }
+
+  function release(hash: string): void {
+    const count = (holds.get(hash) ?? 0) - 1;
+    if (count > 0) {
+      holds.set(hash, count);
+      return;
+    }
+    holds.delete(hash);
+    if (retiredWhileHeld.delete(hash)) {
+      unpin([hash]);
+    }
+  }
+
+  /** `hashes` are oldest first. Returns the blocks left behind. */
+  function advanceFinalized(hashes: string[]): string[] {
+    const newest = hashes.at(-1);
+    if (newest === undefined) {
+      return [];
+    }
+    const behind = newestFinalized === null ? hashes.slice(0, -1) : [newestFinalized, ...hashes.slice(0, -1)];
+    newestFinalized = newest;
+    return behind;
   }
 
   const follow = client.chainHead(
     false,
-    (event) => {
-      if (event.type === "initialized") {
+    event => {
+      if (event.type === 'initialized') {
         bestHashRef = event.finalizedBlockHashes.at(-1) ?? null;
+        retire(advanceFinalized(event.finalizedBlockHashes));
         resolveReady?.();
         resolveReady = null;
         rejectReady = null;
-      } else if (event.type === "bestBlockChanged") {
+      } else if (event.type === 'bestBlockChanged') {
         bestHashRef = event.bestBlockHash;
+      } else if (event.type === 'finalized') {
+        retire([...advanceFinalized(event.finalizedBlockHashes), ...event.prunedBlockHashes]);
       }
     },
-    (err) => {
+    err => {
       markStopped(err);
     },
   );
@@ -154,64 +196,76 @@ export function createRawApi(client: SubstrateClient): Api {
     }
   }
 
-  async function resolveTrieId(
-    contractAddress: string,
-    atHash: string,
-  ): Promise<Uint8Array | null> {
-    const addr = fromHex(contractAddress); // 20-byte H160, Identity hasher
+  async function resolveTrieId(contractAddress: string, atHash: string): Promise<Uint8Array | null> {
+    // `AccountInfoOf` uses the Identity hasher.
+    const addr = fromHex(contractAddress);
     const mainKey = mergeUint8([ACCOUNT_INFO_OF_PREFIX, addr]);
-    const accountInfoHex = await withStopGuard(() =>
-      follow.storage(atHash, "value", toHex(mainKey), null),
+    const accountInfoHex = await readWithRetry(
+      () => withStopGuard(() => follow.storage(atHash, 'value', toHex(mainKey), null)),
+      now,
     );
     if (accountInfoHex === null) {
       return null;
     }
     const accountInfo = fromHex(accountInfoHex);
-    // AccountInfo.account_type is an enum: tag 0x00 = Contract(ContractInfo).
-    // ContractInfo.trie_id is its first field, a SCALE `Vec<u8>`.
+    // Tag 0x00 is `Contract(ContractInfo)`, whose first field is `trie_id` as a SCALE `Vec<u8>`.
     if (accountInfo[0] !== 0x00) {
       return null;
     }
     return fromHex(decodeVecU8(accountInfo.slice(1)));
   }
 
+  async function withBestBlock<T>(read: (hash: string) => Promise<T>): Promise<T> {
+    await ready;
+    const hash = bestHashRef;
+    if (hash === null || stopped) {
+      throw new ApiStoppedError();
+    }
+    holds.set(hash, (holds.get(hash) ?? 0) + 1);
+    try {
+      return await read(hash);
+    } finally {
+      release(hash);
+    }
+  }
+
+  async function readSlotAt(
+    contractAddress: string,
+    slotKey: `0x${string}`,
+    hash: string,
+    trieId: Uint8Array | undefined,
+  ): Promise<Uint8Array | null> {
+    const trie = trieId ?? (await resolveTrieId(contractAddress, hash));
+    if (trie === null) {
+      return null;
+    }
+    const childKey = Blake2256(fromHex(slotKey));
+    const valueHex = await readWithRetry(
+      () => withStopGuard(() => follow.storage(hash, 'value', toHex(childKey), toHex(trie))),
+      now,
+    );
+    return valueHex === null ? null : fromHex(valueHex);
+  }
+
   return {
     whenReady: () => ready,
-    bestHash: () => bestHashRef,
+    withBestBlock,
     resolveTrieId,
     async readSlot(contractAddress, slotKey, atHash, trieId) {
+      if (atHash === undefined) {
+        return withBestBlock(hash => readSlotAt(contractAddress, slotKey, hash, trieId));
+      }
       await ready;
-      const hash = atHash ?? bestHashRef;
-      if (hash === null) {
-        return null;
-      }
-      const trie = trieId ?? (await resolveTrieId(contractAddress, hash));
-      if (trie === null) {
-        return null;
-      }
-      const childKey = Blake2256(fromHex(slotKey)); // Key::Fix hash path
-      const valueHex = await withStopGuard(() =>
-        follow.storage(hash, "value", toHex(childKey), toHex(trie)),
-      );
-      return valueHex === null ? null : fromHex(valueHex);
+      return readSlotAt(contractAddress, slotKey, atHash, trieId);
     },
     onStop(cb) {
       if (stopped) {
-        // Fire immediately for late subscribers, matching `onSmoldotFatal`.
-        try {
-          cb();
-          // eslint-disable-next-line no-restricted-syntax -- defensive: one buggy late subscriber must not break the registration.
-        } catch {
-          /* ignore */
-        }
+        stops.deliver(cb, undefined);
         return () => {
           /* already stopped */
         };
       }
-      stopCbs.add(cb);
-      return () => {
-        stopCbs.delete(cb);
-      };
+      return stops.subscribe(cb);
     },
     destroy() {
       try {

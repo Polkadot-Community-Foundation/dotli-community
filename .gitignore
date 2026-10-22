@@ -10,20 +10,20 @@ lerna-debug.log*
 node_modules
 .DS_Store
 dist
+.astro
 coverage
 *.local
 
-# Ad-hoc screenshots dropped at the repo root during debugging.
-# Documentation images should live under docs/ (or be explicitly
-# force-added) rather than at the root.
+# Debug screenshots. Doc images belong under docs/.
 /*.png
 /*.jpg
 /*.jpeg
 
-# Lock files (keep bun.lock committed for reproducible CI builds)
-package-lock.json
+# Lock files of other package managers
 yarn.lock
 pnpm-lock.yaml
+bun.lock
+bun.lockb
 
 # Editor directories and files
 .vscode/*
@@ -41,6 +41,10 @@ test-results/
 playwright-report/
 **/results.json
 apps/host/**/.auth/
+# Built by the functional suite's global setup.
+apps/host/tests/functional/.wire/
+# Machine-local cold-start runs. CI keeps its baseline as an artifact.
+apps/host/tests/performance/results/
 
 # PAPI
 .papi/descriptors
@@ -49,7 +53,7 @@ apps/host/**/.auth/
 .env*
 !.env.example
 
-# Deploy (uncommitted SSH targets; see deploy.env.example)
+# Deploy targets, see deploy.env.example
 deploy.env
 
 # Turbo
@@ -74,10 +78,18 @@ deploy.env
 opencode.json
 GEMINI.md
 
-# Vendored SDK packages (debug branch only).
-# Override the generic `dist` / `.papi/descriptors` rules so the
-# prebuilt packages under vendor/truapi-debug/ ship to CI.
+# Prebuilt vendored SDK packages ship to CI despite the rules above (debug branch only).
 !vendor/truapi-debug/**/dist
 !vendor/truapi-debug/**/dist/**
 !vendor/truapi-debug/**/.papi
 !vendor/truapi-debug/**/.papi/**
+
+# Agent planning docs
+docs/superpowers/
+
+# Storybook
+storybook-static
+.vrt/
+
+# test:vrt screenshot attachments
+.vitest/

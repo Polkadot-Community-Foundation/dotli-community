@@ -1,21 +1,60 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { defineConfig } from "vitest/config";
+import { defineConfig } from 'vitest/config';
+import solid from '@solidjs/vite-plugin';
+import { TEST_DEFINES } from '@config/vite/test-defines';
 
+// Unit specs sit beside their module and run under Node. The functional tests of the host's views, the islands and the
+// shell's DOM bindings run under happy-dom. The Playwright suites have their own configs.
 export default defineConfig({
+  plugins: [solid()],
+  // `npm run link:truapi` points @parity/truapi-provider outside the workspace, and Vite's strict file serving would
+  // refuse its `?url` wasm import.
+  server: { fs: { strict: false } },
   test: {
-    // Only unit tests. The e2e, functional and performance suites are
-    // Playwright and have their own configs and runners. Tests sitting beside
-    // the file they cover are picked up from `src` too.
-    include: ["tests/unit/**/*.test.ts", "src/**/*.test.ts"],
-    environment: "happy-dom",
     globals: false,
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'host:unit',
+          include: ['src/**/*.spec.{ts,tsx}'],
+          exclude: ['src/islands/**', 'src/runtime/**'],
+          environment: 'node',
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'host:runtime',
+          include: ['src/runtime/**/*.spec.ts'],
+          environment: 'node',
+          // The runtime's specs read metrics through a recorder nobody else binds.
+          setupFiles: ['@dotli/metrics/testing/setup'],
+        },
+      },
+      {
+        extends: true,
+        test: { name: 'host:islands', include: ['src/islands/**/*.spec.{ts,tsx}'], environment: 'node' },
+        // The islands' bindings run Solid, and Node's own conditions pick its server build, whose effects never re-run.
+        ssr: { resolve: { conditions: ['browser', 'development'] } },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'host:functional',
+          include: ['tests/{components,islands,shell}/**/*.test.{ts,tsx}'],
+          environment: 'happy-dom',
+          setupFiles: ['tests/setup.ts'],
+        },
+      },
+    ],
   },
   define: {
-    // On, so the tests assert the real span tree against a fake Sentry rather
-    // than the inert no-op handles a stripped build produces.
-    "import.meta.env.VITE_METRICS": '"true"',
-    "import.meta.env.VITE_RESOLUTION_SAMPLE_RATE": '"1"',
+    ...TEST_DEFINES,
+    // On, so tests assert the span tree against a fake Sentry, not the inert handles of a build without metrics.
+    'import.meta.env.VITE_METRICS': '"true"',
+    'import.meta.env.VITE_RESOLUTION_SAMPLE_RATE': '"1"',
   },
 });
