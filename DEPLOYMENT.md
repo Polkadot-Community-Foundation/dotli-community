@@ -117,3 +117,7 @@ builds are rsynced separately, so check each origin to cover all of them:
 These gateways are deployed manually, not by CI. Set `REMOTE_SUMMIT` in `deploy.env` to the box's SSH target, then run
 `make deploy ENV=<env>` and `make deploy-nginx ENV=<env>`. The on-box `build:prod` gets `VITE_NETWORKS` from
 `VITE_NETWORKS_<env>` in the Makefile, so no local `.env` is needed.
+
+Both serve the devnet, so every target that changes them runs only from a clean checkout of the `devnet` branch that
+matches `origin/devnet`. A successful `make deploy` tags the deployed commit `devnet/<YYYY-MM-DD>.<n>` and pushes the
+tag. To roll back, revert on `devnet` by PR and deploy again. Any other `ENV` is refused.

@@ -183,6 +183,7 @@ deploy: _require-env provision-node
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/host/dist/     $(REMOTE_PATH)/host/; \
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/sandbox/dist/  $(REMOTE_PATH)/app/; \
 		rsync -av --delete --filter='P /assets/' $(REMOTE_BUILD_PATH)/apps/protocol/dist/ $(REMOTE_PATH)/protocol/"
+	scripts/lane-deploy.sh tag $(ENV) $(SITE_$(ENV))
 
 # A literal "#" goes through _hash because make >= 4.3 keeps the backslash of a "\#" inside a function call.
 _hash := \#
@@ -234,3 +235,4 @@ _require-env-name:
 
 _require-env: _require-env-name
 	@test -n "$(or $(REMOTE),$(REMOTE_FOR_$(ENV)))" || (echo "No deploy target for ENV=$(ENV). Set REMOTE_PRD/REMOTE_STG in deploy.env (copy deploy.env.example) or pass REMOTE=user@host."; exit 1)
+	@scripts/lane-deploy.sh check $(ENV)
