@@ -1,5 +1,6 @@
 ---
-summary: "The prebuilt dotli artifacts (container image and release tarball), each repointed at a forked dev chain per run without rebuilding"
+summary: "The prebuilt dotli artifacts (container image and release tarball), each repointed at a forked dev chain
+  per run without rebuilding"
 read_when:
   - You want to run dotli against a locally forked chain (zombie-bite, chopsticks)
   - You are changing the runtime network config schema or how it reaches the browser
@@ -74,13 +75,13 @@ stops the container rather than starting with the override silently dropped.
 
 ## Config schema
 
-`RuntimeNetworkConfig` in `packages/config/src/network.ts` is the source of
-truth. Two top-level keys, both optional:
+`RuntimeNetworkConfig` in `packages/config/src/readRuntimeNetworkConfig.ts` is the source of
+truth. Three top-level keys, all optional:
 
 | Key | Effect |
 |---|---|
 | `enabled` | Networks offered in the Settings selector. Replaces `VITE_NETWORKS`. First entry is the default. |
-| `networks` | Per-network patches, keyed by `NetworkName`, merged over the built-in entry. |
+| `networks` | Per-network patches, keyed by a name in `NETWORK_NAMES`, merged over the built-in entry. |
 | `baseDomain` | Explicit base domain, for hosts with more than two segments. See below. |
 
 Only **endpoints** are overridable, per network:
@@ -100,7 +101,7 @@ move.
 
 Two more rules:
 
-**Patches existing networks, no new names**, so `NetworkName` stays a closed
+**Patches existing networks, no new names**, so `Network` stays a closed
 union. Use `label` to say what a repointed network really is.
 
 **Arrays replace, they do not concatenate.** `{"rpcs":["ws://localhost:9944"]}`
@@ -114,15 +115,17 @@ while believing otherwise.
 
 ## Why `*.localhost` on one port
 
-dotli needs four hostnames: an apex, `host.<domain>` for the protocol iframe,
-`*.app.<domain>` for sandboxes, and `*.<domain>` for the shell. The container
-serves them as `localhost`, `host.localhost`, `*.app.localhost`, `*.localhost`,
-mirroring what `scripts/preview-server.ts` does for local previews.
+dotli needs three hostnames: an apex, `*.app.<domain>` for sandboxes, and
+`*.<domain>` for the shell. The apex also serves the protocol iframe under
+`/p/` and the session window at `/s/auth`, `/s/signout`, `/s/manage`
+and `/s/sign`. The container serves them as `localhost`, `*.app.localhost` and
+`*.localhost`. `host.localhost` still answers with the protocol build for one
+more release, so a shell cached by the previous release finds its frame.
 
 This needs no code changes and no DNS setup: the flat `*.localhost` shape is
 already special-cased in `getProtocolOrigin` (`packages/protocol/src/client.ts`),
-`dotUrl` (`apps/host/src/components/landing/dot-url.ts`) and `appOrigin`
-(`apps/host/src/runtime/product-frame.ts`), browsers resolve every `*.localhost` name to
+`dotUrl` (`apps/host/src/components/landing/dotUrl.ts`) and `appOrigin`
+(`apps/host/src/runtime/productFrame.ts`), browsers resolve every `*.localhost` name to
 loopback, and `http://*.localhost` is a secure context so `crypto.subtle`,
 service workers and SharedWorker all work.
 
@@ -138,11 +141,11 @@ the bundle reads the port from the current location.
 
 ## Base domain
 
-dot.li needs four hostnames (an apex, `host.<base>`, `*.<base>` and
-`*.app.<base>`) and normally derives `<base>` from the last two segments of the
-current hostname. That is right for `dot.li` and `paseo.li` and wrong for anything
-deeper: `dotli.ppn-65iw.pdp-stg-scw.parity.io` would derive `parity.io`, then look
-for its protocol iframe at `host.parity.io` and accept `*.app.parity.io` as sandbox
+dot.li needs three hostnames (an apex, `*.<base>` and `*.app.<base>`) and normally
+derives `<base>` from the last two segments of the current hostname. That is right
+for `dot.li` and `paseo.li` and wrong for anything deeper:
+`dotli.ppn-65iw.pdp-stg-scw.parity.io` would derive `parity.io`, then look for its
+protocol iframe at `parity.io/p/` and accept `*.app.parity.io` as sandbox
 origins.
 
 Such hosts must state it:
@@ -183,7 +186,7 @@ a restart takes effect immediately. Bypass the entrypoint
 apply.
 
 Outside the container the same path is served from `$DOTLI_NETWORK` by the vite
-dev servers (via the plugin), by `scripts/preview-server.ts` and by the tarball's
+dev servers (via the plugin), by `scripts/previewServer.ts` and by the tarball's
 `serve.mjs`, with the container's headers: same-origin only and no CORS, since the
 config can name private RPC endpoints. Each reads the variable once at start, so a
 value that is not JSON stops the server there. Runtime config is testable without
@@ -204,13 +207,15 @@ that survives every release is cheaper to abuse than patching a hash-named
 bundle, and the hosted deployments have no use for it. Both halves are gated
 independently, so neither alone turns it on:
 
-- `config/vite/src/runtime-network-config-plugin.ts` **injects** the script
+- `config/vite/src/runtimeNetworkConfigPlugin.ts` **injects** the script
   tag on opt-in rather than stripping it on opt-out, so the default is safe by
   construction: a default build's HTML is byte-identical to one from before
   runtime config existed.
-- `RUNTIME_CONFIG_ENABLED` in `network.ts` gates the reader. In a default build
-  the minifier folds the guard and `readRuntimeConfig()` compiles to
-  `return null`, so the global read is absent rather than merely bypassed.
+- `RUNTIME_CONFIG_ENABLED` in `readRuntimeNetworkConfig.ts` gates both readers,
+  `readRuntimeNetworkConfig()` and `readRuntimeGlobal()`, each of which checks
+  it before it reads the global. In a default build the minifier folds the
+  guard and each reader compiles to returning `null` (or `undefined` for `readRuntimeGlobal()`), so the global read is
+  absent rather than merely bypassed.
 
 Inside the image the global **is** live and writable from the page. That is
 acceptable for a local dev container. Whoever runs it already controls
@@ -231,7 +236,7 @@ production bootnodes, so smoldot may peer with the real network and accept it as
 correct while the UI names your fork. Genesis checks cannot catch this. Use
 `rpc-gateway` against a fork, or supply a chain spec with bootnodes scrubbed.
 
-**Mode preferences are not shared across subdomains.** `preview-server.ts`
+**Mode preferences are not shared across subdomains.** `previewServer.ts`
 implements a `/__dotli-mode/<key>` store to work around `localhost` being on the
 Public Suffix List; nginx has no equivalent. On localhost the settings
 resolution (`resolveSettings`, with `preferLocal`) prefers the per-origin choice
@@ -262,7 +267,7 @@ trusting them:
   looks fine while running against the public chain, which is the worst failure
   either artifact could ship. The job greps all three `index.html` files for the
   script tag.
-- **`build:prod`, not `build`**: `compress-dist.ts` only runs there, so without it
+- **`build:prod`, not `build`**: `compressDist.ts` only runs there, so without it
   no `.br`/`.gz` siblings exist and the precompressed negotiation is dead code.
   The job checks for them.
 
