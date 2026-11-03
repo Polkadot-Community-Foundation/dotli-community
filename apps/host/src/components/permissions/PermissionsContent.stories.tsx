@@ -5,8 +5,8 @@ import type { JSX } from '@solidjs/web';
 import type { Meta, StoryObj } from 'storybook-solidjs-vite';
 import { expect, waitFor, within } from 'storybook/test';
 import { byId, byTestId } from '@dotli/ui/testing';
-import type { PermissionStatus } from '../../runtime/permissions.js';
-import { expectPhone, openSurface, TopbarFrame } from '../../testing/stories/topbar-frame.js';
+import type { PermissionStatus } from '../../runtime/permissionPolicy.js';
+import { expectPhone, openSurface, TopbarFrame } from '../../testing/stories/topbarFrame.js';
 import {
   givenApp,
   givenNotice,
@@ -18,7 +18,7 @@ import {
   resetStoryPermissions,
   STORY_PERMISSIONS,
   storyPermissions,
-} from '../../testing/stories/permissions-fixtures.js';
+} from '../../testing/stories/permissionsFixtures.js';
 import { PermissionsItem } from './PermissionsItem.js';
 import { SECURE, TRUSTED, UNLIMITED } from './presets.js';
 
@@ -80,7 +80,17 @@ async function expectPreset(id: string, modified: boolean): Promise<void> {
 const GROUPS = [
   {
     label: 'Device',
-    names: ['Notifications', 'Camera', 'Microphone', 'Location', 'Bluetooth', 'NFC', 'Clipboard', 'Biometrics'],
+    names: [
+      'Notifications',
+      'Camera',
+      'Microphone',
+      'Location',
+      'Motion',
+      'Bluetooth',
+      'NFC',
+      'Clipboard',
+      'Biometrics',
+    ],
   },
   { label: 'Account and chain', names: ['IdentityDisclosure', 'ChainSubmit', 'PreimageSubmit', 'StatementSubmit'] },
 ];

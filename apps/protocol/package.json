@@ -2,15 +2,15 @@
   "name": "@dotli/protocol-app",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.11.4",
+  "version": "0.12.0",
   "type": "module",
   "sideEffects": [
     "./src/main.ts",
-    "./src/protocol-shared-worker.ts"
+    "./src/protocolSharedWorker.ts"
   ],
   "scripts": {
     "build": "vite build",
-    "build:prod": "vite build && node ../../scripts/compress-dist.ts",
+    "build:prod": "vite build && node ../../scripts/compressDist.ts",
     "dev": "vite",
     "lint": "eslint .",
     "test": "vitest run",

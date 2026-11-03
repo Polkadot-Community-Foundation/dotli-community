@@ -2,7 +2,7 @@
   "name": "@dotli/storage",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.11.4",
+  "version": "0.12.0",
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -18,7 +18,7 @@
   "devDependencies": {
     "@config/eslint": "*",
     "@config/typescript": "*",
-    "fake-indexeddb": "^6.2.6"
+    "fake-indexeddb": "^6.2.7"
   },
   "dependencies": {
     "@dotli/config": "*",

@@ -1,7 +1,7 @@
 # `@dotli/protocol`
 
-The host page's client for the hidden protocol frame, the origin that runs the light client and the shared store. It
-turns postMessage traffic into promises, streams and remote chain connections.
+The host page's client for the hidden protocol frame, the page at `/p/` on the root domain that runs the light client
+and the shared store. It turns postMessage traffic into promises, streams and remote chain connections.
 
 ## Responsibility
 
@@ -41,14 +41,20 @@ flowchart TB
   trail and the errors (the flat name it had before the methods were grouped into sections, such as `resolveOwner` or
   `authStorageRead`, so dashboards read on unchanged), its budget, whether a page load's trail names it, whether each
   call is timed, and whether the frame answers it once it listens, before its light client is ready.
+- The frame's origin is the root domain's, or on a local root (`localhost`, or `local.host` in a development build) the
+  page's own scheme on that root, with the host's dev port in a development build and otherwise the page's own port. The
+  frame module adds its own `/p/` path to that origin, and the transport stays locked to the origin. The frame shares
+  that origin with the host's pages on the root domain, so the provider tells the frame from those pages by its window,
+  not by its origin.
 - The frame module creates the iframe, publishes a `ProtocolStatus` (`idle`, `booting`, `listening`, `ready`, `failed`)
   and owns one provider and one transport per iframe. The window provider admits only bytes from that iframe's window at
   the frame's origin. It rebuilds itself when lost, after a backoff that grows while rebuilds keep failing, and a
   request while it is down boots one at once. Boot is deduped with a task pool. It is configured with the backend, and
   names it in its URL in the frame's own words, which a host page of an earlier release still sends.
 - The facades are the host's parts written against the transport: name resolution, remote chains, the shared store and
-  telemetry. The client factory builds them and returns them as one object. The page's instance is `protocolClient()`,
-  built on first use, and callers reach every request through it.
+  telemetry. The client factory builds them and returns one object of entities: `frame`, `sharedStore`, `sharedAuth`,
+  `sharedMode`, `sharedWallet`, `resolve`, `telemetry` and `chains`, each with verb members. The page's instance is
+  `getProtocolClient()`, built on first use, and callers reach every request through it.
 - A request has a budget per method. No deadline crosses the wire, so the frame sizes its own work from the same
   budgets. A shared store request's budget runs from the call. A chain or resolve request's runs once the frame is
   ready, since it also waits for the light client. A request that outlives its budget is given up on the host and its
@@ -94,10 +100,13 @@ were.
   subscription ends with it, so a remote chain connection hears that the frame stopped. The transport posts nothing as
   it closes, so the frame lets go of what it served as its iframe goes. The frame is then rebuilt.
 - A call made while the frame is down waits for the next transport.
+- The wallet save carries the identity, and the store and the wallet gained their compare-and-clear calls, which moved
+  the wire to a new version on purpose. A cached older shell then meets the reload screen instead of saving a wallet the
+  frame would read back without it.
 - A version mismatch is final. A rebuild cannot fix it and a reload can, so the frame moves to `failed`, stops
   rebuilding, and rejects every waiting and later call with `ProtocolVersionMismatchError`.
 - A frame rebuilt while an app is open can come from a newer release and refuse the page's wire. The client's
-  `onProtocolVersionMismatch` hears that once, and at once for a listener that subscribes after it, so the host can
+  `frame.subscribeVersionMismatch` hears that once, and at once for a listener that subscribes after it, so the host can
   replace the open app with its reload screen.
 - A boot that fails is counted under the frame's ready metric with the step that failed, and logged. A fatal light
   client or a failed init ends the frame status subscription with that error.
@@ -128,7 +137,19 @@ a call that is no longer waiting is ignored without a count.
 
 ### Shared store and chains
 
-- Shared store keys are named in one place, and only allowed origins may use them.
+- Shared store keys are named in one place, and only allowed origins may use them: a host or landing page on the root
+  domain or a subdomain, never a product's sandbox. A frame embedded under a local root gets a store of its own in
+  production, so any origin under a local root but a sandbox's is allowed. A production build trusts only `localhost` as
+  a local root, never the public `local.host`.
+- Under a product, Safari gives the frame that product's own copy of the store, while other browsers give every page the
+  one main store. The host keeps the copies in step through its sign-in window, which this package does not know.
+- A shared auth write resolves whether it changed the value, and an equal value is neither written nor told to other
+  tabs. A clear may name the value it expects (`sharedAuth.clearIf`), and the local wallet's forget the version a read
+  gave (`sharedWallet.forgetIf`). The frame then reads and clears in one step on its store and resolves whether it
+  cleared, so what another tab wrote between a page's read and its clear stays.
+- The shared auth changes are tagged. A `session` change carries an auth key and its new value, and a `wallet` change
+  says only that the local wallet record of a site changed, so a page hears another tab's import or forget on the
+  subscription it already holds.
 - A remote chain connection answers a request its chain halted under with the chain pool's halt marker, and tells its
   consumer whether the chain or the whole frame stopped. A connection its consumer leaves before it connects settles as
   a disconnect, and a chain message that cannot be parsed is reported, counted and dropped.
@@ -138,35 +159,38 @@ a call that is no longer waiting is ignored without a count.
 
 ### `@dotli/protocol`
 
-- Client: `protocolClient` (the page's client, built on first use: frame, resolution, remote chains, shared store and
-  telemetry as one object), `ProtocolClient`, `ProtocolFrameConfig`, `ProtocolStatus`, `getProtocolOrigin`.
+- Client: `getProtocolClient` (the page's client, built on first use: `frame`, `sharedStore`, `sharedAuth`,
+  `sharedMode`, `sharedWallet`, `resolve`, `telemetry` and `chains` as one object, whose shared store writes of three
+  inputs take one params object), `ProtocolClient`, `ProtocolFrameConfig`, `ProtocolStatus`, `getProtocolOrigin`.
 - Remote chains: `isRemoteChainSupported`, `isRemoteChainConnectable`, `RemoteChainProvider`.
-- Shared store: `SharedStoreStatus`, `SHARED_CORE_SESSION_KEY`, the key helpers `buildSharedAuthStorageKey`,
-  `buildSharedModeStorageKey`, `isValidSharedAuthKey`, `isValidSharedModeKey`, and the request guards
-  `isSharedAuthOriginAllowed`, `isSharedAuthSiteId` and `isSharedModeRequestMethod`, which tells the mode store's
-  methods from the rest of the storage section.
+- Shared store: `SharedStoreStatus`, `SHARED_CORE_SESSION_KEY`, `SHARED_AUTH_KEY_PREFIX`, `SHARED_MODE_KEY_PREFIX`, the
+  key helpers `buildSharedAuthStorageKey`, `buildSharedModeStorageKey`, `isValidSharedAuthKey`, `isValidSharedModeKey`,
+  and the request guards `isSharedAuthOriginAllowed(origin, { dev? })`, `isSharedAuthSiteId` and
+  `isSharedModeRequestMethod`, which tells the mode store's methods from the rest of the storage section.
 - Local wallet: `LocalWalletIdentity`, `LocalWalletReadResult` (a read's `status`: `none`, `unreadable`, or `ok` with
-  the entropy and the cached identity).
+  the entropy, the cached identity and the record's version, which changes with every save), and the checks for a wallet
+  that did not come through the codec: `isLocalWalletEntropy` (a recovery phrase's entropy size) and
+  `isLocalWalletIdentity` (the identity's shape).
 - The protocol as a transport schema: `protocolSchema`, whose `sections` `frame`, `resolve`, `storage`, `wallet` and
   `chain` hold the method objects every call and handler is made with, with the resolution hello and the typed failures
   of the frame status, the resolve methods and chain connections. `ProtocolSchema`, `ProtocolHello`, `ProtocolTransport`
   and `ProtocolContext` type a transport over it and its handlers' context. `ProtocolServing` is the serving half of a
   transport for the schema's own errors, and `ProtocolHandler<typeof method>` a method's handler. `FrameFailure` and
   `RemoteFailure` are its typed failures, `DomainFailure` both, `SubscriptionEnd<E>` how a subscription ends (`Ok`, or a
-  `CallError` of its reason `E`), `endListeners(end)` (a subscription's `interrupt` and `fail` listeners as one `end`
-  with a `SubscriptionEnd`, a failure of the library's as `err(failure)`), `SharedAuthChange` what the shared auth feed
-  sends, and `TelemetryEvent` what the frame reports on its telemetry feed.
-- The method policy: `policyOf` and `MethodPolicy`. For the frame to size its own work, `budgetOf` (a method's budget,
+  `CallError` of its reason `E`), `createEndListeners(end)` (a subscription's `interrupt` and `fail` listeners as one
+  `end` with a `SubscriptionEnd`, a failure of the library's as `err(failure)`), `SharedAuthChange` what the shared auth
+  feed sends, and `TelemetryEvent` what the frame reports on its telemetry feed.
+- The method policy: `getPolicy` and `MethodPolicy`. For the frame to size its own work, `getBudget` (a method's budget,
   or null for one waited on without a timer).
-- For the frame, which serves the schema and waits on or relays another frame's calls: `callName` and `CallName` (a
+- For the frame, which serves the schema and waits on or relays another frame's calls: `getCallName` and `CallName` (a
   method's one name for metrics, the trail and spans), `createFrameStatus` with `FrameStatus`, `FrameStatusSink` and
   `FrameStatusEnd` (the `frame.status` subscription a frame serves, which tells a late subscriber where the frame stands
-  at once), the two sides of a failure's crossing, `frameStatusEnd` (how a frame ends its status on an error),
-  `fromTransportError` (a transport's closing error under the protocol's class) and `remoteEnd` (how a resolver or chain
-  error ends a call, typed or as the handler's own failure) beside `failureOf` (a call's failure as the error host code
-  sees, by its method), and `createWireReport(side, { count, warn? })` (the `onIssue`, `onNotBytes` and
+  at once), the two sides of a failure's crossing, `toFrameStatusEnd` (how a frame ends its status on an error),
+  `fromTransportError` (a transport's closing error under the protocol's class) and `toRemoteEnd` (how a resolver or
+  chain error ends a call, typed or as the handler's own failure) beside `getFailure` (a call's failure as the error
+  host code sees, by its method), and `createWireReport({ side, count, warn? })` (the `onIssue`, `onNotBytes` and
   `onRefusedOrigin` hooks for a transport and its window provider, which count and log what they cannot handle
   themselves under the side that reports it, as the host's own transport is, and a refused origin only on its first
   bytes, with `warn` the shared log's when unset).
-- Frame and errors: `backendOfFrameMode`, `ProtocolFatalError`, `ProtocolInitFailedError`, `ProtocolPortReleasedError`,
-  `ProtocolVersionMismatchError`.
+- Frame and errors: `getBackendOfFrameMode`, `ProtocolFatalError`, `ProtocolInitFailedError`,
+  `ProtocolPortReleasedError`, `ProtocolVersionMismatchError`.

@@ -3,6 +3,14 @@
 
 /* One element morphs between the open pill and the collapsed status capsule (data-hidden). */
 
+/* The open pill's cap. Registered so it computes to px, which the action group reads as its room, and stays put while
+   the max-width it sets morphs. */
+@property --topbar-max-width {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 /* The row is centred in the bar at its full width, so while the bar morphs its edges open and close around content
    that holds still. */
 .topbar {
@@ -14,7 +22,8 @@
   justify-content: center;
   box-sizing: border-box;
   width: fit-content;
-  max-width: calc(95vw - var(--safe-left) - var(--safe-right));
+  --topbar-max-width: calc(95vw - var(--safe-left) - var(--safe-right));
+  max-width: var(--topbar-max-width);
   height: var(--h-bar);
   margin: 0;
   padding: 0;
@@ -26,7 +35,7 @@
   color: var(--chrome-text);
   font-family: var(--font-sans);
   transform: translateX(-50%);
-  /* Animates width to fit-content where supported, elsewhere it snaps. */
+  /* Animates width to fit-content where supported. */
   interpolate-size: allow-keywords;
   /* No overshoot, or the row inside lurches as a spring settles. */
   transition:
@@ -39,13 +48,35 @@
 @media (min-width: 561px) {
   /* Clip, not hidden: a hidden overflow scrolls the strip away when a clipped control takes focus. */
   .topbar {
+    --capsule-width: 120px;
     overflow: clip;
   }
   .topbar[data-hidden] {
     top: calc(var(--sp-1) + var(--safe-top));
-    width: 120px;
+    width: var(--capsule-width);
     height: var(--sp-2);
     box-shadow: var(--chrome-shadow-capsule);
+  }
+  /* Without interpolate-size, as in Safari, a width can't animate to fit-content. There the width always follows the
+     content and the cap animates instead. The cap opens towards 95vw, past the content, so it opens linearly, or it
+     reaches the content at once. */
+  @supports not (interpolate-size: allow-keywords) {
+    .topbar {
+      transition:
+        max-width var(--dur-morph) linear,
+        height var(--dur-morph) var(--ease-out),
+        top var(--dur-morph) var(--ease-out),
+        box-shadow var(--dur);
+    }
+    .topbar[data-hidden] {
+      width: fit-content;
+      max-width: var(--capsule-width);
+      transition:
+        max-width var(--dur-morph) var(--ease-out),
+        height var(--dur-morph) var(--ease-out),
+        top var(--dur-morph) var(--ease-out),
+        box-shadow var(--dur);
+    }
   }
 }
 .row {

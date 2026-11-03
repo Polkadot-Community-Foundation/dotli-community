@@ -2,7 +2,7 @@
   "name": "@dotli/metrics",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.11.4",
+  "version": "0.12.0",
   "type": "module",
   "sideEffects": [
     "./src/testing/setup.ts"
@@ -24,6 +24,6 @@
   },
   "dependencies": {
     "@dotli/shared": "*",
-    "@sentry/browser": "^11.8.0"
+    "@sentry/browser": "^11.10.0"
   }
 }
