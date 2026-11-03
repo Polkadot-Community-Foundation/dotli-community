@@ -142,7 +142,7 @@ provision-renewal: _require-env
 provision-node: _require-env
 	$(eval REMOTE_TARGET := $(or $(REMOTE),$(REMOTE_FOR_$(ENV))))
 	ssh $(REMOTE_TARGET) 'set -euo pipefail; \
-		major=$$(node --version 2>/dev/null | sed "s/^v\([0-9]*\).*/\1/"); \
+		major=$$(node --version 2>/dev/null | sed "s/^v\([0-9]*\).*/\1/" || true); \
 		if [ "$${major:-0}" -lt $(NODE_MAJOR) ]; then \
 			curl -fsSL https://deb.nodesource.com/setup_$(NODE_MAJOR).x | sudo -E bash -; \
 			sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; \
