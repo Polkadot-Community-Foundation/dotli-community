@@ -4,20 +4,25 @@
 import { describe, expect, it } from 'vitest';
 import { createRoot, flush } from 'solid-js';
 import { createSyncStore } from '@dotli/shared';
-import type { DotliAuthState } from '../runtime/session/auth-state.js';
-import type { TruapiSessionUiState } from '../runtime/session/session-state.js';
+import type { DotliAuthState } from '../runtime/session/types.js';
+import type { TruapiSessionUiState } from '../runtime/session/parseUiStateCache.js';
 import type { Account } from '../components/account/account.js';
 import { useAccount } from './account.js';
 
 const ALICE: TruapiSessionUiState = { connected: true, fullUsername: 'Alice Smith' };
 const PAIRING: DotliAuthState = { tag: 'Pairing', deeplink: 'polkadotapp://pair?handshake=test', label: 'app' };
 
-/** The page's three stores, as boot left them, and an account read from them under a fresh owner. */
+/** The page's stores, as boot left them, and an account read from them under a fresh owner. */
 function mount(auth: DotliAuthState, loggedIn = auth.tag === 'Connected') {
   const stores = {
-    auth: createSyncStore<DotliAuthState>('account-test-auth', auth),
-    loggedIn: createSyncStore('account-test-logged-in', loggedIn),
-    walletMode: createSyncStore<{ mode: 'app' | 'local' }>('account-test-wallet-mode', { mode: 'app' }),
+    auth: createSyncStore<DotliAuthState>({ name: 'account-test-auth', initial: auth }),
+    loggedIn: createSyncStore({ name: 'account-test-logged-in', initial: loggedIn }),
+    walletMode: createSyncStore<{ mode: 'app' | 'local' }>({
+      name: 'account-test-wallet-mode',
+      initial: { mode: 'app' },
+    }),
+    signingOut: createSyncStore({ name: 'account-test-signing-out', initial: false }),
+    elsewhere: createSyncStore({ name: 'account-test-elsewhere', initial: false }),
   };
   const { account, dispose } = createRoot(d => ({ account: useAccount(stores), dispose: d }));
   flush();
@@ -31,7 +36,9 @@ function read(account: Account) {
     connected: account.connected(),
     restoring: account.restoring(),
     unreachable: account.unreachable(),
+    signingOut: account.signingOut(),
     local: account.local(),
+    elsewhere: account.elsewhere(),
   };
 }
 
@@ -47,8 +54,52 @@ describe('useAccount', () => {
       connected: false,
       restoring: true,
       unreachable: false,
+      signingOut: false,
       local: false,
+      elsewhere: false,
     });
+    dispose();
+  });
+
+  it('As a signed-in user whose sign-out waits for the sign-out window, I look at the account and it says so until the sign-out ends', () => {
+    // Given a signed-in account
+    const { stores, account, dispose } = mount({ tag: 'Connected', session: ALICE });
+
+    // When a sign-out starts waiting
+    stores.signingOut.set(true);
+    flush();
+
+    // Then the account shows the wait and stays signed in
+    expect(account.signingOut()).toBe(true);
+    expect(account.loggedIn()).toBe(true);
+
+    // When the wait ends
+    stores.signingOut.set(false);
+    flush();
+
+    // Then the account no longer shows it
+    expect(account.signingOut()).toBe(false);
+    dispose();
+  });
+
+  it('As a signed-out user whose sign-in made elsewhere waits, I look at the account and it says so until the sign-in no longer waits', () => {
+    // Given a signed-out account
+    const { stores, account, dispose } = mount({ tag: 'Disconnected' });
+
+    // When a sign-in made elsewhere starts waiting
+    stores.elsewhere.set(true);
+    flush();
+
+    // Then the account offers it and stays signed out
+    expect(account.elsewhere()).toBe(true);
+    expect(account.loggedIn()).toBe(false);
+
+    // When nothing waits any more
+    stores.elsewhere.set(false);
+    flush();
+
+    // Then the account no longer offers it
+    expect(account.elsewhere()).toBe(false);
     dispose();
   });
 

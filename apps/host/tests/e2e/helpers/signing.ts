@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { expect, type Page, type Frame, type Locator } from '@playwright/test';
-import { entryText } from './run-test.js';
+import { entryText } from './runTest.js';
 
 type PageLike = Page | Frame;
 
@@ -14,17 +14,16 @@ export type HostDialogTitle =
   | 'Product Account'
   | 'Resource Allocation'
   | 'Sign Message'
-  | 'Sign Transaction'
-  | 'Submit Preimage';
+  | 'Sign Transaction';
 
 /** The button that answers a host dialog. */
 export type HostAnswer = 'Always allow' | 'Allow' | 'Allow once' | 'Sign';
 
 /** A dialog the host is expected to show, and the button that answers it. */
-export interface HostDialog {
+export type HostDialog = {
   title: HostDialogTitle;
   answer: HostAnswer;
-}
+};
 
 /**
  * Answers each expected dialog in order, failing when one never shows. The button is looked up inside the dialog with

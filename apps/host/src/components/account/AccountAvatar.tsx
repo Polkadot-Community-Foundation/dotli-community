@@ -5,7 +5,7 @@ import { Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { UserIcon } from '../icons/UserIcon.js';
 import type { AccountSession } from './account.js';
-import { sessionInitials } from './account-names.js';
+import { sessionInitials } from './accountNames.js';
 import s from './AccountAvatar.module.css';
 
 /**
@@ -14,7 +14,7 @@ import s from './AccountAvatar.module.css';
  */
 export function AccountAvatar(props: {
   session: AccountSession | undefined;
-  /** `sm` sits in a bar control, `lg` heads an account panel. */
+  /** `sm` sits in a bar control, `lg` heads an account panel or a sign-in card. */
   size: 'sm' | 'lg';
   local?: boolean;
   /** Hidden from assistive tech where a label beside it already names the account. */

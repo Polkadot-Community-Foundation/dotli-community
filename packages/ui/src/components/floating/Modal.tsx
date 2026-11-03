@@ -3,15 +3,15 @@
 
 import { children, createEffect, createSignal, isHydrating, onSettled, Show, type Component } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { isPhoneViewport, watchPhoneViewport } from '../../page/phone-viewport.js';
-import type { IconProps } from '../icons/icon-props.js';
+import { isPhoneViewport, watchPhoneViewport } from '../../page/phoneViewport.js';
+import type { IconProps } from '../icons/iconProps.js';
 import { IconTile } from '../primitives/IconTile.js';
-import { InSheet } from './in-sheet.js';
+import { InSheet } from './inSheet.js';
 import { ModalLayer } from './ModalLayer.js';
 import { SheetFrame } from './SheetFrame.js';
 import s from './Modal.module.css';
 
-export interface ModalProps {
+export type ModalProps = {
   open: boolean;
   /** `dismiss`: Escape or the scrim. `close`: the sheet head's close button or a swipe. */
   onOpenChange: (open: boolean, reason?: 'dismiss' | 'close') => void;
@@ -23,7 +23,7 @@ export interface ModalProps {
   initialFocus?: (() => HTMLElement | undefined) | undefined;
   /** Overrides what held focus at opening, for a trigger the browser may not focus on click. */
   restoreFocus?: (() => HTMLElement | undefined) | undefined;
-  /** Moves focus to the card or sheet each time its value changes after opening, for content swapped in place. */
+  /** Moves focus to the card or sheet each time its value changes while open, for content swapped in place. */
   refocusOn?: (() => unknown) | undefined;
   placement?: 'center' | 'topbar-end';
   scrim?: 'dark' | 'light';
@@ -37,7 +37,7 @@ export interface ModalProps {
   /** Receives the frame. */
   frameRef?: (el: HTMLDivElement) => void;
   children: JSX.Element;
-}
+};
 
 /**
  * A card on wide screens and a bottom sheet on a phone, following the viewport while open. The children resolve
@@ -70,12 +70,14 @@ function ModalRoot(props: ModalProps): JSX.Element {
     }
   });
 
-  let opened = false;
+  // The value on show while open. Opening places focus through `initialFocus`, so only a swap while open moves it.
+  let shown: { value: unknown } | undefined;
   createEffect(
-    () => props.refocusOn?.(),
-    () => {
-      if (!opened) {
-        opened = true;
+    () => ({ open: props.open, value: props.refocusOn?.() }),
+    ({ open, value }) => {
+      const swapped = open && shown !== undefined && !Object.is(shown.value, value);
+      shown = open ? { value } : undefined;
+      if (!swapped) {
         return;
       }
       const surface = frame?.querySelector('[data-modal-surface]');

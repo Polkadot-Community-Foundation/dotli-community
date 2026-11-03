@@ -5,11 +5,11 @@
 // override is module state and would leak into the other suites.
 
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { activeSettings, setSettings } from './active-settings.js';
-import { defaultBackend, getBackend } from './mode.js';
-import { NetworkName, activeNetworkSupportsLightClient, type Network } from './network.js';
+import { activeNetworkSupportsLightClient } from './activeNetwork.js';
+import { activeSettings, setSettings } from './activeSettings.js';
+import { getBackend, getDefaultBackend, type Backend } from './backend.js';
+import type { Network } from './networkNames.js';
 import { getSettings } from './settings.js';
-import type { Backend } from './mode.js';
 
 function useNetwork(network: Network, backend?: Backend): void {
   const settings = getSettings();
@@ -18,29 +18,29 @@ function useNetwork(network: Network, backend?: Backend): void {
 
 describe('devnet transport', () => {
   it('As a devnet host, I report that the light client cannot serve the network', () => {
-    useNetwork(NetworkName.DEVNET);
+    useNetwork('devnet');
 
     expect(activeNetworkSupportsLightClient()).toBe(false);
   });
 
   it('As a devnet host, I default to the trusted providers', () => {
-    useNetwork(NetworkName.DEVNET);
+    useNetwork('devnet');
 
-    expect(defaultBackend()).toBe('rpc-gateway');
+    expect(getDefaultBackend()).toBe('rpc-gateway');
   });
 
   it('As a devnet host, I serve the trusted providers over a stored light-client choice without erasing it', () => {
-    useNetwork(NetworkName.DEVNET, 'smoldot-direct');
+    useNetwork('devnet', 'smoldot-direct');
 
     expect(getBackend()).toBe('rpc-gateway');
     expect(activeSettings()?.backend).toBe('smoldot-direct');
   });
 
   it('As a host on a network the catalog carries, I keep the light client', () => {
-    useNetwork(NetworkName.PASEO, 'smoldot-direct');
+    useNetwork('paseo-next-v2', 'smoldot-direct');
 
     expect(activeNetworkSupportsLightClient()).toBe(true);
-    expect(defaultBackend()).toBe('smoldot-direct');
+    expect(getDefaultBackend()).toBe('smoldot-direct');
     expect(getBackend()).toBe('smoldot-direct');
   });
 });
