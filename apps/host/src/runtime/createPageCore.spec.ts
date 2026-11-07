@@ -1,6 +1,7 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asProductId } from '@parity/truapi';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { TrUApiProductProvider } from '@parity/truapi-host';
 import type { WorkerPairingHostRuntime } from '@parity/truapi-host/web';
@@ -58,7 +59,7 @@ type CreateHeldBootParams = {
 
 /** A V1 `signRaw` request body of the product's first account. */
 const SIGN_RAW_BODY = {
-  account: { dotNsIdentifier: 'product.dot', derivationIndex: { tag: 'Index', value: 0 } },
+  account: { dotNsIdentifier: asProductId('product.dot'), derivationIndex: { tag: 'Index', value: 0 } },
   payload: { tag: 'Payload', value: { payload: 'x' } },
 };
 
@@ -174,13 +175,14 @@ function createHarness({
   const outcomes: ('ok' | 'error')[] = [];
   const changes = createChanges();
 
-  function bootNow(): Promise<BootedCoreRuntime> {
+  function bootNow({ product }: CoreRuntimeRequest): Promise<BootedCoreRuntime> {
     const runtime = createFakeRuntime({ changes });
     runtimes.push(runtime);
     // As the real boot does, a wallet read that finds the wallet boots a local core, which is never stale.
     const local = fixedLocal ?? walletFound?.() ?? false;
     return Promise.resolve({
       runtime: runtime.runtime,
+      productId: asProductId(product.productId ?? toProductId(product.label)),
       local,
       isStale() {
         const check = local ? Promise.resolve(false) : Promise.resolve(walletFound?.() ?? false);
@@ -255,7 +257,12 @@ function createHeldBoot({ changes }: CreateHeldBootParams) {
     /** Lets the boot through and returns its runtime. */
     resolve(): FakeRuntime {
       const runtime = createFakeRuntime({ changes });
-      pending.resolve({ runtime: runtime.runtime, local: false, isStale: () => Promise.resolve(false) });
+      pending.resolve({
+        runtime: runtime.runtime,
+        productId: asProductId('held.dot'),
+        local: false,
+        isStale: () => Promise.resolve(false),
+      });
       return runtime;
     },
   };
@@ -1088,6 +1095,29 @@ describe('page core', () => {
     });
   });
 
+  it('As a product, I connect and my connection runs under the id my core parsed, not the one I asked for', async () => {
+    // Given a core that parsed the product's id into its canonical form
+    const { core, changes, nextBoots } = createHarness();
+    const runtime = createFakeRuntime({ changes });
+    nextBoots.push(() =>
+      Promise.resolve({
+        runtime: runtime.runtime,
+        productId: asProductId('canonical.paseo'),
+        local: false,
+        isStale: () => Promise.resolve(false),
+      }),
+    );
+    core.setProduct({ label: 'doom' });
+    const lease = await core.acquire();
+
+    // When the product connects
+    const connection = await lease.connect();
+
+    // Then the provider and the connection carry the parsed id
+    expect(runtime.createProvider).toHaveBeenCalledWith({ productId: 'canonical.paseo', executionKind: 'App' });
+    expect(connection.productId).toBe('canonical.paseo');
+  });
+
   it('As a Polkadot App user, I log in from another tab and the login reaches my core until its last lease goes', async () => {
     // Given a core that follows the store
     const { core, runtimes, storeListeners, changes } = createHarness();
@@ -1331,6 +1361,32 @@ describe('page core after a failed wallet read', () => {
     expect(next.runtime).toBe(lease.runtime);
     expect(requests).toHaveLength(1);
     expect(outcomes).toEqual(['ok']);
+  });
+
+  it('As the page, I tell the core of a stored session change that throws and the failure is reported while the stale check still runs', async () => {
+    // Given a pairing core whose runtime throws when told of a store change, and a store that now holds the wallet
+    let walletFound = false;
+    const { core, runtimes, storeListeners, counted, changes } = createReportingHarness({
+      walletFound: () => walletFound,
+    });
+    recordLog({ onFinished: onTestFinished, level: 'error' });
+    await core.acquire();
+    const pairing = nth(runtimes, 0);
+    await changes.until(() => pairing.notifySessionStoreChanged.mock.calls.length === 1);
+    pairing.notifySessionStoreChanged.mockImplementation(() => {
+      throw new Error('notify broke');
+    });
+    walletFound = true;
+
+    // When the store reports a change
+    for (const listener of [...storeListeners]) {
+      listener();
+    }
+    await changes.until(() => counted('wallet.core_redial').length === 1);
+
+    // Then the failure is counted once and the stale check still retired the pairing core
+    expect(counted('page_core.session_follow')).toEqual([{ outcome: 'error', reason: 'Error' }]);
+    expect(counted('wallet.core_redial')).toEqual([{ outcome: 'ok', reason: 'stale' }]);
   });
 });
 

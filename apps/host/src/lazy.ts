@@ -14,13 +14,13 @@ import type * as LocalWalletCoreNamespace from './runtime/localWalletCore.js';
 import type * as PermissionsContentNamespace from './components/permissions/PermissionsContent.js';
 import type * as PhraseScreenNamespace from './components/account/PhraseScreen.js';
 import type * as PolkadotApiNamespace from 'polkadot-api';
+import type * as ProductCardNamespace from './components/productCard/ProductCard.js';
 import type * as QrCodeNamespace from 'qrcode';
 import type * as RecoveryPhraseNamespace from './runtime/recoveryPhrase.js';
 import type * as SettingsContentNamespace from './components/settings/SettingsContent.js';
 import type * as SignersCommonNamespace from '@polkadot-api/signers-common';
 import type * as ViolationPanelMountNamespace from './components/sandboxChecker/mount.js';
 import type * as WireDescriberNamespace from './runtime/debugWireDescribe.js';
-import type * as WorkboxWindowNamespace from 'workbox-window';
 
 /** The published host runtime's chunk: its web build and the constructor of its worker. */
 type HostRuntimeChunk = {
@@ -33,7 +33,6 @@ type QrCodeModule = typeof QrCodeNamespace & { default: typeof QrCodeNamespace }
 
 export type DebugPanelHostModule = typeof DebugPanelHostNamespace;
 export type ChatPanelModule = typeof ChatPanelNamespace;
-export type WorkboxWindowModule = typeof WorkboxWindowNamespace;
 export type BridgeModule = typeof BridgeNamespace;
 export type LocalWalletCoreModule = typeof LocalWalletCoreNamespace;
 export type PhraseScreenModule = typeof PhraseScreenNamespace;
@@ -65,6 +64,10 @@ export function loadAccountContent(): Promise<typeof AccountContentNamespace> {
 export function loadChainsContent(): Promise<typeof ChainsContentNamespace> {
   return import('./components/chains/ChainsContent.js');
 }
+/** The product card. Rejects when its chunk fails to load. */
+export function loadProductCard(): Promise<typeof ProductCardNamespace> {
+  return import('./components/productCard/ProductCard.js');
+}
 /** The permissions view. Rejects when its chunk fails to load. */
 export function loadPermissionsContent(): Promise<typeof PermissionsContentNamespace> {
   return import('./components/permissions/PermissionsContent.js');
@@ -77,11 +80,6 @@ export function loadSettingsContent(): Promise<typeof SettingsContentNamespace> 
 /** Sandbox checker builds only. Rejects when its chunk fails to load. */
 export function loadViolationPanelMount(): Promise<typeof ViolationPanelMountNamespace> {
   return import('./components/sandboxChecker/mount.js');
-}
-
-/** The service worker client. Rejects when its chunk fails to load. */
-export function loadWorkboxWindow(): Promise<WorkboxWindowModule> {
-  return import('workbox-window');
 }
 
 /** The TrUAPI bridge and the dialogs it asks with. Rejects when its chunk fails to load. */

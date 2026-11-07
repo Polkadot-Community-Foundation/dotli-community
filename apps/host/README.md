@@ -9,7 +9,9 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
   (`<label>.<domain>`) or, on the bare host, by the first path segment (`<domain>/<name>`), and gets only the path after
   it. A subname such as `pr16.my-app` opens by path only, since a wildcard certificate covers one label.
 - Take a `.dot` label to a product on screen, or to the screen that says why not.
-- Own the page chrome: topbar, URL pill, loading screen, settings, account, permissions and network views.
+- Own the page chrome: topbar, URL pill, loading screen, settings, account, permissions and network views. The product
+  card opens from the URL pill and, on a phone, from the product button. On a phone the logo slot of a product page is
+  the product button from first paint, with the Polkadot mark until the product's icon loads.
 - Own the domain building blocks the chrome composes: account, chat, permission, appearance, signing and chain views and
   their icons. Each takes props, reads no store and reports the user's intent through a callback, so the flow that
   composes it owns the data.
@@ -34,8 +36,8 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
   read leaves the page on this origin's settings and the link's.
 - The shell page has one script. It also binds the static markup of the topbar and the URL pill, which only that page
   renders. The chat dock is off the page until the chat button returns.
-- Static markup is Astro. Interactive controls are Solid islands, one module per island, bound to sync stores that
-  import no Solid.
+- Static markup is Astro. Interactive controls are Solid islands, one module per island, bound to nanostores stores read
+  through `useStore`.
 - The building blocks group by domain beside the flows that use them, and take their types from the runtime, so a
   permission, a theme or a chat message has one type. Each has a CSS module beside it and most have a story that carries
   their tests.
@@ -45,22 +47,31 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
   a third the screen for each of the window's own views.
 - The TrUAPI side lives in its own folder. The bridge is its own chunk, which every page loads in parallel with its
   boot. It brings the TrUAPI host, the session state and the TrUAPI codecs, so none of them is in the boot chunk. One
-  runtime boots per page core, a signing host on the local wallet when there is one, else the pairing host. A core that
-  goes stale is rebuilt without being asked. A core outlives its last lease by a few seconds, so a lease taken soon
-  after keeps the same core. The signing worker and the local wallet core load on demand.
+  runtime boots per page core, a signing host on the local wallet when there is one, else the pairing host. Once up, the
+  core parses the product id the page asks for, and that parsed id is the one its connections and the product's
+  notifications run under, so the id's rules live in the core alone. A notification is kept under the full id, its
+  network included, and titled with the label. A core that goes stale is rebuilt without being asked. A core outlives
+  its last lease by a few seconds, so a lease taken soon after keeps the same core. The signing worker and the local
+  wallet core load on demand.
 - The session layer (the auth state type, the session state the boot starts, the core's shared-store adapter, the
   signed-in flag, the restore rule and the session lease) sits apart from the TrUAPI host callbacks. State the runtime
   reads or writes (auth, product, permissions, theme, wallet mode) lives with the runtime, and the page chrome's own
-  state (topbar, URL pill, chat panel, network) lives with the page. Each runtime state is one entity object: its
-  read-only store, its getters and the setters its writers call. The sign-in modal, the sign-in window, the chat panel,
-  the loading screen, the settings snapshot, the topbar state and the URL pill are entity objects the same way, and the
-  topbar's floating surfaces register with one registry object. The first three keep what their islands cannot be handed
-  at hydration (the control focus returns to, the window's intents, the panel's element) as private slots behind their
-  members. The chat store and the product connections it reaches the product through are each a factory with the page's
-  instance beside it, and the store stamps messages with the clock it is given. The network monitor, the network state
-  and the network health are factories the same way, and measure block arrival, read times and rechecks on the timers
-  they are given. The chat panel, the network state and the network health each follow their sources once however many
-  callers start them, and stop with the last caller's stop.
+  state (topbar, URL pill, product card, chat panel, network) lives with the page. Each runtime state is one entity
+  object: its read-only store, its getters and the setters its writers call. The sign-in modal, the sign-in window, the
+  chat panel, the loading screen, the settings snapshot, the topbar state, the URL pill and the product card are entity
+  objects the same way, and the topbar's floating surfaces register with one registry object. The first three keep what
+  their islands cannot be handed at hydration (the control focus returns to, the window's intents, the panel's element)
+  as private slots behind their members, and the product card keeps the author read the page hands it as a private slot
+  the same way, since the islands that load the author hydrate apart from the page that builds the read. The chat store
+  and the product connections it reaches the product through are each a factory with the page's instance beside it, and
+  the store stamps messages with the clock it is given. The network monitor, the network state and the network health
+  are factories the same way, and measure block arrival, read times and rechecks on the timers they are given. The chat
+  panel and the network health each follow their sources once however many callers start them, and stop with the last
+  caller's stop. The network state is derived from the monitor and rebuilds only while something reads it and for a
+  second after.
+- The product page hands the product card its author read, whose dotNS owner is read with the manifests and cached with
+  them, so the card's first opening reads only the account Asset Hub maps the owner to and that account's People
+  username. The product's icon shows in the tab and the card.
 - The shell's own module state is entities the same way, each a factory with the page's instance beside it: the boot
   tracker that says where a boot failure happened, the product frame layout that writes the frame's geometry through the
   writer it is given, the bar's morph that what is laid out against the bar waits out, the reload reason over the
@@ -77,18 +88,20 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
   auto-hide, the product branding, the sandbox content's report and the failure screen wait and measure on the timers,
   the monotonic clock, the repeating tick and the randomness they are given, the page's own by default. The page's
   monotonic clock and its repeating tick each have one owner. The loader hands its clocks on to the parts of a load it
-  starts. It reads the protocol frame's telemetry and fetches the product's icon through the clients it is given, the
-  page's own by default. The journey and the failure sightings read the session storage they are given.
-- Every reload that tells the next boot why goes through one step. The topbar's binding, the service worker's update
-  offer, the main-thread monitor, the loading screen, the load progress, the bar's auto-hide on the shield, the sandbox
-  watch and the resolution trace each hand back the cleanup of what they listen to and the timers they hold. The trace
-  releases its own once it ends, and the sandbox watch once the sandbox speaks. A load that fails stops waiting for the
-  sandbox's outcome on its content and stops hearing a refused wire version. The page keeps the rest for its life.
+  starts. It reads the protocol frame's telemetry through the client it is given, the page's own by default. The page
+  gives it the host's bitswap client from the bridge to fetch the product's icon. The journey and the failure sightings
+  read the session storage they are given.
+- Every reload that tells the next boot why goes through one step. The topbar's binding, the main-thread monitor, the
+  loading screen, the load progress, the bar's auto-hide on the shield, the sandbox watch and the resolution trace each
+  hand back the cleanup of what they listen to and the timers they hold. The trace releases its own once it ends, and
+  the sandbox watch once the sandbox speaks. A load that fails stops waiting for the sandbox's outcome on its content
+  and stops hearing a refused wire version. The page keeps the rest for its life.
 - Each TrUAPI host callback is a factory of its own, which takes its page dependencies as named params that default to
   the page's own. The chain redial gates and the permission prompt rate limit measure time on the clock they are given.
   The page's chain pool and its sources sit beside the pool's factory. The chain connect and the host chain providers
-  lease that pool, and the chain watcher watches it. A product's local storage is one factory whose page instance every
-  core shares, so a write from one runtime reaches the subscriptions of the others.
+  lease that pool, and the chain watcher watches it. The page's bitswap client leases it too, Bulletin while a fetch
+  runs. A product's local storage is one factory whose page instance every core shares, so a write from one runtime
+  reaches the subscriptions of the others.
 - The product frame, its wait for a device permission answer, the scheduled notifications and the diagnostics' finalized
   block query take the clock and timers they run on as params that default to the page's own. The scheduler takes its
   repeating poll the same way, so their specs move time themselves. The channel to the local server's shared store takes
@@ -158,10 +171,11 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
 - On `/s/sign`, a site asks the user to sign a transaction on Asset Hub with the product account it names. The window
   takes the site's call from the request, else from the first payload the vetted site posts for the round, and shows
   Connecting until it has one. A call that is not hex of 2 to 1 000 000 bytes, or a request of dot.li's own page, is a
-  bad request. The round asks consent and resumes the main session as a sign-in does, then decodes the call for the
-  review. Once the user confirms, the window asks the user to open Polkadot App, reads the named account's key from the
-  phone, fills every extension and the phone signs with that account. The site gets the signed transaction and sends it
-  itself, and never gets the main account.
+  bad request. The window opens Asset Hub as the round starts, while it asks consent and resumes the main session as a
+  sign-in does, and closes it when the round ends before the review. It then decodes the call for the review. Once the
+  user confirms, the window asks the user to open Polkadot App, reads the named account's key from the phone, fills
+  every extension and the phone signs with that account. The site gets the signed transaction and sends it itself, and
+  never gets the main account.
 - The sign-in window reads a site's registrable domain from a copy of the Public Suffix List it ships, a data file under
   the Mozilla Public License 2.0, read as text and kept with its license header, and refreshed with each release.
 - The site list lists the sites the main store keeps a grant for, the most recently used first, each with Revoke, which
@@ -204,32 +218,39 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
 - The toasts and dialogs are one idle island on each page. What boot queues before it hydrates shows once it does.
 - Components are imported where they are used. The startup size budgets in CI guard what each page loads first.
 - The bridge, and what a visit may never open, load on demand through a lazy loader, each in its own chunk: the bridge,
-  the panel bodies (chat, account, chains, permissions, settings), the violation panel, the debug panel and its wire
-  describer, the recovery phrase form, the local wallet and workbox, the host runtime and its worker, the chain client
-  and the QR encoder. The small pieces of a product load (branding, the cache check, the failure screen, the
-  verification tooltip) are plain imports.
+  the panel bodies (chat, account, chains, permissions, settings), the product card, the violation panel, the debug
+  panel and its wire describer, the recovery phrase form, the local wallet, the host runtime and its worker, the chain
+  client and the QR encoder. The small pieces of a product load (branding, the cache check, the failure screen) are
+  plain imports.
 - The host runtime, the wire describer, the block verifier and the gateway resolver each load once and serve every
   caller after. A failed load is forgotten, so the next caller, a sign-in Retry for one, loads it again without a page
-  reload. The describer and the verifier report only their first miss.
+  reload. The describer and the verifier report only their first miss. The verifier starts loading as soon as a
+  product's content relay is built, before any block is checked.
 - The error page and the no-content page replace the page's content at once, through the shared screen owner. A
   full-page screen ends the loading screen and the landing islands, and the product frame takes the screen down when it
   shows.
 - A flow takes as parameters what sits in another frame or origin (the name source, the product frame and what the
   sandbox reports through it, the protocol frame's version mismatch, the recent list) and what reloads or writes the
-  page (the CID cache and the failure screen). A cached copy that revalidation finds cleared is evicted, and the page
-  reloads onto the cold path only once the stale copy is gone. A redeploy is offered as soon as its new contenthash is
-  known, and a Reload pressed before the new version is cached waits for it. A sandbox that says nothing for 30 seconds
-  after the handoff fails the load, since a blocked origin or a page that never ran would otherwise leave the loading
-  screen up for good. It imports the page's own state (the URL pill, the journey, the network monitor). A protocol frame
-  that refuses the page's wire version, during the load or after the handoff, puts up the reload screen and ends the
-  load once, so nothing after it records success. Under that screen or the silent sandbox's, the product frame halts: it
-  lets go of the product's core and starts no render of its own, so nothing clears the screen until the user reloads or
-  a new render is asked for. Load progress takes the loading screen as a parameter that defaults to the page's, since
-  the page's draws on animation frames, so its spec runs under Node. The product loader drives the page and is tested on
+  page (the CID cache and the failure screen). The CID cache read for the page's name starts while the shell boots, once
+  the network is known. The loader leases the product's core as soon as it names the product, so the core boots while
+  the name resolves. The render waits for that lease, so a core that cannot boot fails the load at the render, and the
+  lease goes once the load ends. A cached copy that revalidation finds cleared is evicted, and the page reloads onto the
+  cold path only once the stale copy is gone. A redeploy is offered as soon as its new contenthash is known, and a
+  Reload pressed before the new version is cached waits for it. A sandbox that says nothing for 30 seconds after the
+  handoff fails the load, since a blocked origin or a page that never ran would otherwise leave the loading screen up
+  for good. It imports the page's own state (the URL pill, the journey, the network monitor). A protocol frame that
+  refuses the page's wire version, during the load or after the handoff, puts up the reload screen and ends the load
+  once, so nothing after it records success. Under that screen or the silent sandbox's, the product frame halts: it lets
+  go of the product's core and starts no render of its own, so nothing clears the screen until the user reloads or a new
+  render is asked for. Load progress takes the loading screen as a parameter that defaults to the page's, since the
+  page's draws on animation frames, so its spec runs under Node. The product loader drives the page and is tested on
   one, in the functional suite. The bridge chunk is where the page's real dialogs, notifications and frame layout are
   wired in.
 - The network monitor opens no chain. The bridge reports who holds each host chain and its best blocks to it, and the
-  load progress reports phases, peers and transfer.
+  load progress reports phases, peers and transfer. On the product page it starts each chain's judgement over on each
+  return to the page.
+- The page pauses its network after a grace while it is hidden, unless a page load or a product's request to Polkadot
+  App holds it awake, through `createNetworkPause`. The page's chain pool and the protocol frame are its targets.
 - The recently visited names live in the store every subdomain shares, reached through the runtime's shared channel,
   with a per-origin mirror for when that store is unreachable.
 - Whether a product declares chat is read from its worker manifest alongside its name and travels on the product the
@@ -239,9 +260,8 @@ by `.dot` name inside a sandbox iframe. See the root [README](../../README.md) f
   its tree in its own error boundary. An island whose code never ran is reported and offers a reload, and the auth modal
   and the overlays each have a stand-in that releases the sign-in lease or refuses pending prompts. One that fails
   before page start listens, such as an island that loads with the page, reaches the console alone.
-- The Astro config adds the PWA service worker, the signing worker, the dev SPA fallback and a Sentry release upload,
-  all from the shared Vite tooling. The shell asks for a new release as soon as its worker registers and offers one the
-  moment the browser finds it. A Reload pressed while the release downloads applies it once downloaded.
+- The Astro config adds the web manifest, a service worker that retires the one earlier releases installed, the signing
+  worker, the dev SPA fallback and a Sentry release upload, all from the shared Vite tooling.
 
 ```mermaid
 flowchart LR
@@ -275,6 +295,7 @@ sequenceDiagram
 - The shell page. Dev server on port 4001.
 - The landing page, served for the bare host's root.
 - The session window, served for the bare host's `/s/auth`, `/s/signout`, `/s/manage` and `/s/sign`.
+- The service worker that retires the one earlier releases installed, one file at the root.
 - `npm run dev`, `build`, `build:prod`, `typecheck`, `lint`.
 - `npm test`: unit specs. `test:functional`, `test:e2e`, `test:e2e:local` and `test:perf*` run Playwright suites. A
   functional run needs the build the root `build:test` script makes, as CI does. It turns metrics on and gives Sentry a

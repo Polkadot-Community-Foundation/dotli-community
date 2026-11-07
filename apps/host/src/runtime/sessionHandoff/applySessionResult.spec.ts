@@ -3,7 +3,7 @@
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { SHARED_CORE_SESSION_KEY, type LocalWalletIdentity, type LocalWalletReadResult } from '@dotli/protocol';
-import { createStoreStatus, createSyncStore, waitForStatus, type ReadableStore } from '@dotli/shared';
+import { atom } from 'nanostores';
 import type { DotliAuthState } from '../session/types.js';
 import { createCoreStorage } from '../session/createCoreStorage.js';
 import { createNonOwnerSignInFlag } from '../session/signInFlag.js';
@@ -42,13 +42,18 @@ function createPage(stored: Params = {}) {
       readStoredSignIn: () => Promise.resolve('none'),
     }),
   });
-  const auth = createSyncStore<DotliAuthState>({ name: 'auth', initial: { tag: 'Disconnected' }, equals: () => false });
+  const auth = atom<DotliAuthState>({ tag: 'Disconnected' });
   const session = createSessionState({
     store: storage,
     async restore() {
       return { local: null, session: await storage.readSession(), wallet: { status: 'none' }, presence: 'present' };
     },
-    auth,
+    auth: {
+      store: auth,
+      set: next => {
+        auth.set(next);
+      },
+    },
     setElsewhere: () => undefined,
     isLocalWallet: () => false,
     isResumeOffered: () => true,
@@ -68,11 +73,6 @@ function createPage(stored: Params = {}) {
     reload,
   };
   return { shared, auth, sessionChanges, saved, reload, params };
-}
-
-/** Waits until the page shows a sign-in, checking at each state it publishes. */
-function waitUntilSignedIn(auth: ReadableStore<DotliAuthState>): Promise<void> {
-  return waitForStatus(createStoreStatus(auth), state => state.tag === 'Connected');
 }
 
 describe('applying a sign-in window result', () => {
@@ -117,12 +117,12 @@ describe('applying a sign-in window result', () => {
     const page = createPage();
     const result: SessionResult = { session: { blob: BLOB, uiState: UI_STATE }, localWallet: null };
 
-    // When the result is applied and the page shows the change
+    // When the result is applied
     await applySessionResult(result, page.params);
-    await waitUntilSignedIn(page.auth);
 
     // Then the page shows the account signed in with no reload
-    expect(page.auth.get()).toEqual({ tag: 'Connected', session: ACCOUNT });
+    // A load that read the cached account before the window wrote it shows the sign-in without a name first.
+    await expect.poll(() => page.auth.get()).toEqual({ tag: 'Connected', session: ACCOUNT });
     expect(page.reload).not.toHaveBeenCalled();
   });
 
@@ -131,14 +131,14 @@ describe('applying a sign-in window result', () => {
     const page = createPage({ blob: BLOB });
     const result: SessionResult = { session: { blob: BLOB, uiState: UI_STATE }, localWallet: null };
 
-    // When the result is applied and the page shows the change
+    // When the result is applied
     await applySessionResult(result, page.params);
-    await waitUntilSignedIn(page.auth);
 
     // Then the page and its cores are told, and the page shows the account the window sent
     expect(page.shared.entries.get(UI_STATE_KEY)).toBe(UI_STATE);
     expect(page.sessionChanges).toHaveBeenCalledTimes(1);
-    expect(page.auth.get()).toEqual({ tag: 'Connected', session: ACCOUNT });
+    // A load that read the cached account before the window wrote it shows the sign-in without a name first.
+    await expect.poll(() => page.auth.get()).toEqual({ tag: 'Connected', session: ACCOUNT });
   });
 
   it('As a user signing in on a dot.li page, I get a wallet with its identity from the window and the page saves both and reloads', async () => {

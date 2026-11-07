@@ -8,12 +8,13 @@ import { m, reportExpected, setResolutionId, spans as S } from '@dotli/metrics';
 import { topbarState } from './state/topbarState.js';
 import { showNotification } from '@dotli/ui';
 import { getProtocolClient, type ProtocolFrameConfig } from '@dotli/protocol';
-import { log, pageLocalStorage } from '@dotli/shared';
+import { log, markHandled, pageLocalStorage } from '@dotli/shared';
 import { bootTracker } from './createBootTracker.js';
 import { isLocalhost, isSharedWorkerAvailable, setSettings, type Settings } from '@dotli/config';
 import type { DotliDebugEvent } from '@dotli/truapi-debug';
 import { loadBridge, loadRecoveryPhrase } from './lazy.js';
 import { createBlockingModalCoordinator } from './runtime/createBlockingModalCoordinator.js';
+import { networkPause } from './runtime/createNetworkPause.js';
 import { pendingResets } from './runtime/createPendingResets.js';
 import { readSharedSettings, writeSharedSettings } from './runtime/sharedMode.js';
 import { authControl } from './runtime/createAuthController.js';
@@ -46,7 +47,9 @@ export type StartHostParams = {
 
 /**
  * Boots the host's settings, shared mode and bridge, and starts the shell state when the page has one. Rejects with
- * what the settings boot or the bridge load threw.
+ * what the settings boot or the bridge load threw, and a settings failure wins when both fail. It sets this origin's
+ * settings and the link's before its first await, so a caller that does not await it may read them at once. The
+ * shared settings read after that never change the network.
  */
 export async function startHost({
   bootFlowId,
@@ -91,6 +94,19 @@ export async function startHost({
   // After this origin's settings are set and before the first await, so the capsule shows going offline at once and no
   // island mounts on a store not yet started.
   startShellState?.();
+  // The pause and its targets last the page's life, so their stops go unused.
+  networkPause.start();
+  networkPause.addTarget({
+    pause() {
+      getProtocolClient().frame.setPaused(true);
+    },
+    resume() {
+      getProtocolClient().frame.setPaused(false);
+    },
+  });
+  // The chunk loads before the settings settle, so it must not depend on them. Its failure is awaited at the bridge load, or
+  // dropped when the settings fail first.
+  const bridgeChunk = markHandled(loadBridge());
   const settings = await settingsBoot;
   settingsState.init();
 
@@ -143,7 +159,7 @@ export async function startHost({
 
   const blockingModalCoordinator = createBlockingModalCoordinator({ report: topbarState.reportBlockingModals });
   // The bridge chunk brings the dialogs it asks with, so they never join the boot chunk.
-  const bridgeReady = loadBridge().then(bridge => {
+  const bridgeReady = bridgeChunk.then(bridge => {
     bridge.initBridge(blockingModalCoordinator);
     return bridge;
   });
@@ -157,11 +173,13 @@ export async function startHost({
         const [{ toEntropy }, { walletSwitch }] = await Promise.all([loadRecoveryPhrase(), bridgeReady]);
         return { toEntropy, useLocalWallet: entropy => walletSwitch.useLocalWallet(entropy) };
       },
+      rereadSession: async () => (await bridgeReady).rereadSession(),
     });
   }
 
   bootTracker.setStep('bridge_load');
   const bridgeModule = await bridgeReady;
+  networkPause.addTarget(bridgeModule.hostChainPool);
 
   bootTracker.setStep('topbar');
   // At once, not on idle: the auth button spins until the saved session is read, and a busy boot can starve an idle

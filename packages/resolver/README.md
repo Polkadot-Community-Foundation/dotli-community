@@ -5,7 +5,8 @@ every caller checks a name against.
 
 ## Responsibility
 
-- Owns dotNS reads: Registry and ContentResolver storage, contenthash decoding and manifest records.
+- Owns dotNS reads: Registry and ContentResolver storage, contenthash decoding, manifest records and a name's owner,
+  which is the record's owner for a subname and else the holder of the name's token in the Registrar.
 - Owns the wait for a chain to sync before a read, and the errors a resolution fails with.
 - Owns the dotNS naming rules: which hosts are products under the active network's TLD, what a valid label and name are,
   the one DNS label a product's sandbox origin is named by, and the manifest kinds a product publishes.
@@ -15,8 +16,13 @@ every caller checks a name against.
 
 - The resolver works over one Asset Hub client, created on first use and again after its follow stops. The connection is
   passed in, so it reads through the follow its owner already keeps. Work runs in named `createAsyncTaskPool` pools.
+- The client's status is held in one nanostores atom and replayed to each caller's phase callback. A caller hears each
+  change with the status there is when its turn comes, so a read started inside a store's listener round can hear the
+  latest phase twice and miss an earlier one. A callback's own throw is reported and the build goes on. A throw from a
+  listener of a store the callback writes reaches the build, so such a listener catches its own errors.
 - Contract reads go straight to Revive storage slots with no runtime call. Multi-slot reads pin one block and the
-  contract's trie id, so bytes are never torn across blocks. Slot math and contenthash decoding sit in their own part.
+  contract's trie id, so bytes are never torn across blocks. Slot math and contenthash decoding sit in their own part. A
+  multi-slot read asks for its data slots at once. Each follow runs a bounded number of storage operations at a time.
 - Manifest records are read as text and checked by handwritten validators, kept apart so the eager path does not pull
   the chain-storage code.
 - A read on a halted chain is retried on the rebuilt chain a bounded number of times. The resolver knows the halt by the

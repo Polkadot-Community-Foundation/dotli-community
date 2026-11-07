@@ -9,15 +9,8 @@
 // wallet, reaches the site.
 
 import { m, type MetricOutcome } from '@dotli/metrics';
-import {
-  createAsyncTaskPool,
-  createSyncStore,
-  createDeferred,
-  log,
-  isShallowEqual,
-  waitForStatus,
-  type ReadableStore,
-} from '@dotli/shared';
+import { atom, type ReadableAtom } from 'nanostores';
+import { createAsyncTaskPool, createDeferred, log, isShallowEqual, markHandled, waitForStatus } from '@dotli/shared';
 import type { SiteGrant, SiteGrantStore } from '@dotli/storage';
 import type { Responder } from '../sessionHandoff/createResponder.js';
 import type { SessionRoute } from '../sessionHandoff/sessionRoute.js';
@@ -89,6 +82,12 @@ export type SiteAction<Result> = {
     confirmed: () => Promise<void>;
     signal: AbortSignal;
   }): Promise<Result>;
+  /**
+   * Starts what the action needs before the user's grant, such as opening its chain. Called once as the round starts.
+   * `signal` aborts once the round ends, and the action lets go of what it started and `run` never took. Never throws,
+   * and starts nothing that reaches the phone or the site.
+   */
+  prepare?(signal: AbortSignal): void;
 };
 
 export type SiteRoundParams<Result> = {
@@ -97,7 +96,7 @@ export type SiteRoundParams<Result> = {
   /** The vetted opener's origin, the site the round answers. */
   origin: string;
   /** Answers the site, and says when the round is answered. */
-  responder: Pick<Responder<unknown>, 'send' | 'refuse' | 'cancel' | 'state' | 'subscribe'>;
+  responder: Pick<Responder<unknown>, 'send' | 'refuse' | 'cancel' | 'state'>;
   /** The main store's grants, which the round reads, keeps and forgets. */
   grants: SiteGrantStore;
   /** The registrable domains a site's group is judged by. */
@@ -159,7 +158,8 @@ export function createSiteRound<Result>({
 }: SiteRoundParams<Result>) {
   const { route } = action;
   const working: SiteActionScreen = { view: 'site-signing', origin, route };
-  const screen = createSyncStore<SiteScreen>({ name: 'siteRound', initial: working, equals: isShallowEqual });
+  const screen = atom<SiteScreen>(working);
+  screen.eq = isShallowEqual;
   // One step at a time, so a second press waits for the first and finds the view it left.
   const steps = createAsyncTaskPool({ poolSize: 1 });
   // Aborted as the round's last word goes out, so nothing after it posts or changes the main store.
@@ -247,10 +247,7 @@ export function createSiteRound<Result>({
    * back-forward cache meanwhile, which sends the result it holds.
    */
   function closeOnceAnswered(): void {
-    void waitForStatus(
-      { get: responder.state, subscribe: responder.subscribe },
-      state => state.kind === 'answered',
-    ).then(close);
+    void waitForStatus(responder.state, state => state.kind === 'answered').then(close);
   }
 
   function fail(failure: SiteRoundFailure): void {
@@ -325,13 +322,13 @@ export function createSiteRound<Result>({
       : grant.group?.registrable === group.registrable && grant.group.token === group.token;
   }
 
-  /** The grant the site's token names, when it answers the request. A store that cannot be read knows none. */
-  async function lookUpGrant(): Promise<SiteGrant | null> {
-    if (request.siteToken === null) {
-      return null;
-    }
+  /**
+   * The grant the site's token names, when it answers the request. `reading` is the read started before the group was
+   * judged. A store that cannot be read knows none.
+   */
+  async function lookUpGrant(reading: Promise<SiteGrant | null>): Promise<SiteGrant | null> {
     try {
-      const grant = await grants.read(request.siteToken);
+      const grant = await reading;
       return grant !== null && isAnsweringGrant(grant) ? grant : null;
     } catch (error) {
       reportGrantMiss(error, 'grant_read');
@@ -468,10 +465,13 @@ export function createSiteRound<Result>({
   }
 
   async function start(): Promise<void> {
+    action.prepare?.(ended.signal);
+    // lookUpGrant reports a failed read once the group is judged. A refused group never reports it.
+    const reading = markHandled(request.siteToken === null ? Promise.resolve(null) : grants.read(request.siteToken));
     if (request.groupToken !== null) {
       group = await judgeGroup(request.groupToken);
     }
-    known = await lookUpGrant();
+    known = await lookUpGrant(reading);
     if (known === null) {
       showConsent();
     } else {
@@ -508,7 +508,7 @@ export function createSiteRound<Result>({
 
   void runStep(start);
 
-  const shownScreen: ReadableStore<SiteScreen> = screen;
+  const shownScreen: ReadableAtom<SiteScreen> = screen;
 
   return {
     /** What the window shows for the site. */

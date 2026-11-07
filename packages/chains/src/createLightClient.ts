@@ -7,12 +7,18 @@
 import type { JsonRpcConnection, JsonRpcMessage } from '@polkadot-api/json-rpc-provider';
 import type { JsonRpcProvider } from 'polkadot-api';
 import { DEBUG, getChainRoleForGenesis, getActiveSupportedGenesisHashes, type ChainRole } from '@dotli/config/fixed';
-import { m, reportListener, spans } from '@dotli/metrics';
-import { createAsyncTaskPool, createListenerSet, getErrorMessage, log } from '@dotli/shared';
+import { m, reportExpected, reportListener, spans } from '@dotli/metrics';
+import { createAsyncTaskPool, createListenerSet, getErrorMessage, log, markHandled } from '@dotli/shared';
 import init, { ChainProviderBuilder, setLogLevel, type Connection } from '@parity/truapi-provider';
 import wasmUrl from '@parity/truapi-provider/truapi_provider_bg.wasm?url';
 import { createSmoldotDb, type SmoldotDb } from './createSmoldotDb.js';
-import { pageChainSyncReporter, type ChainLifecycleWatch, type ChainSyncTap } from './createChainSyncReporter.js';
+import {
+  pageChainSyncReporter,
+  type ChainLifecycleWatch,
+  type ChainSyncReporter,
+  type ChainSyncTap,
+  type ParsedRpcMessage,
+} from './createChainSyncReporter.js';
 import type { ChainTransportHooks } from './transportHooks.js';
 
 // Reached through `loadProvider` too, so a caller that loads the light client lazily keeps sync reporting off its boot path.
@@ -25,7 +31,10 @@ export type LightClientEngine = {
    * read.
    */
   loadDatabase(genesisHash: string): Promise<boolean>;
-  /** Adds the chain and opens a JSON-RPC connection to it. Rejects when the chain cannot be added. */
+  /**
+   * Adds the chain and opens a JSON-RPC connection to it. Rejects when the chain cannot be added, and with a
+   * `LightClientCapError` when the engine already holds as many connections as it allows.
+   */
   connect(genesisHash: string): Promise<LightClientConnection>;
   /** Watches the chain's lifecycle snapshots. May throw when the engine offers no watch. */
   lifecycle(genesisHash: string): ChainLifecycleWatch;
@@ -57,6 +66,8 @@ export type LightClientDeps = {
   debug?: boolean;
   /** Defaults to truapi-provider's wasm. */
   start?: StartEngine;
+  /** Defaults to the page's sync reporter. */
+  attachChainSync?: ChainSyncReporter['attachChainSync'];
 };
 
 // Observed at the store, since the crate reads it for the relay it dials internally. "unavailable" keeps an
@@ -91,6 +102,30 @@ export type LightClient = {
 const HEARTBEAT_DEFAULT_MS = 60_000;
 const LOG_LEVEL_KEY = 'dotli:truapi-provider-log';
 const HEARTBEAT_KEY = 'dotli:smoldot-heartbeat-ms';
+// truapi-provider rejects a connect past its connection cap with this text.
+const CONNECTION_CAP_TEXT = 'the light client already holds';
+
+// What a chain's sync tap needs of its connection and engine.
+type ChainSyncSource = Omit<Parameters<ChainSyncReporter['attachChainSync']>[0], 'chain'>;
+
+type CreateChainSyncTapsParams = {
+  attachChainSync: ChainSyncReporter['attachChainSync'];
+};
+
+// A chain's connected sources in connect order, and the tap one of them holds.
+type ChainSyncEntry = {
+  sources: Set<ChainSyncSource>;
+  held: { source: ChainSyncSource; tap: ChainSyncTap } | null;
+};
+
+/** A connect the engine refused because it already holds as many connections as it allows. */
+export class LightClientCapError extends Error {
+  override readonly name = 'LightClientCapError';
+
+  constructor(genesisHash: string, cause: unknown) {
+    super(`Light client refused chain ${genesisHash} at its connection cap`, { cause });
+  }
+}
 
 /**
  * A light client whose engine starts on the first chain it opens, with a failed start retried by the next open.
@@ -106,16 +141,21 @@ export function createLightClient({
   heartbeatMs = HEARTBEAT_DEFAULT_MS,
   debug = false,
   start = startTruapiProvider,
+  attachChainSync = pageChainSyncReporter.attachChainSync,
 }: LightClientDeps): LightClient {
   const listeners = createListenerSet<LightClientChange>({
     onListenerError: reportListener('protocol', 'light_client'),
   });
   const dbOutcomes = new Map<SmoldotDbChain, SmoldotDbOutcome>();
+  // The read needs no engine, so it overlaps the wasm compile. A blob is megabytes, so an entry lives only until its
+  // chain's resume.
+  const earlyReads = new Map<string, Promise<string | null>>();
   let fatal: string | null = null;
   let engine: LightClientEngine | null = null;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   // Every chain's first open waits on one start. A failed start is tried again by the next open.
   const starts = createAsyncTaskPool({ poolSize: 1 });
+  const syncTaps = createChainSyncTaps({ attachChainSync });
 
   function markFatal(message: string): void {
     if (fatal !== null) {
@@ -146,7 +186,7 @@ export function createLightClient({
       : {
           async load(genesisHash: string) {
             try {
-              const blob = await db.load(genesisHash);
+              const blob = await readStored(db, genesisHash);
               markDb(genesisHash, blob !== null ? 'hit' : 'miss');
               return blob;
             } catch (error) {
@@ -182,6 +222,35 @@ export function createLightClient({
     });
   }
 
+  function readEarly(genesisHash: string): void {
+    // Once the engine is up there is nothing to overlap, and a chain it already added reads nothing.
+    if (db === null || engine !== null || earlyReads.has(genesisHash)) {
+      return;
+    }
+    earlyReads.set(genesisHash, markHandled(db.load(genesisHash)));
+  }
+
+  function readStored(store: SmoldotDb, genesisHash: string): Promise<string | null> {
+    const early = earlyReads.get(genesisHash);
+    if (early === undefined) {
+      return store.load(genesisHash);
+    }
+    earlyReads.delete(genesisHash);
+    return early;
+  }
+
+  async function prepareChain(key: string): Promise<LightClientEngine> {
+    readEarly(key);
+    try {
+      const live = await ensureEngine();
+      // Must run before the chain is added: only a chain's first add consumes a blob.
+      await resumeFromStore(live, key);
+      return live;
+    } finally {
+      earlyReads.delete(key);
+    }
+  }
+
   function isChainSupported(genesisHash: string): boolean {
     return getActiveSupportedGenesisHashes().has(genesisHash.toLowerCase());
   }
@@ -197,7 +266,7 @@ export function createLightClient({
       const state: {
         connection: LightClientConnection | null;
         closed: boolean;
-        sync: ChainSyncTap | null;
+        sync: ChainSyncSource | null;
       } = {
         connection: null,
         closed: false,
@@ -212,18 +281,42 @@ export function createLightClient({
         hooks?.onStatus('disconnected');
         hooks?.onHalt(error);
       }
+      function releaseSync(): void {
+        if (state.sync === null) {
+          return;
+        }
+        syncTaps.leave(key, state.sync);
+        state.sync = null;
+      }
+      function reportFailure(error: unknown, connected: boolean): void {
+        const reason = getErrorMessage(error);
+        if (connected) {
+          log.warn(`[dot.li provider] chain ${key} read failed, halting it: ${reason}`, error);
+          return;
+        }
+        if (error instanceof LightClientCapError) {
+          reportExpected(error, {
+            flow: 'protocol',
+            step: 'light_client_connect',
+            metric: spans.SMOLDOT_CONNECTION_CAP,
+            reason: 'cap',
+            message: `[dot.li provider] chain ${key} is past the light client's connection cap, halting it: ${reason}`,
+          });
+          return;
+        }
+        markFatal(`chain ${key} connection failed: ${reason}`);
+      }
       hooks?.onStatus('connecting');
       void readResponses();
 
       async function readResponses(): Promise<void> {
         // The halt runs outside the `try`, so a throwing hook cannot reach the `catch` and halt again.
         let streamEnded = false;
-        // A failure before connecting is the light client's, one after it is this chain's.
+        // A failure before connecting is the light client's, one after it is this chain's. A cap rejection before
+        // connecting is the chain's failure too.
         let connected = false;
         try {
-          const live = await ensureEngine();
-          // Must precede `connect`: only a chain's first add consumes a blob.
-          await resumeFromStore(live, key);
+          const live = await prepareChain(key);
           const candidate = await live.connect(key);
           if (state.closed) {
             candidate.close();
@@ -237,17 +330,14 @@ export function createLightClient({
           }
           queued.length = 0;
           // After the flush, so the sync request cannot jump ahead of a caller's.
-          const chain = getChainRoleForGenesis(key);
-          state.sync =
-            chain === null
-              ? null
-              : pageChainSyncReporter.attachChainSync({
-                  chain,
-                  send: raw => {
-                    candidate.send(raw);
-                  },
-                  watchLifecycle: () => live.lifecycle(key),
-                });
+          const source: ChainSyncSource = {
+            send: raw => {
+              candidate.send(raw);
+            },
+            watchLifecycle: () => live.lifecycle(key),
+          };
+          state.sync = source;
+          syncTaps.join(key, source);
           for (;;) {
             const response = await candidate.nextResponse();
             if (response === undefined) {
@@ -257,21 +347,19 @@ export function createLightClient({
             // The light client answers only JSON-RPC, which goes on unchecked as the held provider wire.
             const parsed = JSON.parse(response) as JsonRpcMessage;
             // polkadot-api would reject a string id it never issued.
-            if (state.sync?.intercept(parsed) === true) {
+            if (syncTaps.intercept(key, source, parsed)) {
               continue;
             }
             onMessage(parsed);
           }
         } catch (error) {
-          const reason = getErrorMessage(error);
-          if (connected) {
-            log.warn(`[dot.li provider] chain ${key} read failed, halting it: ${reason}`, error);
-          } else {
-            markFatal(`chain ${key} connection failed: ${reason}`);
-          }
+          reportFailure(error, connected);
           if (!isClosed()) {
             fail(error);
           }
+        } finally {
+          // A stream that ended or broke hands the chain's tap to another of its connections.
+          releaseSync();
         }
         // Only `disconnect()` ends the stream in order. Otherwise the transport died or overflowed its send budget.
         if (streamEnded && !isClosed()) {
@@ -298,8 +386,7 @@ export function createLightClient({
         },
         disconnect() {
           state.closed = true;
-          state.sync?.stop();
-          state.sync = null;
+          releaseSync();
           state.connection?.close();
           state.connection = null;
         },
@@ -350,7 +437,89 @@ export async function startTruapiProvider({ logLevel, store, debug }: StartEngin
   if (store !== null) {
     builder.setStorage(store);
   }
-  return builder.build();
+  return withConnectionCapError(builder.build());
+}
+
+/**
+ * Wraps `engine` so that a `connect` rejection that states the wasm's connection cap rejects with `LightClientCapError`.
+ * Never throws. Any other rejection passes through unchanged. The wasm states its cap only in a rejection's text, so the
+ * mapping happens where the failure leaves the wasm.
+ */
+export function withConnectionCapError(engine: LightClientEngine): LightClientEngine {
+  return {
+    loadDatabase: genesisHash => engine.loadDatabase(genesisHash),
+    lifecycle: genesisHash => engine.lifecycle(genesisHash),
+    async connect(genesisHash) {
+      try {
+        return await engine.connect(genesisHash);
+      } catch (error) {
+        if (getErrorMessage(error).includes(CONNECTION_CAP_TEXT)) {
+          throw new LightClientCapError(genesisHash, error);
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+/**
+ * One sync tap per chain, held by one of its connected sources, since every connection of a chain would report the same
+ * sync. When the holder leaves, a source still connected takes the tap, so a chain reports its sync while any connection
+ * of it is open. Never throws on its own, since `attachChainSync` never throws. A call throws only what the held tap's
+ * `stop` or `intercept` throws.
+ */
+function createChainSyncTaps({ attachChainSync }: CreateChainSyncTapsParams) {
+  const entries = new Map<string, ChainSyncEntry>();
+
+  function attach(key: string, entry: ChainSyncEntry, source: ChainSyncSource): void {
+    const chain = getChainRoleForGenesis(key);
+    if (chain === null) {
+      return;
+    }
+    const tap = attachChainSync({ chain, ...source });
+    if (tap !== null) {
+      entry.held = { source, tap };
+    }
+  }
+
+  return {
+    /** Adds `source` as connected to the chain, which takes the tap when no source holds it. Never throws. */
+    join(key: string, source: ChainSyncSource): void {
+      const entry = entries.get(key) ?? { sources: new Set(), held: null };
+      entries.set(key, entry);
+      entry.sources.add(source);
+      if (entry.held === null) {
+        attach(key, entry, source);
+      }
+    },
+    /**
+     * Removes `source`, and when it held the tap, stops it and attaches one to the next source. A repeat does nothing.
+     * Throws only what the stopped tap's `stop` throws, and never from the attach.
+     */
+    leave(key: string, source: ChainSyncSource): void {
+      const entry = entries.get(key);
+      if (entry?.sources.delete(source) !== true) {
+        return;
+      }
+      if (entry.sources.size === 0) {
+        entries.delete(key);
+      }
+      if (entry.held?.source !== source) {
+        return;
+      }
+      entry.held.tap.stop();
+      entry.held = null;
+      const [next] = entry.sources;
+      if (next !== undefined) {
+        attach(key, entry, next);
+      }
+    },
+    /** Whether `parsed` was the tap's own reply, true only on the source that holds the tap. Throws what the tap throws. */
+    intercept(key: string, source: ChainSyncSource, parsed: ParsedRpcMessage): boolean {
+      const held = entries.get(key)?.held;
+      return held?.source === source && held.tap.intercept(parsed);
+    },
+  };
 }
 
 async function resumeFromStore(engine: LightClientEngine, key: string): Promise<void> {

@@ -5,7 +5,6 @@
 
 // Must stay the first import: it starts Sentry before any other module evaluates.
 import './boot.js';
-import { startPwa } from './startPwa.js';
 import { startPage } from './startPage.js';
 import { startHost, type HostStartup } from './startHost.js';
 import { reportBootFailure } from './reportBootFailure.js';
@@ -13,17 +12,23 @@ import { reportBootFailure } from './reportBootFailure.js';
 import { PAGE_START } from './pageStart.js';
 import { bootTracker } from './createBootTracker.js';
 import { pageLoading } from './createLoadingController.js';
+import { holdNetworkWhileLoading } from './holdNetworkWhileLoading.js';
+import { loadingState } from './state/loadingState.js';
+import { networkPause } from './runtime/createNetworkPause.js';
 import { urlPillState } from './state/urlPillState.js';
+import { productCardState } from './state/productCardState.js';
+import { createProductAuthor } from './createProductAuthor.js';
 import { pageTopbarAutoHide } from './createTopbarAutoHide.js';
+import { productState } from './runtime/state/productState.js';
 import { authState } from './runtime/state/authState.js';
 import { loadBridge, loadDebugPanelHost } from './lazy.js';
 import type { ProductFrame } from './runtime/createProductFrame.js';
-import { fetchBitswapBlock, createSandboxBlockRelay, type SandboxBlockRelay } from '@dotli/bitswap';
+import { createSandboxBlockRelay, type SandboxBlockRelay } from '@dotli/bitswap';
 import { loadVerify } from '@dotli/content';
 import { getProtocolClient } from '@dotli/protocol';
 import { blockCache as pageBlockCache, cidCache } from '@dotli/storage';
 import { runWhenIdle, showNotification } from '@dotli/ui';
-import { formatElapsed, log, createRandomId } from '@dotli/shared';
+import { formatElapsed, log, markHandled, createRandomId } from '@dotli/shared';
 import {
   DEBUG,
   getActiveServicesConfig,
@@ -42,6 +47,7 @@ import { createProductLoader, type CachedCopy, type LoaderCidCache } from './cre
 import { startSandboxContent } from './startSandboxContent.js';
 import { startShieldAutoHide } from './startShieldAutoHide.js';
 import { createNameSource, type NameSource, type RpcResolver } from './createNameSource.js';
+import type { H160Address } from './h160Address.js';
 import { revalidateCachedCopy } from './revalidateCachedCopy.js';
 import { markAndReload } from './createContinuation.js';
 import { loadFailureScreen } from './loadFailureScreen.js';
@@ -80,6 +86,17 @@ type Shell = {
   productFrame: ProductFrame;
 };
 
+/** A CID cache read started before the shell was up, for the name the page opens. */
+type EarlyCidRead = { label: string; read: ReturnType<LoaderCidCache['get']> };
+
+type OpenProductParams = {
+  route: Extract<ShellRoute, { kind: 'product' }>;
+  shell: Shell;
+  cidRead: EarlyCidRead | null;
+};
+
+type CreatePageCidCacheParams = { names: NameSource; cidRead: EarlyCidRead | null };
+
 /** Built on the host pool's Asset Hub connection, since the resolver cannot import the pool. */
 async function loadRpcResolver(): Promise<RpcResolver> {
   const [resolveModule, bridge] = await Promise.all([loadResolve(), loadBridge()]);
@@ -90,7 +107,10 @@ async function loadRpcResolver(): Promise<RpcResolver> {
   });
 }
 
-/** Starts the debug tools, the sandbox channel, the settings and the bridge. */
+/**
+ * Starts the debug tools, the sandbox channel, the settings and the bridge. It sets the page's network before its
+ * first await, and the shared settings read after that never change it.
+ */
 async function startShell(route: ShellRoute, role: PageRole): Promise<Shell> {
   log.debug(`[dot.li perf] main() started (${formatElapsed(PAGE_START)})`);
 
@@ -99,9 +119,7 @@ async function startShell(route: ShellRoute, role: PageRole): Promise<Shell> {
   if (debugMode.enabled) {
     debugBus.enableBuffering();
     // The describer reports its own failed load, and the boot reports the bridge's.
-    void loadBridge()
-      .then(bridge => bridge.wireDescriber.preload())
-      .catch(() => undefined);
+    void markHandled(loadBridge().then(bridge => bridge.wireDescriber.preload()));
     void startDebugPanel({
       load: loadTruapiDebugMount,
       host: async () => (await loadDebugPanelHost()).debugPanelHost,
@@ -196,7 +214,8 @@ async function openLocalTarget(target: LocalTarget, shell: Shell): Promise<void>
   }
 }
 
-async function openProduct({ label, base }: Extract<ShellRoute, { kind: 'product' }>, shell: Shell): Promise<void> {
+async function openProduct({ route, shell, cidRead }: OpenProductParams): Promise<void> {
+  const { label, base } = route;
   const { settings, bridgeModule } = shell.startup;
   const protocol = getProtocolClient();
   bootTracker.setStep('resolve_setup');
@@ -207,11 +226,18 @@ async function openProduct({ label, base }: Extract<ShellRoute, { kind: 'product
     backend: settings.backend,
     remote: {
       resolveDotName: protocol.resolve.resolveDotName,
+      resolveOwner: protocol.resolve.resolveOwner,
       resolveRootManifest: protocol.resolve.resolveRootManifest,
       resolveExecutableManifest: protocol.resolve.resolveExecutableManifest,
     },
     loadRpc: loadRpcResolver,
   });
+  const author = createProductAuthor({
+    readOwner: readLoadedOwner,
+    readAccount: address => bridgeModule.readOriginalAccount(address),
+    readUsernames: account => bridgeModule.readPeopleUsernames(account),
+  });
+  productCardState.setAuthorSource(() => author.load());
   const loader = createProductLoader({
     backend: settings.backend,
     skipCidCache: settings.cache.skipCidCache,
@@ -221,6 +247,7 @@ async function openProduct({ label, base }: Extract<ShellRoute, { kind: 'product
     base,
     frame: {
       setPageProduct: bridgeModule.setPageProduct,
+      holdCore: bridgeModule.acquirePageCore,
       render: product => shell.productFrame.render(product),
       halt() {
         shell.productFrame.halt();
@@ -229,7 +256,8 @@ async function openProduct({ label, base }: Extract<ShellRoute, { kind: 'product
       onContentProgress: listener => relay.onProgress(listener),
       onSandboxHeard: listener => shell.sandboxChannel.on('dotli:loading-status', listener),
     },
-    cidCache: createPageCidCache(names),
+    cidCache: createPageCidCache({ names, cidRead }),
+    fetchBlock: (cid, signal) => bridgeModule.hostBitswapClient.get(cid, signal),
     recents: { record: recentLabels.record },
     failureScreen: loadFailureScreen,
     onProtocolVersionMismatch: protocol.frame.subscribeVersionMismatch,
@@ -237,15 +265,30 @@ async function openProduct({ label, base }: Extract<ShellRoute, { kind: 'product
   await loader.load(label);
 }
 
+/** The loaded product's owner, null while no product is loaded or when its owner is not known. */
+function readLoadedOwner(): H160Address | null {
+  const product = productState.store.get();
+  return product.status === 'loaded' ? (product.owner ?? null) : null;
+}
+
 /**
- * The page's CID cache for the active network, checked with `names`, the source the load itself reads. Its writes and
- * its check against the network wait until the page is idle, so they never hold a render back.
+ * The page's CID cache for the active network, checked with `names`, the source the load itself reads. Its first read
+ * for the early read's name is that read. Its writes and its check against the network wait until the page is idle,
+ * so they never hold a render back.
  */
-function createPageCidCache(names: NameSource): LoaderCidCache {
+function createPageCidCache({ names, cidRead }: CreatePageCidCacheParams): LoaderCidCache {
+  let early = cidRead;
   const set = ({ label, cid, manifests }: CachedCopy): Promise<void> =>
     cidCache.set({ label, network: getNetwork(), cid, manifests });
   return {
-    get: label => cidCache.get(label, getNetwork()),
+    get(label) {
+      if (early?.label === label) {
+        const { read } = early;
+        early = null;
+        return read;
+      }
+      return cidCache.get(label, getNetwork());
+    },
     storeLater(copy) {
       runWhenIdle(() => {
         void set(copy);
@@ -276,7 +319,7 @@ function startProductContent(shell: Shell, skipArchiveCache: boolean): SandboxBl
     : { get: pageBlockCache.get, put: pageBlockCache.put, delete: pageBlockCache.remove };
   const relay = createSandboxBlockRelay({
     channel: shell.sandboxChannel,
-    blocks: fetchBitswapBlock,
+    blocks: (cid, signal) => shell.startup.bridgeModule.hostBitswapClient.get(cid, signal),
     cache: blockCache,
     verify: createBlockVerifier({
       load: loadVerify,
@@ -315,11 +358,18 @@ async function main(): Promise<void> {
     return;
   }
   performance.mark('dotli:main:start');
+  // The load ends the hold itself once the loading screen is gone, so the stop goes unused.
+  holdNetworkWhileLoading({ pause: networkPause, loading: loadingState.store });
   // From the URL alone, before any await, so the URL bar paints with the page.
   if (route.kind === 'preview' || route.kind === 'localhost') {
     urlPillState.showLocalhost(route.host);
   }
-  const shell = await startShell(route, getShellPageRole(route, framed));
+  const booting = startShell(route, getShellPageRole(route, framed));
+  // The network is final once the shell boot has started. `cidCache.get` never rejects, so the read needs no handler
+  // even when the shell fails to start.
+  const cidRead: EarlyCidRead | null =
+    route.kind === 'product' ? { label: route.label, read: cidCache.get(route.label, getNetwork()) } : null;
+  const shell = await booting;
   switch (route.kind) {
     case 'preview':
       await openLocalTarget(route, shell);
@@ -330,15 +380,11 @@ async function main(): Promise<void> {
       return;
     case 'product':
       announceRoute(route, shell.flowId);
-      await openProduct(route, shell);
+      await openProduct({ route, shell, cidRead });
       return;
     case 'landing':
       announceRoute(route, shell.flowId);
-      await leaveForLanding({
-        location: window.location,
-        localRoot: LOCAL_ROOT,
-        workers: async () => ('serviceWorker' in navigator ? navigator.serviceWorker.getRegistrations() : []),
-      });
+      leaveForLanding({ location: window.location, localRoot: LOCAL_ROOT });
       return;
   }
 }
@@ -353,9 +399,6 @@ const urlPillElement = document.getElementById('topbar-url');
 if (urlPillElement !== null) {
   bindUrlPill(urlPillElement);
 }
-
-// The update offer lasts the page's life, so its cleanup goes unused.
-startPwa();
 
 // Everything past boot catches its own failures, so this broke the shell before a load started.
 main().catch(reportBootFailure);

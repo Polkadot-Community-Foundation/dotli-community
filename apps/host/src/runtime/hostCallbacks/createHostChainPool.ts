@@ -8,7 +8,9 @@ import {
   createChainPool,
   createCoreRpcChainProvider,
   isCoreRpcChainSupported,
+  RPC_FOLLOW_LIMIT,
   type ChainPool,
+  type ChainTransport,
   type ChainTransportHooks,
 } from '@dotli/chains';
 import {
@@ -61,13 +63,17 @@ export function createHostChainPool({
   createRemoteChain = pageSources.createRemoteChain,
   createRpcChain = pageSources.createRpcChain,
 }: Params = {}): ChainPool {
-  function createTransport(genesisHash: string, hooks: ChainTransportHooks): JsonRpcProvider | null {
+  function createTransport(genesisHash: string, hooks: ChainTransportHooks): ChainTransport | null {
     switch (backend()) {
-      case 'rpc-gateway':
-        return createRpcChain(genesisHash, hooks);
+      case 'rpc-gateway': {
+        const provider = createRpcChain(genesisHash, hooks);
+        return provider === null ? null : { provider, followLimit: RPC_FOLLOW_LIMIT };
+      }
       case 'smoldot-direct':
-      case 'smoldot-shared-worker':
-        return createFrameChainTransport(genesisHash, hooks, { createRemoteChain });
+      case 'smoldot-shared-worker': {
+        const provider = createFrameChainTransport(genesisHash, hooks, { createRemoteChain });
+        return provider === null ? null : { provider, followLimit: Infinity };
+      }
     }
   }
 
@@ -79,7 +85,7 @@ export function createHostChainPool({
 }
 
 /** The page's protocol frame status, read from the protocol client on each call. */
-export const protocolFrame: FrameStatusSource = { getProtocolStatus: () => getProtocolClient().frame.getStatus() };
+export const protocolFrame: FrameStatusSource = { getProtocolStatus: () => getProtocolClient().frame.status.get() };
 
 /** The page's one host chain pool. */
 export const hostChainPool = createHostChainPool();
