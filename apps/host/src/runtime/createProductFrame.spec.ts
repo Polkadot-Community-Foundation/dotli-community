@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { asProductId } from '@parity/truapi';
 import { PERMISSIONS_REQUEST_DEVICE_PERMISSION } from '@parity/truapi/wire-table';
 import { isSandboxOrigin } from '@dotli/config';
 import { startSandboxChannel, type SandboxChannel } from '@dotli/sandbox-wire';
-import { createDeferred, createSyncStore, realTimers, type Timers } from '@dotli/shared';
+import { createDeferred, realTimers, type Timers } from '@dotli/shared';
+import { atom } from 'nanostores';
 import { catchError, catchRejection, createManualTimers, nth, readOutcome } from '@dotli/shared/testing';
 import { encodeResponseFrame } from '../testing/encodeResponseFrame.js';
 import { bindReports } from '../testing/bindReports.js';
@@ -33,6 +35,7 @@ import {
   type FakeCoreProvider,
   type FakePageCore,
 } from './createPageCore.fake.js';
+import { parseH160Address } from '../h160Address.js';
 import { createFakeIframe, createFakeProductFrameView } from './createProductFrame.fake.js';
 import { createFakeStoredSession } from './session/createCoreStorage.fake.js';
 
@@ -290,8 +293,9 @@ function matchAttached(attached: (HTMLIFrameElement | undefined)[], hosts: FakeI
 
 /** A product page whose topbar login runs on `fakes`, as the shell starts it. */
 function createTopbarLogin({ fakes }: CreateTopbarLoginParams): () => Promise<void> {
+  const auth = atom<DotliAuthState>({ tag: 'Disconnected' });
   const commands = createCoreAuthCommands({
-    auth: createSyncStore<DotliAuthState>({ name: 'auth', initial: { tag: 'Disconnected' }, equals: () => false }),
+    auth,
     core: fakes.core,
     session: { reportLoginFailure: vi.fn() },
     walletMode: () => 'app',
@@ -560,7 +564,7 @@ describe('product frame renders', () => {
     // When
     await fakes.settle(buildSubdomainProduct('chatty', { chat: true }), 0);
     const chattyProviders = nth(fakes.runtimes, 0).createProvider.mock.calls.length;
-    const chattyState = productState.get();
+    const chattyState = productState.store.get();
     await fakes.settle(buildSubdomainProduct('quiet'), 1);
 
     // Then
@@ -572,20 +576,39 @@ describe('product frame renders', () => {
     expect(fakes.runtimes.at(-1)?.createProvider).toHaveBeenLastCalledWith(
       expect.objectContaining({ executionKind: 'App' }),
     );
-    expect(productState.get()).toMatchObject({ status: 'loaded', label: 'quiet', chat: false });
+    expect(productState.store.get()).toMatchObject({ status: 'loaded', label: 'quiet', chat: false });
+  });
+
+  it('As a dApp user, I open a product and the page records the id its core parsed, so its chat is keyed as the core keys it', async () => {
+    // Given a core that parses the asked id into another spelling
+    const fakes = createHarness({
+      fakes: createFakePageCore({ parseProductId: () => asProductId('canonical.paseo') }),
+    });
+
+    // When
+    await fakes.settle(buildSubdomainProduct('chatty', { chat: true }), 0);
+
+    // Then
+    expect(productState.store.get()).toMatchObject({ status: 'loaded', label: 'chatty', productId: 'canonical.paseo' });
   });
 
   it('As a dApp user, I open my product and the tab names it by its published name from the first render, and the page knows its versions', async () => {
     // Given
     const fakes = createHarness();
-    const facts: ManifestFacts = { displayName: 'DOOM', manifestVersion: 1, appVersion: [1, 2, 3] };
+    const facts: ManifestFacts = {
+      displayName: 'DOOM',
+      description: 'Shoot demons.',
+      manifestVersion: 1,
+      appVersion: [1, 2, 3],
+      owner: parseH160Address('0x1111111111111111111111111111111111111111'),
+    };
 
     // When
     await fakes.settle({ mode: 'subdomain', label: 'doom', cid: 'cid', chat: Promise.resolve(false), ...facts }, 0);
 
     // Then
     expect(fakes.frameView.titles).toEqual([{ mode: 'subdomain', label: 'doom', displayName: 'DOOM' }]);
-    expect(productState.get()).toMatchObject({ status: 'loaded', label: 'doom', ...facts });
+    expect(productState.store.get()).toMatchObject({ status: 'loaded', label: 'doom', ...facts });
   });
 });
 

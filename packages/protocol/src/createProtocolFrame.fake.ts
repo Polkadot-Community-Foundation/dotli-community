@@ -7,7 +7,8 @@
 // frame hands out its transport once its iframe loads, since a call starts the handshake. So calls made while it boots
 // wait as they would on a real frame.
 
-import { createStatusCell, realTimers, waitForStatus, type Timers } from '@dotli/shared';
+import { atom } from 'nanostores';
+import { realTimers, waitForStatus, type Timers } from '@dotli/shared';
 import { createTransport } from '@dotli/transport';
 import { createProviderPair } from '@dotli/transport/testing';
 import type { ProtocolFrame, ProtocolStatus } from './frameTypes.js';
@@ -35,22 +36,19 @@ type Built = {
  * Up and ready unless `status` says otherwise, or the test moves it. A `waitUntilReady` or `getTransport` on an idle or
  * failed frame builds one and starts it booting, as the frame does. A `getTransport` waits for the test to set
  * `listening` or `ready`, and a `waitUntilReady` for `ready`. Each fails when the frame is then lost or goes idle.
+ * Unlike the frame, a status listener's throw reaches the test through the call that moved the status.
  */
 export function createFakeFrame({
   serve = () => undefined,
   status: initial = 'ready',
   timers = realTimers,
 }: Params = {}) {
-  // A listener's throw fails the test that set the status.
-  const status = createStatusCell<ProtocolStatus>({
-    initial,
-    onListenerError: error => {
-      throw error;
-    },
-  });
+  const status = atom<ProtocolStatus>(initial);
+  const storeHeld = atom(false);
   let lostWith: Error = new Error('lost');
   let builds = 0;
   let current: Built | null = null;
+  const checks: ProtocolTransport[] = [];
 
   function build(): Built {
     builds += 1;
@@ -133,13 +131,16 @@ export function createFakeFrame({
   bringUp(status.get());
 
   const frame: ProtocolFrame = {
-    getStatus: status.get,
-    subscribeStatus: status.subscribe,
+    status,
+    storeHeld,
     configure: () => undefined,
     getTransport: () => waitForHost(['listening', 'ready']),
     waitUntilReady: () => waitForHost(['ready']),
     // The facades never read it, and this fake's frame speaks the host's schema.
     onVersionMismatch: () => () => undefined,
+    checkAlive: transport => {
+      checks.push(transport);
+    },
   };
 
   return {
@@ -149,8 +150,14 @@ export function createFakeFrame({
     setStatus,
     /** Drops the frame with `error`, after its status says it is down. Its transport is disposed with `error`. */
     lose,
+    /** Says whether a frame whose light client failed to start is held for the store. Builds and drops nothing. */
+    holdStore: (held: boolean): void => {
+      storeHeld.set(held);
+    },
     /** How many frames were built. */
     countBuilds: () => builds,
+    /** The transports the frame was asked to check, in order. Checks nothing. */
+    checks,
   };
 }
 

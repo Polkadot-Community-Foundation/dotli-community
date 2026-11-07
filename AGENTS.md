@@ -16,6 +16,10 @@ shows a screen that tells the user to open Polkadot App.
 
 The browser floor is ES2022 and Safari 17.4. Shipped code uses no runtime API newer than that.
 
+A product's metadata, its author included, is read as the product-manifest RFC's "Resolving a product"
+(paritytech/host-rust-core, `docs/rfcs/product-manifest.md`) says, while the product resolves, and is cached with its
+manifests.
+
 ## Glossary
 
 - **Host**: the top-level shell build. Owns the topbar, session and bridge.
@@ -56,6 +60,10 @@ Tools:
   Don't add join-by-key to the pool.
 - Use `createSharedRun` from `@dotli/shared` for work several callers start and stop, so it runs once and ends with its
   last caller. Don't hand-roll caller counts.
+- Every chain user in a JS context leases its chains from that context's chain pool. A package that cannot import the
+  pool takes its connection as a parameter. It never opens one through a global client.
+- A chain consumer holds its lease only while it has work on the chain, and releases it once the work ends. The pool's
+  destroy delay keeps the chain warm between bursts.
 
 ## Packages
 
@@ -72,6 +80,8 @@ General:
 
 - Don't disable rules without a one-line reason.
 - Prefer the framework's own mechanism (Astro, Solid 2, Vite) over hand-written machinery.
+- A feature off the critical path that already loads lazily gets the simplest correct read. Don't trade simplicity or
+  the spec for a load-time saving nobody asked for.
 - Fix races and duplicate resources structurally (one refcounted owner), not with flags or delays.
 - Build dotli as a plain website that loads fast. Special build, startup or packaging machinery belongs only where a
   plain website can't cover the need: the sandbox, product isolation, iframe messaging and chain connections.
@@ -81,6 +91,8 @@ General:
   in the commit or PR.
 - A build value that gates code is read as a static `import.meta.env.X` at each site, never through an import, so the
   bundler drops the dead branch.
+- A cleanup never deletes a working capability, such as a pause, a retry or a cache, only because nothing calls it yet.
+  Ask the owner first. The delete's commit or PR names the capability and why it goes.
 
 Packages:
 
@@ -103,7 +115,10 @@ TypeScript:
 UI:
 
 - Astro for static markup. Solid islands only for interactive controls, one module per island.
-- Keep the sync stores (`createSyncStore`) for app state. Don't swap them for Solid stores.
+- Chrome a page shows from first paint is in the server-rendered HTML, and its island upgrades it in place. Never swap
+  one element for another at hydration.
+- App state is a nanostores store. A component renders one through `useStore` from `@dotli/stores-solid`, never by
+  copying it into a Solid signal or store where `useStore` would do.
 - Colors only from tokens in `packages/ui/src/global.css`. dotli chrome is dark only.
 - Every icon is a Solid component with an `<svg>` inside, drawn in `currentColor`, with a `size` prop when it needs
   resizing. Never markup in a string or built from DOM calls.
@@ -146,6 +161,9 @@ Tests:
   tests business logic. A test that needs a DOM tests an integration layer, so give the logic a seam.
 - A component is tested by a play function in its Storybook story, which runs in a real browser.
 - Functional tests may mock the DOM and run under happy-dom.
+- A functional test of a flow that Safari's storage partition shapes, such as a product's copy of the session or the
+  sign-in window, runs on partitioned storage. It never relies on Chromium's default shared third-party storage, or on
+  the order of its steps, to keep a product's copy apart from the main store.
 - Name tests as user stories: `As a <role>, I <action> and <outcome>`, where the role may carry a `who …` clause.
 - Separate bodies with `// Given`, `// When`, `// Then`.
 - The call under test sits in When, and Then only asserts.

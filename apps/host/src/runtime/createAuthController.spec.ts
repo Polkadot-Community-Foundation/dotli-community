@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
+import { asProductId } from '@parity/truapi';
 import { withActiveTld } from '@dotli/config';
 import { bindCaptureSink, type CaptureContext } from '@dotli/metrics';
 import { bindRecordingSentry } from '@dotli/metrics/testing';
@@ -12,10 +13,12 @@ import { createBlockingModalCoordinator, type BlockingModalCoordinator } from '.
 import type { DotliAuthState } from './session/types.js';
 import { authModalState, type AuthModalState } from '../state/authModalState.js';
 import { authState } from './state/authState.js';
-import { createSyncStore, createDeferred } from '@dotli/shared';
+import { createDeferred, createListenerSet } from '@dotli/shared';
+import { atom } from 'nanostores';
 import { catchError, nth, recordLog, resetAllStoresForTests } from '@dotli/shared/testing';
 import { productState } from './state/productState.js';
 import { createChanges, type Changes } from '../testing/changes.js';
+import { recordNotified } from '../testing/recordNotified.js';
 import type { SignInIntent } from './sessionHandoff/parseWindowRequest.js';
 import type { SessionResult } from './sessionHandoff/parseSessionResult.js';
 import type { PageCancelReason, SessionHandoff, SignInOutcome } from './sessionHandoff/createSessionHandoff.js';
@@ -49,6 +52,8 @@ type StartControllerParams = {
   inPagePhrase?: () => Promise<InPagePhrase>;
   /** Whether a sign-in made elsewhere waits, as session state says. */
   elsewhere?: () => boolean;
+  /** Reads the saved session again, by default resolving with the auth state left as it was. */
+  rereadSession?: () => Promise<void>;
 };
 
 type CreateFakePhraseParams = {
@@ -65,7 +70,9 @@ type RecordCommandsParams = {
 const LOGIN_CANCELLED: LoginOutcome = { kind: 'cancelled' };
 
 const CLOSED_MODAL: AuthModalState = { open: false, productLabel: null, reason: null, view: { kind: 'spinner' } };
-const getAuthModalState = authModalState.store.get;
+function getAuthModalState(): AuthModalState {
+  return authModalState.store.get();
+}
 
 const PHRASE = 'twelve good words';
 const ENTROPY = new Uint8Array(16).fill(7);
@@ -120,7 +127,7 @@ function createFakePhrase({ outcome = 'reloading' }: CreateFakePhraseParams = {}
   return { phrase, used };
 }
 
-/** A controller over its own auth store, whose commands only record what they are asked. */
+/** A controller over its own auth store and steps, whose commands only record what they are asked. */
 function startController({
   coordinator = createBlockingModalCoordinator(),
   commands,
@@ -129,24 +136,35 @@ function startController({
   walletMode = 'app',
   inPagePhrase = rejectNoPhrase,
   elsewhere = () => false,
+  rereadSession = () => Promise.resolve(),
 }: StartControllerParams = {}) {
-  const auth = createSyncStore<DotliAuthState>({
-    name: 'auth-test',
-    initial: { tag: 'Restoring' },
-    equals: () => false,
+  const auth = atom<DotliAuthState>({ tag: 'Restoring' });
+  const steps = createListenerSet<DotliAuthState>({
+    onListenerError: error => {
+      throw new Error('An auth step listener threw', { cause: error });
+    },
   });
+
+  // A repeated step reaches the steps, though the store drops it as equal.
+  function setAuthStep(next: DotliAuthState): void {
+    auth.set(next);
+    steps.emit(next);
+  }
+
   const changes = createChanges();
-  onTestFinished(authModalState.store.subscribe(changes.notify));
+  onTestFinished(authModalState.store.listen(changes.notify));
   const recorded = recordCommands({ changes });
   const controller = createAuthController({
     coordinator,
     commands: commands ?? (() => Promise.resolve(recorded.commands)),
     auth,
+    subscribeAuthSteps: steps.subscribe,
     handoff,
     applyResult,
     walletMode: () => walletMode,
     inPagePhrase,
     elsewhere,
+    rereadSession,
   });
   onTestFinished(() => {
     controller.dispose();
@@ -154,8 +172,8 @@ function startController({
   return {
     /** The controller under test. */
     controller,
-    /** The auth store it follows, which the test sets as the core would. */
-    auth,
+    /** The auth state it follows, which the test sets as the core would. */
+    auth: { set: setAuthStep },
     /** The coordinator its modal leases come from. */
     coordinator,
     /** What the controller asked of the bridge chunk's commands. */
@@ -342,6 +360,7 @@ function buildInitParams(commands: AuthCommands): Parameters<AuthControlSlot['in
     inPagePhrase: rejectNoPhrase,
     coordinator: createBlockingModalCoordinator(),
     commands: () => Promise.resolve(commands),
+    rereadSession: () => Promise.resolve(),
   };
 }
 
@@ -378,17 +397,59 @@ describe('auth controller: login requests', () => {
     expect(getAuthModalState().reason).toBeNull();
   });
 
-  it('As a user asking for a sign-in while the saved session cannot be reached, I get no modal and no pairing', () => {
-    // Given a page whose saved session cannot be reached
-    const { controller, auth, calls } = startController();
+  it('As a user asking for a sign-in while the saved session cannot be reached, I am shown why once it is read again and still fails', async () => {
+    // Given a page whose saved session cannot be reached, and whose re-read leaves it so
+    const { controller, auth, calls, changes } = startController();
     auth.set({ tag: 'Unreachable' });
 
     // When a sign-in is asked for
     controller.startLogin({ label: 'foo' });
+    await changes.until(() => getAuthModalState().view.kind === 'error');
 
-    // Then nothing opens and nothing pairs
-    expect(getAuthModalState().open).toBe(false);
+    // Then the modal says the saved sign-in cannot be reached, and nothing pairs
+    expect(getAuthModalState()).toMatchObject({ open: true, view: { title: "Can't reach your saved sign-in" } });
     expect(calls.logins).toEqual([]);
+  });
+
+  it('As a user on the landing page, I click Sign in while my saved session cannot be reached and pair once it reads signed out', async () => {
+    // Given a page that pairs in place, whose saved session cannot be reached until it is read again
+    const { controller, auth, calls, changes } = startController({
+      rereadSession() {
+        auth.set({ tag: 'Disconnected' });
+        return Promise.resolve();
+      },
+    });
+    auth.set({ tag: 'Unreachable' });
+
+    // When Sign in is clicked
+    controller.startLogin({ reason: 'Sign in to continue' });
+    await changes.until(() => calls.logins.length === 1);
+
+    // Then the core is asked once to log in, with the click's reason
+    expect(calls.logins).toEqual(['Sign in to continue']);
+  });
+
+  it('As a user on a product, I click Sign in while my saved session cannot be reached and am asked to continue once it reads signed out', async () => {
+    // Given a page with a sign-in window, whose saved session cannot be reached until it is read again
+    const handoff = createFakeHandoff();
+    const { controller, auth, changes } = startController({
+      handoff,
+      rereadSession() {
+        auth.set({ tag: 'Disconnected' });
+        return Promise.resolve();
+      },
+    });
+    auth.set({ tag: 'Unreachable' });
+
+    // When Sign in is clicked, and then the prompt's button
+    controller.startLogin();
+    await changes.until(() => getAuthModalState().view.kind === 'prompt');
+    const signInsAtPrompt = [...handoff.signIns];
+    controller.retryLogin();
+
+    // Then no window opened before the prompt, and its button opened one
+    expect(signInsAtPrompt).toEqual([]);
+    expect(handoff.signIns).toEqual(['signin']);
   });
 
   it('As a user, I click Sign in again while the QR is shown and the QR stays while the core is asked once', async () => {
@@ -1091,18 +1152,39 @@ describe('auth controller: the sign-in window', () => {
     expect(handoff.focuses).toBe(1);
   });
 
-  it('As a debug panel user, I import while the saved session cannot be reached and no window opens', () => {
-    // Given a page whose saved session cannot be reached
+  it('As a debug panel user, I import while the saved session cannot be reached and am shown why', async () => {
+    // Given a page whose saved session cannot be reached, and whose re-read leaves it so
     const handoff = createFakeHandoff();
-    const { controller, auth } = startController({ handoff });
+    const { controller, auth, changes } = startController({ handoff });
     auth.set({ tag: 'Unreachable' });
 
     // When the debug panel imports a phrase
     controller.importPhrase();
+    await changes.until(() => getAuthModalState().view.kind === 'error');
 
-    // Then no window opens and the modal stays closed
+    // Then the modal says the saved sign-in cannot be reached, and no window opens
+    expect(getAuthModalState()).toMatchObject({ open: true, view: { title: "Can't reach your saved sign-in" } });
     expect(handoff.signIns).toEqual([]);
-    expect(getAuthModalState().open).toBe(false);
+  });
+
+  it('As a debug panel user on a page that pairs in place, I import while the saved session cannot be reached and see the phrase view once it reads signed out', async () => {
+    // Given a page that pairs in place, whose saved session cannot be reached until it is read again
+    const { phrase } = createFakePhrase();
+    const { controller, auth, calls, changes } = startController({
+      inPagePhrase: () => Promise.resolve(phrase),
+      rereadSession() {
+        auth.set({ tag: 'Disconnected' });
+        return Promise.resolve();
+      },
+    });
+    auth.set({ tag: 'Unreachable' });
+
+    // When the debug panel imports a phrase
+    controller.importPhrase();
+    await changes.until(() => getAuthModalState().view.kind === 'phrase');
+
+    // Then the phrase view shows, and no pairing starts
+    expect(calls.logins).toEqual([]);
   });
 
   it('As a user on a product, I press Sign in and the window opens with the waiting view', () => {
@@ -1356,12 +1438,7 @@ describe('auth controller: the sign-in window', () => {
     // Given the prompt on show and every later modal write recorded
     const { auth } = startController({ handoff: createFakeHandoff() });
     auth.set({ ...PAIRING, deeplink: '' });
-    const writes: AuthModalState[] = [];
-    onTestFinished(
-      authModalState.store.subscribe(() => {
-        writes.push(getAuthModalState());
-      }),
-    );
+    const writes = recordNotified(authModalState.store);
 
     // When: the core reports the pairing again, now with its deeplink
     auth.set(PAIRING);
@@ -1700,7 +1777,7 @@ describe('auth controller on the page stores', () => {
       const { commands, calls } = recordCommands({ changes });
       authControl.init(buildInitParams(commands));
       authState.set({ tag: 'Disconnected' });
-      productState.setLoaded({ label: 'localhost:3000', productId: 'localhost:3000' });
+      productState.setLoaded({ label: 'localhost:3000', productId: asProductId('localhost:3000') });
 
       // When the topbar signs in
       authControl.startLogin();
@@ -1716,7 +1793,7 @@ describe('auth controller on the page stores', () => {
       const { commands } = recordCommands({ changes: createChanges() });
       authControl.init(buildInitParams(commands));
       authState.set({ tag: 'Disconnected' });
-      productState.setLoaded({ label: 'localhost:3000', productId: 'localhost:3000' });
+      productState.setLoaded({ label: 'localhost:3000', productId: asProductId('localhost:3000') });
 
       // When the login fails
       authState.set({ tag: 'LoginFailed', kind: 'Other', reason: 'Host failure' });
@@ -1727,6 +1804,23 @@ describe('auth controller on the page stores', () => {
         productLabel: null,
         view: { kind: 'error', retry: true },
       });
+    });
+
+    it('As a user on the error view, I retry from the topbar and a retry that fails the same way shows the error again', () => {
+      // Given a booted page whose login failed, and a retry from the topbar
+      const { commands } = recordCommands({ changes: createChanges() });
+      authControl.init(buildInitParams(commands));
+      const failed = { tag: 'LoginFailed', kind: 'Other', reason: 'worker init failed' } as const;
+      authState.set(failed);
+      authControl.startLogin();
+      const retryView = getAuthModalState().view;
+
+      // When the core reports the same failure again
+      authState.set(failed);
+
+      // Then the spinner showed for the retry, and the error shows again
+      expect(retryView).toEqual({ kind: 'spinner' });
+      expect(getAuthModalState().view).toMatchObject({ kind: 'error', message: 'worker init failed' });
     });
   });
 });

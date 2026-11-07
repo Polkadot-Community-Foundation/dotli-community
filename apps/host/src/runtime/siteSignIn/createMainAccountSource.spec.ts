@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it } from 'vitest';
-import { hashBlake2b, createDeferred, createSyncStore, fromHex, toHex, type ReadableStore } from '@dotli/shared';
+import { hashBlake2b, createDeferred, fromHex, toHex } from '@dotli/shared';
+import { atom, type ReadableAtom } from 'nanostores';
 import { catchError, must } from '@dotli/shared/testing';
 import { createChanges } from '../../testing/changes.js';
 import type { TruapiSessionUiState } from '../session/parseUiStateCache.js';
@@ -42,15 +43,14 @@ const CONNECTED: DotliAuthState = {
 /** A main-account source over a core whose leases the test counts and takes down, and a core report the test sets. */
 function createSourceOverCore({ acquireFailures = [], booted = Promise.resolve() }: Params = {}) {
   const changes = createChanges();
-  const report = createSyncStore<DotliAuthState | null>({ name: 'testCoreReport', initial: null });
+  const report = atom<DotliAuthState | null>(null);
   let waits = 0;
-  const coreReport: ReadableStore<DotliAuthState | null> = {
-    get: report.get,
-    initial: report.initial,
-    subscribe(listener) {
+  const coreReport: Pick<ReadableAtom<DotliAuthState | null>, 'get' | 'listen'> = {
+    get: () => report.get(),
+    listen(listener) {
       waits += 1;
       changes.notify();
-      return report.subscribe(listener);
+      return report.listen(listener);
     },
   };
   const failures = [...acquireFailures];
@@ -230,6 +230,19 @@ describe('main account', () => {
 
     // Then the read failed as unavailable
     expect(failed).toMatchObject({ name: 'MainAccountError', kind: 'unavailable' });
+  });
+
+  it("As a site, I sign in while the window's core cannot read the main session and the read fails as unavailable", async () => {
+    // Given a core that reports it cannot read the main session
+    const core = createSourceOverCore();
+    core.report.set({ tag: 'Unreachable' });
+
+    // When the round reads
+    const failed: unknown = await core.source.read(createLiveSignal()).catch((error: unknown) => error);
+
+    // Then the read failed as unavailable, naming the core
+    expect(failed).toBeInstanceOf(MainAccountError);
+    expect(failed).toMatchObject({ kind: 'unavailable', message: "The window's core cannot read the main session" });
   });
 
   it("As a user, I end a site's round while it waits on the main account and the read fails as unavailable", async () => {

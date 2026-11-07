@@ -4,7 +4,8 @@
 // The page's login, logout and cancel over one queue, so overlapping calls never reach the core twice. A login answers
 // every call made in its round, and a logout runs its end in the order it was asked for.
 
-import { createAsyncTaskPool, type ReadableStore } from '@dotli/shared';
+import { createAsyncTaskPool } from '@dotli/shared';
+import type { ReadableAtom } from 'nanostores';
 import type { DotliAuthState } from './session/types.js';
 import type { TruapiSessionUiState } from './session/parseUiStateCache.js';
 import type { LogoutOutcome } from './createPageSignOut.js';
@@ -32,7 +33,7 @@ export type CoreLoginParams = LoginParams & {
 export type AuthCommands = {
   /**
    * Answers how the login ended. A click queued behind a login shares its answer. Answers `paired` at once for a user
-   * already signed in. Rejects when the core paired but its session could not be stored.
+   * already signed in. Rejects when the core paired but its session could not be stored or read back.
    */
   login(params?: LoginParams): Promise<LoginOutcome>;
   /**
@@ -49,10 +50,10 @@ export type AuthCommands = {
 
 type Params = {
   /** The page's auth state, which tells a login of a user already signed in. */
-  auth: ReadableStore<DotliAuthState>;
+  auth: ReadableAtom<DotliAuthState>;
   /**
    * One login to its end, answering how it ended and reporting its own failures. Rejects when the core paired but its
-   * session could not be stored.
+   * session could not be stored or read back.
    */
   login: (params: CoreLoginParams) => Promise<LoginOutcome>;
   /** Stops the pairing under way on the core. Never throws. */
@@ -88,7 +89,7 @@ export function createAuthCommands({ auth, login, cancelPairing }: Params) {
   return {
     /**
      * Answers how the login ended. A click queued behind a login shares its answer. Answers `paired` at once for a user
-     * already signed in. Rejects when the core paired but its session could not be stored.
+     * already signed in. Rejects when the core paired but its session could not be stored or read back.
      */
     login({ reason }: LoginParams = {}): Promise<LoginOutcome> {
       const asked = round;

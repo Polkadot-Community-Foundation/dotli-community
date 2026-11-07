@@ -17,6 +17,8 @@ rule, flag it and propose a row.
 
 ## Layering
 
+- **major** (AGENTS.md § Project): A product's metadata or author read another way than the product-manifest RFC's
+  "Resolving a product", or not cached with its manifests.
 - **blocking** (AGENTS.md § Architecture): A module writes another layer's state, or a layer reads state as a command
   instead of taking intent from above.
 - **major** (AGENTS.md § Architecture): A page on an origin it shares with another layer's stores clears the origin and
@@ -37,6 +39,10 @@ rule, flag it and propose a row.
   instead of `createAsyncTaskPool` from `@dotli/shared`.
 - **major** (AGENTS.md § Architecture, Tools:): A hand-rolled caller count for work several callers start and stop,
   instead of `createSharedRun` from `@dotli/shared`.
+- **major** (AGENTS.md § Architecture, Tools:): A chain connection opened outside its context's chain pool, such as a
+  package that reaches a global client for a chain instead of taking its connection as a parameter.
+- **major** (AGENTS.md § Architecture, Tools:): A chain lease held while its consumer has no work on the chain, such as
+  a connection kept open after the last request settled.
 - **major** (AGENTS.md § Code style, General:): Special build, startup or packaging machinery a plain website would not
   need, outside the sandbox, product isolation, iframe messaging and chain connections.
 

@@ -232,7 +232,7 @@ describe('createFrameRpc', () => {
     // When a request is made, and the frame then comes up
     void rpc.request(resolve.owner, { label: 'doom' });
     await settle();
-    const statusWhileWaiting = fake.frame.getStatus();
+    const statusWhileWaiting = fake.frame.status.get();
     const servedWhileWaiting = [...served];
     fake.setStatus('ready');
     await settle();
@@ -310,6 +310,52 @@ describe('createFrameRpc', () => {
       method: 'authStorageRead',
       reason: 'ProtocolTimeoutError',
     });
+  });
+
+  it('As a dotli integrator, I make a shared store request the frame never answers and the frame is asked whether it still answers', async () => {
+    // Given
+    const fake = createFakeFrame({ serve: createSilentFrame([]), timers });
+    const rpc = createFrameRpc({ frame: fake.frame, timers });
+    const transport = await fake.frame.getTransport();
+    const read = catchRejection(rpc.request(storage.authRead, { siteId: 'dotli', key: 'k' }));
+    await settle();
+
+    // When
+    await timers.advance(30_000);
+
+    // Then
+    expect((await read).name).toBe('ProtocolTimeoutError');
+    expect(fake.checks).toHaveLength(1);
+    expect(fake.checks[0]).toBe(transport);
+  });
+
+  it('As a dotli integrator, I make a chain request that times out and the frame is not checked', async () => {
+    // Given
+    const fake = createFakeFrame({ serve: createSilentFrame([]), timers });
+    const rpc = createFrameRpc({ frame: fake.frame, timers });
+    const owner = catchRejection(rpc.request(resolve.owner, { label: 'doom' }));
+    await settle();
+
+    // When
+    await timers.advance(90_000);
+
+    // Then
+    expect((await owner).name).toBe('ProtocolTimeoutError');
+    expect(fake.checks).toEqual([]);
+  });
+
+  it('As a dotli integrator, I make a shared store request whose budget runs out before the frame listens and the frame is not checked', async () => {
+    // Given a frame that stays booting
+    const fake = createFakeFrame({ serve: createSilentFrame([]), status: 'booting', timers });
+    const rpc = createFrameRpc({ frame: fake.frame, timers });
+    const read = catchRejection(rpc.request(storage.authRead, { siteId: 'dotli', key: 'k' }));
+
+    // When
+    await timers.advance(30_000);
+
+    // Then
+    expect((await read).name).toBe('ProtocolTimeoutError');
+    expect(fake.checks).toEqual([]);
   });
 
   it('As a dotli integrator, I make a chain request while the frame comes up and its budget starts only once the frame is up', async () => {

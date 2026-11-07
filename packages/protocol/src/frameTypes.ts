@@ -3,6 +3,7 @@
 
 // The protocol frame's contract, and the status, config, timeouts and page parts it is built with.
 
+import type { ReadableAtom } from 'nanostores';
 import type { Backend, Network } from '@dotli/config';
 import type { m } from '@dotli/metrics';
 import type { Timers } from '@dotli/shared';
@@ -90,15 +91,25 @@ export type ProtocolFrameParams<E extends FrameElement> = {
 
 /** The protocol frame as the layers above it use it. */
 export type ProtocolFrame = {
-  /** Where the frame stands now. */
-  getStatus(): ProtocolStatus;
-  /** Called on each change only. Does not start a frame. Returns the unsubscribe. */
-  subscribeStatus(listener: (status: ProtocolStatus) => void): () => void;
+  /**
+   * Where the frame stands. A listener hears each change only, with the status there is when its turn comes, so within
+   * one round of listeners it can hear the same status twice and miss one. Listening starts no frame.
+   * The frame catches a listener's throw where it sets the status, reports it under `protocol.status` and goes on.
+   * nanostores runs every listener queued in that round, of every store set in it, and rethrows only the last throw, so
+   * that one is reported, whatever store its listener follows. A set made inside another store's listener round is
+   * delivered in that round, so its listeners' throws reach that round's writer instead.
+   */
+  readonly status: ReadableAtom<ProtocolStatus>;
+  /**
+   * Whether a frame whose light client failed to start is kept to answer the shared store until a new frame listens.
+   * Listening starts no frame.
+   */
+  readonly storeHeld: ReadableAtom<boolean>;
   /**
    * Says what the frame is built with. Nothing boots before it, and waits begun before the first config wait for it,
    * up to `configureMs`.
    * The same config again does nothing. A different one rebuilds a frame already asked for at once, unless a frame
-   * refused the host's wire version, which no rebuild fixes.
+   * refused the host's wire version, which no rebuild fixes. Never throws.
    */
   configure(config: ProtocolFrameConfig): void;
   /**
@@ -106,15 +117,19 @@ export type ProtocolFrame = {
    * has loaded, since a call starts the handshake and a frame hears none before its document loads. Rejects with the
    * loss when the frame is dropped before it loads. Calls on it wait in its queue until its handshake succeeds, and
    * fail with the loss when the frame is dropped first. Rejects with the version mismatch for good once a frame refused
-   * the host's wire. The transport itself speaks the transport library's outcomes and errors, so a failed handshake
-   * rejects its calls with the library's timeout or mismatch error.
+   * the host's wire. While a frame whose light client failed to start is held and no new frame listens, it is that
+   * frame's transport, and nothing boots. The transport itself speaks the transport library's outcomes and errors, so a
+   * failed handshake rejects its calls with the library's timeout or mismatch error.
    */
   getTransport(): Promise<ProtocolTransport>;
   /**
    * The transport of the ready frame, booting one if none was asked for yet, once it is configured. A call while the
    * frame is down boots one at once instead of waiting out the rebuild backoff, and calls that find a boot under way
    * join it. Rejects with why when the boot it waits on fails, or when a config change drops the frame, so no caller is
-   * left to its own timeout.
+   * left to its own timeout. A status listener queued ahead of it that asks for the rebuilt frame on the change keeps
+   * it waiting on that frame instead. While a frame whose light client failed to start is held and the frame is
+   * `failed`, it rejects at once with why the frame is down and boots nothing, and while the next boot runs it waits on
+   * that boot.
    */
   waitUntilReady(): Promise<ProtocolTransport>;
   /**
@@ -122,4 +137,11 @@ export type ProtocolFrame = {
    * while an app is open can come from a newer release, and only a reload fixes that. Returns the unsubscribe.
    */
   onVersionMismatch(listener: (error: ProtocolVersionMismatchError) => void): () => void;
+  /**
+   * Asks the frame that holds `transport` whether it still answers, while that frame is still the current or the held
+   * one, and drops it as lost when it does not answer within `handshakeMs` or its transport closes. A held frame
+   * dropped this way leaves the status as it is. A resolved answer counts as alive, a refusal included. A call queued
+   * behind a check of the same transport that settled after the call was made does nothing. Never throws.
+   */
+  checkAlive(transport: ProtocolTransport): void;
 };

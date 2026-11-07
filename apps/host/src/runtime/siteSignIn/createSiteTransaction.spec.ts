@@ -1,7 +1,7 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { ProductAccountId } from '@parity/truapi';
+import { asProductId, type ProductAccountId } from '@parity/truapi';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { TxCreator } from 'polkadot-api';
 import { NETWORK_NAME_TO_SERVICES_CONFIG } from '@dotli/config';
@@ -79,7 +79,7 @@ type StartTransactionParams = {
 } & Omit<CreateFakeChainParams, 'steps'>;
 
 /** The responder calls a site's round makes. */
-type RoundResponder = Pick<Responder<unknown>, 'send' | 'refuse' | 'cancel' | 'state' | 'subscribe'>;
+type RoundResponder = Pick<Responder<unknown>, 'send' | 'refuse' | 'cancel' | 'state'>;
 
 /** A started transaction round over fakes. */
 type StartedTransaction = Awaited<ReturnType<typeof startTransactionWith>>;
@@ -88,7 +88,7 @@ const SELF = 'https://dot.li';
 const NETWORK_NAME = 'paseo-next-v2';
 const SERVICES = NETWORK_NAME_TO_SERVICES_CONFIG[NETWORK_NAME];
 const ACCOUNT: ProductAccountId = {
-  dotNsIdentifier: `myapp.${SERVICES.dotns.TLD}`,
+  dotNsIdentifier: asProductId(`myapp.${SERVICES.dotns.TLD}`),
   derivationIndex: { tag: 'Index', value: 0 },
 };
 const SITE_KEY = new Uint8Array(32).fill(0x22);
@@ -291,10 +291,9 @@ async function startTransactionWith(options: StartTransactionParams, responder: 
       closed.resolve(undefined);
     },
   });
-  const views: SiteScreen['view'][] = [flow.screen.get().view];
+  const views: SiteScreen['view'][] = [];
   onTestFinished(
-    flow.screen.subscribe(() => {
-      const { view } = flow.screen.get();
+    flow.screen.subscribe(({ view }) => {
       views.push(view);
       if (view === 'site-review') {
         steps.push('review');
@@ -326,6 +325,16 @@ async function startTransaction(options: StartTransactionParams = {}) {
   return { ...(await startTransactionWith(options, responder)), posts };
 }
 
+/** A round whose Asset Hub cannot be opened, taken through consent and a stored sign-in to its failure. */
+async function startFailedOpen() {
+  const round = await startTransaction({
+    openFailures: [new SiteChainError('unreachable', 'Asset Hub is not reachable')],
+  });
+  await consentAndStore(round);
+  await round.waitForView('site-failed');
+  return round;
+}
+
 /** Signs on the review once it shows. */
 async function signOnReview(round: StartedTransaction): Promise<void> {
   await round.waitForView('site-review');
@@ -343,6 +352,65 @@ describe('site transaction', () => {
 
     // Then the consent carries the site's origin and no group
     expect(round.flow.screen.get()).toEqual({ view: 'consent', origin: SITE_ORIGIN, group: null });
+  });
+
+  it("As a user on a site's transaction, I am still asked for consent while the window already opens Asset Hub", async () => {
+    // Given a site of no group the main store keeps no grant for
+    const round = await startTransaction();
+
+    // When the round shows its consent
+    await round.waitForView('consent');
+
+    // Then the window opened the request's Asset Hub once and decoded nothing
+    expect(round.chain.opens).toEqual([SERVICES.assethub.genesis]);
+    expect(round.chain.record.decoded).toBe(0);
+  });
+
+  it('As a user, I consent and sign, and the review decodes on the session the round opened as it started', async () => {
+    // Given a site the main store keeps no grant for
+    const round = await startTransaction();
+
+    // When the user consents, the window flow stores a sign-in and the user signs on the review
+    await consentAndStore(round);
+    await signOnReview(round);
+    await round.closed;
+
+    // Then the window opened Asset Hub once in the whole round, and the site got its signed transaction
+    expect(round.chain.opens).toHaveLength(1);
+    expect(round.chain.record).toMatchObject({ opened: 1, decoded: 1 });
+    expect(getResult(round.posts).result).toEqual({ transaction: SIGNED_TX.toLowerCase() });
+  });
+
+  it("As a user who declines a site's transaction, I leave and the Asset Hub session the round opened is closed once", async () => {
+    // Given a site's round on its consent
+    const round = await startTransaction();
+    await round.waitForView('consent');
+
+    // When the user declines and the window closes
+    // The round ends before it closes the window, so the session's close is queued ahead of this wait.
+    round.flow.decline();
+    await round.closed;
+
+    // Then the session the round opened was closed once and nothing was decoded
+    expect(round.chain.record).toMatchObject({ opened: 1, closed: 1, decoded: 0 });
+  });
+
+  it('As a user who declines while Asset Hub cannot be opened, I leave and no chain failure is counted or logged', async () => {
+    // Given a site's round on its consent, whose Asset Hub cannot be opened
+    const round = await startTransaction({
+      openFailures: [new SiteChainError('unreachable', 'Asset Hub is not reachable')],
+    });
+    await round.waitForView('consent');
+
+    // When the user declines and the window closes
+    round.flow.decline();
+    await round.closed;
+
+    // Then only the refusal is counted and nothing is logged
+    expect(round.metrics.counted('session_pages.site_transaction')).toEqual([
+      { outcome: 'refused', reason: 'declined' },
+    ]);
+    expect(round.errors).toEqual([]);
   });
 
   it('As a site, I ask for my call to be signed and get it signed by my account with nothing sent', async () => {
@@ -607,6 +675,24 @@ describe('site transaction', () => {
     expect(round.flow.screen.get()).toEqual({ view: 'site-failed', origin: SITE_ORIGIN, route: 'sign', retry: true });
     expect(round.accounts).toEqual([]);
     expect(round.metrics.counted('session_pages.site_transaction')).toEqual([{ outcome: 'error', reason: 'chain' }]);
+  });
+
+  it('As a user whose Asset Hub could not be opened as the round started, I press Try again and the window opens it again', async () => {
+    // Given a chain whose first open fails, and a round taken to its failure
+    const round = await startFailedOpen();
+    const failed = round.flow.screen.get();
+
+    // When the user tries again
+    // The retry runs until the round ends, so the review shows while it runs.
+    void round.flow.retry();
+    await round.waitForView('site-review');
+
+    // Then the failure offered Try again, the window asked for Asset Hub twice, the second open succeeded, and the
+    // review shows
+    expect(failed).toEqual({ view: 'site-failed', origin: SITE_ORIGIN, route: 'sign', retry: true });
+    expect(round.chain.opens).toHaveLength(2);
+    expect(round.chain.record.opened).toBe(1);
+    expect(round.flow.screen.get()).toMatchObject({ view: 'site-review' });
   });
 
   it("As a user whose window runs on another network than the site's request, I start its transaction and see the failure with no Try again", async () => {
@@ -965,5 +1051,72 @@ describe('site transaction action', () => {
     // Then the run rejects with the round's end, and the session closed once with nothing built
     await expect(running).rejects.toBe(ended.signal.reason);
     expect(chain.record).toMatchObject({ opened: 1, closed: 1, built: 0 });
+  });
+
+  it('As a site whose round already ended, I prepare a transaction and no Asset Hub opens', () => {
+    // Given the transaction action of a round that already ended
+    const chain = createFakeChain({});
+    const action = getSiteTransactionAction({
+      origin: SITE_ORIGIN,
+      genesis: SERVICES.assethub.genesis,
+      call: CALL,
+      account: ACCOUNT,
+      chain: chain.chain,
+      txSigner: createFakeTxSigner().txSigner,
+      accountReader: createFakeAccountReader().accountReader,
+    });
+    const ended = new AbortController();
+    ended.abort();
+
+    // When the action prepares with the ended round's signal
+    must(action.prepare?.bind(action), 'the action prepares')(ended.signal);
+
+    // Then the chain was not opened
+    expect(chain.opens).toEqual([]);
+  });
+
+  it('As a user who leaves while Asset Hub still opens, I end the round and its session is closed once it opens', async () => {
+    // Given a chain whose open the test holds, and the transaction action prepared with a live round's signal
+    const opening = createDeferred<undefined>();
+    let opens = 0;
+    let closes = 0;
+    const chain: SiteChain = {
+      async open() {
+        await opening.promise;
+        opens += 1;
+        return {
+          decode: () => Promise.reject(new Error('The held chain decodes nothing')),
+          create: () => Promise.reject(new Error('The held chain builds nothing')),
+          close() {
+            closes += 1;
+          },
+        };
+      },
+    };
+    function prepare(signal: AbortSignal): void {
+      const action = getSiteTransactionAction({
+        origin: SITE_ORIGIN,
+        genesis: SERVICES.assethub.genesis,
+        call: CALL,
+        account: ACCOUNT,
+        chain,
+        txSigner: createFakeTxSigner().txSigner,
+        accountReader: createFakeAccountReader().accountReader,
+      });
+      must(action.prepare?.bind(action), 'the action prepares')(signal);
+    }
+    const ended = new AbortController();
+    prepare(ended.signal);
+
+    // When the round ends, and the chain opens after
+    ended.abort();
+    opening.resolve(undefined);
+    await expect.poll(() => closes).toBe(1);
+    // A later open on the same chain, by which a second close of the ended round's session would have landed.
+    prepare(new AbortController().signal);
+    await expect.poll(() => opens).toBe(2);
+
+    // Then the ended round's session was closed once
+    expect(closes).toBe(1);
   });
 });

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { beforeEach, describe, expect, it, onTestFinished } from 'vitest';
-import { bindRecordingSentry, recordCaptures } from '@dotli/metrics/testing';
 import type { ChainActivity } from '@dotli/chains';
 import {
   classifyGap,
@@ -12,8 +11,10 @@ import {
   type ChainStatus,
   type NetworkMonitor,
 } from './networkMonitorState.js';
+import { describeLiveNetwork } from '../networkVerdict.js';
 import { buildChainActivity } from '../testing/buildChainActivity.js';
 import { getRelayGenesis } from '../testing/getRelayGenesis.js';
+import { recordNotified } from '../testing/recordNotified.js';
 import { createManualTimers, must, nth, type ManualTimers } from '@dotli/shared/testing';
 
 const EXTRA = `0x${'ab'.repeat(32)}`;
@@ -274,7 +275,7 @@ describe('The network monitor tracks blocks', () => {
     // Given
     use(getRelayGenesis());
     let calls = 0;
-    const unsubscribe = monitor.subscribe(() => {
+    const unsubscribe = monitor.version.listen(() => {
       calls += 1;
     });
 
@@ -390,6 +391,19 @@ describe('The network monitor tracks the phase of each chain', () => {
 });
 
 describe('The network monitor repaints the panel only on a change', () => {
+  it('As a follower, I hear the version bump once per changed record, and not for an unchanged one', () => {
+    // Given
+    const versions = recordNotified(monitor.version);
+
+    // When
+    monitor.recordTransfer({ bytesPerSecond: 10 });
+    monitor.recordTransfer({ bytesPerSecond: 10 });
+    monitor.recordTransfer({ bytesPerSecond: 20 });
+
+    // Then
+    expect(versions).toEqual([1, 2]);
+  });
+
   it.each<{ reports: string; send: () => void; sendChanged: () => void }>([
     {
       reports: 'peer counts',
@@ -423,9 +437,11 @@ describe('The network monitor repaints the panel only on a change', () => {
     ({ send, sendChanged }) => {
       // Given
       let woken = 0;
-      monitor.subscribe(() => {
-        woken += 1;
-      });
+      onTestFinished(
+        monitor.version.listen(() => {
+          woken += 1;
+        }),
+      );
 
       // When
       send();
@@ -554,28 +570,85 @@ describe('The network monitor judges how each chain is used', () => {
     // Then
     expect(getChainByKey(EXTRA)).toMatchObject({ state: 'live', alarm: true });
   });
+});
 
-  it('As a user with the network panel open, I get a change while one renderer throws and see it reported and the next renderer still updated', () => {
+describe('The network monitor after a return', () => {
+  it('As a user back on my page, I see my chain as Connecting until its next block, not as overdue', async () => {
     // Given
-    const captured = recordCaptures({ onFinished: onTestFinished });
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    monitor.subscribe(() => {
-      throw new TypeError('renderer broke');
-    });
-    let heard = 0;
-    monitor.subscribe(() => {
-      heard += 1;
-    });
+    use(getRelayGenesis());
+    monitor.recordBestBlock(getRelayGenesis(), 100);
+    await timers.advance(120_000);
 
     // When
-    monitor.recordTransfer({ bytesPerSecond: 10 });
+    monitor.recordReturn();
+    const back = describeLiveNetwork(monitor.getChainClocks());
+    monitor.recordBestBlock(getRelayGenesis(), 101);
 
     // Then
-    expect(heard).toBe(1);
-    expect(captured).toEqual([{ flow: 'ui', step: 'listener', tags: { owner: 'network_monitor' } }]);
-    expect(metrics.counted('listener.delivery')).toEqual([
-      { outcome: 'error', reason: 'TypeError', owner: 'network_monitor' },
-    ]);
+    expect(back).toEqual({ text: 'Connecting', tone: 'idle' });
+    expect(describeLiveNetwork(monitor.getChainClocks()).text).toBe('Your connection is good');
+  });
+
+  it('As a user back on my page, I see a light client syncing again as Connecting, not as Waiting', () => {
+    // Given
+    monitor.recordChainPhase('relay', 'ready');
+
+    // When
+    monitor.recordReturn();
+    monitor.recordChainPhase('relay', 'connecting');
+
+    // Then
+    expect(monitor.getChainClocks().some(chain => chain.alarm)).toBe(false);
+  });
+
+  it('As a user back on my page whose chain drops after its first block, I see it as Waiting again', () => {
+    // Given
+    use(getRelayGenesis());
+    monitor.recordChainPhase('relay', 'ready');
+    monitor.recordReturn();
+
+    // When
+    monitor.recordBestBlock(getRelayGenesis(), 100);
+    monitor.recordChainPhase('relay', 'connecting');
+
+    // Then
+    expect(getChainByKey('relay').alarm).toBe(true);
+  });
+
+  it('As a user whose light client drops back with no return, I still see it as Waiting', () => {
+    // Given
+    monitor.recordChainPhase('relay', 'ready');
+
+    // When
+    monitor.recordChainPhase('relay', 'connecting');
+
+    // Then
+    expect(getChainByKey('relay').alarm).toBe(true);
+  });
+
+  it('As a user back on my page, I see a host pool that paused and reconnects as Connecting', () => {
+    // Given
+    use(EXTRA, { following: false, status: 'connected' });
+    use(EXTRA, { following: false, status: 'disconnected' });
+
+    // When
+    monitor.recordReturn();
+    use(EXTRA, { following: false, status: 'connecting' });
+
+    // Then
+    expect(getChainByKey(EXTRA)).toMatchObject({ state: 'pending', alarm: false });
+  });
+
+  it('As a user back on my page whose connected pool chain drops later, I see it as Waiting', () => {
+    // Given
+    use(EXTRA, { following: false, status: 'connected' });
+
+    // When
+    monitor.recordReturn();
+    use(EXTRA, { following: false, status: 'connecting' });
+
+    // Then
+    expect(getChainByKey(EXTRA).alarm).toBe(true);
   });
 });
 

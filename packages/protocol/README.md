@@ -27,9 +27,10 @@ flowchart TB
 - The protocol schema is where the wire types come from. It groups the methods into sections: the frame, name
   resolution, the shared store, the local wallet and chains. Each method declares its kind (request or subscription) and
   its payloads, and each handshake's hello has a resolution id field, null from the host and the page load's id from the
-  iframe toward the SharedWorker. Each payload is typed by its method, so a payload, answer or value that does not fit
-  its method fails to compile. Its value codecs are composed from scale-ts: a string union is an enum of empty variants,
-  an optional field is an `Option`, a whole number of any size is a compact, and a record crosses as entries.
+  iframe toward the SharedWorker. The frame section carries the host's network pause, which a frame in SharedWorker mode
+  forwards to the worker. Each payload is typed by its method, so a payload, answer or value that does not fit its
+  method fails to compile. Its value codecs are composed from scale-ts: a string union is an enum of empty variants, an
+  optional field is an `Option`, a whole number of any size is a compact, and a record crosses as entries.
 - A remote failure the host branches on is a typed error in the schema: the frame status ends as fatal, as a failed
   init, as a released port or as a version mismatch, and name resolution and chain connections fail with a sync timeout
   or a stopped light client. A telemetry event past the limits, such as the peer count limit, fails to decode, so it is
@@ -49,12 +50,22 @@ flowchart TB
 - The frame module creates the iframe, publishes a `ProtocolStatus` (`idle`, `booting`, `listening`, `ready`, `failed`)
   and owns one provider and one transport per iframe. The window provider admits only bytes from that iframe's window at
   the frame's origin. It rebuilds itself when lost, after a backoff that grows while rebuilds keep failing, and a
-  request while it is down boots one at once. Boot is deduped with a task pool. It is configured with the backend, and
-  names it in its URL in the frame's own words, which a host page of an earlier release still sends.
+  request while it is down boots one at once, unless a frame whose light client failed to start is held for the shared
+  store. Boot is deduped with a task pool. It is configured with the backend, and names it in its URL in the frame's own
+  words, which a host page of an earlier release still sends.
+- The frame's status is held in one nanostores atom. The frame exposes it, read-only, as its `status` member, and the
+  client's `frame` entity hands on that same atom. The shared store's status is a `computed` over the frame's `status`
+  and `storeHeld` and a private atom latched once a frame settled, so a read reflects the frame's status even with
+  nobody listening. It also reads `available` while a frame whose light client failed to start is held for the store.
+  The client's `sharedStore` entity exposes it as its `status` member. A status listener hears each change after it
+  subscribed, with the status there is when its turn comes. When a frame status listener throws, or a listener of the
+  shared store's status, the frame reports that throw under `protocol.status` and goes on.
 - The facades are the host's parts written against the transport: name resolution, remote chains, the shared store and
   telemetry. The client factory builds them and returns one object of entities: `frame`, `sharedStore`, `sharedAuth`,
-  `sharedMode`, `sharedWallet`, `resolve`, `telemetry` and `chains`, each with verb members. The page's instance is
-  `getProtocolClient()`, built on first use, and callers reach every request through it.
+  `sharedMode`, `sharedWallet`, `resolve`, `telemetry` and `chains`, each with verb members. The `frame` entity sends
+  the host's network pause to the ready frame, and to each later frame once it is ready while the pause lasts, without
+  booting one. The page's instance is `getProtocolClient()`, built on first use, and callers reach every request through
+  it.
 - A request has a budget per method. No deadline crosses the wire, so the frame sizes its own work from the same
   budgets. A shared store request's budget runs from the call. A chain or resolve request's runs once the frame is
   ready, since it also waits for the light client. A request that outlives its budget is given up on the host and its
@@ -99,7 +110,13 @@ were.
 - A lost frame disposes its transport with the loss as the reason. Every call in flight rejects with it and every open
   subscription ends with it, so a remote chain connection hears that the frame stopped. The transport posts nothing as
   it closes, so the frame lets go of what it served as its iframe goes. The frame is then rebuilt.
-- A call made while the frame is down waits for the next transport.
+- A call made while the frame is down waits for the next transport, unless a frame is held for the shared store, which
+  then answers a shared store call.
+- A failed init keeps the frame for the shared store until a new frame listens, the config changes or a version mismatch
+  stops the rebuilds, while chain and name calls reject at once with why the frame is down.
+- A shared store call that times out on its budget makes the host ask that frame once whether it still answers
+  (`frame.heartbeat`, within the handshake's 5 s). A frame that does not answer is dropped and rebuilt as a lost frame,
+  and any answer, a refusal from an earlier release included, keeps it.
 - The wallet save carries the identity, and the store and the wallet gained their compare-and-clear calls, which moved
   the wire to a new version on purpose. A cached older shell then meets the reload screen instead of saving a wallet the
   frame would read back without it.
@@ -110,10 +127,11 @@ were.
   replace the open app with its reload screen.
 - A boot that fails is counted under the frame's ready metric with the step that failed, and logged. A fatal light
   client or a failed init ends the frame status subscription with that error.
-- A frame lost after it was ready is counted once under its own frame lost metric with the error's name, and logged.
-  Only the first such loss since the last frame that stayed ready for 30 seconds is captured, so a frame that keeps
-  dying soon after ready does not flood the error tracker. A tab the SharedWorker let go of while it was frozen finds
-  its port released when it thaws, which is expected, so that loss is counted and left in the trail but not captured.
+- A frame lost after it was ready, or a held frame that stopped answering, is counted once under its own frame lost
+  metric with the error's name, and logged. Only the first such loss since the last frame that stayed ready for 30
+  seconds is captured, so a frame that keeps dying soon after ready does not flood the error tracker. A tab the
+  SharedWorker let go of while it was frozen finds its port released when it thaws, which is expected, so that loss is
+  counted and left in the trail but not captured.
 
 ### Held feeds
 
@@ -122,10 +140,10 @@ were.
   and reopened on the same transport.
 - The reopen waits 1 second, doubling after each end on the same frame up to 30 seconds. A feed that stayed open for 30
   seconds before it ended starts the waits over.
-- A held feed follows the frame there is now and each frame that boots after it, and an answer to an ask a later ask
-  overtook is dropped. The shared auth feed boots a frame that is down, since a listener needs one. The telemetry only
-  hears a frame there is. A transport that closes under the feed ends it on that frame with no report, since the frame's
-  loss is reported where the frame was dropped.
+- A held feed follows the frame there is now and each frame that boots or starts listening after it, and an answer to an
+  ask a later ask overtook is dropped. The shared auth feed boots a frame that is down, since a listener needs one. The
+  telemetry only hears a frame there is. A transport that closes under the feed ends it on that frame with no report,
+  since the frame's loss is reported where the frame was dropped.
 
 ### Refused messages
 

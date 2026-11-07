@@ -8,7 +8,7 @@ import type { ProductAccountId } from '@parity/truapi';
 import { getActiveServicesConfig } from '@dotli/config';
 import { m, spans as S } from '@dotli/metrics';
 import type { LocalWalletReadResult } from '@dotli/protocol';
-import { createAsyncTaskPool, createLazyLoad, fromHex, listenForPageReturn } from '@dotli/shared';
+import { createAsyncTaskPool, createLazyLoad, fromHex, listenForPageReturn, markHandled } from '@dotli/shared';
 import { siteGrants } from '@dotli/storage';
 import { hostPrompts } from '../createHostPrompts.js';
 import { loadHostRuntimeChunk, loadLocalWalletCore, loadPolkadotApi, loadTxFillers } from '../lazy.js';
@@ -26,7 +26,7 @@ import { isSiteGrantForgotten, pageRole } from './pageRole.js';
 import { coreStorage, signInFlag, type SessionRead } from './session/createCoreStorage.js';
 import { createHostCallbacks } from './hostCallbacks/createHostCallbacks.js';
 import { createPromptAsks } from './hostCallbacks/createPromptAsks.js';
-import { LANDING_PRODUCT } from './createPageCore.js';
+import { LANDING_PRODUCT, type CoreLease } from './createPageCore.js';
 import { getWindowAsks } from './hostCallbacks/getWindowAsks.js';
 import { listenForSessionFlagChange, sessionPresence } from './session/createPagePresence.js';
 import { listenForSiteWalletChange } from './session/listenForLocalWalletChange.js';
@@ -54,8 +54,12 @@ import { walletSwitch } from './createWalletSwitch.js';
 // Already in this chunk for leaving local mode, so a page with no sign-in window takes it from here for a phrase.
 export { walletSwitch } from './createWalletSwitch.js';
 
-// The pool behind these leases already ships in this chunk, so other callers take them from here.
+// The pool behind these leases and the reads over them already ships in this chunk, so callers take them from here.
 export { getHostAssetHubProvider, getHostChainProvider } from './hostCallbacks/getHostChainProvider.js';
+export { hostChainPool } from './hostCallbacks/createHostChainPool.js';
+export { hostBitswapClient } from './hostCallbacks/createHostBitswapClient.js';
+export { readOriginalAccount } from './readOriginalAccount.js';
+export { readPeopleUsernames } from './readPeopleUsernames.js';
 
 // Started with debug mode from the boot chunk, which must not import the codecs this file already carries.
 export { wireDescriber } from './createWireDescriber.js';
@@ -70,9 +74,8 @@ const hostRuntime = createLazyLoad({
   },
 });
 // Preloaded so it is ready when the first product renders.
-void hostRuntime().catch(() => {
-  // The render or the core boot that asks next loads it again and reports its own failure.
-});
+// The render or the core boot that asks next loads it again and reports its own failure.
+void markHandled(hostRuntime());
 
 // Each core boots on the wallet read from the shared store and the published host runtime, with callbacks that ask
 // the page.
@@ -261,6 +264,15 @@ export function startSessionLease(): () => void {
   return sessionLease.start();
 }
 
+/**
+ * Leases the core of the page's product, dialing it when none serves that product, so it boots before the product
+ * renders. Rejects with the boot's error, or `CoreRedialError` when a replacement could not boot. Throws before
+ * `initBridge`.
+ */
+export function acquirePageCore(): Promise<CoreLease> {
+  return bridge.core.acquire();
+}
+
 /** The main store's restore and a core of its own, for the sign-out window. */
 export const windowSignOut: Pick<WindowSignOutParams, 'restore' | 'endSession'> = {
   restore: pageWalletBoot.restore,
@@ -297,7 +309,7 @@ export function startSessionState(): () => void {
 
       return unsubscribe;
     },
-    isSignedIn: () => authState.get().tag === 'Connected',
+    isSignedIn: () => authState.store.get().tag === 'Connected',
     signOuts,
     reconcile: () => reconcilePage('visible'),
     readPageWalletVersion: async () =>
@@ -311,12 +323,25 @@ export function startSessionState(): () => void {
       sessionState.reportFlag(presence);
     },
   });
+  const stopReread = listenForPageReturn({
+    visibility: document,
+    target: window,
+    handler: () => {
+      void sessionState.retryRead();
+    },
+  });
   stopSession = stopSessionState;
   return stopSession;
 
   function stopSessionState(): void {
     stopState();
     stopWatch();
+    stopReread();
     stopSession = null;
   }
+}
+
+/** Reads the saved session again while it cannot be reached, and settles once the page shows it. Never rejects. */
+export function rereadSession(): Promise<void> {
+  return sessionState.retryRead();
 }
