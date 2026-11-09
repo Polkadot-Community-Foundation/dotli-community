@@ -7,9 +7,10 @@
 
 import { createClient, DisjointError, RpcError } from '@polkadot-api/substrate-client';
 import type { JsonRpcProvider } from 'polkadot-api';
+import { atom } from 'nanostores';
 import { TIMEOUTS, type DotnsContracts } from '@dotli/config';
 import { m, reportListener, spans as S } from '@dotli/metrics';
-import { CHAIN_HALTED_ERROR_DATA, createAsyncTaskPool, createStatusCell, log, toHex, withTimeout } from '@dotli/shared';
+import { CHAIN_HALTED_ERROR_DATA, createAsyncTaskPool, log, toHex, withTimeout } from '@dotli/shared';
 
 import { ApiStoppedError } from './apiStoppedError.js';
 import { ContenthashDecodeError } from './contenthashDecodeError.js';
@@ -18,8 +19,8 @@ import { decodeIpfsContenthashResult } from './decodeIpfsContenthashResult.js';
 import type { ExecutableKind } from './manifestTypes.js';
 import { NetworkSyncTimeoutError } from './networkSyncTimeoutError.js';
 import { readExecutableManifest } from './readExecutableManifest.js';
-import { readMappingAddress } from './readMappingAddress.js';
 import { readMappingBytes } from './readMappingBytes.js';
+import { readNameOwner } from './readNameOwner.js';
 import { readRootManifest } from './readRootManifest.js';
 import { computeNamehash } from './storageSlots.js';
 import type { PhaseCallback, ResolvePhase } from './types.js';
@@ -81,6 +82,8 @@ const HUB_CHAIN: Record<Params['source'], string> = {
  */
 const MAX_HALT_ATTEMPTS = 4;
 
+const reportPhaseListener = reportListener('resolve', 'resolver.status');
+
 /**
  * Builds the dotNS reads on the connections it is given. Each instance keeps its own clients.
  *
@@ -100,11 +103,7 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
     retryIf: isChainHalt,
   });
 
-  // A callback's throw must not fail the shared build, nor leave the status behind a client already kept.
-  const status = createStatusCell<DotnsResolverStatus>({
-    initial: 'idle',
-    onListenerError: reportListener('resolve', 'resolver.status'),
-  });
+  const status = atom<DotnsResolverStatus>('idle');
 
   let hub: ChainClient | null = null;
   let peopleClient: ChainClient | null = null;
@@ -186,7 +185,6 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
       return () => undefined;
     }
     // A caller that arrives after a phase was reached hears it too.
-    tellPhase(onPhase, status.get());
     return status.subscribe(next => {
       tellPhase(onPhase, next);
     });
@@ -285,16 +283,6 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
     }
   }
 
-  function readOwner(api: Api, label: string): Promise<string | null> {
-    const node = computeNamehash(`${label}.${dotns.TLD}`);
-    return readMappingAddress({
-      api,
-      contractAddress: dotns.DOTNS_REGISTRY,
-      mappingKey: node,
-      mappingSlot: dotns.STORAGE_SLOTS.REGISTRY_RECORDS,
-    });
-  }
-
   async function buildPeople(connect: () => JsonRpcProvider): Promise<void> {
     const initStart = performance.now();
     const client = open(connect());
@@ -334,7 +322,7 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
      * for any other reason or the chain keeps halting.
      */
     resolveOwner: (label: string, options: ResolveOptions = {}): Promise<string | null> =>
-      read(options, api => readOwner(api, label)),
+      read(options, api => readNameOwner({ api, dotns, label })),
     /**
      * Reads the manifest a label publishes for `kind`, as a result the caller branches on. Rejects with
      * `PartialStorageReadError` when the read stops partway, `NetworkSyncTimeoutError` when Asset Hub does not sync
@@ -382,11 +370,18 @@ function isChainHalt(error: unknown): boolean {
   return error instanceof DisjointError || error instanceof ApiStoppedError;
 }
 
-/** Tells `onPhase` the phase a client status stands for, if it stands for one. */
+/** Tells `onPhase` the phase a client status stands for, if it stands for one, and reports a throw from it. */
 function tellPhase(onPhase: PhaseCallback, next: DotnsResolverStatus): void {
   const phase = PHASES[next];
-  if (phase !== undefined) {
+  if (phase === undefined) {
+    return;
+  }
+  // The callback's own throw must not fail the shared build, nor leave the status behind a client already kept. A throw
+  // from a listener of a store the callback writes still reaches the build.
+  try {
     onPhase(phase);
+  } catch (error) {
+    reportPhaseListener(error);
   }
 }
 

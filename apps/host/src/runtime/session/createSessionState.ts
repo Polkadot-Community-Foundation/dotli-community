@@ -4,10 +4,11 @@
 // The one writer of the auth store. It shows the session of the saved copy or of the core that speaks for the page,
 // and whether a sign-in made elsewhere waits for the page.
 
-import type { AuthState, SessionUiInfo } from '@parity/truapi-host';
-import { createAsyncTaskPool, createSyncStore, type ReadableStore } from '@dotli/shared';
+import type { AuthState as CoreAuthState, SessionUiInfo } from '@parity/truapi-host';
+import { createAsyncTaskPool, registerAtomReset } from '@dotli/shared';
+import { atom, type ReadableAtom } from 'nanostores';
 import { isResumeOffered, pageRole } from '../pageRole.js';
-import { authState } from '../state/authState.js';
+import { authState, type AuthState } from '../state/authState.js';
 import { walletModeState } from '../state/walletModeState.js';
 import { sessionElsewhereState } from '../state/sessionElsewhereState.js';
 import { pageWalletBoot, type Restored } from '../createWalletBoot.js';
@@ -17,12 +18,7 @@ import { parseUiStateCache, type TruapiSessionUiState } from './parseUiStateCach
 import type { DotliAuthState, Presence } from './types.js';
 
 /** The auth store as its one writer sees it. */
-export type AuthStateWriter = {
-  /** Returns the current auth step. Never throws. */
-  get(): DotliAuthState;
-  /** Publishes the next auth step. Never throws. */
-  set(next: DotliAuthState): void;
-};
+export type AuthStateWriter = Pick<AuthState, 'store' | 'set'>;
 
 /** What session state takes from the restore on load. */
 type LoadRestore = Pick<Restored, 'local' | 'session' | 'wallet' | 'presence'>;
@@ -44,6 +40,12 @@ type Params = {
   isLocalWallet: () => boolean;
   /** Whether the page offers to continue a sign-in made elsewhere, which its role decides. */
   isResumeOffered: () => boolean;
+};
+
+type ReadSessionToShowParams = {
+  local: LoadRestore['local'];
+  raw: string | null;
+  readCachedAccount: () => Promise<string | null>;
 };
 
 /** How pairing presents itself. */
@@ -71,7 +73,7 @@ export function createSessionState({
   // before it says nothing of another sign-in once this one ends.
   let flag: Presence = 'unknown';
   const auth: AuthStateWriter = {
-    get: () => authStore.get(),
+    store: authStore.store,
     set(next) {
       if (next.tag === 'Connected') {
         flag = 'unknown';
@@ -81,20 +83,24 @@ export function createSessionState({
       authStore.set(next);
     },
   };
+  // One read at a time, so a read that started before the store changed is never the last word.
+  const savedSessionReads = createAsyncTaskPool({ poolSize: 1 });
+
   let lastReadFailed = false;
   const stopSessionReads = store.subscribeSessionReads(failed => {
     lastReadFailed = failed;
+    if (!failed && auth.store.get().tag === 'Unreachable') {
+      void retryRead();
+    }
   });
-
-  // One read at a time, so a read that started before the store changed is never the last word.
-  const savedSessionReads = createAsyncTaskPool({ poolSize: 1 });
 
   // Who speaks for the page's session: the saved copy, read here, or a core that reported, which follows the copy
   // itself. The page core says when its last core went.
   let speaker: 'copy' | 'core' = 'copy';
 
-  const coreReportStore = createSyncStore<DotliAuthState | null>({ name: 'sessionCoreReport', initial: null });
-  const coreReport: ReadableStore<DotliAuthState | null> = coreReportStore;
+  const coreReportStore = atom<DotliAuthState | null>(null);
+  registerAtomReset(coreReportStore);
+  const coreReport: ReadableAtom<DotliAuthState | null> = coreReportStore;
 
   let stop: (() => void) | null = null;
 
@@ -103,7 +109,7 @@ export function createSessionState({
   }
 
   function reportFlag(presence: Presence): void {
-    const { tag } = auth.get();
+    const { tag } = auth.store.get();
     if (tag === 'Connected') {
       return;
     }
@@ -115,8 +121,7 @@ export function createSessionState({
     return store.writeUiCache(state.connected ? JSON.stringify(state) : null);
   }
 
-  async function readUiCache(): Promise<TruapiSessionUiState | null> {
-    const raw = await store.readUiCache();
+  function parseCachedAccount(raw: string | null): TruapiSessionUiState | null {
     return raw === null ? null : parseUiStateCache(raw);
   }
 
@@ -126,36 +131,41 @@ export function createSessionState({
   // is open to it, the copy may also replace a sign-in it showed itself.
   function isCopyAllowedToShow(): boolean {
     const report = coreReport.get();
-    return speaker === 'copy' || isOpenToCopy(auth.get().tag) || (report !== null && isOpenToCopy(report.tag));
+    return speaker === 'copy' || isOpenToCopy(auth.store.get().tag) || (report !== null && isOpenToCopy(report.tag));
   }
 
   /** The session to show: the local wallet's when there is one, else the saved one with its cached account. */
-  async function readSessionToShow(
-    local: LoadRestore['local'],
-    raw: string | null,
-  ): Promise<TruapiSessionUiState | null> {
+  async function readSessionToShow({
+    local,
+    raw,
+    readCachedAccount,
+  }: ReadSessionToShowParams): Promise<TruapiSessionUiState | null> {
     if (local !== null) {
       return getLocalSessionUiState(local.identity);
     }
     if (raw === null) {
       return null;
     }
-    return (await readUiCache()) ?? { connected: true };
+    return parseCachedAccount(await readCachedAccount()) ?? { connected: true };
   }
 
   /**
    * Shows the local wallet when there is one, else what was saved, while the copy may show it. A read that finds
    * nothing ends only `Restoring` or `Unreachable`, and, while a core speaks, withdraws a sign-in the copy showed
-   * to the core's own report. It leaves a sign-out or a failure on show alone.
+   * to the core's own report. It leaves a sign-out or a failure on show alone. `readCachedAccount` is the raw read of
+   * the cached account, called only when a session of the saved copy is to be shown and never rejecting.
    */
-  async function applySavedSession(readSession: (restored: LoadRestore) => Promise<string | null>): Promise<void> {
+  async function applySavedSession(
+    readSession: (restored: LoadRestore) => Promise<string | null>,
+    readCachedAccount: () => Promise<string | null>,
+  ): Promise<void> {
     if (!isCopyAllowedToShow()) {
       return;
     }
     // The restore first, since the session read must come after the rule.
     const restored = await restore();
     const raw = await readSession(restored);
-    const session = await readSessionToShow(restored.local, raw);
+    const session = await readSessionToShow({ local: restored.local, raw, readCachedAccount });
     if (!isCopyAllowedToShow()) {
       return;
     }
@@ -163,7 +173,7 @@ export function createSessionState({
       auth.set({ tag: 'Connected', session });
       return;
     }
-    const shown = auth.get().tag;
+    const shown = auth.store.get().tag;
     // A store that could not be read says nothing of a sign-out, so a sign-in on show stays.
     // A sign-in the core reported itself is its own report, so withdrawing to that report leaves it on show.
     if (speaker === 'core' && !lastReadFailed && shown === 'Connected') {
@@ -175,19 +185,36 @@ export function createSessionState({
     }
   }
 
-  /** Reads the saved session again and shows it, queued behind the read in flight, so the later read decides. */
-  function refresh(): Promise<void> {
-    return savedSessionReads.call(() =>
-      applySavedSession(async () => {
+  /** Reads the saved session and shows it. Never rejects. */
+  function readAndApply(): Promise<void> {
+    return applySavedSession(
+      async () => {
         const read = await store.readSession();
         return read.status === 'ok' ? read.blob : null;
-      }),
+      },
+      // A sign-in elsewhere writes the cached account right after the session whose change started this read, so
+      // the read waits for the session's.
+      () => store.readUiCache(),
     );
+  }
+
+  /** Reads the saved session again and shows it, queued behind the read in flight, so the later read decides. */
+  function refresh(): Promise<void> {
+    return savedSessionReads.call(readAndApply);
+  }
+
+  function retryRead(): Promise<void> {
+    return savedSessionReads.call(async () => {
+      if (auth.store.get().tag !== 'Unreachable') {
+        return;
+      }
+      await readAndApply();
+    });
   }
 
   /** A store that is down cannot confirm a logout or a session, so a user who is not signed in waits on it. */
   function markUnreachable(): void {
-    const tag = auth.get().tag;
+    const tag = auth.store.get().tag;
     if (tag === 'Restoring' || tag === 'Disconnected') {
       auth.set({ tag: 'Unreachable' });
     }
@@ -219,22 +246,28 @@ export function createSessionState({
       if (stop !== null) {
         return stop;
       }
-      const stopStatus = store.subscribeStatus(status => {
+      const stopStatus = store.getStatusStore().listen(status => {
         if (status === 'unavailable') {
           markUnreachable();
         }
       });
       // The load's own read, which the restore rule already made, with the flag it read beside a copy that held
       // nothing.
-      void savedSessionReads.call(() =>
-        applySavedSession(restored => {
-          if (hasHeldNothing(restored)) {
-            reportFlag(restored.presence);
-          }
-          const { session } = restored;
-          return Promise.resolve(session.status === 'ok' ? session.blob : null);
-        }),
-      );
+      void savedSessionReads.call(() => {
+        // The restore rule clears the cached account only with the session it drops, which makes the cache unused, so
+        // the read starts beside the rule. It never rejects.
+        const cachedAccount = store.readUiCache();
+        return applySavedSession(
+          restored => {
+            if (hasHeldNothing(restored)) {
+              reportFlag(restored.presence);
+            }
+            const { session } = restored;
+            return Promise.resolve(session.status === 'ok' ? session.blob : null);
+          },
+          () => cachedAccount,
+        );
+      });
       // A sign-in from the window, a change in another tab, and the store coming back after a read failed.
       const stopChanges = store.subscribeStoredSession(() => {
         if (isCopyAllowedToShow()) {
@@ -261,7 +294,7 @@ export function createSessionState({
      * A state the core reported, which also keeps the UI-state cache. From then the page is
      * that core's, which follows the copy itself, until the page's last core went.
      */
-    reportCoreAuthState(state: AuthState, pairing: PairingPresentation): void {
+    reportCoreAuthState(state: CoreAuthState, pairing: PairingPresentation): void {
       speaker = 'core';
       switch (state.tag) {
         case 'Pairing': {
@@ -325,6 +358,12 @@ export function createSessionState({
      * one.
      */
     reportFlag,
+    /**
+     * Reads the saved session again while the page shows `Unreachable`, queued behind the read in flight, and settles
+     * once that read was applied. Settles without a read in any other state. Never rejects. `Unreachable` is left by a
+     * read that answers, whichever reader made it, so a core's read that answers also starts one.
+     */
+    retryRead,
     /**
      * Stops hearing the store's session reads and ends the follow `start` began, is safe to call twice and never
      * throws, and leaves a state that is not started again, while a read already queued still settles and writes the

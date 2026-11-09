@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { beforeEach, describe, expect, it, onTestFinished } from 'vitest';
+import { atom, type WritableAtom } from 'nanostores';
 import { spans as S } from '@dotli/metrics';
 import { bindRecordingSentry, recordCaptures } from '@dotli/metrics/testing';
-import { createStatusCell, createDeferred, type StatusCell } from '@dotli/shared';
+import { createDeferred } from '@dotli/shared';
 import { createManualTimers, recordLog, type ManualTimers } from '@dotli/shared/testing';
 import { createFeedKeeper, type FeedEnds, type FeedFrame, type FeedName } from './createFeedKeeper.js';
 import type { ProtocolStatus } from './frameTypes.js';
@@ -30,10 +31,13 @@ describe('createFeedKeeper', () => {
   let opened: HeldSubscription[];
   let current: Transport;
 
-  let status: StatusCell<ProtocolStatus>;
+  let status: WritableAtom<ProtocolStatus>;
   /** The frame, ready with `current` as its transport unless a test says otherwise. */
   function createFrame(transport = (): Promise<Transport> => Promise.resolve(current)): FeedFrame<Transport> {
-    return { getStatus: status.get, subscribeStatus: status.subscribe, getTransport: transport };
+    return {
+      status,
+      getTransport: transport,
+    };
   }
 
   /** A keeper following `frame`, recording each subscription it opens. */
@@ -57,12 +61,7 @@ describe('createFeedKeeper', () => {
     timers = createManualTimers();
     opened = [];
     current = { name: 'first' };
-    status = createStatusCell<ProtocolStatus>({
-      initial: 'ready',
-      onListenerError: error => {
-        throw error;
-      },
-    });
+    status = atom<ProtocolStatus>('ready');
     recordLog({ onFinished: onTestFinished });
   });
 
@@ -172,6 +171,36 @@ describe('createFeedKeeper', () => {
       ['first', true],
       ['second', false],
     ]);
+  });
+
+  it('As the host, I keep my feed on a frame that starts listening with a transport I do not hold yet', async () => {
+    // Given a feed held on the first transport
+    createKeeper('shared_auth').follow();
+    await timers.advance(0);
+
+    // When the frame gives a second transport and starts listening
+    current = { name: 'second' };
+    status.set('listening');
+    await timers.advance(0);
+
+    // Then
+    expect(opened.map(({ transport, unsubscribed }) => [transport.name, unsubscribed])).toEqual([
+      ['first', true],
+      ['second', false],
+    ]);
+  });
+
+  it('As the host, I see my feed left as it is when the frame I hold starts listening', async () => {
+    // Given a feed held on the first transport
+    createKeeper('shared_auth').follow();
+    await timers.advance(0);
+
+    // When the frame starts listening with the same transport
+    status.set('listening');
+    await timers.advance(0);
+
+    // Then
+    expect(opened.map(({ transport, unsubscribed }) => [transport.name, unsubscribed])).toEqual([['first', false]]);
   });
 
   it('As the host, I let go of a feed during the wait after an end, so it is not reopened and an ask still out is dropped', async () => {

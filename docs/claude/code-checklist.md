@@ -20,6 +20,10 @@ above the linter: semantics, data flow and naming.
 
 ## Code shape
 
+- **major** (AGENTS.md § Code style, General:): A working capability deleted only because nothing calls it yet, with no
+  owner's word in the commit or PR and no reason given.
+- **major** (AGENTS.md § Code style, General:): Optimisation machinery, extra reads or a departure from the spec added
+  to a lazily loaded feature off the critical path, where the simplest correct read would do.
 - **major** (docs/code/style.md § A factory returns a plain object): A class for a stateful unit, other than an `Error`
   subclass, a data structure, or a measured hot path kept private behind a factory.
 - **major** (docs/code/style.md § The public type comes from the implementation): A hand-written type that restates a
@@ -129,12 +133,15 @@ above the linter: semantics, data flow and naming.
 
 ## UI and styles
 
+- **major** (AGENTS.md § Code style, UI:): Chrome a page shows from first paint that is missing from the
+  server-rendered HTML, or an element an island swaps for another at hydration.
 - **major** (AGENTS.md § Code style, General:): Hand-written machinery where Astro, Solid 2 or Vite has its own
   mechanism, or parts of an old mechanism kept beside the framework's after a migration.
 - **major** (AGENTS.md § Code style, General:): JavaScript shipped as a string, such as a serialised function or an
   inline script block.
 - **major** (AGENTS.md § Code style, UI:): A Solid island for static markup, or more than one island in a module.
-- **major** (AGENTS.md § Code style, UI:): App state moved off `createSyncStore` to Solid signals or stores.
+- **major** (AGENTS.md § Code style, UI:): App state held in Solid signals or stores instead of a nanostores store, or a
+  component that copies a store into a Solid signal where `useStore` from `@dotli/stores-solid` would do.
 - **major** (AGENTS.md § Code style, UI:): An icon that is not a Solid component with an `<svg>` drawn in
   `currentColor`, such as markup in a string, a path-data constant, `innerHTML` or DOM calls.
 - **major** (AGENTS.md § Code style, UI:): A color not taken from the tokens in `packages/ui/src/global.css`, or a light
@@ -187,6 +194,8 @@ above the linter: semantics, data flow and naming.
 - **major** (AGENTS.md § Code style, Tests:): A sleep, `waitForTimeout` or other fixed delay instead of waiting on a
   signal.
 - **major** (AGENTS.md § Code style, Tests:): A committed test that exercises a third-party SDK's own setup.
+- **major** (AGENTS.md § Code style, Tests:): A functional test of a flow that Safari's storage partition shapes, run on
+  Chromium's default shared storage or kept apart from the main store only by the order of its steps.
 - **minor** (AGENTS.md § Code style, Tests:): A test not named as a user story, `As a <role>, I <action> and <outcome>`,
   the role with an optional `who …` clause.
 - **minor** (AGENTS.md § Code style, Tests:): A test body without `// Given`, `// When` and `// Then`, or descriptive

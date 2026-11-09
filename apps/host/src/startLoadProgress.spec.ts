@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it, onTestFinished, vi, type Mock } from 'vitest';
+import { asProductId } from '@parity/truapi';
 import type { Backend } from '@dotli/config';
 import { createManualTimers, resetAllStoresForTests, type ManualTimers } from '@dotli/shared/testing';
 import type { DotliDebugEvent } from '@dotli/truapi-debug';
 import { createDebugBus } from '@dotli/truapi-debug/testing';
 import type { ChainDetail, ChainSyncEvent } from '@dotli/chains';
-import { createSyncStore } from '@dotli/shared';
+import { atom } from 'nanostores';
 import type { PageContent } from '@dotli/ui';
 import { createLoadingController, type LoadingPhase } from './createLoadingController.js';
 import {
@@ -179,31 +180,34 @@ describe('startLoadProgress', () => {
     expect(trace.markWarningShown).toHaveBeenCalledTimes(1);
   });
 
-  it('As a visitor in direct mode, I see the bar follow the relay warp and Asset Hub, and the network monitor follows each chain', () => {
-    // Given
-    const { chainSync, debug } = setupLoad({ backend: 'smoldot-direct' });
+  it.each(['smoldot-direct', 'smoldot-shared-worker'] as const)(
+    'As a visitor on the %s light client, I see the bar follow the relay warp and Asset Hub, and the network monitor follows each chain',
+    backend => {
+      // Given
+      const { chainSync, debug } = setupLoad({ backend });
 
-    // When
-    chainSync.send({ chain: 'relay', kind: 'warpSyncProgress', at: 50, target: 100 });
-    const warping = readProgress();
-    chainSync.send({ chain: 'relay', kind: 'warpSyncFinished' });
-    const warped = readProgress();
-    chainSync.send({ chain: 'assethub', kind: 'firstPeer' });
-    const hubFound = readBand();
-    chainSync.send({ chain: 'assethub', kind: 'bootstrapComplete' });
-    chainSync.send({ chain: 'bulletin', kind: 'peers', peers: 3 });
-    const chains = networkMonitorState.getNetworkStatus();
+      // When
+      chainSync.send({ chain: 'relay', kind: 'warpSyncProgress', at: 50, target: 100 });
+      const warping = readProgress();
+      chainSync.send({ chain: 'relay', kind: 'warpSyncFinished' });
+      const warped = readProgress();
+      chainSync.send({ chain: 'assethub', kind: 'firstPeer' });
+      const hubFound = readBand();
+      chainSync.send({ chain: 'assethub', kind: 'bootstrapComplete' });
+      chainSync.send({ chain: 'bulletin', kind: 'peers', peers: 3 });
+      const chains = networkMonitorState.getNetworkStatus();
 
-    // Then: half the warp is half of the starting band, from 2 to 10
-    expect(warping).toBe(6);
-    expect(warped).toBe(10);
-    expect(hubFound).toEqual({ progress: 10, line: 'Looking up doom.paseo' });
-    expect(readBand()).toEqual({ progress: 55, line: 'Found it' });
-    expect(chains.find(chain => chain.key === 'relay')?.phase).toBe('ready');
-    expect(chains.find(chain => chain.key === 'assethub')?.phase).toBe('ready');
-    expect(chains.find(chain => chain.key === 'bulletin')?.peers).toBe(3);
-    expect(debug.map(event => event.event)).toEqual(['phase', 'phase', 'phase', 'peers']);
-  });
+      // Then: half the warp is half of the starting band, from 2 to 10
+      expect(warping).toBe(6);
+      expect(warped).toBe(10);
+      expect(hubFound).toEqual({ progress: 10, line: 'Looking up doom.paseo' });
+      expect(readBand()).toEqual({ progress: 55, line: 'Found it' });
+      expect(chains.find(chain => chain.key === 'relay')?.phase).toBe('ready');
+      expect(chains.find(chain => chain.key === 'assethub')?.phase).toBe('ready');
+      expect(chains.find(chain => chain.key === 'bulletin')?.peers).toBe(3);
+      expect(debug.map(event => event.event)).toEqual(['phase', 'phase', 'phase', 'peers']);
+    },
+  );
 
   it('As a visitor in direct mode, I see the download fill its band by bytes and hand over to preparing once complete', () => {
     // Given
@@ -292,7 +296,7 @@ describe('startLoadProgress', () => {
     netBytes.send({ received: 200 });
 
     // When
-    productState.setLoaded({ label: 'doom', productId: 'doom.dot' });
+    productState.setLoaded({ label: 'doom', productId: asProductId('doom.dot') });
     await timers.advance(5_000);
     netBytes.send({ received: 300 });
 
@@ -351,7 +355,7 @@ function setupLoad({ backend }: Params): LoadStand {
   const controller = createLoadingController({
     prefersReducedMotion: () => true,
     frames: { request: () => 0, cancel: () => undefined, now: readPageClock },
-    pageContent: createSyncStore<PageContent>({ name: 'load-progress-spec-page-content', initial: 'page' }),
+    pageContent: atom<PageContent>('page'),
     timers,
     poll: createManualPoll({ timers }),
   });

@@ -17,6 +17,12 @@ export const spans = {
    */
   SMOLDOT_ACTIVE: 'smoldot.active',
 
+  /**
+   * A light-client connection refused at the light client's connection cap, which halts its chain.
+   * Tagged `outcome` (error) and `reason` (`cap`).
+   */
+  SMOLDOT_CONNECTION_CAP: 'smoldot.connection_cap',
+
   /** Mode detection plus engine start. */
   PROTOCOL_INIT: 'protocol.init',
 
@@ -29,10 +35,24 @@ export const spans = {
   PROTOCOL_SESSION_TUNING: 'protocol.session_tuning',
 
   /**
-   * Count. A held chain whose teardown threw as the pool closed it. Tagged `outcome` (error) and `reason` (the error's
-   * name).
+   * Count. A held chain whose teardown threw as the pool closed it, whose pause or resume threw, or whose empty extra
+   * lane threw as it closed, told apart by the `step` tag (`chain_pool_close`, `chain_pool_pause`, `chain_pool_resume`,
+   * `chain_lane_close`). Tagged `outcome` (error) and `reason` (the error's name).
    */
   CHAIN_POOL_CLOSE: 'chain_pool.close',
+
+  /**
+   * Count. A chain's lane that could not be built, a consumer's session that could not open on another lane, or the
+   * network panel's follow that could not open, told apart by the `step` tag (`chain_lane_build`, `chain_lane_session`,
+   * `chain_pool_watch_follow`). Tagged `outcome` (error) and `reason` (the error's name).
+   */
+  CHAIN_LANE_OPEN: 'chain_pool.lane_open',
+
+  /**
+   * Count. A `chainHead_v1_follow` the node refused. Tagged `outcome` (error) and `reason` (`limit` for error code
+   * `-32800`, `refused` for any other).
+   */
+  CHAIN_FOLLOW_REFUSED: 'chain_broker.follow_refused',
 
   RESOLVE_STORAGE_READ: 'resolve.storage_read',
 
@@ -76,6 +96,9 @@ export const spans = {
 
   /** A bitswap relay step that failed. Tag `outcome` (`error`), `reason` (the error name) and `step` (`verify, cache_read, cache_delete, cache_write`). */
   CONTENT_BLOCK_RELAY: 'content.block_relay',
+
+  /** A Bulletin connection the bitswap client failed to close after its last fetch. Tag `outcome` (`error`) and `reason` (the error name). */
+  CONTENT_BITSWAP_RELEASE: 'content.bitswap_release',
 
   /** Bytes. */
   CONTENT_SIZE: 'content.size',
@@ -185,6 +208,11 @@ export const spans = {
   PROTOCOL_WORKER_HEARTBEAT: 'protocol.worker_heartbeat',
 
   /**
+   * A pause the host could not send to its frame. Tagged `outcome` (error) and `reason` (the error's name).
+   */
+  PROTOCOL_FRAME_PAUSE: 'protocol.frame_pause',
+
+  /**
    * A shared auth or wallet change the protocol frame could not post to the other tabs, tagged `outcome` (error) and
    * `reason` (the error's name).
    */
@@ -219,22 +247,6 @@ export const spans = {
    * and `reason` (the error's name).
    */
   SANDBOX_BITSWAP_ABORT: 'sandbox.bitswap_abort',
-
-  /**
-   * Count. The shell's service worker module could not load. Tagged `outcome` (error) and `reason` (the error's name).
-   */
-  PWA_SW_LOAD: 'pwa.sw_load',
-
-  /**
-   * Count. The shell's service worker could not register. Tagged `outcome` (error) and `reason` (the error's name).
-   */
-  PWA_SW_REGISTER: 'pwa.sw_register',
-
-  /**
-   * Count. An update check of the shell's service worker failed, offline, mid-deploy or after storage was cleared.
-   * Expected, since the next check retries. Tagged `outcome` (error) and `reason` (the error's name).
-   */
-  PWA_SW_UPDATE: 'pwa.sw_update',
 
   /**
    * Count. A step of the scheduled notifications poll failed, once per failing run of the step. Tagged `outcome`
@@ -280,6 +292,12 @@ export const spans = {
   WALLET_CORE_REDIAL: 'wallet.core_redial',
 
   /**
+   * Count. Telling a pairing core that the stored session changed threw, so the core may miss a login from another tab.
+   * Tagged `outcome` (error) and `reason` (the error's name).
+   */
+  PAGE_CORE_SESSION_FOLLOW: 'page_core.session_follow',
+
+  /**
    * One `acquire` the session lease made of the page core. Tagged `outcome` (ok or error) and, on error, `reason`: `boot`
    * for a first boot that failed and `redial` for a replacement that could not boot.
    */
@@ -305,6 +323,14 @@ export const spans = {
    * `outcome` (error) and `reason` (the error's name).
    */
   PRODUCT_ICON: 'product.icon',
+
+  /**
+   * Count. A read behind the product card's author failed, so the card shows less of the author. Expected. Tagged
+   * `outcome` (error) and `reason`, the read that failed: `owner` (counted while the product resolves), `cached-owner`
+   * (a cached owner that is no address, counted when the cached copy is read), and `account` or `username` (counted
+   * when the card opens).
+   */
+  PRODUCT_AUTHOR: 'product.author',
 
   /**
    * A frame on the topbar login's own connection that the login skipped and survived. Tagged `outcome` (error) and

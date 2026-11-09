@@ -8,8 +8,9 @@
 
 import { withActiveTld } from '@dotli/config';
 import { reportDefect, spans as S } from '@dotli/metrics';
-import { getErrorMessage, log, type ReadableStore, registerStoreStateReset } from '@dotli/shared';
-import type { AuthCommands } from './createAuthCommands.js';
+import { getErrorMessage, log, registerStoreStateReset } from '@dotli/shared';
+import type { ReadableAtom } from 'nanostores';
+import type { AuthCommands, LoginParams } from './createAuthCommands.js';
 import type { BlockingModalCoordinator, BlockingModalScope } from './createBlockingModalCoordinator.js';
 import { createInPageSignIn, type InPagePhrase } from './createInPageSignIn.js';
 import type { DotliAuthState } from './session/types.js';
@@ -22,12 +23,13 @@ import type {
   SignInRoute,
   StartLoginParams,
 } from './signInRoute.js';
-import { authState } from './state/authState.js';
+import { authState, type AuthState } from './state/authState.js';
 import { sessionElsewhereState } from './state/sessionElsewhereState.js';
 import { walletModeState, type WalletMode } from './state/walletModeState.js';
 import { createWindowSignIn } from './createWindowSignIn.js';
 import { authModalState } from '../state/authModalState.js';
 import { getLoginFailureView, type LoginFailureKind } from './getLoginFailureView.js';
+import { rereadBeforeSignIn } from './rereadBeforeSignIn.js';
 
 type Params = {
   coordinator: BlockingModalCoordinator;
@@ -36,7 +38,10 @@ type Params = {
    * the bridge chunk fails to load.
    */
   commands: () => Promise<AuthCommands>;
-  auth: ReadableStore<DotliAuthState>;
+  /** The current auth step, read for each intent. */
+  auth: ReadableAtom<DotliAuthState>;
+  /** Hears every auth step, an equal one included, which the controller follows until it is disposed. */
+  subscribeAuthSteps: AuthState['subscribeSteps'];
   /** The sign-in window, or null for a page that pairs in place. */
   handoff: SessionHandoff | null;
   /** Writes the window's result into this page's copy. Rejects with the failed step as the cause. */
@@ -47,25 +52,29 @@ type Params = {
   inPagePhrase: () => Promise<InPagePhrase>;
   /** Whether the page shows signed out while a sign-in made elsewhere waits, which a sign-in then resumes. */
   elsewhere: () => boolean;
+  /** Reads the saved session again and settles once the page shows it. Rejects when the bridge chunk fails to load. */
+  rereadSession: () => Promise<void>;
 };
 
 /** What the slot's `init` takes: the controller's params, less the page stores the slot reads itself. */
-type InitParams = Omit<Params, 'auth' | 'walletMode' | 'elsewhere'>;
+type InitParams = Omit<Params, 'auth' | 'subscribeAuthSteps' | 'walletMode' | 'elsewhere'>;
 
 type CommandStep = 'login' | 'logout' | 'cancel_login';
 
 export type AuthController = ReturnType<typeof createAuthController>;
 
-/** Returns the controller of the page's sign-in modal, which follows `auth` until it is disposed. */
+/** Returns the controller of the page's sign-in modal, which follows the auth steps until it is disposed. */
 export function createAuthController({
   coordinator,
   commands,
   auth,
+  subscribeAuthSteps,
   handoff,
   applyResult,
   walletMode,
   inPagePhrase,
   elsewhere,
+  rereadSession,
 }: Params) {
   let authModalScope: BlockingModalScope | null = null;
   let releaseAuthModal: (() => void) | null = null;
@@ -250,14 +259,16 @@ export function createAuthController({
     close: closeAuthModal,
   };
 
+  function loginInPage(params?: LoginParams): void {
+    runCommand('login', loaded => loaded.login(params));
+  }
+
   const route: SignInRoute =
     handoff === null
       ? createInPageSignIn({
           inPagePhrase,
           modal,
-          login(params) {
-            runCommand('login', loaded => loaded.login(params));
-          },
+          login: loginInPage,
         })
       : createWindowSignIn({
           handoff,
@@ -267,10 +278,8 @@ export function createAuthController({
           modal,
         });
 
-  // The store never drops a set as equal, so every step of the ordered stream reaches here.
   let lastTag = auth.get().tag;
-  const unsubscribe = auth.subscribe(() => {
-    const state = auth.get();
+  const unlisten = subscribeAuthSteps(state => {
     const previous = lastTag;
     lastTag = state.tag;
     applyAuthState(state, previous);
@@ -280,7 +289,19 @@ export function createAuthController({
     const state = auth.get();
     // A pairing writes its session to the shared store, so one started while the store is down would be lost.
     if (state.tag === 'Unreachable') {
-      log.event('sign-in refused while the saved session is unreachable', { flow: 'wallet' });
+      void rereadBeforeSignIn({
+        open: () => openAuthModal({ reason: params.reason, label: params.label }),
+        modal,
+        rereadSession,
+        auth,
+        proceed:
+          handoff === null
+            ? () => {
+                loginInPage({ reason: params.reason });
+              }
+            : null,
+        elsewhere,
+      });
       return;
     }
     if (state.tag === 'Connected') {
@@ -291,7 +312,19 @@ export function createAuthController({
 
   function importPhrase(): void {
     if (auth.get().tag === 'Unreachable') {
-      log.event('phrase import refused while the saved session is unreachable', { flow: 'wallet' });
+      void rereadBeforeSignIn({
+        open: () => openAuthModal(),
+        modal,
+        rereadSession,
+        auth,
+        proceed:
+          handoff === null
+            ? () => {
+                route.importPhrase();
+              }
+            : null,
+        elsewhere,
+      });
       return;
     }
     route.importPhrase();
@@ -301,13 +334,16 @@ export function createAuthController({
     /**
      * Opens the sign-in window and waits for it, asking it to resume a sign-in made elsewhere when one waits, or with
      * no window opens the modal and asks the core to log in. Does nothing while a login is already on show or the user
-     * is signed in. The window opens before this returns, so a click handler reaches it with no wait between. Never
-     * throws.
+     * is signed in. The window opens before this returns, so a click handler reaches it with no wait between. While the
+     * saved session cannot be reached, reads it again first, and then signs in, asks for a click to open the window, or
+     * says why it cannot. Never throws.
      */
     startLogin,
     /**
      * Opens the sign-in window at its recovery phrase view and waits for it, or with no window opens the modal at its
-     * phrase view. Also runs for a signed-in user, who replaces the local wallet. Never throws.
+     * phrase view. Also runs for a signed-in user, who replaces the local wallet. While the saved session cannot be
+     * reached, reads it again first, and then goes on, asks for a click to open the window, or says why it cannot.
+     * Never throws.
      */
     importPhrase,
     /** Whether the modal's phrase view takes `phrase`. Never throws. */
@@ -368,7 +404,7 @@ export function createAuthController({
     },
     /** Stops following the auth state and closes the modal without cancelling a login. Never throws. */
     dispose(): void {
-      unsubscribe();
+      unlisten();
       closeAuthModal({ skipTruapiCancel: true });
     },
   };
@@ -401,6 +437,7 @@ export function createAuthControlSlot() {
     const started = createAuthController({
       ...params,
       auth: authState.store,
+      subscribeAuthSteps: authState.subscribeSteps,
       walletMode: walletModeState.getMode,
       elsewhere: () => sessionElsewhereState.store.get(),
     });

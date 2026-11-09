@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
+import { asProductId } from '@parity/truapi';
 import { productState } from './productState.js';
 import { resetAllStoresForTests as resetStores } from '@dotli/shared/testing';
 
@@ -14,7 +15,7 @@ describe('product store', () => {
     // Given a page as it opens
 
     // When
-    const state = productState.get();
+    const state = productState.store.get();
 
     // Then
     expect(state).toEqual({ status: 'none', loadId: 0 });
@@ -24,10 +25,10 @@ describe('product store', () => {
     // Given a page as it opens, with no product loaded
 
     // When
-    productState.setLoaded({ label: 'myapp', productId: 'myapp.dot', details: { cid: 'bafyroot' } });
+    productState.setLoaded({ label: 'myapp', productId: asProductId('myapp.dot'), details: { cid: 'bafyroot' } });
 
     // Then
-    expect(productState.get()).toEqual({
+    expect(productState.store.get()).toEqual({
       status: 'loaded',
       loadId: 1,
       label: 'myapp',
@@ -38,32 +39,32 @@ describe('product store', () => {
 
   it('As a user, I reload the same product and every load is announced', () => {
     // Given
-    productState.setLoaded({ label: 'myapp', productId: 'myapp.dot' });
+    productState.setLoaded({ label: 'myapp', productId: asProductId('myapp.dot') });
     const seen: number[] = [];
     onTestFinished(
-      productState.store.subscribe(() => {
-        seen.push(productState.get().loadId);
+      productState.store.listen(() => {
+        seen.push(productState.store.get().loadId);
       }),
     );
 
     // When
-    productState.setLoaded({ label: 'myapp', productId: 'myapp.dot' });
+    productState.setLoaded({ label: 'myapp', productId: asProductId('myapp.dot') });
     productState.setError();
-    productState.setLoaded({ label: 'myapp', productId: 'myapp.dot' });
+    productState.setLoaded({ label: 'myapp', productId: asProductId('myapp.dot') });
 
     // Then
     expect(seen).toEqual([2, 3, 4]);
-    expect(productState.get()).toEqual({ status: 'loaded', loadId: 4, label: 'myapp', productId: 'myapp.dot' });
+    expect(productState.store.get()).toEqual({ status: 'loaded', loadId: 4, label: 'myapp', productId: 'myapp.dot' });
   });
 
   it('As a user, I hit a failed load and no product is left on show', () => {
     // Given
-    productState.setLoaded({ label: 'myapp', productId: 'myapp.dot' });
+    productState.setLoaded({ label: 'myapp', productId: asProductId('myapp.dot') });
 
     // When
     productState.setError();
 
     // Then
-    expect(productState.get()).toEqual({ status: 'error', loadId: 2 });
+    expect(productState.store.get()).toEqual({ status: 'error', loadId: 2 });
   });
 });

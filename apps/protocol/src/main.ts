@@ -12,7 +12,7 @@ import {
   setResolutionId,
   spans as S,
 } from '@dotli/metrics';
-import { byteMeter, loadProvider } from '@dotli/chains';
+import { byteMeter, loadProvider, type ChainPool } from '@dotli/chains';
 import { loadResolve } from '@dotli/resolver';
 
 import { getErrorMessage, log, serializeError } from '@dotli/shared';
@@ -51,6 +51,8 @@ import { readResolveBudgetCap } from './readResolveBudgetCap.js';
 import { readSessionTuning } from './readSessionTuning.js';
 import { registerWorkerRelay } from './registerWorkerRelay.js';
 import { serveEngineScope } from './serveEngineMethods.js';
+import { serveFramePause } from './serveFramePause.js';
+import { serveHeartbeat } from './serveHeartbeat.js';
 import { serveLocalWallet } from './serveLocalWallet.js';
 import { shareNetBytes } from './shareNetBytes.js';
 import { SHARED_WORKER_MODE } from './sharedWorkerMode.js';
@@ -118,6 +120,8 @@ const serving = createTransport({
 });
 serving.handleSubscription(protocolSchema.sections.frame.status, boot.handleStatus);
 serving.handleSubscription(protocolSchema.sections.frame.telemetry, boot.handleTelemetry);
+// The frame answers the heartbeat as long as its page, so the stop goes unused.
+serveHeartbeat({ serving });
 
 // What the stores, the wallet and the engine refuse is logged and counted, as well as answered.
 const served = withRefusalReports(serving, createRefusalReporter({ warn: log.warn, count: m.count }));
@@ -133,7 +137,10 @@ serveLocalWallet({
   },
 });
 
-/** Logs `message` and fails the boot for good, so this frame never serves. Never throws. */
+/**
+ * Logs `message` and fails the boot for good, so this frame never serves the chains. The frame keeps serving the shared
+ * store and the wallet after its init failed. Never throws.
+ */
 function failInit(message: string, { cause }: Params = {}): void {
   log.error(`${FRAME_LOG_TAG} ${message}`);
   boot.fail(new ProtocolInitFailedError(message, cause === undefined ? undefined : { cause }));
@@ -241,12 +248,13 @@ async function initSharedWorkerMode(network: Network): Promise<void> {
 }
 
 /**
- * Serves `engine`, reports the frame ready, and disposes `engine` once the page is hidden for good. The iframe serves
- * its one parent, so one scope holds every connection.
+ * Serves `engine` and the pause of `pool`, reports the frame ready, and disposes `engine` once the page is hidden for
+ * good. The iframe serves its one parent, so one scope holds every connection.
  */
-function serveEngine(engine: ProtocolEngine): void {
-  // The frame serves its engine as long as its page, so both stops go unused.
+function serveEngine(engine: ProtocolEngine, pool: ChainPool): void {
+  // The frame serves its engine and its pause as long as its page, so the stops go unused.
   serveEngineScope(served, engine);
+  serveFramePause({ serving: served, pool });
   disposeOnPageHide({ target: window, dispose: engine.dispose });
   boot.markReady();
 }
@@ -303,15 +311,16 @@ async function initDirectMode(): Promise<void> {
     syncBudgetCapMs: readResolveBudgetCap(session),
   });
 
-  serveEngine(engine);
+  serveEngine(engine, service.pool);
 }
 
 // Gateway mode serves chain connections only, so no resolver is wired here.
 async function initRpcMode(): Promise<void> {
   const { openGatewayChains } = await loadGatewayChains();
-  const engine = createEngine(openGatewayChains());
+  const chains = openGatewayChains();
+  const engine = createEngine(chains);
 
-  serveEngine(engine);
+  serveEngine(engine, chains.pool);
 }
 
 void init().catch((error: unknown) => {

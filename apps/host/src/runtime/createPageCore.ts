@@ -5,13 +5,15 @@
 // delay, so a lease taken soon after keeps it. A faulted one is never handed out again, and one that goes down while it
 // is the page's core is replaced at once when it is held. One nobody holds just goes, and the next request dials.
 
-import type { ProductExecutionKind, TrUApiProductProvider } from '@parity/truapi-host';
+import type { ProductId } from '@parity/truapi';
+import type { ExecutableKind, TrUApiProductProvider } from '@parity/truapi-host';
 import type { WorkerPairingHostRuntime } from '@parity/truapi-host/web';
 import { m, reportDefect, reportListener, spans as S } from '@dotli/metrics';
 import {
   createAsyncTaskPool,
   createListenerSet,
   log,
+  markHandled,
   realTimers,
   type AsyncTaskPool,
   type ListenerSet,
@@ -34,7 +36,7 @@ export type PageProduct = {
 /** Close it through `close`, never the provider, or the core is marked faulted. */
 export type CoreConnection = {
   provider: TrUApiProductProvider;
-  productId: string;
+  productId: ProductId;
   /** Closes the connection without taking the core down. Throws when the provider's own dispose throws. */
   close(): void;
 };
@@ -90,7 +92,7 @@ type DialParams = {
 
 type ConnectParams = {
   /** What the product runs as. An app by default. */
-  executionKind?: ProductExecutionKind | undefined;
+  executionKind?: ExecutableKind | undefined;
 };
 
 export type PageCore = ReturnType<typeof createPageCore>;
@@ -211,8 +213,19 @@ export function createPageCore({
         }
         // A local wallet core holds its session in memory, so the stored one is not its to follow.
         if (!booted.local) {
+          // Runs in store listeners, where a throw would reach the store's writer, and in a microtask, where it would be
+          // uncaught, so it is reported here and the stale check still runs.
           function followStore(): void {
-            booted.runtime.notifySessionStoreChanged();
+            try {
+              booted.runtime.notifySessionStoreChanged();
+            } catch (error) {
+              reportDefect(error, {
+                flow: 'wallet',
+                step: 'session_follow',
+                metric: S.PAGE_CORE_SESSION_FOLLOW,
+                message: '[dot.li page-core] telling the core the stored session changed failed:',
+              });
+            }
             // The store coming back can answer a wallet read that failed when this core booted.
             void booted.isStale().then(stale => {
               if (stale) {
@@ -261,9 +274,8 @@ export function createPageCore({
         throw error;
       },
     );
-    runtime.catch(() => {
-      // Logged above, and a redial nobody has asked for yet has no caller to tell.
-    });
+    // Logged above, and a redial nobody has asked for yet has no caller to tell.
+    void markHandled(runtime);
     const core: Core = {
       product,
       runtime,
@@ -321,10 +333,9 @@ export function createPageCore({
 
   async function connect(
     core: Core,
-    runtime: WorkerPairingHostRuntime,
+    { runtime, productId }: BootedCoreRuntime,
     { executionKind = 'App' }: ConnectParams = {},
   ): Promise<CoreConnection> {
-    const productId = getProductId(core.product);
     let provider: TrUApiProductProvider;
     try {
       provider = await runtime.createProvider({ productId, executionKind });
@@ -446,10 +457,9 @@ export function createPageCore({
         release();
         throw error;
       }
-      const { runtime } = booted;
       return {
-        runtime,
-        connect: params => connect(core, runtime, params),
+        runtime: booted.runtime,
+        connect: params => connect(core, booted, params),
         subscribeDown(listener) {
           if (released) {
             return () => undefined;

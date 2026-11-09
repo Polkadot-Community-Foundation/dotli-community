@@ -13,9 +13,9 @@ import {
   noop,
   toHex,
   waitForStatus,
-  type ReadableStore,
-  type StatusCell,
+  type StatusSource,
 } from '@dotli/shared';
+import type { ReadableAtom } from 'nanostores';
 import type { CoreLease } from '../createPageCore.js';
 import type { DotliAuthState } from '../session/types.js';
 import type { TruapiSessionUiState } from '../session/parseUiStateCache.js';
@@ -43,7 +43,7 @@ type Params = {
   /** Takes a lease on the page's core, booting it when none runs. Rejects when the core cannot boot. */
   acquire: () => Promise<HeldLease>;
   /** What the page's core itself reported last, null while no core reported. */
-  coreReport: ReadableStore<DotliAuthState | null>;
+  coreReport: Pick<ReadableAtom<DotliAuthState | null>, 'get' | 'listen'>;
 };
 
 /** A key the core reports as `0x` hex of whole bytes. */
@@ -95,18 +95,18 @@ export function createMainAccountSource({ acquire, coreReport }: Params) {
   }
 
   /** The core's report while the leased core is up, and `down` once it went down, since a replacement reports anew. */
-  function watchLeasedReport(down: AbortSignal): Pick<StatusCell<LeasedReport>, 'get' | 'subscribe'> {
+  function watchLeasedReport(down: AbortSignal): StatusSource<LeasedReport> {
     function getReport(): LeasedReport {
       return down.aborted ? 'down' : coreReport.get();
     }
     return {
       get: getReport,
-      subscribe(listener) {
+      listen(listener) {
         function notify(): void {
           listener(getReport());
         }
         down.addEventListener('abort', notify, { once: true });
-        const unsubscribeReport = coreReport.subscribe(notify);
+        const unsubscribeReport = coreReport.listen(notify);
         function unsubscribe(): void {
           down.removeEventListener('abort', notify);
           unsubscribeReport();
@@ -137,9 +137,10 @@ export function createMainAccountSource({ acquire, coreReport }: Params) {
           case 'Disconnected':
           case 'LoginFailed':
             return new MainAccountError('signed_out', `The window's core reports the main session ${report.tag}`);
+          case 'Unreachable':
+            return new MainAccountError('unavailable', "The window's core cannot read the main session");
           case undefined:
           case 'Restoring':
-          case 'Unreachable':
           case 'Pairing':
           case 'Authenticating':
             return false;
@@ -154,8 +155,9 @@ export function createMainAccountSource({ acquire, coreReport }: Params) {
     /**
      * The main account once the core reports a session, on a core lease the source holds from the first read. Rejects
      * with a {@link MainAccountError}: `signed_out` once the core reports no session or a failed login, `unavailable`
-     * for a core that cannot boot, a session without a readable key, `signal` aborting first, or the source disposed
-     * while the read is open or before it starts, which then takes no new lease.
+     * for a core that cannot boot, a core that cannot read the main session, a session without a readable key,
+     * `signal` aborting first, or the source disposed while the read is open or before it starts, which then takes no
+     * new lease.
      */
     async read(signal: AbortSignal): Promise<MainAccount> {
       const ended = AbortSignal.any([signal, lifetime.signal]);
