@@ -16,8 +16,8 @@ NODE_MAJOR := 24
 
 # Networks for the on-box `build:prod`, which requires VITE_NETWORKS. The `summit` slot is dot.li, which serves the
 # devnet like dev-dot.li.
-VITE_NETWORKS_summit := devnet
-VITE_NETWORKS_devnet := devnet
+VITE_NETWORKS_summit := pcf-devnet
+VITE_NETWORKS_devnet := pcf-devnet
 
 # Icon variant for the host shell (apps/host/public/brand/<variant>); unset keeps the stock icons.
 VITE_BRAND_VARIANT_devnet := devnet
