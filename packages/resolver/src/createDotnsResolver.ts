@@ -5,39 +5,47 @@
 // passed in, so the resolver reads through the follow its owner already keeps: the light client's broker in the
 // protocol frame, the host's chain pool on a gateway.
 
-import { createClient, DisjointError, RpcError } from '@polkadot-api/substrate-client';
+import { createClient, DisjointError } from '@polkadot-api/substrate-client';
 import type { JsonRpcProvider } from 'polkadot-api';
-import { atom } from 'nanostores';
 import { TIMEOUTS, type DotnsContracts } from '@dotli/config';
-import { m, reportListener, spans as S } from '@dotli/metrics';
-import { CHAIN_HALTED_ERROR_DATA, createAsyncTaskPool, log, toHex, withTimeout } from '@dotli/shared';
+import { createReporter, defineCount, m } from '@dotli/metrics';
+import { createAsyncTaskPool, isChainHaltedRpcError, log, toHex, withTimeout } from '@dotli/shared';
 
 import { ApiStoppedError } from './apiStoppedError.js';
 import { ContenthashDecodeError } from './contenthashDecodeError.js';
 import { createRawApi, type Api } from './createRawApi.js';
+import { createSyncedClient, type ChainClient, type SyncedClientState } from './createSyncedClient.js';
 import { decodeIpfsContenthashResult } from './decodeIpfsContenthashResult.js';
 import type { ExecutableKind } from './manifestTypes.js';
 import { NetworkSyncTimeoutError } from './networkSyncTimeoutError.js';
+import { readAppLabels } from './readAppLabels.js';
 import { readExecutableManifest } from './readExecutableManifest.js';
-import { readMappingBytes } from './readMappingBytes.js';
+import { readLabelStores } from './readLabelStores.js';
 import { readNameOwner } from './readNameOwner.js';
+import { readNewLabels, type LabelStoreCursor } from './readNewLabels.js';
+import { readPinnedBytes } from './readPinnedBytes.js';
 import { readRootManifest } from './readRootManifest.js';
-import { computeNamehash } from './storageSlots.js';
+import { computeMappingSlot, computeNamehash } from './storageSlots.js';
 import type { PhaseCallback, ResolvePhase } from './types.js';
 import { UnsupportedContenthashCodecError } from './unsupportedContenthashCodecError.js';
+
+const report = createReporter({ flow: 'resolve' });
+
+const RESOLVE_STORAGE_READ = 'resolve.storage_read';
+
+/**
+ * Count. A chain client whose teardown threw. Tagged `outcome` (error) and `reason` (the error's name):
+ * `AlreadyDestroyedError` or `CrashError` for a light client that ended or panicked, and any other name for a bug.
+ */
+const clientDestroyMetric = defineCount<'error'>('resolve.client_destroy');
+
+// A panicked smoldot says so in its message, while its own class names may not survive the bundle.
+const SMOLDOT_GONE_PATTERN = /panicked at|Smoldot has (?:panicked|crashed)/i;
 
 export type ResolveOptions = {
   onPhase?: PhaseCallback | undefined;
   /** What is left of the caller's deadline, if it set one. */
   syncTimeoutMs?: number;
-};
-
-/** A chain client: its raw reads, and the teardown of its follow and connection. */
-export type ChainClient = {
-  /** The raw reads over this client's follow. */
-  readonly api: Api;
-  /** Tears down the follow and the connection. Never throws. */
-  destroy: () => void;
 };
 
 export type DotnsResolver = ReturnType<typeof createDotnsResolver>;
@@ -58,18 +66,13 @@ type Params = {
   open?: (provider: JsonRpcProvider) => ChainClient;
 };
 
-/** Where the Asset Hub client stands. A stopped follow takes it back to `idle`, and the next read builds it again. */
-type DotnsResolverStatus = 'idle' | 'connecting' | 'syncing' | 'ready' | 'failed';
-
-const PEOPLE_CHAIN = 'People Paseo';
-/** Upper bound on the background People-chain warm for legacy-account auth. */
-const PEOPLE_FINALIZED_SYNC_MS = 180_000;
-
-const PHASES: Partial<Record<DotnsResolverStatus, ResolvePhase>> = {
+const PHASES = {
+  idle: null,
   connecting: 'asset-hub-connecting',
   syncing: 'asset-hub-syncing',
   ready: 'asset-hub-ready',
-};
+  failed: null,
+} satisfies Record<SyncedClientState['kind'], ResolvePhase | null>;
 
 const HUB_CHAIN: Record<Params['source'], string> = {
   'light-client': 'Asset Hub Paseo',
@@ -82,7 +85,7 @@ const HUB_CHAIN: Record<Params['source'], string> = {
  */
 const MAX_HALT_ATTEMPTS = 4;
 
-const reportPhaseListener = reportListener('resolve', 'resolver.status');
+const reportPhaseListener = report.listener('resolver.status');
 
 /**
  * Builds the dotNS reads on the connections it is given. Each instance keeps its own clients.
@@ -95,89 +98,27 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
   const hubChain = HUB_CHAIN[source];
   // A gateway's timings would skew the light client's dashboards.
   const timed = source === 'light-client';
-  // One build at a time per chain. A queued caller finds the client its predecessor built.
-  const clients = createAsyncTaskPool({ poolSize: 1 });
   const reads = createAsyncTaskPool({
     poolSize: Number.POSITIVE_INFINITY,
     retryCount: MAX_HALT_ATTEMPTS - 1,
     retryIf: isChainHalt,
   });
-
-  const status = atom<DotnsResolverStatus>('idle');
-
-  let hub: ChainClient | null = null;
-  let peopleClient: ChainClient | null = null;
-
-  function measureSpan<T>(name: string, work: () => Promise<T>): Promise<T> {
-    return timed ? m.span(name, work) : work();
-  }
-
-  async function buildAssetHub(): Promise<Api> {
-    const initStart = performance.now();
-    let outcome: 'ok' | 'error' | 'timeout' = 'error';
-    try {
-      status.set('connecting');
-      const client = open(assetHub());
-      status.set('syncing');
-      const syncStart = performance.now();
-      let syncMs: number;
-      // Kept only once ready, and torn down on failure, so no orphaned client keeps a subscription alive.
-      try {
-        // `api.whenReady()` never settles without reachable peers, so the wait is bounded and its error names the cause.
-        await measureSpan(S.SMOLDOT_FINALIZED_BLOCK, () =>
-          withTimeout({
-            work: client.api.whenReady(),
-            ms: TIMEOUTS.HUB_FINALIZED_SYNC,
-            timeoutError: () => new NetworkSyncTimeoutError(hubChain, TIMEOUTS.HUB_FINALIZED_SYNC),
-          }),
-        );
-        syncMs = performance.now() - syncStart;
-        if (timed) {
-          m.measure(S.SMOLDOT_FINALIZED_BLOCK, syncMs);
-          m.distribution(S.SMOLDOT_FINALIZED_BLOCK, syncMs);
-        }
-      } catch (error) {
-        client.destroy();
-        throw error;
-      }
-
-      // A dead follow would otherwise make every later read return `null`, which reads as "name not found".
-      client.api.onStop(() => {
-        log.warn('[dot.li resolve] chainHead follow stopped, invalidating resolver client');
-        if (hub === client) {
-          hub = null;
-          client.destroy();
-          status.set('idle');
-        }
-      });
-
-      hub = client;
-      outcome = 'ok';
-      log.event('Asset Hub client ready', {
-        flow: 'resolve',
-        source,
-        sync_ms: Math.round(syncMs),
-        total_ms: Math.round(performance.now() - initStart),
-      });
-      status.set('ready');
-      return client.api;
-    } catch (error) {
-      if (error instanceof NetworkSyncTimeoutError) {
-        outcome = 'timeout';
-      }
-      status.set('failed');
-      throw error;
-    } finally {
-      // Recorded here alone, since the SharedWorker presync and direct mode both come through here.
-      if (timed) {
-        const totalMs = performance.now() - initStart;
-        if (outcome === 'ok') {
-          m.measure(S.SMOLDOT_PRESYNC, totalMs);
-        }
-        m.distribution(S.SMOLDOT_PRESYNC, totalMs, { unit: 'millisecond', attributes: { outcome } });
-      }
-    }
-  }
+  const assetHubClient = createSyncedClient({
+    chain: hubChain,
+    syncTimeoutMs: TIMEOUTS.HUB_FINALIZED_SYNC,
+    timed,
+    openClient: () => open(assetHub()),
+  });
+  const peopleClient =
+    people === undefined
+      ? null
+      : createSyncedClient({
+          chain: 'People Paseo',
+          // Upper bound on the background People-chain warm for legacy-account auth.
+          syncTimeoutMs: 180_000,
+          timed: false,
+          openClient: () => open(people()),
+        });
 
   /** The caller hears how far the client has come while it waits. */
   function reportProgress(onPhase: PhaseCallback | undefined): () => void {
@@ -185,8 +126,8 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
       return () => undefined;
     }
     // A caller that arrives after a phase was reached hears it too.
-    return status.subscribe(next => {
-      tellPhase(onPhase, next);
+    return assetHubClient.state.subscribe(next => {
+      tellPhase(onPhase, next.kind);
     });
   }
 
@@ -197,20 +138,16 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
 
   function getAssetHubApi(options: ResolveOptions): Promise<Api> {
     const stopReporting = reportProgress(options.onPhase);
+    // Aborted when this caller gives up, so it starts no build nobody waits for.
     const gaveUp = new AbortController();
-    // Checked in the task, not passed to the pool: aborting a running build would free its slot for a second one.
-    const ready = clients.call(
-      () => {
-        gaveUp.signal.throwIfAborted();
-        return hub?.api ?? buildAssetHub();
-      },
-      { pool: 'asset-hub' },
-    );
     // The shared client keeps the full budget, so a short caller cannot cut short a longer one.
     const budget = getBudget(options);
-    return withTimeout({ work: ready, ms: budget, timeoutError: () => new NetworkSyncTimeoutError(hubChain, budget) })
+    return withTimeout({
+      work: assetHubClient.getApi({ signal: gaveUp.signal }),
+      ms: budget,
+      timeoutError: () => new NetworkSyncTimeoutError(hubChain, budget),
+    })
       .catch((error: unknown) => {
-        // A caller that gave up while queued must not start a build nobody waits for.
         gaveUp.abort(error);
         throw error;
       })
@@ -230,7 +167,7 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
       }
       attempts += 1;
       if (attempts > 1) {
-        log.event('Resolve retry after a chain halt', { flow: 'resolve', attempt: attempts, left_ms: left });
+        report.log.event('Resolve retry after a chain halt', { attempt: attempts, left_ms: left });
       }
       const attempt = { ...options, syncTimeoutMs: left };
       return run(await getAssetHubApi(attempt), attempt);
@@ -252,19 +189,19 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
     options.onPhase?.('resolving-content');
     const contentStart = performance.now();
 
-    const contenthashBytes = await measureSpan(S.RESOLVE_STORAGE_READ, () =>
-      readMappingBytes({
+    const readContenthash = () =>
+      readPinnedBytes({
         api,
         contractAddress: dotns.DOTNS_CONTENT_RESOLVER,
-        mappingKey: node,
-        mappingSlot: dotns.STORAGE_SLOTS.CONTENTHASH,
-      }),
-    );
+        baseSlotKey: computeMappingSlot(node, dotns.STORAGE_SLOTS.CONTENTHASH),
+        context: { mappingKind: 'mapping bytes' },
+      });
+    const contenthashBytes = await (timed ? m.span(RESOLVE_STORAGE_READ, readContenthash) : readContenthash());
     const contentMs = performance.now() - contentStart;
     if (timed) {
-      m.measure(S.RESOLVE_STORAGE_READ, contentMs);
+      m.measure(RESOLVE_STORAGE_READ, contentMs);
     }
-    log.event('Contenthash read', { flow: 'resolve', found: contenthashBytes !== null, ms: Math.round(contentMs) });
+    report.log.event('Contenthash read', { found: contenthashBytes !== null, ms: Math.round(contentMs) });
 
     if (contenthashBytes === null) {
       return null;
@@ -283,36 +220,13 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
     }
   }
 
-  async function buildPeople(connect: () => JsonRpcProvider): Promise<void> {
-    const initStart = performance.now();
-    const client = open(connect());
-    try {
-      await withTimeout({
-        work: client.api.whenReady(),
-        ms: PEOPLE_FINALIZED_SYNC_MS,
-        timeoutError: () => new NetworkSyncTimeoutError(PEOPLE_CHAIN, PEOPLE_FINALIZED_SYNC_MS),
-      });
-    } catch (error) {
-      client.destroy();
-      throw error;
-    }
-    client.api.onStop(() => {
-      log.warn('[dot.li resolve] People chainHead follow stopped, invalidating warm client');
-      if (peopleClient === client) {
-        peopleClient = null;
-        client.destroy();
-      }
-    });
-    peopleClient = client;
-    log.event('People chain warmed', { flow: 'resolve', ms: Math.round(performance.now() - initStart) });
-  }
-
   return {
     /**
      * Reads the IPFS CID a label's contenthash points at, or `null` when the name has none. Rejects with
      * `UnsupportedContenthashCodecError` or `ContenthashDecodeError` for a contenthash dotli cannot fetch,
-     * `PartialStorageReadError` when the read stops partway, `NetworkSyncTimeoutError` when Asset Hub does not sync
-     * within the budget, and the read's own error when it fails for any other reason or the chain keeps halting.
+     * `PartialStorageReadError` when the read stops partway, `CorruptBytesSlotError` when a stored value's length
+     * cannot be read, `NetworkSyncTimeoutError` when Asset Hub does not sync within the budget, and the read's own
+     * error when it fails for any other reason or the chain keeps halting.
      */
     resolveDotName: (label: string, options: ResolveOptions = {}): Promise<string | null> =>
       read(options, (api, attempt) => readDotName({ api, label, options: attempt })),
@@ -325,18 +239,49 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
       read(options, api => readNameOwner({ api, dotns, label })),
     /**
      * Reads the manifest a label publishes for `kind`, as a result the caller branches on. Rejects with
-     * `PartialStorageReadError` when the read stops partway, `NetworkSyncTimeoutError` when Asset Hub does not sync
-     * within the budget, and the read's own error when it fails for any other reason or the chain keeps halting.
+     * `PartialStorageReadError` when the read stops partway, `CorruptBytesSlotError` when a stored value's length
+     * cannot be read, `NetworkSyncTimeoutError` when Asset Hub does not sync within the budget, and the read's own
+     * error when it fails for any other reason or the chain keeps halting.
      */
     resolveExecutableManifest: (label: string, kind: ExecutableKind, options: ResolveOptions = {}) =>
       read(options, api => readExecutableManifest({ api, dotns, label, kind })),
     /**
      * Reads a label's root manifest, as a result the caller branches on. Rejects with `PartialStorageReadError` when
-     * the read stops partway, `NetworkSyncTimeoutError` when Asset Hub does not sync within the budget, and the read's
-     * own error when it fails for any other reason or the chain keeps halting.
+     * the read stops partway, `CorruptBytesSlotError` when a stored value's length cannot be read,
+     * `NetworkSyncTimeoutError` when Asset Hub does not sync within the budget, and the read's own error when it
+     * fails for any other reason or the chain keeps halting.
      */
     resolveRootManifest: (label: string, options: ResolveOptions = {}) =>
       read(options, api => readRootManifest({ api, dotns, label })),
+    /**
+     * Reads the addresses of the label stores at index `known` and above, in creation order. Rejects with
+     * `NetworkSyncTimeoutError` when Asset Hub does not sync within the budget, and the read's own error when it fails
+     * for any other reason or the chain keeps halting.
+     */
+    readLabelStores: (known: number, options: ResolveOptions = {}): Promise<string[]> =>
+      read(options, api => readLabelStores({ api, dotns, known })),
+    /**
+     * Reads the second-level labels of a slice of the entries the stores added past their cursors, deduped, with each
+     * cursor moved past its slice. A caller reads again until no cursor moves. Rejects with `PartialStorageReadError`
+     * when a long name's data slot is missing, `NetworkSyncTimeoutError` when Asset Hub does not sync within the budget,
+     * and the read's own error when it fails for any other reason or the chain keeps halting.
+     */
+    readNewLabels: (stores: readonly LabelStoreCursor[], options: ResolveOptions = {}) =>
+      read(options, api => readNewLabels({ api, dotns, stores })),
+    /**
+     * Reads which of `labels` publish an app, and resolves an empty set for no labels without building a client.
+     * Rejects with `NetworkSyncTimeoutError` when Asset Hub does not sync within the budget, and the read's own error
+     * when it fails for any other reason or the chain keeps halting.
+     */
+    readAppLabels: (labels: readonly string[], options: ResolveOptions = {}): Promise<Set<string>> =>
+      labels.length === 0 ? Promise.resolve(new Set()) : read(options, api => readAppLabels({ api, dotns, labels })),
+    /**
+     * Ends the Asset Hub client, kept or building, so its lease closes. A read still running retries on a new client,
+     * and the next read builds one. Does nothing while no client is kept or building.
+     */
+    release: (): void => {
+      assetHubClient.release();
+    },
     /**
      * Settles once Asset Hub is synced: the client setup of a name read without the read. Rejects with
      * `NetworkSyncTimeoutError` when it does not sync in time, or the client's own error.
@@ -347,14 +292,14 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
     /**
      * Keeps People synced for legacy-account auth, whose cold read would race the warp sync. Resolution never needs
      * People, so callers must not gate on it. Rejects with `NetworkSyncTimeoutError` when People does not sync in
-     * time, or the client's own error.
+     * time, with `ApiStoppedError` when its follow stops as it syncs, or the client's own error.
      */
     waitForPeopleFinalized: async (): Promise<void> => {
-      if (people === undefined) {
+      if (peopleClient === null) {
         log.debug('[dot.li resolve] No People connection, so no warm-keep. People resolves on demand via the broker.');
         return;
       }
-      await clients.call(() => (peopleClient === null ? buildPeople(people) : undefined), { pool: 'people' });
+      await peopleClient.getApi();
     },
   };
 }
@@ -364,20 +309,17 @@ export function createDotnsResolver({ assetHub, people, dotns, source, open = op
  * marked answer, as `ApiStoppedError`, or as papi's `DisjointError` for an operation already running.
  */
 function isChainHalt(error: unknown): boolean {
-  if (error instanceof RpcError) {
-    return error.data === CHAIN_HALTED_ERROR_DATA;
-  }
-  return error instanceof DisjointError || error instanceof ApiStoppedError;
+  return isChainHaltedRpcError(error) || error instanceof DisjointError || error instanceof ApiStoppedError;
 }
 
 /** Tells `onPhase` the phase a client status stands for, if it stands for one, and reports a throw from it. */
-function tellPhase(onPhase: PhaseCallback, next: DotnsResolverStatus): void {
+function tellPhase(onPhase: PhaseCallback, next: SyncedClientState['kind']): void {
   const phase = PHASES[next];
-  if (phase === undefined) {
+  if (phase === null) {
     return;
   }
   // The callback's own throw must not fail the shared build, nor leave the status behind a client already kept. A throw
-  // from a listener of a store the callback writes still reaches the build.
+  // from a listener of a store the callback writes still reaches the client's transition, which reports it.
   try {
     onPhase(phase);
   } catch (error) {
@@ -394,10 +336,28 @@ function openRawClient(provider: JsonRpcProvider): ChainClient {
       try {
         api.destroy();
         client.destroy();
-        // eslint-disable-next-line no-restricted-syntax -- a panicked smoldot may throw here, and the owner must still let go of the client.
-      } catch {
-        /* already dead */
+      } catch (error: unknown) {
+        // A light client that ended or panicked throws as its chain is removed, which the environment causes.
+        if (isLightClientGone(error)) {
+          report.expected(error, { step: 'client_destroy', metric: clientDestroyMetric });
+          return;
+        }
+        report.defect(error, {
+          step: 'client_destroy',
+          metric: clientDestroyMetric,
+          message: '[dot.li resolve] A chain client teardown threw:',
+        });
       }
     },
   };
+}
+
+/** Whether `error` is a light client's refusal because it already ended or panicked. */
+function isLightClientGone(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.name === 'AlreadyDestroyedError' || error.name === 'CrashError' || SMOLDOT_GONE_PATTERN.test(error.message)
+  );
 }

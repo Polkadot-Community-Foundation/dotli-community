@@ -1,0 +1,33 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1_5);
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  color: var(--chat-fg-primary);
+}
+
+/* As tall as a button, so a small tree does not jump in. */
+.placeholder {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--h-control-sm);
+  color: var(--chat-fg-secondary);
+  font-size: var(--fs-caption);
+}
+.placeholder > .spinner {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.error {
+  color: var(--chat-fg-error);
+  font-size: var(--fs-caption);
+}

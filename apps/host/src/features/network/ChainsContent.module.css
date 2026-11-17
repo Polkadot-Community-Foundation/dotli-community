@@ -1,0 +1,95 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* The Surface around these parts sets the rhythm between them. */
+
+/* The dot sits on the title's line, not centred on a detail that wraps. */
+.status {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+.status-dot {
+  margin-top: 4px;
+}
+.status-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-hair);
+  min-width: 0;
+}
+.status-title {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+}
+.status-detail {
+  margin: 0;
+  color: var(--chrome-text-muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body);
+  text-wrap: pretty;
+}
+
+.other {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-1);
+}
+/* Set apart from the last chain, so the transfer rows never read as one more chain. */
+.transfer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-top: var(--sp-2);
+  padding: 0 var(--sp-1);
+}
+/* Both rows empty (the product is on screen): no gap left behind. */
+.transfer[data-empty] {
+  display: none;
+}
+.transfer-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin: 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-body);
+  white-space: nowrap;
+}
+.transfer-row:empty {
+  display: none;
+}
+.transfer-label {
+  color: var(--chrome-text-muted);
+}
+.transfer-value {
+  color: var(--chrome-text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Set apart from the last strip, so the tip never reads as part of that chain. */
+.tips {
+  margin-top: var(--sp-2);
+}
+
+@media (max-width: 560px) {
+  .status {
+    gap: var(--sp-3);
+  }
+  /* The sheet's padding is the text column, so these start on it. */
+  .other,
+  .transfer {
+    padding: 0;
+  }
+  .other {
+    gap: var(--sp-3);
+  }
+  .transfer-row {
+    gap: var(--sp-3);
+  }
+}

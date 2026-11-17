@@ -3,20 +3,25 @@
 
 // Sharing the Diagnostics tab as a pre-filled GitHub issue, apart from the view so it is tested without a DOM.
 
-import { m, reportDefect, spans as S } from '@dotli/metrics';
-import type { DiagnosticsRow, DiagnosticsSource } from './host.js';
+import { createReporter, defineCount } from '@dotli/metrics';
+import type { DiagnosticsSnapshot, DiagnosticsSource } from './host.js';
 
-/** A closed set, so the metric's `reason` tag stays bounded. */
-type ShareFailureReason = 'report' | 'open';
+const uiReport = createReporter({ flow: 'ui' });
 
-/** Opens an issue with the report of `rows`, the rows the tab shows. A failure is reported here, never thrown. */
+/**
+ * One Share diagnostics click in the debug panel. Tagged `outcome` and, on error, `reason`, as a failed one opens no
+ * issue.
+ */
+const diagnosticsShareMetric = defineCount<'error' | 'ok'>('diagnostics.share');
+
+/** Opens an issue with the report of `snapshot`, the page the tab shows. A failure is reported here, never thrown. */
 export async function shareDiagnostics(
   source: Pick<DiagnosticsSource, 'report' | 'openIssue'>,
-  rows: readonly DiagnosticsRow[],
+  snapshot: DiagnosticsSnapshot,
 ): Promise<void> {
   let report: string;
   try {
-    report = await source.report(rows);
+    report = await source.report(snapshot);
   } catch (error) {
     reportShareFailure(error, 'report');
     return;
@@ -27,7 +32,7 @@ export async function shareDiagnostics(
     reportShareFailure(error, 'open');
     return;
   }
-  m.count(S.DIAGNOSTICS_SHARE, { outcome: 'ok' });
+  diagnosticsShareMetric.count({ outcome: 'ok' });
 }
 
 function buildIssueUrl(report: string): string {
@@ -45,12 +50,12 @@ function buildIssueUrl(report: string): string {
   return url.toString();
 }
 
-function reportShareFailure(error: unknown, reason: ShareFailureReason): void {
-  reportDefect(error, {
-    flow: 'ui',
+/** `reason` is a closed set, so the metric's tag stays bounded. */
+function reportShareFailure(error: unknown, reason: 'report' | 'open'): void {
+  uiReport.defect(error, {
     step: 'diagnostics_share',
     tags: { reason },
-    metric: S.DIAGNOSTICS_SHARE,
+    metric: diagnosticsShareMetric,
     reason,
     message: `[dot.li debug] diagnostics ${reason} failed:`,
   });

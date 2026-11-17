@@ -119,13 +119,11 @@ dotli needs three hostnames: an apex, `*.app.<domain>` for sandboxes, and
 `*.<domain>` for the shell. The apex also serves the protocol iframe under
 `/p/` and the session window at `/s/auth`, `/s/signout`, `/s/manage`
 and `/s/sign`. The container serves them as `localhost`, `*.app.localhost` and
-`*.localhost`. `host.localhost` still answers with the protocol build for one
-more release, so a shell cached by the previous release finds its frame.
+`*.localhost`.
 
 This needs no code changes and no DNS setup: the flat `*.localhost` shape is
-already special-cased in `getProtocolOrigin` (`packages/protocol/src/client.ts`),
-`dotUrl` (`apps/host/src/components/landing/dotUrl.ts`) and `appOrigin`
-(`apps/host/src/runtime/productFrame.ts`), browsers resolve every `*.localhost` name to
+already special-cased in `getProtocolOrigin` (`packages/protocol/src/client.ts`)
+and `dotUrl` (`apps/host/src/features/landing/dotUrl.ts`). Browsers resolve every `*.localhost` name to
 loopback, and `http://*.localhost` is a secure context so `crypto.subtle`,
 service workers and SharedWorker all work.
 
@@ -136,7 +134,7 @@ scheme or a real domain with a wildcard certificate, not a hybrid.
 
 **Do not publish on port 80.** `getProtocolOrigin` falls back to port 5173 when
 `window.location.port` is empty, which it is on the default HTTP port, so the
-protocol iframe would be looked for on the wrong port. Any explicit port is fine;
+protocol iframe would be looked for on the wrong port. Any explicit port is fine, since
 the bundle reads the port from the current location.
 
 ## Base domain
@@ -238,7 +236,7 @@ correct while the UI names your fork. Genesis checks cannot catch this. Use
 
 **Mode preferences are not shared across subdomains.** `previewServer.ts`
 implements a `/__dotli-mode/<key>` store to work around `localhost` being on the
-Public Suffix List; nginx has no equivalent. On localhost the settings
+Public Suffix List. nginx has no equivalent. On localhost the settings
 resolution (`resolveSettings`, with `preferLocal`) prefers the per-origin choice
 and the shared store only reports a read error, so each subdomain simply keeps
 its own backend and cache settings.

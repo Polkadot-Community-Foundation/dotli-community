@@ -39,6 +39,7 @@ export const BUILTIN_NETWORK_SERVICES: Record<Network, ServicesConfig> = {
     dotns: {
       DOTNS_REGISTRY: '0xf34054fd76BbF85f216cf9908226D5f0A72E50CA',
       DOTNS_CONTENT_RESOLVER: '0x7F74D7CD50f5a834270E2ad395a01b01891AB37d',
+      STORE_FACTORY: '0x99605a926FcB40aB520F659c6505E5ff862771f6',
       STORAGE_SLOTS: {
         REGISTRY_RECORDS: 0,
         CONTENTHASH: 0,
@@ -46,6 +47,9 @@ export const BUILTIN_NETWORK_SERVICES: Record<Network, ServicesConfig> = {
         REGISTRY_PROTOCOL_REGISTRY: 1,
         PROTOCOL_REGISTRY_ADDRESSES: 0,
         REGISTRAR_OWNERS: '0x80bb2b638cc20bc4d0a60d66940f3ab4a00c1d7b313497ca82fb0b4ab0079302',
+        STORE_FACTORY_LABEL_STORES: 5,
+        LABEL_STORE_LABELS: 2,
+        LABEL_STORE_LABEL_LIST: 3,
       },
       TLD: 'paseo',
     },
@@ -77,6 +81,7 @@ export const BUILTIN_NETWORK_SERVICES: Record<Network, ServicesConfig> = {
     dotns: {
       DOTNS_REGISTRY: '0xf34054fd76BbF85f216cf9908226D5f0A72E50CA',
       DOTNS_CONTENT_RESOLVER: '0x7F74D7CD50f5a834270E2ad395a01b01891AB37d',
+      STORE_FACTORY: '0x99605a926FcB40aB520F659c6505E5ff862771f6',
       STORAGE_SLOTS: {
         REGISTRY_RECORDS: 0,
         CONTENTHASH: 0,
@@ -84,20 +89,28 @@ export const BUILTIN_NETWORK_SERVICES: Record<Network, ServicesConfig> = {
         REGISTRY_PROTOCOL_REGISTRY: 1,
         PROTOCOL_REGISTRY_ADDRESSES: 0,
         REGISTRAR_OWNERS: '0x80bb2b638cc20bc4d0a60d66940f3ab4a00c1d7b313497ca82fb0b4ab0079302',
+        STORE_FACTORY_LABEL_STORES: 5,
+        LABEL_STORE_LABELS: 2,
+        LABEL_STORE_LABEL_LIST: 3,
       },
       TLD: 'testnet',
     },
   },
   'pcf-devnet': {
-    label: 'Polkadot Products Devnet',
-    description: 'Public products testnet (dev-dot.li gateway)',
+    label: 'PCF Devnet',
+    description: 'Polkadot Community Foundation devnet on Paseo',
     // truapi-provider's catalog carries the Paseo relay but only the Paseo Next
     // parachains, so connecting to this AH/People/Bulletin rejects and the host
     // reports a smoldot crash. RPC until the catalog includes them.
     lightClient: false,
     relay: {
       genesis: '0x374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd',
-      rpcs: ['wss://paseo-rpc.n.dwellir.com', 'wss://paseo.dotters.network', 'wss://paseo.ibp.network'],
+      rpcs: [
+        'wss://paseo-rpc.n.dwellir.com',
+        'wss://paseo-v2.rpc.turboflakes.io',
+        'wss://rpc-paseo.stakeworld.io',
+        'wss://rpc.interweb-it.com/paseo',
+      ],
       blockTimeMs: 6000,
     },
     assethub: {
@@ -107,23 +120,24 @@ export const BUILTIN_NETWORK_SERVICES: Record<Network, ServicesConfig> = {
     },
     bulletin: {
       genesis: '0xe101f0fa4627d29a257645e02be86d80378fea1a2bf8fa6a918d150ebc760a59',
-      rpcs: ['wss://bulletin-paseo.tservices.es:8443'],
-      ipfsGateways: ['https://devnet-ipfs.api.polkadotcommunity.foundation'],
+      rpcs: ['wss://bullet.sik.rocks', 'wss://bullet.tunastaking.eu', 'wss://bulletin-paseo.tservices.es:8443'],
       blockTimeMs: 6000,
+      ipfsGateways: ['https://devnet-ipfs.api.polkadotcommunity.foundation'],
     },
     people: {
       genesis: '0xe6c30d6e148f250b887105237bcaa5cb9f16dd203bf7b5b9d4f1da7387cb86ec',
-      // Statement store (device sync, chat) needs the `statement_*` RPC, which all three expose.
       rpcs: [
+        'wss://people-devnet-rpc.api.polkadotcommunity.foundation',
         'wss://people-paseo.gatotech.network',
-        'wss://rpc.interweb-it.com/people-paseo',
         'wss://people-paseo.rotko.net',
+        'wss://rpc.interweb-it.com/people-paseo',
       ],
       blockTimeMs: 2000,
     },
     dotns: {
       DOTNS_REGISTRY: '0xb052E5EfC5ADEff1f21d48DEfb5169Cb394A1a73',
       DOTNS_CONTENT_RESOLVER: '0x7e75491ecfb04900EB05ee63CABA2B33900aABB5',
+      STORE_FACTORY: '0x5Df012daA06cA2602DA153309C2E3A83284Cb879',
       STORAGE_SLOTS: {
         REGISTRY_RECORDS: 0,
         CONTENTHASH: 0,
@@ -131,6 +145,9 @@ export const BUILTIN_NETWORK_SERVICES: Record<Network, ServicesConfig> = {
         REGISTRY_PROTOCOL_REGISTRY: 1,
         PROTOCOL_REGISTRY_ADDRESSES: 0,
         REGISTRAR_OWNERS: '0x80bb2b638cc20bc4d0a60d66940f3ab4a00c1d7b313497ca82fb0b4ab0079302',
+        STORE_FACTORY_LABEL_STORES: 5,
+        LABEL_STORE_LABELS: 2,
+        LABEL_STORE_LABEL_LIST: 3,
       },
       TLD: 'dot',
     },

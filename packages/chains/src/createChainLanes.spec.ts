@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { spans as S } from '@dotli/metrics';
-import { bindRecordingSentry, recordCaptures } from '@dotli/metrics/testing';
+import { bindRecordingSentry, recordReports } from '@dotli/metrics/testing';
 import { bindLogSink, isRecord } from '@dotli/shared';
 import { catchError, must, nth } from '@dotli/shared/testing';
 import type {
@@ -189,9 +188,12 @@ function listWatchEvents(consumer: Consumer): unknown[] {
 }
 
 describe('createChainLanes', () => {
-  it('As a chain with no follow limit, I put every consumer and follow on one lane', () => {
-    // Given lanes over a transport with no follow limit, and five consumers
-    const { createTransport, built } = createTransports({ followLimit: Infinity });
+  it.each([
+    { chain: 'a chain with no follow limit', followLimit: Infinity, perLane: [5] },
+    { chain: 'an RPC chain', followLimit: RPC_FOLLOW_LIMIT, perLane: [4, 1] },
+  ])('As $chain, I spread five follows over my lanes as $perLane', ({ followLimit, perLane }) => {
+    // Given lanes over a transport with this follow limit, and five consumers
+    const { createTransport, built } = createTransports({ followLimit });
     const { lanes } = createLanes({ createTransport });
     const consumers = ['a', 'b', 'c', 'd', 'e'].map(name => connectConsumer(lanes, `local:${name}`));
 
@@ -200,26 +202,8 @@ describe('createChainLanes', () => {
       consumer.connection.send(createFollow(1));
     }
 
-    // Then one lane is built and it sends all five follows
-    expect(built).toHaveLength(1);
-    expect(listSent(nth(built, 0), CHAIN_HEAD_FOLLOW)).toHaveLength(5);
-  });
-
-  it('As an RPC chain, I open a second lane for the fifth follow and send it there', () => {
-    // Given lanes over an RPC transport, and five consumers
-    const { createTransport, built } = createTransports();
-    const { lanes } = createLanes({ createTransport });
-    const consumers = ['a', 'b', 'c', 'd', 'e'].map(name => connectConsumer(lanes, `local:${name}`));
-
-    // When each follows
-    for (const consumer of consumers) {
-      consumer.connection.send(createFollow(1));
-    }
-
-    // Then four follows go out on lane 0 and the fifth on a second lane
-    expect(built).toHaveLength(2);
-    expect(listSent(nth(built, 0), CHAIN_HEAD_FOLLOW)).toHaveLength(4);
-    expect(listSent(nth(built, 1), CHAIN_HEAD_FOLLOW)).toHaveLength(1);
+    // Then each lane sends its share of the five follows
+    expect(built.map(record => listSent(record, CHAIN_HEAD_FOLLOW).length)).toEqual(perLane);
   });
 
   it('As an RPC chain, I send two follows together into a lane with one slot left and only the first takes it', () => {
@@ -399,7 +383,7 @@ describe('createChainLanes', () => {
 
   it("As an RPC chain, I report and halt when a new lane's transport cannot be built", () => {
     // Given lane 0 full, and no transport for a second lane
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     onTestFinished(bindLogSink({ emit: () => undefined }));
     const { createTransport } = createTransports({ faults: { 1: 'null' } });
@@ -411,15 +395,15 @@ describe('createChainLanes', () => {
     consumer.connection.send(createFollow(2));
 
     // Then the build is reported, the chain halts naming the lane, and the follow is answered with an error
-    expect(captured).toEqual([{ flow: 'protocol', step: 'chain_lane_build' }]);
-    expect(metrics.counted(S.CHAIN_LANE_OPEN)).toEqual([{ outcome: 'error', reason: 'Error' }]);
+    expect(captured).toMatchObject([{ step: 'chain_lane_build' }]);
+    expect(metrics.counted('chain_pool.lane_open')).toEqual([{ outcome: 'error', reason: 'Error' }]);
     expect(halts).toEqual([expect.objectContaining({ message: `${LABEL} lane 1 could not be built` })]);
     expect(readAnswer(consumer, 2)).toHaveProperty('error');
   });
 
   it('As an RPC chain, I report a follow whose session cannot open on a new lane, and answer it with an error', () => {
     // Given lane 0 full, and a second lane whose connection throws on opening
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     onTestFinished(bindLogSink({ emit: () => undefined }));
     const { createTransport } = createTransports({ faults: { 1: 'open' } });
@@ -431,8 +415,8 @@ describe('createChainLanes', () => {
     consumer.connection.send(createFollow(2));
 
     // Then the session's failure is reported, the follow is answered with an error, and the chain does not halt
-    expect(captured).toEqual([{ flow: 'protocol', step: 'chain_lane_session' }]);
-    expect(metrics.counted(S.CHAIN_LANE_OPEN)).toEqual([{ outcome: 'error', reason: 'Error' }]);
+    expect(captured).toMatchObject([{ step: 'chain_lane_session' }]);
+    expect(metrics.counted('chain_pool.lane_open')).toEqual([{ outcome: 'error', reason: 'Error' }]);
     expect(readAnswer(consumer, 2)).toHaveProperty('error');
     expect(halts).toEqual([]);
   });
@@ -496,7 +480,7 @@ describe('createChainLanes', () => {
 
   it('As an RPC chain, I report and halt when closing an empty extra lane throws', () => {
     // Given lane 0 full, and a consumer homed on lane 1, whose close throws
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     onTestFinished(bindLogSink({ emit: () => undefined }));
     const { createTransport } = createTransports({ faults: { 1: 'disconnect' } });
@@ -508,8 +492,8 @@ describe('createChainLanes', () => {
     extra.connection.disconnect();
 
     // Then the close's failure is reported, and the chain halts with its error
-    expect(captured).toEqual([{ flow: 'protocol', step: 'chain_lane_close' }]);
-    expect(metrics.counted(S.CHAIN_POOL_CLOSE)).toEqual([{ outcome: 'error', reason: 'Error' }]);
+    expect(captured).toMatchObject([{ step: 'chain_lane_close' }]);
+    expect(metrics.counted('chain_pool.close')).toEqual([{ outcome: 'error', reason: 'Error' }]);
     expect(halts).toEqual([FAULT]);
   });
 

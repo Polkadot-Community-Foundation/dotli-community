@@ -34,9 +34,6 @@ type Params = {
 
 const SESSION_FILE = 'session.html';
 
-/** The session window's built file, which only its paths may serve, since those paths are what refuse framing. */
-const SESSION_FILE_PATH = `/${SESSION_FILE}`;
-
 /** Missing, these are a 404 rather than the shell, which a browser would try to run. */
 const NO_FALLBACK: ReadonlySet<string> = new Set([...SERVICE_WORKER_PATHS, `/${BUILD_INFO_FILE}`]);
 
@@ -47,42 +44,39 @@ const NO_FALLBACK: ReadonlySet<string> = new Set([...SERVICE_WORKER_PATHS, `/${B
  * missing asset, worker, session window or version file is a 404 instead.
  */
 export function resolveFile({ dir, route, pathname, isFile = isFileOnDisk }: Params): ResolvedFile | undefined {
+  return listCandidates({ dir, route, pathname }).find(candidate => isFile(candidate.file));
+}
+
+/** Returns the files that may answer `pathname`, in the order they are tried. None for a path that is always a 404. */
+function listCandidates({ dir, route, pathname }: Omit<Params, 'isFile'>): ResolvedFile[] {
   let decoded: string;
   try {
     decoded = decodeURIComponent(pathname);
   } catch {
     // A malformed escape names no file.
-    return undefined;
+    return [];
   }
   if (decoded === '/') {
     const page = getRootPage(route);
-    const file = join(dir, page);
-    return isFile(file) ? { file, pathname: `/${page}` } : undefined;
+    return [{ file: join(dir, page), pathname: `/${page}` }];
   }
   if (isSessionPath(route, pathname)) {
-    const file = join(dir, SESSION_FILE);
-    return isFile(file) ? { file, pathname: decoded } : undefined;
+    return [{ file: join(dir, SESSION_FILE), pathname: decoded }];
   }
   // The leading slash makes `normalize` settle `..` against the root, so no path leaves `dir`.
   const normalized = normalize(`/${decoded}`);
-  if (route.site === 'host' && normalized === SESSION_FILE_PATH) {
-    return undefined;
+  // The session window's built file is served only under its paths, since those are what refuse framing. Compared
+  // whatever its case, since a disk that ignores case, as macOS does, finds the file under any spelling.
+  if (route.site === 'host' && normalized.toLowerCase() === `/${SESSION_FILE}`) {
+    return [];
   }
   const file = join(dir, normalized);
-  if (isFile(file)) {
-    return { file, pathname: decoded };
-  }
+  const own = { file, pathname: decoded };
   if (decoded.startsWith(ASSETS_PREFIX) || NO_FALLBACK.has(decoded)) {
-    return undefined;
+    return [own];
   }
-  if (route.bare) {
-    const index = join(file, 'index.html');
-    if (isFile(index)) {
-      return { file: index, pathname: decoded };
-    }
-  }
-  const shell = join(dir, SHELL_FILE);
-  return isFile(shell) ? { file: shell, pathname: `/${SHELL_FILE}` } : undefined;
+  const shell = { file: join(dir, SHELL_FILE), pathname: `/${SHELL_FILE}` };
+  return route.bare ? [own, { file: join(file, 'index.html'), pathname: decoded }, shell] : [own, shell];
 }
 
 function isFileOnDisk(path: string): boolean {

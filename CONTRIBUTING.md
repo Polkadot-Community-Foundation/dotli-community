@@ -54,8 +54,8 @@ for other packages' tests. Never import another package's internal modules.
 
 - Inside a package, import relative paths with the `.js` extension (`./foo.js`), as NodeNext resolution requires. ESLint
   rejects a `.ts` extension, except in files Node loads directly.
-- A module loaded on demand gets a loader in `src/lazy.ts` (`loadBridge()`, typed `BridgeModule`), so it stays a
-  separate chunk.
+- A module loaded on demand goes through an `import()`, so it stays a separate chunk. A package module gets a loader in
+  a `lazy.ts`. A feature's module is imported in place by its caller, such as `import('./AccountContent.js')`.
 - Build-time code that Node runs (the Vite plugins) lives in `@config/vite`, one subpath per plugin
   (`@config/vite/build-info`, …), so a consumer loads only the one it imports. CSS is exported as `./styles.css`.
 - Each `package.json` declares `sideEffects`. List a module there if it is imported only for its effects.
@@ -101,14 +101,15 @@ Good documentation starts with a single, clear sentence. Everything else comes a
    need work.
 6. **No code section separators.** Don't use `// -----------` or similar decorative dividers to split sections within a
    file. Let the code structure speak for itself.
-7. **No em-dashes, semicolons, prose-conjunction `+`, or Unicode arrows (`→`, `←`, `↔`).** Rewrite the sentence. Two
-   short sentences read better than one long one with a dash, and arrows belong in diagrams (where `->` is fine if it's
-   a real arrow, not a stand-in for "becomes" or "then").
+7. **In Markdown docs, no em-dashes, semicolons, prose-conjunction `+`, or Unicode arrows (`→`, `←`, `↔`).** Code
+   comments are exempt. `npm run lint:root` checks the docs. Rewrite the sentence. Two short sentences read better than
+   one long one with a dash, and arrows belong in diagrams (where `->` is fine if it's a real arrow, not a stand-in for
+   "becomes" or "then").
 8. **No external spec citations in code comments.** Don't write "per RFC 0001" or "see EIP-137" inside a comment.
    Explain the rule itself. If a reader needs the spec, the commit message and the PR description are the right place.
    Code comments stand alone.
-9. **No "on-chain" in prose.** Say "network" or "remote" instead. The host already knows the data sits on a chain.
-   Calling it "the network value" reads naturally; "the on-chain value" reads as crypto jargon.
+9. **No "on-chain" in Markdown docs.** Say "network" or "remote" instead. The host already knows the data sits on a
+   chain. Calling it "the network value" reads naturally. "The on-chain value" reads as crypto jargon.
 
 #### TypeScript
 

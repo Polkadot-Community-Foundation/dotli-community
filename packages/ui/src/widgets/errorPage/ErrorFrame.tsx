@@ -1,18 +1,20 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { onSettled, untrack, type Component } from 'solid-js';
+import { For, onSettled, Show, untrack, type Component } from 'solid-js';
 import { dynamic, type JSX } from '@solidjs/web';
 import type { IconProps } from '../../icons.js';
+import { Button } from '../../components/primitives/Button.js';
+import { arrangeErrorActions, type ArrangedAction, type ErrorAction } from './arrangeErrorActions.js';
 import s from './ErrorPage.module.css';
 
 export type ErrorFrameProps = {
   standalone: boolean;
   /** On the centred column, for a screen's own layout of what sits under the title. */
   class?: string | undefined;
-  /** Drawn in the circle above the title. */
+  /** Drawn bare above the title. */
   icon: Component<IconProps>;
-  /** Tints the circle as a warning. */
+  /** Draws the icon in the warning tone. */
   warning?: boolean | undefined;
   title: string;
   /**
@@ -41,7 +43,7 @@ export function ErrorFrame(props: ErrorFrameProps): JSX.Element {
           aria-hidden="true"
           data-warning={props.warning === true ? '' : undefined}
         >
-          <Icon size={24} class={s['glyphIcon']} testId="error-page-icon" />
+          <Icon size={32} class={s['glyphIcon']} testId="error-page-icon" />
         </div>
         <h1
           ref={el => {
@@ -65,5 +67,38 @@ export function ErrorDetail(props: { class?: string | undefined; children?: JSX.
     <p class={[s['detail'], props.class]} data-testid="error-page-detail">
       {props.children}
     </p>
+  );
+}
+
+function ActionIcon(props: { icon: Component<IconProps> }): JSX.Element {
+  const Icon = dynamic(() => props.icon);
+  return <Icon class={s['actionIcon']} testId="error-page-action-icon" />;
+}
+
+function ActionButton(props: { arranged: ArrangedAction }): JSX.Element {
+  return (
+    <Button
+      id={props.arranged.id}
+      variant={props.arranged.primary ? 'primary' : 'secondary'}
+      size="lg"
+      onClick={event => {
+        props.arranged.action.onClick(event);
+      }}
+    >
+      <Show when={props.arranged.action.icon}>{icon => <ActionIcon icon={icon()} />}</Show>
+      <span data-testid="error-page-retry-label">{props.arranged.action.label}</span>
+    </Button>
+  );
+}
+
+/** The error page's action row, the recommended action last. Renders nothing for an empty list. */
+export function ErrorActions(props: { actions: readonly ErrorAction[] }): JSX.Element {
+  const arranged = (): ArrangedAction[] => arrangeErrorActions(props.actions);
+  return (
+    <Show when={arranged().length > 0}>
+      <div class={s['actions']} data-testid="error-page-actions">
+        <For each={arranged()}>{item => <ActionButton arranged={item} />}</For>
+      </div>
+    </Show>
   );
 }

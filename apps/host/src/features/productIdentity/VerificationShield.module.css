@@ -1,0 +1,61 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+.shield {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--chrome-idle);
+  transition: color var(--dur);
+}
+@media (prefers-reduced-motion: reduce) {
+  .shield {
+    transition: none;
+  }
+}
+.shield[data-state='trusted'] {
+  color: var(--chrome-warn);
+}
+.shield[data-state='verified'] {
+  color: var(--chrome-ok);
+}
+/* A bare shield until the host knows how the product loaded, so it claims no check before one passed. */
+.glyph {
+  display: none;
+  width: 16px;
+  height: 16px;
+}
+.pending-glyph,
+.shield[data-state='verified'] .verified-glyph,
+.shield[data-state='trusted'] .trusted-glyph {
+  display: block;
+}
+.shield[data-state] .pending-glyph {
+  display: none;
+}
+.product-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-hair);
+  object-fit: cover;
+}
+/* A known state marks the icon's corner. The disc, in the bar's dark end under the pill, cuts the shield out of any
+   icon, so it stays readable without a ring of its own. */
+.badge {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  display: none;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-full);
+  background: var(--chrome-bottom);
+  fill: var(--chrome-bottom);
+}
+.shield[data-state='verified'] .verified-badge,
+.shield[data-state='trusted'] .trusted-badge {
+  display: block;
+}

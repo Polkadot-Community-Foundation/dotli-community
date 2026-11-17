@@ -26,7 +26,7 @@ export type StepSliderProps = {
    * slider is on too, so its owner can apply it again, or a step key, which commits only a step.
    */
   onCommit: (index: number) => void;
-  /** The value is a stop only approximately, so the thumb shows hollow. Exposed as `data-marked` on the track. */
+  /** The value is a stop only approximately. Exposed as `data-marked` on the track, and drawn as any other stop. */
   marked?: boolean;
   class?: string | undefined;
   testId?: string;
@@ -74,9 +74,7 @@ export function StepSlider(props: StepSliderProps): JSX.Element {
     if (event.button !== 0 || track === undefined) {
       return;
     }
-    track.focus();
-    follow(event.clientX);
-    drags.start({
+    const took = drags.start({
       target: track,
       down: event,
       handlers: {
@@ -94,6 +92,11 @@ export function StepSlider(props: StepSliderProps): JSX.Element {
         },
       },
     });
+    if (!took) {
+      return;
+    }
+    track.focus();
+    follow(event.clientX);
   }
 
   function handleKeyDown(event: KeyboardEvent): void {
@@ -156,6 +159,12 @@ export function StepSlider(props: StepSliderProps): JSX.Element {
               style={{ left: `${String(getStopPercent(index()))}%` }}
               data-current={index() === shown() ? '' : undefined}
               data-testid={stop.testId}
+              onMouseDown={event => {
+                // The slider takes focus, as for a press on the track, so the label never shows a focus box and the
+                // arrow keys go on from the slider.
+                event.preventDefault();
+                track?.focus();
+              }}
               onClick={() => {
                 props.onCommit(index());
               }}

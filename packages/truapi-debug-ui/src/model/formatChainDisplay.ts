@@ -19,13 +19,15 @@ function getChainName(genesisHash: string): string | null {
   return NAME_BY_GENESIS.get(genesisHash.toLowerCase()) ?? null;
 }
 
-/** Every network's chains, so an event from a chain of another network is still named after its own. */
+/**
+ * Every network's chains, so an event from a chain of another network is still named after its own. Networks can share
+ * a chain, such as a relay, which keeps the name of the first network in the table that lists it.
+ */
 function buildRegistry(): ReadonlyMap<string, string> {
   const names = new Map<string, string>();
   for (const config of Object.values(NETWORK_NAME_TO_SERVICES_CONFIG)) {
     for (const role of CHAIN_ROLES) {
       const genesis = config[role].genesis.toLowerCase();
-      // A genesis several networks share keeps the first network's name.
       if (!names.has(genesis)) {
         names.set(genesis, `${config.label} ${CHAIN_ROLE_LABELS[role]}`);
       }

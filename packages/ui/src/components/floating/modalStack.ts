@@ -3,13 +3,17 @@
 
 // Shown modal layers and the inertness they put on the page.
 
+export type LayerLayout = 'center' | 'sheet' | 'topbar-end';
+
+type ShownLayer = { element: HTMLElement; layout: LayerLayout };
+
 /** In opening order. The page answers to the last. */
-const shownLayers: HTMLElement[] = [];
+const shownLayers: ShownLayer[] = [];
 /** Only what the layers made inert, so elements inert for other reasons stay so. */
 const madeInert = new Set<HTMLElement>();
 
 export function topLayer(): HTMLElement | undefined {
-  return shownLayers.at(-1);
+  return shownLayers.at(-1)?.element;
 }
 
 /**
@@ -20,7 +24,7 @@ export function topLayer(): HTMLElement | undefined {
 function syncInert(): void {
   const top = shownLayers.at(-1);
   for (const el of madeInert) {
-    if (top === undefined || el === top) {
+    if (top === undefined || !isInertUnder(el, top)) {
       el.removeAttribute('inert');
       madeInert.delete(el);
     }
@@ -28,19 +32,20 @@ function syncInert(): void {
   if (top === undefined) {
     return;
   }
-  const sheet = top.getAttribute('data-layout') === 'sheet';
   for (const el of document.body.children) {
-    if (
-      el instanceof HTMLElement &&
-      el !== top &&
-      !el.hasAttribute('inert') &&
-      !el.hasAttribute('popover') &&
-      !(sheet && el.hasAttribute('data-over-sheets'))
-    ) {
+    if (el instanceof HTMLElement && !el.hasAttribute('inert') && isInertUnder(el, top)) {
       el.setAttribute('inert', '');
       madeInert.add(el);
     }
   }
+}
+
+function isInertUnder(el: HTMLElement, top: ShownLayer): boolean {
+  return (
+    el !== top.element &&
+    !el.hasAttribute('popover') &&
+    !(top.layout === 'sheet' && el.hasAttribute('data-over-sheets'))
+  );
 }
 
 /** Closes all but manual popovers, as showModal() does. */
@@ -50,16 +55,36 @@ function closePopovers(): void {
   }
 }
 
-export function showLayer(layer: HTMLElement): void {
+export function showLayer(layer: HTMLElement, layout: LayerLayout): void {
   closePopovers();
-  shownLayers.push(layer);
+  shownLayers.push({ element: layer, layout });
+  syncDepth();
+  syncInert();
+}
+
+/** Records a shown layer's new layout. Never throws, and a layer that is not shown is ignored. */
+export function setLayerLayout(layer: HTMLElement, layout: LayerLayout): void {
+  const shown = shownLayers.find(entry => entry.element === layer);
+  if (shown === undefined || shown.layout === layout) {
+    return;
+  }
+  shown.layout = layout;
   syncInert();
 }
 
 export function hideLayer(layer: HTMLElement): void {
-  const index = shownLayers.indexOf(layer);
+  const index = shownLayers.findIndex(entry => entry.element === layer);
   if (index !== -1) {
     shownLayers.splice(index, 1);
   }
+  layer.style.removeProperty('--layer-depth');
+  syncDepth();
   syncInert();
+}
+
+/** Paints each shown layer over those opened before it, whatever their order in the page. */
+function syncDepth(): void {
+  for (const [index, { element }] of shownLayers.entries()) {
+    element.style.setProperty('--layer-depth', String(index));
+  }
 }

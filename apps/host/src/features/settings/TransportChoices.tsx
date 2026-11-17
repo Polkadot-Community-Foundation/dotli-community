@@ -1,0 +1,78 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { For } from 'solid-js';
+import type { JSX } from '@solidjs/web';
+import { BACKEND_FACTS, hasLightClient, hasSharedWorker, type Backend } from '@dotli/config';
+import { Chip, Choice, SectionLabel, Stack } from '@dotli/ui';
+
+/** The order the transport choices are listed in. */
+const TRANSPORT_ORDER: readonly Backend[] = ['smoldot-direct', 'smoldot-shared-worker', 'rpc-gateway'];
+
+/** What the transport choice for each backend says, and the chip that marks it: recommended, or unverified. */
+const TRANSPORT_FACTS = {
+  'smoldot-direct': { description: 'Verified in your browser, separate for each tab', mark: 'recommended' },
+  'smoldot-shared-worker': { description: 'Verified in your browser, shared across tabs', mark: null },
+  'rpc-gateway': { description: 'Fetched from trusted servers. Fastest, but less private', mark: 'unverified' },
+} satisfies Record<Backend, { description: string; mark: 'recommended' | 'unverified' | null }>;
+
+export type TransportChoicesProps = {
+  /** The chosen backend, drawn as selected. */
+  value: Backend;
+  /** Whether this browser can run a SharedWorker. A backend that needs one is disabled without it. */
+  sharedWorkerAvailable: boolean;
+  /** Whether the active network can be reached through a light client. A backend that needs one is disabled without it. */
+  lightClientAvailable: boolean;
+  /** A backend was picked. */
+  onChoose: (backend: Backend) => void;
+};
+
+/** The network transport choice: a labelled radio list of the backends a page reaches the chains through. */
+export function TransportChoices(props: TransportChoicesProps): JSX.Element {
+  const lightClientOff = (value: Backend): boolean => hasLightClient(value) && !props.lightClientAvailable;
+  const workerOff = (value: Backend): boolean => hasSharedWorker(value) && !props.sharedWorkerAvailable;
+  const unavailable = (value: Backend): boolean => lightClientOff(value) || workerOff(value);
+  return (
+    <Stack>
+      <SectionLabel text="Network transport" />
+      <Stack role="radiogroup" aria-label="Network transport">
+        <For each={TRANSPORT_ORDER}>
+          {value => (
+            <Choice
+              title={BACKEND_FACTS[value].label}
+              description={
+                lightClientOff(value)
+                  ? 'Not available on this network yet'
+                  : workerOff(value)
+                    ? 'Unavailable in this browser or private window'
+                    : TRANSPORT_FACTS[value].description
+              }
+              chip={getMarkChip(TRANSPORT_FACTS[value].mark)}
+              selected={props.value === value}
+              radio={{
+                name: 'dotli-backend',
+                value,
+                disabled: unavailable(value),
+                onChoose: () => {
+                  props.onChoose(value);
+                },
+              }}
+            />
+          )}
+        </For>
+      </Stack>
+    </Stack>
+  );
+}
+
+/** The chip beside a choice. Unverified answers the warning mark the settings button shows on that transport. */
+function getMarkChip(mark: 'recommended' | 'unverified' | null): JSX.Element {
+  switch (mark) {
+    case 'recommended':
+      return <Chip tone="ok">Recommended</Chip>;
+    case 'unverified':
+      return <Chip tone="warn">Unverified</Chip>;
+    case null:
+      return undefined;
+  }
+}

@@ -3,7 +3,7 @@
 
 export { areBytesEqual } from './areBytesEqual.js';
 export type { Branded } from './branded.js';
-export { CHAIN_HALTED_ERROR_DATA } from './chainHaltedErrorData.js';
+export { CHAIN_HALTED_ERROR_DATA, isChainHaltedRpcError } from './chainHaltedErrorData.js';
 export { combineErrors } from './combineErrors.js';
 export { runEvery } from './runEvery.js';
 export type { AsyncTaskPool } from './createAsyncTaskPool.js';
@@ -18,6 +18,8 @@ export { createRandomId } from './createRandomId.js';
 export type { ListableStorage, SafeStorage } from './createSafeStorage.js';
 export { createSafeStorage } from './createSafeStorage.js';
 export { createSharedRun } from './createSharedRun.js';
+export type { HandlerOf, HandlersOf, MachineTypes, StateHandlers, Transition, Update } from './createStateMachine.js';
+export { createStateMachine, nest } from './createStateMachine.js';
 export { registerAtomReset, registerStoreStateReset } from './storeResets.js';
 export { deleteIdb } from './deleteIdb.js';
 export { describeGatewayUnreachable } from './describeGatewayUnreachable.js';
@@ -53,6 +55,7 @@ export { runIdbTransaction } from './runIdbTransaction.js';
 export { serializeError } from './serializeError.js';
 export { setErrorName } from './setErrorName.js';
 export { sleep } from './sleep.js';
+export { startActiveTimeout } from './startActiveTimeout.js';
 export { toAbortError } from './toAbortError.js';
 export { toError } from './toError.js';
 export { waitForIdbRequest } from './waitForIdbRequest.js';

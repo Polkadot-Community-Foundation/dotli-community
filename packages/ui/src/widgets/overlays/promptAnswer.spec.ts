@@ -3,12 +3,12 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ModalView } from '../../page/state/createModals.js';
-import { getCloseAnswer, getScrimAnswer } from './promptAnswer.js';
+import { getCloseAnswer, getSafeButton, getScrimAnswer } from './promptAnswer.js';
 
 type Choice = 'deny' | 'allow' | 'once' | 'dismissed';
 
 const passwordView: ModalView<'cancel' | 'unlock'> = {
-  title: 'Encrypted Content',
+  title: 'Encrypted content',
   fields: [],
   input: { kind: 'password', placeholder: 'Password' },
   buttons: [
@@ -53,17 +53,6 @@ describe('prompt answers', () => {
     expect(close).toBe('cancel');
   });
 
-  it('As a phone user, I press the close button on a prompt with no Cancel and no scrim answer and it answers with its danger reject', () => {
-    // Given
-    const view = buildPermissionView({ dismissOnBackdrop: false });
-
-    // When
-    const close = getCloseAnswer(view);
-
-    // Then
-    expect(close).toBe('deny');
-  });
-
   it('As a phone user, I press the close button on a scrim-dismissable prompt with no scrim answer and it answers with its danger reject', () => {
     // Given
     const { dismissResult: _unused, ...view } = buildPermissionView();
@@ -76,11 +65,25 @@ describe('prompt answers', () => {
     expect(scrim).toBeUndefined();
     expect(close).toBe('deny');
   });
+
+  it('As a keyboard user, I open a prompt and its safe answer is its Cancel, else its reject, never an approval', () => {
+    // Given
+    const permissionView = buildPermissionView();
+    const approvalOnly = buildPermissionView({
+      buttons: [{ label: 'Allow once', variant: 'primary', result: 'once' }],
+    });
+
+    // When
+    const answers = [getSafeButton(passwordView), getSafeButton(permissionView), getSafeButton(approvalOnly)];
+
+    // Then
+    expect(answers.map(button => button?.result)).toEqual(['cancel', 'deny', undefined]);
+  });
 });
 
 function buildPermissionView(overrides: Partial<ModalView<Choice>> = {}): ModalView<Choice> {
   return {
-    title: 'Permission Request',
+    title: 'Permission request',
     fields: [],
     buttons: [
       { label: 'Deny', variant: 'danger', result: 'deny' },

@@ -160,7 +160,7 @@ export function getRowByTag(tag: string): HTMLElement {
   return row;
 }
 
-/** The header's event counts as shown. Throws when the panel is not mounted. */
+/** The view bar's event counts as shown. Throws when the panel is not mounted. */
 export function readCounts(): string {
   return getPart('td-counts').textContent;
 }
@@ -220,7 +220,7 @@ export function seedMixedTraffic({ advance = () => undefined }: { advance?: (ms:
     layer: 'boot',
     event: 'started',
     flowId: 'flow-boot-1',
-    payload: { chainBackend: 'smoldot', mode: 'direct', contentBackend: 'helia' },
+    payload: { chainBackend: 'smoldot-direct', skipCidCache: false, skipArchiveCache: false },
   });
 }
 
@@ -391,7 +391,7 @@ function createDebugPanelStory() {
   }
 
   function emitSystem({ payload = {}, ...step }: SystemParams): void {
-    // A story also sends payloads older hosts sent, such as boot's `mode`, which the event union does not name.
+    // A story sends only the payload fields it shows, which the event union does not allow without the cast.
     const params = { ...step, payload, timestamp: Date.now() } as BuildSystemEventParams;
     bus.emit(buildSystemEvent(params));
   }
@@ -445,7 +445,7 @@ function seedFilterTraffic(): void {
   emitTruapi({ tag: 'alpha_response', requestId: 'a1', productId: 'b.dot', direction: 'incoming' });
   emitTruapi({ tag: 'beta_request', requestId: 'b1', productId: 'a.dot', direction: 'incoming' });
   emitTruapi({ tag: 'gamma_request', requestId: 'c1', productId: null, direction: 'outgoing' });
-  emitSystem({ layer: 'boot', event: 'started', flowId: 'flow-1', payload: { chainBackend: 'smoldot' } });
+  emitSystem({ layer: 'boot', event: 'started', flowId: 'flow-1', payload: { chainBackend: 'smoldot-direct' } });
 }
 
 function dispatchPointer(target: Element, { type, x = 0, y = 0 }: PointerParams): void {

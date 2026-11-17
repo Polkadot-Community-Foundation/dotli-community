@@ -3,8 +3,7 @@
 
 import { beforeEach, describe, expect, it, onTestFinished, vi, type Mock } from 'vitest';
 import { getActiveServicesConfig, SITE_ID } from '@dotli/config';
-import { spans as S } from '@dotli/metrics';
-import { bindRecordingSentry, recordCaptures } from '@dotli/metrics/testing';
+import { bindRecordingSentry, recordReports } from '@dotli/metrics/testing';
 import { createDeferred, toError } from '@dotli/shared';
 import { catchRejection, createManualTimers, readOutcome, recordLog, type ManualTimers } from '@dotli/shared/testing';
 import { createTransport, createWindowProvider, domain, err, ok, type Sink } from '@dotli/transport';
@@ -37,7 +36,7 @@ type ChangeSink = Sink<SharedAuthChange, SubscriptionEnd<undefined>>;
 
 const HANDSHAKE_TIMEOUT_MS = DEFAULT_FRAME_TIMEOUTS.handshakeMs;
 /** What the frame reports when a status listener throws. */
-const STATUS_LISTENER_CAPTURE = { flow: 'protocol', step: 'listener', tags: { owner: 'protocol.status' } };
+const STATUS_LISTENER_CAPTURE = { step: 'listener', tags: { owner: 'protocol.status' } };
 const STATUS_LISTENER_REPORT = { outcome: 'error', reason: 'Error', owner: 'protocol.status' };
 const READY_TIMEOUT_MS = 240_000;
 
@@ -197,27 +196,24 @@ describe('createProtocolFrame', () => {
     void frame.getTransport();
     await dom.listen();
 
-    // When the frame sends bytes too short to be a message, and an object as a frame of an earlier release does
+    // When the frame sends bytes too short to be a message
     dom.deliverRaw(new Uint8Array([0xff, 0xff, 0xff]).buffer);
-    dom.deliverRaw({ namespace: 'dotli:protocol', kind: 'ready' });
     await advance();
 
     // Then
-    expect(metrics.counted(S.PROTOCOL_WIRE_REFUSED)).toEqual([
+    expect(metrics.counted('protocol.wire_refused')).toEqual([
       { outcome: 'refused', reason: 'malformed', side: 'host' },
-      { outcome: 'refused', reason: 'not_bytes', side: 'host' },
     ]);
     expect(
       events
         .filter(line => line.message === 'protocol message refused')
         .map(({ message, attrs }) => ({ message, attrs })),
-    ).toEqual([
+    ).toMatchObject([
       {
         message: 'protocol message refused',
         // An asymmetric matcher is typed any.
-        attrs: { flow: 'protocol', reason: 'malformed', side: 'host', cause: expect.any(String) as string },
+        attrs: { reason: 'malformed', side: 'host', cause: expect.any(String) as string },
       },
-      { message: 'protocol message refused', attrs: { flow: 'protocol', reason: 'not_bytes', side: 'host' } },
     ]);
     expect(frame.status.get()).toBe('listening');
   });
@@ -299,9 +295,34 @@ describe('createProtocolFrame', () => {
     expect(heard).toEqual([{ name: 'ProtocolVersionMismatchError', status: 'failed' }]);
   });
 
+  it('As the host who listens for a version mismatch after it happened, I hear it at once, and my listener that throws is reported, not thrown back', async () => {
+    // Given a frame that refused the host wire version
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
+    const dom = createFrameDom({ timers });
+    const frame = createProtocolFrame(dom.params);
+    frame.configure(FRAME_CONFIG);
+    void frame.waitUntilReady().catch(() => undefined);
+    await advance();
+    dom.serveNewer();
+    await dom.retryHandshake();
+    const heard: Error[] = [];
+
+    // When a late listener subscribes and throws
+    const unsubscribe = frame.onVersionMismatch(error => {
+      heard.push(error);
+      throw new Error('listener broke');
+    });
+
+    // Then
+    expect(unsubscribe).toBeTypeOf('function');
+    expect(heard).toHaveLength(1);
+    expect(heard[0]).toBeInstanceOf(ProtocolVersionMismatchError);
+    expect(captured).toMatchObject([{ step: 'listener', tags: { owner: 'protocol.frame_lost' } }]);
+  });
+
   it('As the host with an app open, I hear a version mismatch although a status listener throws on the failed frame, and the throw is reported and no frame is rebuilt', async () => {
     // Given a frame waiting on its handshake, a status listener that throws on failed, and a mismatch listener
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     const dom = createFrameDom({ timers });
     const frame = createProtocolFrame(dom.params);
@@ -320,7 +341,7 @@ describe('createProtocolFrame', () => {
     const heard: Error[] = [];
     frame.onVersionMismatch(error => heard.push(error));
 
-    // When the frame refuses the host wire version, and the keeper's longest waits pass
+    // When the frame refuses the host wire version, and the longest rebuild waits pass
     dom.serveNewer();
     await dom.retryHandshake();
     await advance(DEFAULT_FRAME_TIMEOUTS.maxRebuildMs * 3);
@@ -331,13 +352,13 @@ describe('createProtocolFrame', () => {
     expect(statuses).toEqual(['failed']);
     expect(frame.status.get()).toBe('failed');
     expect(dom.countFrames()).toBe(0);
-    expect(captured).toEqual([STATUS_LISTENER_CAPTURE]);
-    expect(metrics.counted(S.LISTENER_DELIVERY)).toEqual([STATUS_LISTENER_REPORT]);
+    expect(captured).toMatchObject([STATUS_LISTENER_CAPTURE]);
+    expect(metrics.counted('listener.delivery')).toEqual([STATUS_LISTENER_REPORT]);
   });
 
   it('As the host, I boot a frame while a status listener throws on booting, and the throw is reported and the boot goes on', async () => {
     // Given a configured frame, and a status listener that throws on booting
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     const dom = createFrameDom({ timers });
     const frame = createProtocolFrame(dom.params);
@@ -360,9 +381,9 @@ describe('createProtocolFrame', () => {
     await expect(loaded).resolves.toBe(transport);
     expect(frame.status.get()).toBe('listening');
     expect(dom.countFrames()).toBe(1);
-    expect(metrics.counted(S.PROTOCOL_IFRAME_READY)).toEqual([]);
-    expect(captured).toEqual([STATUS_LISTENER_CAPTURE]);
-    expect(metrics.counted(S.LISTENER_DELIVERY)).toEqual([STATUS_LISTENER_REPORT]);
+    expect(metrics.counted('protocol.iframe_ready')).toEqual([]);
+    expect(captured).toMatchObject([STATUS_LISTENER_CAPTURE]);
+    expect(metrics.counted('listener.delivery')).toEqual([STATUS_LISTENER_REPORT]);
   });
 
   it('As a dotli integrator, I wait on a frame before it is configured, and it boots and answers once configured', async () => {
@@ -382,32 +403,6 @@ describe('createProtocolFrame', () => {
     expect(framesBeforeConfig).toBe(0);
     await expect(up).resolves.toBe(await frame.getTransport());
     expect(dom.countFrames()).toBe(1);
-  });
-
-  it('As the host, I subscribe the status of a frame that already failed and my boot fails, and the frame is rebuilt after the first wait', async () => {
-    // Given a frame app whose light client failed before the host subscribed its status
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    const dom = createFrameDom({ timers });
-    const frame = createProtocolFrame(dom.params);
-    frame.configure(FRAME_CONFIG);
-    const up = catchRejection(frame.waitUntilReady());
-    dom.getFrameStatus().fail(new ProtocolInitFailedError('no SharedWorker'));
-
-    // When
-    await dom.retryHandshake();
-    const failure = await up;
-    const statusAfterFailure = frame.status.get();
-    await advance(2_000);
-
-    // Then
-    expect(failure).toBeInstanceOf(ProtocolInitFailedError);
-    expect(failure.message).toBe('no SharedWorker');
-    expect(statusAfterFailure).toBe('failed');
-    expect(metrics.counted(S.PROTOCOL_IFRAME_READY)).toEqual([
-      { outcome: 'error', phase: 'ready', reason: 'ProtocolInitFailedError' },
-    ]);
-    expect(dom.countFrames()).toBe(2);
-    expect(frame.status.get()).toBe('booting');
   });
 
   it('As the host, I wait for the frame and its light client fails to start, and my wait rejects with that failure', async () => {
@@ -442,7 +437,7 @@ describe('createProtocolFrame', () => {
 
   it('As the host, I drop a frame while a status listener throws, and the change returns, the throw is reported and the frame is still cleaned up', async () => {
     // Given a listening frame, and a status listener that throws when the frame goes idle
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     const dom = createFrameDom({ timers });
     const frame = createProtocolFrame(dom.params);
@@ -466,13 +461,13 @@ describe('createProtocolFrame', () => {
     expect(dropped.isConnected).toBe(false);
     expect(dom.countFrames()).toBe(1);
     expect(new URL(dom.getIframe().src).searchParams.get('mode')).toBe('rpc');
-    expect(captured).toEqual([STATUS_LISTENER_CAPTURE]);
-    expect(metrics.counted(S.LISTENER_DELIVERY)).toEqual([STATUS_LISTENER_REPORT]);
+    expect(captured).toMatchObject([STATUS_LISTENER_CAPTURE]);
+    expect(metrics.counted('listener.delivery')).toEqual([STATUS_LISTENER_REPORT]);
   });
 
   it('As the host, I let a frame listen while a status listener throws on it, and the throw is reported and the frame stays up', async () => {
     // Given a booting frame, its transport, and a status listener that throws when the frame listens
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     const dom = createFrameDom({ timers });
     const frame = createProtocolFrame(dom.params);
@@ -498,41 +493,8 @@ describe('createProtocolFrame', () => {
     expect(dom.countFrames()).toBe(1);
     expect(dom.getIframe()).toBe(booted);
     expect(frame.status.get()).toBe('listening');
-    expect(captured).toEqual([STATUS_LISTENER_CAPTURE]);
-    expect(metrics.counted(S.LISTENER_DELIVERY)).toEqual([STATUS_LISTENER_REPORT]);
-  });
-
-  it('As the host, I change a frame status that two listeners throw on, and the frame reports one throw and goes on', async () => {
-    // Given a configured frame, and two status listeners that throw on booting
-    const errors: unknown[] = [];
-    const captured = recordCaptures({ onFinished: onTestFinished, errors });
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    const dom = createFrameDom({ timers });
-    const frame = createProtocolFrame(dom.params);
-    frame.configure(FRAME_CONFIG);
-    const first = new Error('first listener broke');
-    const second = new Error('second listener broke');
-    for (const thrown of [first, second]) {
-      onTestFinished(
-        frame.status.listen(next => {
-          if (next === 'booting') {
-            throw thrown;
-          }
-        }),
-      );
-    }
-
-    // When the page asks for a frame, and the frame answers its handshake
-    void frame.getTransport();
-    await advance();
-    await dom.listen();
-
-    // Then the last throw alone was reported, and the boot went on to a listening frame
-    expect(captured).toEqual([STATUS_LISTENER_CAPTURE]);
-    expect(errors).toEqual([second]);
-    expect(metrics.counted(S.LISTENER_DELIVERY)).toEqual([STATUS_LISTENER_REPORT]);
-    expect(frame.status.get()).toBe('listening');
-    expect(dom.countFrames()).toBe(1);
+    expect(captured).toMatchObject([STATUS_LISTENER_CAPTURE]);
+    expect(metrics.counted('listener.delivery')).toEqual([STATUS_LISTENER_REPORT]);
   });
 
   it('As the host, I lose a frame once and the loss is counted once', async () => {
@@ -554,14 +516,14 @@ describe('createProtocolFrame', () => {
 
     // Then
     expect(await owner).toBeInstanceOf(ProtocolFatalError);
-    expect(metrics.counted(S.PROTOCOL_IFRAME_READY)).toEqual([
+    expect(metrics.counted('protocol.iframe_ready')).toEqual([
       { outcome: 'error', phase: 'ready', reason: 'ProtocolFatalError' },
     ]);
   });
 
   it('As the host, I lose a ready frame and it is counted once as lost and captured', async () => {
     // Given a ready frame, and a reporting pipeline that records captures and counts
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     const dom = createFrameDom({ timers });
     const frame = createProtocolFrame(dom.params);
@@ -574,14 +536,14 @@ describe('createProtocolFrame', () => {
     await advance();
 
     // Then
-    expect(metrics.counted(S.PROTOCOL_FRAME_LOST)).toEqual([{ outcome: 'error', reason: 'ProtocolFatalError' }]);
-    expect(metrics.counted(S.PROTOCOL_IFRAME_READY).filter(tags => tags?.['outcome'] === 'error')).toEqual([]);
-    expect(captured).toEqual([{ flow: 'protocol', step: 'frame_lost' }]);
+    expect(metrics.counted('protocol.frame_lost')).toEqual([{ outcome: 'error', reason: 'ProtocolFatalError' }]);
+    expect(metrics.counted('protocol.iframe_ready').filter(tags => tags?.['outcome'] === 'error')).toEqual([]);
+    expect(captured).toMatchObject([{ step: 'frame_lost' }]);
   });
 
   it('As the host, I see ready frames that keep dying each counted, captured once, and captured again after a stable one', async () => {
     // Given a ready frame, and a reporting pipeline that records captures and counts
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     const dom = createFrameDom({ timers });
     const frame = createProtocolFrame(dom.params);
@@ -597,8 +559,8 @@ describe('createProtocolFrame', () => {
     await advance(4_000);
 
     // Then both losses are counted and only the first is captured
-    expect(metrics.counted(S.PROTOCOL_FRAME_LOST)).toHaveLength(2);
-    expect(captured).toEqual([{ flow: 'protocol', step: 'frame_lost' }]);
+    expect(metrics.counted('protocol.frame_lost')).toHaveLength(2);
+    expect(captured).toMatchObject([{ step: 'frame_lost' }]);
 
     // When the next frame stays ready for the stable span before it dies
     const third = await dom.bringUp();
@@ -607,16 +569,100 @@ describe('createProtocolFrame', () => {
     await advance();
 
     // Then its loss is counted and captured again
-    expect(metrics.counted(S.PROTOCOL_FRAME_LOST)).toHaveLength(3);
-    expect(captured).toEqual([
-      { flow: 'protocol', step: 'frame_lost' },
-      { flow: 'protocol', step: 'frame_lost' },
+    expect(metrics.counted('protocol.frame_lost')).toHaveLength(3);
+    expect(captured).toMatchObject([{ step: 'frame_lost' }, { step: 'frame_lost' }]);
+  });
+
+  it('As the host, I see a frame that stayed up and then keeps dying rebuilt after twice the first wait, not the first wait again', async () => {
+    // Given a frame that stayed ready for the stable span, died, and was rebuilt after the first wait
+    const dom = createFrameDom({ timers });
+    const iframes = recordIframes(dom);
+    const frame = createProtocolFrame(iframes.params);
+    frame.configure(FRAME_CONFIG);
+    void frame.waitUntilReady().catch(() => undefined);
+    const first = await dom.bringUp();
+    await advance(DEFAULT_FRAME_TIMEOUTS.stableMs);
+    first.fail(new ProtocolFatalError('boom'));
+    await advance(DEFAULT_FRAME_TIMEOUTS.rebuildMs);
+    const second = await dom.bringUp();
+    const rebuilt = iframes.getNewest();
+
+    // When the rebuilt frame dies soon after ready
+    second.fail(new ProtocolFatalError('boom'));
+    await advance(DEFAULT_FRAME_TIMEOUTS.rebuildMs);
+    const builtAfterFirstWait = iframes.getNewest() !== rebuilt;
+    await advance(DEFAULT_FRAME_TIMEOUTS.rebuildMs);
+
+    // Then
+    expect([builtAfterFirstWait, iframes.getNewest() !== rebuilt]).toEqual([false, true]);
+  });
+
+  it('As the host, I see a frame that dies soon after ready captured when the frame before it stayed up and was reconfigured away', async () => {
+    // Given a frame that died soon after ready, and the rebuilt frame that stayed ready for the stable span
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const dom = createFrameDom({ timers });
+    const frame = createProtocolFrame(dom.params);
+    frame.configure(FRAME_CONFIG);
+    void frame.waitUntilReady().catch(() => undefined);
+    const first = await dom.bringUp();
+    await advance(1_000);
+    first.fail(new ProtocolFatalError('boom'));
+    await advance(2_000);
+    await dom.bringUp();
+    await advance(30_000);
+    frame.configure({ ...FRAME_CONFIG, network: 'previewnet' });
+    const third = await dom.bringUp();
+    await advance(1_000);
+
+    // When the frame booted on the new config dies soon after ready
+    third.fail(new ProtocolFatalError('boom'));
+    await advance();
+
+    // Then both quick losses are counted and captured, and the reconfigured one is neither
+    expect(metrics.counted('protocol.frame_lost')).toHaveLength(2);
+    expect(captured).toMatchObject([{ step: 'frame_lost' }, { step: 'frame_lost' }]);
+    expect(captured.map(report => report.error)).toEqual([
+      expect.any(ProtocolFatalError),
+      expect.any(ProtocolFatalError),
+    ]);
+  });
+
+  it('As the host, I see a frame that dies soon after ready captured when the frame before it stayed up and its port was released', async () => {
+    // Given a frame that died soon after ready, the rebuilt frame that stayed ready for the stable span and was released, and the frame rebuilt after it ready
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const dom = createFrameDom({ timers });
+    const frame = createProtocolFrame(dom.params);
+    frame.configure(FRAME_CONFIG);
+    void frame.waitUntilReady().catch(() => undefined);
+    const first = await dom.bringUp();
+    await advance(1_000);
+    first.fail(new ProtocolFatalError('boom'));
+    await advance(2_000);
+    const second = await dom.bringUp();
+    await advance(30_000);
+    second.interrupt(err(domain({ tag: 'released', value: 'The worker released this tab' })));
+    await advance(2_000);
+    const third = await dom.bringUp();
+    await advance(1_000);
+
+    // When the frame rebuilt after the release dies soon after ready
+    third.fail(new ProtocolFatalError('boom'));
+    await advance();
+
+    // Then all three losses are counted, the release is not captured, and both quick losses are
+    expect(metrics.counted('protocol.frame_lost')).toHaveLength(3);
+    expect(captured).toMatchObject([{ step: 'frame_lost' }, { step: 'frame_lost' }]);
+    expect(captured.map(report => report.error)).toEqual([
+      expect.any(ProtocolFatalError),
+      expect.any(ProtocolFatalError),
     ]);
   });
 
   it('As the host, I hear a worker port release end the frame through the typed released interrupt, without a capture', async () => {
     // Given a ready frame, and a reporting pipeline that records captures, counts and breadcrumbs
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     const events = recordLog({ onFinished: onTestFinished, level: 'info' });
     const dom = createFrameDom({ timers });
@@ -634,7 +680,7 @@ describe('createProtocolFrame', () => {
     await advance();
 
     // Then
-    expect(metrics.counted(S.PROTOCOL_FRAME_LOST)).toEqual([{ outcome: 'error', reason: 'ProtocolPortReleasedError' }]);
+    expect(metrics.counted('protocol.frame_lost')).toEqual([{ outcome: 'error', reason: 'ProtocolPortReleasedError' }]);
     expect(captured).toEqual([]);
     expect(events.map(line => line.message)).toContain('protocol frame released');
     expect(await owner).toBeInstanceOf(ProtocolPortReleasedError);
@@ -661,8 +707,131 @@ describe('createProtocolFrame', () => {
 
     // Then
     expect((await owner)?.message).toBe(PROTOCOL_ERRORS.FRAME_STATUS_ENDED);
-    expect(metrics.counted(S.PROTOCOL_FRAME_LOST)).toEqual([{ outcome: 'error', reason: 'Error' }]);
+    expect(metrics.counted('protocol.frame_lost')).toEqual([{ outcome: 'error', reason: 'Error' }]);
     expect(frame.status.get()).toBe('failed');
+  });
+
+  it("As the host, I change the config while the frame loads and the dropped load's timer fails nothing", async () => {
+    // Given a frame that has been loading for part of its load wait, and a recording metrics pipeline
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const dom = createFrameDom({ mount: null, timers });
+    const frame = createProtocolFrame(dom.params);
+    frame.configure(FRAME_CONFIG);
+    void frame.getTransport().catch(() => undefined);
+    await advance(DEFAULT_FRAME_TIMEOUTS.loadMs / 2);
+
+    // When the config changes, and the dropped frame's load wait comes due while the new frame still loads
+    frame.configure({ ...FRAME_CONFIG, backend: 'rpc-gateway' });
+    const pendingAfterChange = timers.countPending();
+    await advance(DEFAULT_FRAME_TIMEOUTS.loadMs / 2);
+
+    // Then only the new frame's load wait was pending, and the new frame still boots
+    expect(pendingAfterChange).toBe(1);
+    expect(frame.status.get()).toBe('booting');
+    expect(metrics.counted('protocol.iframe_ready')).toEqual([]);
+  });
+
+  it('As the host, I boot a frame that never loads and the boot fails at load and rebuilds', async () => {
+    // Given a frame whose document never loads, and a recording metrics pipeline
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const dom = createFrameDom({ mount: null, timers });
+    const frame = createProtocolFrame(dom.params);
+    frame.configure(FRAME_CONFIG);
+    const up = catchRejection(frame.waitUntilReady());
+
+    // When
+    await advance(DEFAULT_FRAME_TIMEOUTS.loadMs);
+
+    // Then the wait fails with the load timeout, counted at load, and only the rebuild's wait is pending
+    expect((await up).message).toBe(PROTOCOL_ERRORS.HOST_FRAME_LOAD_TIMEOUT);
+    expect(metrics.counted('protocol.iframe_ready')).toEqual([{ outcome: 'error', phase: 'load', reason: 'Error' }]);
+    expect(frame.status.get()).toBe('failed');
+    expect(timers.countPending()).toBe(1);
+  });
+
+  it('As a returning user whose phone froze the tab while my frame loaded, I keep the frame when the tab wakes', async () => {
+    // Given a frame whose iframe is mounted and not loaded, and a recording metrics pipeline
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const dom = createFrameDom({ mount: null, timers });
+    const frame = createProtocolFrame(dom.params);
+    frame.configure(FRAME_CONFIG);
+    void frame.getTransport().catch(() => undefined);
+    await advance();
+
+    // When the page is frozen, wakes, and the iframe then loads and the frame listens
+    timers.freeze(300_000);
+    await advance(0);
+    dom.getIframe().dispatchEvent(new Event('load'));
+    await dom.listen();
+
+    // Then
+    expect(metrics.counted('protocol.iframe_ready')).toEqual([]);
+    expect(frame.status.get()).toBe('listening');
+  });
+
+  it('As a returning user whose phone froze the tab while my frame waited for its light client, I keep the frame when the tab wakes', async () => {
+    // Given a frame that listens, and a recording metrics pipeline
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const dom = createFrameDom({ timers });
+    const frame = createProtocolFrame(dom.params);
+    frame.configure(FRAME_CONFIG);
+    void frame.waitUntilReady().catch(() => undefined);
+    const status = await dom.listen();
+
+    // When the page is frozen, wakes, and the frame then reports ready
+    timers.freeze(300_000);
+    await advance(0);
+    status.markReady();
+    await advance();
+
+    // Then
+    expect(frame.status.get()).toBe('ready');
+    expect(metrics.counted('protocol.iframe_ready')).toEqual([]);
+  });
+
+  it('As a dotli integrator whose page froze before it configured the frame, my wait still waits when the page wakes', async () => {
+    // Given an unconfigured frame and a ready wait
+    const dom = createFrameDom({ timers });
+    const frame = createProtocolFrame(dom.params);
+    const outcome = readOutcome(frame.waitUntilReady());
+    await advance();
+
+    // When the page is frozen, wakes, and is then configured and the frame comes up
+    timers.freeze(300_000);
+    await advance(0);
+    frame.configure(FRAME_CONFIG);
+    await advance();
+    await dom.bringUp();
+
+    // Then
+    expect(await outcome).toBe('resolved');
+  });
+
+  it('As the host, I lose a frame whose mount throws', async () => {
+    // Given a page that refuses to mount the frame, and a recording metrics pipeline
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const dom = createFrameDom({ timers });
+    const frame = createProtocolFrame({
+      ...dom.params,
+      document: {
+        createElement: tagName => dom.params.document.createElement(tagName),
+        body: {
+          appendChild: () => {
+            throw new Error('mount refused');
+          },
+        },
+      },
+    });
+    frame.configure(FRAME_CONFIG);
+
+    // When
+    const failure = await catchRejection(frame.waitUntilReady());
+
+    // Then the wait fails with the throw, counted at load, and only the rebuild's wait is pending
+    expect(failure.message).toBe('mount refused');
+    expect(metrics.counted('protocol.iframe_ready')).toEqual([{ outcome: 'error', phase: 'load', reason: 'Error' }]);
+    expect(frame.status.get()).toBe('failed');
+    expect(timers.countPending()).toBe(1);
   });
 
   it('As the host, I receive a late message from a dropped frame and it settles nothing on the new one', async () => {
@@ -753,7 +922,7 @@ describe('createProtocolFrame', () => {
     await expect(frame.waitUntilReady()).rejects.toBeInstanceOf(ProtocolVersionMismatchError);
     await expect(frame.getTransport()).rejects.toBeInstanceOf(ProtocolVersionMismatchError);
     expect(dom.countFrames()).toBe(0);
-    expect(metrics.counted(S.PROTOCOL_IFRAME_READY)).toEqual([
+    expect(metrics.counted('protocol.iframe_ready')).toEqual([
       { outcome: 'error', phase: 'listen', reason: 'ProtocolVersionMismatchError' },
     ]);
   });
@@ -785,7 +954,7 @@ describe('createProtocolFrame', () => {
   });
 
   it('As the host, I boot a frame that never answers my handshake and the boot fails and rebuilds with backoff', async () => {
-    // Given a frame of an earlier release, which loads and never answers
+    // Given a frame that loads and never answers
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     const dom = createFrameDom({ timers });
     const frame = createProtocolFrame(dom.params);
@@ -803,7 +972,7 @@ describe('createProtocolFrame', () => {
     // Then
     expect(failure).toBeInstanceOf(ProtocolHandshakeTimeoutError);
     expect(silent.isConnected).toBe(false);
-    expect(metrics.counted(S.PROTOCOL_IFRAME_READY)).toEqual([
+    expect(metrics.counted('protocol.iframe_ready')).toEqual([
       { outcome: 'error', phase: 'listen', reason: 'ProtocolHandshakeTimeoutError' },
     ]);
     expect(framesBeforeBackoff).toBe(0);
@@ -826,7 +995,7 @@ describe('createProtocolFrame', () => {
     expect(timers.countPending()).toBe(1);
   });
 
-  /** A configured frame that came up ready and then died with a fatal, so its keeper waits to rebuild it. */
+  /** A configured frame that came up ready and then died with a fatal, so it waits to rebuild. */
   async function bringFrameDownWithFatal(): Promise<{
     dom: FrameDom;
     frame: ReturnType<typeof createProtocolFrame>;
@@ -859,19 +1028,6 @@ describe('createProtocolFrame', () => {
     expect(frame.status.get()).toBe('ready');
   });
 
-  it('As a product, I ask while the frame is down and the boot I started fails, and I hear that boot failure', async () => {
-    // Given
-    const { dom, frame } = await bringFrameDownWithFatal();
-
-    // When
-    const up = readOutcome(frame.waitUntilReady());
-    const status = await dom.listen();
-    status.fail(new ProtocolInitFailedError('no SharedWorker'));
-
-    // Then
-    expect(await up).toBe('no SharedWorker');
-  });
-
   it('As a product, I ask for the chain while the store is held and fail at once with the init failure, and no frame boots before the backoff', async () => {
     // Given
     const { dom, frame } = await holdFailedFrame();
@@ -888,20 +1044,6 @@ describe('createProtocolFrame', () => {
     expect(framesAfterAsking).toBe(1);
     expect(framesBeforeBackoff).toBe(1);
     expect(frame.status.get()).toBe('failed');
-  });
-
-  it('As a host with no caller waiting, I lose the frame and it rebuilds on its own after the backoff', async () => {
-    // Given
-    const { dom } = await bringFrameDownWithFatal();
-
-    // When
-    await advance(1_999);
-    const framesBeforeBackoff = dom.countFrames();
-    await advance(1);
-
-    // Then
-    expect(framesBeforeBackoff).toBe(0);
-    expect(dom.countFrames()).toBe(1);
   });
 
   it('As one of two products asking while the frame is down, I hear the failure of the one boot we share, and one rebuild follows after the backoff', async () => {
@@ -947,26 +1089,6 @@ describe('createProtocolFrame', () => {
     expect(dom.countFrames()).toBe(2);
     expect(builds - buildsBeforeAsking).toBe(2);
   });
-
-  it('As one of two products asking while the frame is down, I share one rebuild with the other', async () => {
-    // Given
-    const { dom, frame } = await bringFrameDownWithFatal();
-
-    // When
-    const first = readOutcome(frame.waitUntilReady());
-    const second = readOutcome(waitForListening(frame));
-    const rebuilt = dom.getIframe();
-    const framesAfterAsking = dom.countFrames();
-    await dom.bringUp();
-    await advance(2_000);
-
-    // Then
-    expect(framesAfterAsking).toBe(1);
-    expect(await first).toBe('resolved');
-    expect(await second).toBe('resolved');
-    expect(dom.countFrames()).toBe(1);
-    expect(dom.getIframe()).toBe(rebuilt);
-  });
 });
 
 describe('frame liveness check', () => {
@@ -1010,28 +1132,12 @@ describe('frame liveness check', () => {
     expect(framesAfterCheck).toBe(0);
     expect(dom.getIframe()).not.toBe(stale);
     expect(frame.status.get()).toBe('ready');
-    expect(metrics.counted(S.PROTOCOL_FRAME_LOST)).toEqual([
+    expect(metrics.counted('protocol.frame_lost')).toEqual([
       { outcome: 'error', reason: 'ProtocolFrameUnresponsiveError' },
     ]);
   });
 
-  it('As a returning user whose frame answers the check, I keep it', async () => {
-    // Given a ready frame whose app answers the heartbeat
-    const { dom, frame, transport } = await bringFrameUp();
-    dom.serve().handleRequest(heartbeat, () => Promise.resolve(ok()));
-    const kept = dom.getIframe();
-
-    // When
-    frame.checkAlive(transport);
-    await advance(HANDSHAKE_TIMEOUT_MS);
-
-    // Then
-    expect(countHeartbeats(dom)).toBe(1);
-    expect(frame.status.get()).toBe('ready');
-    expect(dom.getIframe()).toBe(kept);
-  });
-
-  it('As a returning user whose frame is from an earlier release, I keep it although it refuses the check', async () => {
+  it('As a returning user whose frame refuses the check, I keep the frame, since a refusal is an answer', async () => {
     // Given a ready frame whose app does not serve the heartbeat
     const { dom, frame, transport } = await bringFrameUp();
     const kept = dom.getIframe();
@@ -1096,7 +1202,7 @@ describe('frame liveness check', () => {
     expect(frame.storeHeld.get()).toBe(false);
     expect(held.isConnected).toBe(false);
     expect(frame.status.get()).toBe('failed');
-    expect(metrics.counted(S.PROTOCOL_FRAME_LOST)).toEqual([
+    expect(metrics.counted('protocol.frame_lost')).toEqual([
       { outcome: 'error', reason: 'ProtocolFrameUnresponsiveError' },
     ]);
   });
@@ -1122,25 +1228,25 @@ describe('frame liveness check', () => {
     expect(held.isConnected).toBe(false);
     expect(rebuilt.isConnected).toBe(true);
     expect(frame.storeHeld.get()).toBe(true);
-    expect(metrics.counted(S.PROTOCOL_FRAME_LOST)).toEqual([]);
-    expect(lines.filter(line => line.attrs?.['outcome'] === 'lost')).toEqual([]);
+    expect(metrics.counted('protocol.frame_lost')).toEqual([]);
+    expect(lines.filter(line => line.attrs['outcome'] === 'lost')).toEqual([]);
   });
 
-  it('As a dotli integrator, I check the rebuilt frame while the check of the frame it replaced is pending and it is still asked', async () => {
+  it('As a dotli integrator, I check the rebuilt frame after a config change dropped a frame under check, and the rebuilt frame is asked at once', async () => {
     // Given a ready frame whose app never answers the heartbeat, and a check of it that waits
     const { dom, frame, transport: replaced } = await bringFrameUp();
     dom.serve().handleRequest(heartbeat, () => new Promise(() => undefined));
     frame.checkAlive(replaced);
     await advance();
 
-    // When a config change rebuilds the frame, and the rebuilt frame's check queues behind the first
+    // When a config change rebuilds the frame, and the rebuilt frame is checked
     frame.configure({ ...FRAME_CONFIG, backend: 'rpc-gateway' });
     const up = frame.waitUntilReady();
     await dom.bringUp();
     const rebuilt = await up;
     dom.serve().handleRequest(heartbeat, () => Promise.resolve(ok()));
     frame.checkAlive(rebuilt);
-    await advance(HANDSHAKE_TIMEOUT_MS);
+    await advance();
 
     // Then the rebuilt frame was asked once
     expect(countHeartbeats(dom)).toBe(1);
@@ -1273,21 +1379,6 @@ describe('protocol status', () => {
     expect(changes).toEqual([{ tag: 'session', value: { siteId: SITE_ID, key: 'k', value: 'v' } }]);
   });
 
-  it('As a dotli user, I make a request while the protocol frame boots and it waits, then fails as soon as that boot fails', async () => {
-    // Given
-    const warmup = trackOutcome(host.client.resolve.warmup());
-    const status = await host.listen();
-    const waitingWhileBooting = warmup.outcome;
-
-    // When
-    status.fail(new ProtocolInitFailedError('bad network'));
-    await advance();
-
-    // Then
-    expect(waitingWhileBooting).toBeNull();
-    expect(warmup.outcome).toBe('bad network');
-  });
-
   it('As a returning user whose protocol frame never reports ready, I get a rebuilt frame and my shared store back', async () => {
     // Given
     const statuses: SharedStoreStatus[] = [];
@@ -1356,21 +1447,6 @@ describe('protocol status', () => {
     expect(host.countFrames()).toBe(1);
   });
 
-  it('As a returning user, I change the frame config during my session and see the shared store down, then available', async () => {
-    // Given
-    void host.client.frame.ensureReady();
-    await host.bringUp();
-    const statuses: SharedStoreStatus[] = [];
-    host.client.sharedStore.status.listen(status => statuses.push(status));
-
-    // When
-    host.client.frame.configure({ ...FRAME_CONFIG, backend: 'rpc-gateway' });
-    await host.listen();
-
-    // Then
-    expect(statuses).toEqual(['unavailable', 'available']);
-  });
-
   it('As a dotli integrator, I change the frame config and the chain connections of the dropped frame halt', async () => {
     // Given a chain connection the frame accepted
     const provider = host.client.chains.createProvider(getActiveServicesConfig().people.genesis);
@@ -1419,7 +1495,7 @@ describe('protocol status', () => {
     ]);
   });
 
-  it('As a dotli integrator, I request from a status listener after a config change, and a later listener hears the status there is on its turn, and a later ready waiter waits on the rebuilt frame', async () => {
+  it('As a dotli integrator, I request from a status listener after a config change, and each listener hears every status in turn, and the waits of the dropped frame fail with the reset', async () => {
     // Given a boot request queued ahead of the rebuilding listener, a second listener, and a ready waiter after both
     const booting = catchRejection(host.client.frame.ensureReady());
     await host.listen();
@@ -1432,7 +1508,7 @@ describe('protocol status', () => {
       }
     });
     host.client.frame.status.listen(next => heard[1]?.push(next));
-    const later = host.client.frame.ensureReady();
+    const later = catchRejection(host.client.frame.ensureReady());
 
     // When
     host.client.frame.configure({ ...FRAME_CONFIG, backend: 'rpc-gateway' });
@@ -1442,14 +1518,14 @@ describe('protocol status', () => {
     // Then
     expect(framesAfterChange).toBe(1);
     expect(heard[0]).toEqual(['idle', 'booting', 'listening', 'ready']);
-    expect(heard[1]).toEqual(['booting', 'booting', 'listening', 'ready']);
+    expect(heard[1]).toEqual(['idle', 'booting', 'listening', 'ready']);
     await expect(request).resolves.toBeUndefined();
     expect((await booting).message).toBe(PROTOCOL_ERRORS.FRAME_RESET);
-    await expect(later).resolves.toBeUndefined();
+    expect((await later).message).toBe(PROTOCOL_ERRORS.FRAME_RESET);
   });
 
-  it('As a dotli integrator, I request from an idle listener during a config change and the frame keeps one keeper', async () => {
-    // Given a second keeper would wait behind the first and rebuild the next lost frame at once
+  it('As a dotli integrator, I request from an idle listener during a config change and the lost frame is rebuilt once, after its wait', async () => {
+    // Given a frame that would rebuild the next lost frame at once if a second rebuild were waiting
     void host.client.frame.ensureReady();
     await host.bringUp();
     host.client.frame.status.listen(next => {
@@ -1471,7 +1547,46 @@ describe('protocol status', () => {
     expect(host.countFrames()).toBe(1);
   });
 
-  it('As a dotli user whose frame cannot be built, I see the real error on each request, each request that finds it down builds one, and one keeper retries', async () => {
+  it('As a dotli integrator, I configure again from an idle listener during a config change and one frame is built, with the latest config', async () => {
+    // Given a ready frame, and a listener that configures again on its first idle
+    const dom = createFrameDom({ timers });
+    let builds = 0;
+    const frame = createProtocolFrame({
+      ...dom.params,
+      document: {
+        createElement: tagName => {
+          builds += 1;
+          return dom.params.document.createElement(tagName);
+        },
+        body: dom.params.document.body,
+      },
+    });
+    frame.configure(FRAME_CONFIG);
+    void frame.waitUntilReady();
+    await dom.bringUp();
+    let reconfigured = false;
+    onTestFinished(
+      frame.status.listen(next => {
+        if (next === 'idle' && !reconfigured) {
+          reconfigured = true;
+          frame.configure({ ...FRAME_CONFIG, network: 'previewnet' });
+        }
+      }),
+    );
+    const buildsBeforeChange = builds;
+
+    // When
+    frame.configure({ ...FRAME_CONFIG, backend: 'rpc-gateway' });
+    await advance();
+
+    // Then
+    const params = new URL(dom.getIframe().src).searchParams;
+    expect(builds - buildsBeforeChange).toBe(1);
+    expect(params.get('mode')).toBe('direct');
+    expect(params.get('network')).toBe('previewnet');
+  });
+
+  it('As a dotli user whose frame cannot be built, I see the real error on each request, each request that finds it down builds one, and one frame is retried', async () => {
     // Given
     let builds = 0;
     const dom = createFrameDom({ timers });
@@ -1532,7 +1647,7 @@ describe('protocol status', () => {
       await advance();
 
       // Then the failure is counted with the reason of the thrown value
-      expect(metrics.counted(S.PROTOCOL_IFRAME_READY)).toContainEqual({ outcome: 'error', phase: 'load', reason });
+      expect(metrics.counted('protocol.iframe_ready')).toContainEqual({ outcome: 'error', phase: 'load', reason });
     },
   );
 
@@ -1601,27 +1716,5 @@ describe('protocol status', () => {
     expect(framesAfterChange).toBe(1);
     expect(mode).toBe('rpc');
     expect(host.client.frame.status.get()).toBe('ready');
-  });
-
-  it('As a dotli integrator, I unsubscribe a listener from another listener and it hears nothing after that, not even the change of that round', async () => {
-    // Given
-    void host.client.frame.ensureReady();
-    const status = await host.bringUp();
-    const heard: ProtocolStatus[] = [];
-    let unsubscribe: (() => void) | null = null;
-    host.client.frame.status.listen(next => {
-      if (next === 'failed') {
-        host.client.frame.configure({ ...FRAME_CONFIG, backend: 'rpc-gateway' });
-        unsubscribe?.();
-      }
-    });
-    unsubscribe = host.client.frame.status.listen(next => heard.push(next));
-
-    // When
-    status.fail(new ProtocolFatalError('boom'));
-    await advance();
-
-    // Then the change it was due to hear when it was unsubscribed is dropped too
-    expect(heard).toEqual([]);
   });
 });

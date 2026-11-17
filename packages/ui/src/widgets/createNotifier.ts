@@ -1,41 +1,34 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { Component } from 'solid-js';
+import { createReporter, defineCount } from '@dotli/metrics';
 import { realTimers, type Timers } from '@dotli/shared';
-import type { IconProps } from '../components/icons/iconProps.js';
-import { toasts, type ToastInput } from '../page/state/createToasts.js';
+import { toasts, type createToasts, type ToastInput } from '../page/state/createToasts.js';
 import type { StatusTone } from '../page/statusTone.js';
+
+const report = createReporter({ flow: 'ui' });
+
+/** A system notification the browser refused to build although its permission was granted. */
+const systemNotificationMetric = defineCount<'error'>('notification.system');
 
 type NoticeTone = Exclude<StatusTone, 'quiet'>;
 
-export type NotificationParams = {
-  /** The message, trimmed and cut to 200 characters. A blank one drops the notification. */
-  text: string;
-  /** The title, which a system notification shows too. */
-  label: string;
-  /** An http or https link the notification opens. Any other value is dropped. */
-  deeplink?: string | undefined;
-  /** Drawn in currentColor, so it takes the tone. The tone's own icon without one, chosen when the toast renders. */
-  icon?: Component<IconProps>;
+/** A toast's own fields, with a narrower tone and defaults for the dismiss time and the system notification. */
+export type NotificationParams = Omit<ToastInput, 'tone' | 'dismissMs'> & {
   /** Info by default. */
   tone?: NoticeTone;
   /** 0 keeps it until closed. */
   dismissMs?: number;
   /** Also fire a browser Notification when the page is not attended. Default true. */
   browserNotification?: boolean;
-  /** Runs once when the toast is dismissed. */
-  onDismiss?: () => void;
-  /** A button on the toast. */
-  action?: { label: string; onClick: () => void };
 };
 
 /** The browser's system notification API. */
 export type SystemNotifications = typeof Notification;
 
 type Params = {
-  /** Shows the notification as a toast. */
-  present: (input: ToastInput) => void;
+  /** The toast stack that shows each notification in the page. */
+  toasts: Pick<ReturnType<typeof createToasts>, 'push'>;
   /**
    * Whether the user is looking at the page: the tab showing and its window focused. A window behind other windows
    * still reports visible, so focus decides there. An unattended page also gets a system notification.
@@ -43,6 +36,8 @@ type Params = {
   attended: () => boolean;
   /** Undefined where the browser has none. */
   system: () => SystemNotifications | undefined;
+  /** The window a click on a system notification brings forward and opens the link from. */
+  page: Pick<Window, 'focus' | 'open'>;
   /** The page's own by default. A system notification closes on them. */
   timers?: Timers | undefined;
 };
@@ -50,62 +45,50 @@ type Params = {
 type FireBrowserNotificationParams = {
   /** The browser's notification API, which builds each system notification. */
   notifications: SystemNotifications;
-  /** The notification's body. */
-  text: string;
-  /** Opened in a new tab when the notification is clicked, none when undefined or empty. */
-  deeplink: string | undefined;
-  /** The notification's title. */
-  label: string;
+  /** The notification with its text and link already cleaned. */
+  notice: Pick<NotificationParams, 'label' | 'text' | 'deeplink'>;
+  /** The window a click brings forward and opens the link from. */
+  page: Params['page'];
   /** What the notification closes on after its time on screen. */
   timers: Timers;
 };
 
-/**
- * Shows a toast, and a system notification too while the page is not attended. Without the system's permission the
- * toast waits in the page until closed.
- */
 export type ShowNotification = ReturnType<typeof createNotifier>;
 
-export const NOTIFICATION_DISMISS_MS = 10_000;
+const NOTIFICATION_DISMISS_MS = 10_000;
 
 /** How long a system notification stays before it closes itself. */
 const SYSTEM_NOTIFICATION_MS = 5000;
 
 /**
- * Builds a notifier that shows each notification through `present`, and through `system` too while `attended` says
- * no one is looking. Returns the notify function and never throws.
+ * Builds a notifier that shows each notification through `toasts`, and through `system` too while `attended` says
+ * no one is looking. Returns the notify function.
  */
-export function createNotifier({ present, attended, system, timers = realTimers }: Params) {
+export function createNotifier({ toasts, attended, system, page, timers = realTimers }: Params) {
   /**
    * Shows a toast, and a system notification too while the page is not attended. Without the system's permission the
-   * toast waits in the page until closed. Drops a notification whose text is blank. Throws only what `present` throws.
+   * toast waits in the page until closed. The permission is the caller's to ask for. The label is the system
+   * notification's title. Trims the text and cuts it to 200 characters, drops a notification whose text is blank, and
+   * drops a link that is not http or https.
    */
-  function notify(params: NotificationParams): void {
-    const text = sanitizeText(params.text);
+  function notify({
+    browserNotification = true,
+    dismissMs = NOTIFICATION_DISMISS_MS,
+    ...shown
+  }: NotificationParams): void {
+    const text = shown.text.trim().slice(0, 200);
     if (!text) {
       return;
     }
-    const deeplink = validateDeeplink(params.deeplink);
-    const tone = params.tone ?? 'info';
-    const wantsSystem = (params.browserNotification ?? true) && !attended();
+    const notice = { ...shown, text, deeplink: validateDeeplink(shown.deeplink) };
+    const wantsSystem = browserNotification && !attended();
     const notifications = wantsSystem ? system() : undefined;
-    // One the system cannot show stays in the page until closed, or a window behind others would lose it unseen.
-    const fallback = wantsSystem && notifications?.permission !== 'granted';
+    const systemShown =
+      notifications?.permission === 'granted' && fireBrowserNotification({ notifications, notice, page, timers });
+    // One the system did not show stays in the page until closed, or a window behind others would lose it unseen.
+    const fallback = wantsSystem && !systemShown;
 
-    present({
-      text,
-      label: params.label,
-      ...(params.icon === undefined ? {} : { icon: params.icon }),
-      tone,
-      dismissMs: fallback ? 0 : (params.dismissMs ?? NOTIFICATION_DISMISS_MS),
-      ...(deeplink === undefined ? {} : { deeplink }),
-      ...(params.onDismiss === undefined ? {} : { onDismiss: params.onDismiss }),
-      ...(params.action === undefined ? {} : { action: params.action }),
-    });
-
-    if (notifications !== undefined) {
-      fireBrowserNotification({ notifications, text, deeplink, label: params.label, timers });
-    }
+    toasts.push({ ...notice, dismissMs: fallback ? 0 : dismissMs });
   }
 
   return notify;
@@ -113,20 +96,16 @@ export function createNotifier({ present, attended, system, timers = realTimers 
 
 /** The page's notifier over the toast store. */
 export const showNotification = createNotifier({
-  present: input => {
-    toasts.push(input);
-  },
+  toasts,
   // Focus inside the product's frame still counts, since the top document's focus covers its frames.
   attended: () => document.visibilityState === 'visible' && document.hasFocus(),
   system: () => ('Notification' in window ? window.Notification : undefined),
+  // The window in a page, read without naming it so the module still loads where there is none.
+  page: globalThis,
 });
 
-function sanitizeText(raw: string): string {
-  return raw.trim().slice(0, 200);
-}
-
 function validateDeeplink(deeplink: string | undefined): string | undefined {
-  if (deeplink === undefined || deeplink === '') {
+  if (deeplink === undefined) {
     return undefined;
   }
   try {
@@ -137,38 +116,31 @@ function validateDeeplink(deeplink: string | undefined): string | undefined {
   }
 }
 
+/**
+ * Shows a system notification and returns whether it showed. A browser may grant the permission and still refuse to
+ * build one, as Chrome on Android does outside a service worker.
+ */
 function fireBrowserNotification({
   notifications: SystemNotification,
-  text,
-  deeplink,
-  label,
+  notice: { label, text, deeplink },
+  page,
   timers,
-}: FireBrowserNotificationParams): void {
-  function show(): void {
-    const notification = new SystemNotification(label, { body: text });
-    notification.onclick = () => {
-      window.focus();
-      if (deeplink !== undefined && deeplink !== '') {
-        window.open(deeplink, '_blank');
-      }
-    };
-    timers.setTimeout(() => {
-      notification.close();
-    }, SYSTEM_NOTIFICATION_MS);
+}: FireBrowserNotificationParams): boolean {
+  let notification: Notification;
+  try {
+    notification = new SystemNotification(label, { body: text });
+  } catch (error) {
+    report.expected(error, { step: 'system_notification', metric: systemNotificationMetric });
+    return false;
   }
-
-  switch (SystemNotification.permission) {
-    case 'granted':
-      show();
-      return;
-    case 'denied':
-      return;
-    case 'default':
-      void SystemNotification.requestPermission().then(permission => {
-        if (permission === 'granted') {
-          show();
-        }
-      });
-      return;
-  }
+  notification.onclick = () => {
+    page.focus();
+    if (deeplink !== undefined) {
+      page.open(deeplink, '_blank');
+    }
+  };
+  timers.setTimeout(() => {
+    notification.close();
+  }, SYSTEM_NOTIFICATION_MS);
+  return true;
 }

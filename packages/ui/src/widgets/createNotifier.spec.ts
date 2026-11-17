@@ -1,7 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
+import { recordReports } from '@dotli/metrics/testing';
 import {
   createFakePage,
   createManualTimers,
@@ -10,14 +11,19 @@ import {
   type ManualTimers,
 } from '@dotli/shared/testing';
 import { createToasts } from '../page/state/createToasts.js';
-import { createNotifier, NOTIFICATION_DISMISS_MS, type SystemNotifications } from './createNotifier.js';
+import { createNotifier, type SystemNotifications } from './createNotifier.js';
+
+/** How long a toast stays when nothing keeps it. */
+const DEFAULT_DISMISS_MS = 10_000;
 
 let page: FakePage;
 let timers: ManualTimers;
 let toasts: ReturnType<typeof createToasts>;
 let system: SystemNotifications | undefined;
 let closed: string[];
-let focused: boolean;
+let shown: { onclick: (() => void) | null }[];
+let pageCalls: string[];
+let looking: boolean;
 let showNotification: ReturnType<typeof createNotifier>;
 
 beforeEach(() => {
@@ -26,14 +32,23 @@ beforeEach(() => {
   toasts = createToasts({ page: page.document, timers });
   system = undefined;
   closed = [];
-  focused = true;
-  // The notifier over this toast stack, on a page whose visibility and focus the test sets.
+  shown = [];
+  pageCalls = [];
+  looking = true;
+  // The notifier over this toast stack, on a page the test says the user is looking at or not.
   showNotification = createNotifier({
-    present: input => {
-      toasts.push(input);
-    },
-    attended: () => page.document.visibilityState === 'visible' && focused,
+    toasts,
+    attended: () => looking,
     system: () => system,
+    page: {
+      focus() {
+        pageCalls.push('focus');
+      },
+      open(url) {
+        pageCalls.push(`open ${String(url)}`);
+        return null;
+      },
+    },
     timers,
   });
 });
@@ -43,7 +58,7 @@ afterEach(() => {
 });
 
 describe('showNotification', () => {
-  it('As a dotli user, I get a notification and see its title and trimmed text, with the icon left to its tone', () => {
+  it('As a dotli user, I get a notification and see its title and trimmed text', () => {
     // When
     showNotification({ label: 'Hello', text: '  World  ' });
 
@@ -51,7 +66,6 @@ describe('showNotification', () => {
     const [toast] = toasts.store.get().items;
     expect(toast?.label).toBe('Hello');
     expect(toast?.text).toBe('World');
-    expect(toast?.icon).toBeUndefined();
   });
 
   it('As a dotli integrator, I notify with empty text, long text and a non-http link, and get nothing, text cut to 200 characters and no link', () => {
@@ -70,22 +84,10 @@ describe('showNotification', () => {
     expect(items[0]?.deeplink).toBeUndefined();
   });
 
-  it('As a dotli user, I wait out the default delay and the notification leaves', async () => {
-    // Given a toast view is mounted
-    toasts.show();
-    showNotification({ label: 'Timed', text: 'Body' });
-
-    // When
-    await timers.advance(NOTIFICATION_DISMISS_MS);
-
-    // Then
-    expect(readLeaving()).toEqual([true]);
-  });
-
-  it('As a dotli user with the tab hidden, I get a notification and a system one too when permission is granted', () => {
+  it('As a dotli user away from the page, I get a system notification when permission is granted, and none for one that opts out', () => {
     // Given
     const created = grantSystem();
-    page.setVisibility('hidden');
+    looking = false;
 
     // When
     showNotification({ label: 'Ping', text: 'Background' });
@@ -97,19 +99,6 @@ describe('showNotification', () => {
 
     // Then
     expect(created).toEqual([{ title: 'Ping', body: 'Background' }]);
-  });
-
-  it('As a dotli user with the window behind other windows, I get a notification and a system one too', () => {
-    // Given the tab still reports visible, but its window has lost focus
-    const created = grantSystem();
-    focused = false;
-
-    // When
-    showNotification({ label: 'Ping', text: 'Behind' });
-
-    // Then
-    expect(created).toEqual([{ title: 'Ping', body: 'Behind' }]);
-    expect(toasts.store.get().items.map(toast => toast.text)).toEqual(['Behind']);
   });
 
   it('As a dotli user looking at the page, I get a notification and only the in-page one', () => {
@@ -127,7 +116,7 @@ describe('showNotification', () => {
   it('As a dotli user away from the window, I get a system notification and it closes itself after 5 s', async () => {
     // Given
     grantSystem();
-    focused = false;
+    looking = false;
     showNotification({ label: 'Ping', text: 'Closing' });
 
     // When
@@ -140,75 +129,82 @@ describe('showNotification', () => {
     expect(closed).toEqual(['Ping']);
   });
 
+  it('As a dotli user away from the window, I click a system notification and the page comes forward and opens its link', () => {
+    // Given
+    grantSystem();
+    looking = false;
+    showNotification({ label: 'Ping', text: 'Open me', deeplink: 'https://example.com/item' });
+
+    // When
+    shown[0]?.onclick?.();
+
+    // Then
+    expect(pageCalls).toEqual(['focus', 'open https://example.com/item']);
+  });
+
   it('As a dotli user away from the window with system notifications blocked, I get a notification and find it still in the page', async () => {
     // Given
     toasts.show();
     installSystemAt('denied');
-    focused = false;
+    looking = false;
 
     // When
     showNotification({ label: 'Ping', text: 'Kept' });
-    await timers.advance(NOTIFICATION_DISMISS_MS);
+    await timers.advance(DEFAULT_DISMISS_MS);
 
     // Then
     expect(readLeaving()).toEqual([false]);
   });
 
-  it('As a dotli user away from the window in a browser with no system notifications, I get a notification and find it still in the page', async () => {
+  it('As a dotli user away from the window on a browser that grants system notifications but cannot build one, I get a notification and find it still in the page, and the failure is reported', async () => {
     // Given
+    const reports = recordReports({ onFinished: onTestFinished });
     toasts.show();
-    focused = false;
+    looking = false;
+    // Chrome on Android grants the permission but builds a notification only through a service worker.
+    function buildIllegally(): never {
+      throw new TypeError('Illegal constructor');
+    }
+    // The fake carries only the members the notifier reads, not the whole Notification API.
+    system = Object.assign(buildIllegally, { permission: 'granted' }) as unknown as SystemNotifications;
 
     // When
     showNotification({ label: 'Ping', text: 'Kept' });
-    await timers.advance(NOTIFICATION_DISMISS_MS);
+    await timers.advance(DEFAULT_DISMISS_MS);
 
     // Then
     expect(readLeaving()).toEqual([false]);
+    expect(reports.expected).toMatchObject([{ step: 'system_notification' }]);
   });
 
   it('As a dotli user away from the window, I get a notification the system showed and it leaves the page after the default delay', async () => {
     // Given
     toasts.show();
     grantSystem();
-    focused = false;
+    looking = false;
 
     // When
     showNotification({ label: 'Ping', text: 'Shown' });
-    await timers.advance(NOTIFICATION_DISMISS_MS);
+    await timers.advance(DEFAULT_DISMISS_MS);
 
     // Then
     expect(readLeaving()).toEqual([true]);
   });
-
-  it('As a dotli user, I get notifications and each keeps the icon it was given and carries none otherwise', () => {
-    // Given
-    const ownIcon = (): null => null;
-
-    // When
-    showNotification({ label: 'Plain', text: 'Body' });
-    showNotification({ label: 'Failed', text: 'Body', tone: 'err' });
-    showNotification({ label: 'Blocked', text: 'Body', tone: 'idle' });
-    showNotification({ label: 'Own', text: 'Body', tone: 'err', icon: ownIcon });
-
-    // Then
-    const items = toasts.store.get().items;
-    expect(items.map(toast => toast.tone)).toEqual(['info', 'err', 'idle', 'err']);
-    expect(items.map(toast => toast.icon)).toEqual([undefined, undefined, undefined, ownIcon]);
-  });
 });
 
-/** A system notification API whose permission stands at `permission`, recording what it shows and closes. */
+/**
+ * A system notification API whose permission stands at `permission`, recording what it shows and closes.
+ */
 function installSystemAt(permission: NotificationPermission): { title: string; body: string | undefined }[] {
   const created: { title: string; body: string | undefined }[] = [];
   class FakeNotification {
     static permission = permission;
-    static requestPermission = vi.fn(() => Promise.resolve(permission));
     onclick: (() => void) | null = null;
     readonly title: string;
     constructor(title: string, options?: { body?: string }) {
       this.title = title;
       created.push({ title, body: options?.body });
+      shown.push(this);
     }
     close(): void {
       closed.push(this.title);
