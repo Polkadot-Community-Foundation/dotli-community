@@ -88,7 +88,7 @@ export const BUILTIN_NETWORK_SERVICES: Record<Network, ServicesConfig> = {
       TLD: 'testnet',
     },
   },
-  devnet: {
+  'pcf-devnet': {
     label: 'Polkadot Products Devnet',
     description: 'Public products testnet (dev-dot.li gateway)',
     // truapi-provider's catalog carries the Paseo relay but only the Paseo Next

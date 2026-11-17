@@ -197,13 +197,13 @@ describe('validateSandboxParams: resolution id', () => {
   });
 });
 
-describe('devnet is a valid network', () => {
-  // VALID_NETWORKS must include devnet, or every dev-dot.li build fails at startup.
-  it('As dev-dot.li, when the host propagates network=devnet, the sandbox accepts it', () => {
-    const search = buildSearch({ [SANDBOX_CONTRACT_PARAMS.network]: 'devnet' });
+describe('pcf-devnet is a valid network', () => {
+  // VALID_NETWORKS must include pcf-devnet, or every dev-dot.li build fails at startup.
+  it('As dev-dot.li, when the host propagates network=pcf-devnet, the sandbox accepts it', () => {
+    const search = buildSearch({ [SANDBOX_CONTRACT_PARAMS.network]: 'pcf-devnet' });
 
     const params = validateSandboxParams(search);
 
-    expect(params.network).toBe('devnet');
+    expect(params.network).toBe('pcf-devnet');
   });
 });

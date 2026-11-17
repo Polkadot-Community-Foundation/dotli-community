@@ -18,19 +18,19 @@ function useNetwork(network: Network, backend?: Backend): void {
 
 describe('devnet transport', () => {
   it('As a devnet host, I report that the light client cannot serve the network', () => {
-    useNetwork('devnet');
+    useNetwork('pcf-devnet');
 
     expect(activeNetworkSupportsLightClient()).toBe(false);
   });
 
   it('As a devnet host, I default to the trusted providers', () => {
-    useNetwork('devnet');
+    useNetwork('pcf-devnet');
 
     expect(getDefaultBackend()).toBe('rpc-gateway');
   });
 
   it('As a devnet host, I serve the trusted providers over a stored light-client choice without erasing it', () => {
-    useNetwork('devnet', 'smoldot-direct');
+    useNetwork('pcf-devnet', 'smoldot-direct');
 
     expect(getBackend()).toBe('rpc-gateway');
     expect(activeSettings()?.backend).toBe('smoldot-direct');
