@@ -10,12 +10,13 @@ import {
   TransportUnsupportedProtocolVersionError,
   domain,
   hostFailure,
-  reasonParts,
+  parseReason,
   type AnyMethod,
   type CallError,
 } from '@dotli/transport';
-import { toError } from '@dotli/shared';
-import { callName, type CallName } from './method-policy.js';
+import { isApiStoppedError } from '@dotli/resolver';
+import { isChainHaltedRpcError, toError } from '@dotli/shared';
+import { getCallName, type CallName } from './methodPolicy.js';
 import type { DomainFailure, FrameFailure, RemoteFailure } from './schema.js';
 
 export class ProtocolFatalError extends Error {
@@ -90,6 +91,8 @@ export const PROTOCOL_ERRORS = {
   FRAME_RESET: 'Protocol frame state reset before ready signal',
   /** Nothing said how to build the frame, as on a page that never configures it. */
   FRAME_UNCONFIGURED: 'Protocol frame was never configured',
+  /** The frame did not answer the host's heartbeat in time, or its transport closed while it was asked. */
+  FRAME_UNRESPONSIVE: 'Protocol frame stopped answering',
 } as const;
 
 /** The error a transport closed with, under the protocol's own class when it is one of the transport's. */
@@ -134,7 +137,7 @@ export function callFailure(error: CallError<DomainFailure>, method: CallName, s
       return domainFailure(error.value, method);
     case 'HostFailure': {
       // A handler's failure crosses with its name, so its name survives.
-      const { name, message } = reasonParts(error.value.reason);
+      const { name, message } = parseReason(error.value.reason);
       return new ProtocolRequestError(message, name, method);
     }
     case 'Cancelled':
@@ -154,8 +157,8 @@ export function callFailure(error: CallError<DomainFailure>, method: CallName, s
  * The failure of a call of `method` as the error the protocol's own code sees, for a frame that waits on or relays
  * another frame's calls.
  */
-export function failureOf<E extends DomainFailure>(method: AnyMethod, error: CallError<E>): Error {
-  return callFailure(error, callName(method));
+export function getFailure<E extends DomainFailure>(method: AnyMethod, error: CallError<E>): Error {
+  return callFailure(error, getCallName(method));
 }
 
 /**
@@ -163,7 +166,7 @@ export function failureOf<E extends DomainFailure>(method: AnyMethod, error: Cal
  * the host tells them apart, and as the error's own failure for any other. A transport's own closing error counts as
  * the protocol's.
  */
-export function frameStatusEnd(closing: Error): CallError<FrameFailure> {
+export function toFrameStatusEnd(closing: Error): CallError<FrameFailure> {
   const error = fromTransportError(closing);
   if (error instanceof ProtocolFatalError) {
     return domain({ tag: 'fatal', value: error.message });
@@ -182,14 +185,15 @@ export function frameStatusEnd(closing: Error): CallError<FrameFailure> {
 
 /**
  * How a resolver or chain error ends a call: typed for the two the host's error screen tells apart by name, and as the
- * handler's own failure for any other.
+ * handler's own failure for any other. A read its chain halted under crosses as a stopped chain, with its message.
  */
-export function remoteEnd(error: Error): CallError<RemoteFailure> {
+export function toRemoteEnd(error: Error): CallError<RemoteFailure> {
+  if (isApiStoppedError(error) || isChainHaltedRpcError(error)) {
+    return domain({ tag: 'apiStopped', value: error.message });
+  }
   switch (error.name) {
     case 'NetworkSyncTimeoutError':
       return domain({ tag: 'syncTimeout', value: error.message });
-    case 'ApiStoppedError':
-      return domain({ tag: 'apiStopped', value: error.message });
     default:
       return hostFailure(error);
   }

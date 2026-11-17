@@ -1,18 +1,18 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createSignal, For } from 'solid-js';
+import { createEffect, createSignal, For, onSettled } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import s from './SegmentedControl.module.css';
 
-export interface SegmentOption<V extends string> {
+export type SegmentOption<V extends string> = {
   value: V;
   label: string;
   icon?: JSX.Element;
   testId?: string;
-}
+};
 
-export interface SegmentedControlProps<V extends string> {
+export type SegmentedControlProps<V extends string> = {
   /** The group's accessible name. */
   label: string;
   options: readonly SegmentOption<V>[];
@@ -27,6 +27,19 @@ export interface SegmentedControlProps<V extends string> {
   disabled?: boolean;
   class?: string | undefined;
   testId?: string;
+};
+
+type PillBox = { x: number; y: number; width: number; height: number };
+
+function pillStyle(box: PillBox | undefined): JSX.CSSProperties | undefined {
+  if (box === undefined) {
+    return undefined;
+  }
+  return {
+    transform: `translate(${String(box.x)}px, ${String(box.y)}px)`,
+    width: `${String(box.width)}px`,
+    height: `${String(box.height)}px`,
+  };
 }
 
 const FOCUS_KEYS: Readonly<Record<string, (index: number, count: number) => number>> = {
@@ -55,6 +68,34 @@ export function SegmentedControl<V extends string>(props: SegmentedControlProps<
   const buttonsOf = (group: HTMLElement): HTMLButtonElement[] =>
     Array.from(group.querySelectorAll<HTMLButtonElement>(':scope > button'));
 
+  let group: HTMLDivElement | undefined;
+  // The pill slides to the pressed option. Until it is placed, the pressed option paints its own fill.
+  const [pill, setPill] = createSignal<PillBox | undefined>(undefined, { ownedWrite: true });
+  // Layout offsets, not client rects, so a popover's opening transform never skews them.
+  const placePill = (): void => {
+    const pressed = group?.querySelector<HTMLButtonElement>(':scope > button[aria-pressed="true"]') ?? null;
+    // A hidden track, such as a closed popover's, measures zero.
+    if (pressed === null || pressed.offsetWidth === 0) {
+      setPill(undefined);
+      return;
+    }
+    setPill({ x: pressed.offsetLeft, y: pressed.offsetTop, width: pressed.offsetWidth, height: pressed.offsetHeight });
+  };
+  createEffect(() => props.options.findIndex(option => option.value === props.value), placePill);
+  onSettled(() => {
+    if (group === undefined || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const observer = new ResizeObserver(placePill);
+    observer.observe(group);
+    for (const button of buttonsOf(group)) {
+      observer.observe(button);
+    }
+    return () => {
+      observer.disconnect();
+    };
+  });
+
   const onFocusIn = (e: FocusEvent): void => {
     const index = buttonsOf(e.currentTarget as HTMLElement).indexOf(e.target as HTMLButtonElement);
     setFocused(index < 0 ? null : index);
@@ -79,6 +120,9 @@ export function SegmentedControl<V extends string>(props: SegmentedControlProps<
 
   return (
     <div
+      ref={el => {
+        group = el;
+      }}
       role="group"
       aria-label={props.label}
       class={[s['seg'], props.class]}
@@ -90,6 +134,12 @@ export function SegmentedControl<V extends string>(props: SegmentedControlProps<
       onFocusIn={onFocusIn}
       onFocusOut={onFocusOut}
     >
+      <span
+        class={s['pill']}
+        aria-hidden="true"
+        data-placed={pill() === undefined ? undefined : ''}
+        style={pillStyle(pill())}
+      />
       <For each={props.options}>
         {(option, index) => (
           <button

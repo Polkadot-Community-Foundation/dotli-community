@@ -25,7 +25,7 @@ certificates.
 
 ### Local machine
 
-- `make`, `ssh`, `rsync`, and Node 26 with npm 12+.
+- `make`, `ssh`, `rsync`, and Node 26.3+ with npm 11.16+.
 - SSH agent loaded with the key the remote accepts (`ssh-add`).
 - This repo checked out and on the branch/commit you want to deploy.
 
@@ -65,8 +65,8 @@ deploys do not use these: the GitHub Actions path reads `DEPLOY_HOST` / `DEPLOY_
    `--keep-until-expiring --expand` makes re-runs cheap.
 5. `provision-renewal`: enables `certbot.timer` for auto-renewal.
 6. `deploy`: ensures Node 24+ on the remote (`provision-node`), rsyncs the repo to `$(REMOTE_BUILD_PATH)` on the box,
-   runs `npm ci && npm run build:prod` **on the remote** (the box is sized for the build; `VITE_NETWORKS` is injected
-   per-env via `VITE_NETWORKS_<env>`), then installs the three `dist/` outputs into the env's web root.
+   runs `npm ci && npm run build:prod` **on the remote** (the box is sized for the build, and `VITE_NETWORKS` is
+   injected per-env via `VITE_NETWORKS_<env>`), then installs the three `dist/` outputs into the env's web root.
 7. `deploy-nginx`: renders `nginx/nginx.conf.template` for the env (envsubst) and installs it plus `nginx/snippets/`
    into `/etc/nginx/`, runs `nginx -t`, and reloads nginx. Preview the result with `make render-nginx ENV=<env>`.
 
@@ -84,7 +84,7 @@ On success the last line is `Provisioning complete for ENV=<env>.` and the site 
 
 ## Re-runs and follow-ups
 
-- `make provision` is idempotent; re-run it to pick up nginx config or build changes.
+- `make provision` is idempotent. Re-run it to pick up nginx config or build changes.
 - For code-only redeployments (no infra changes), `make deploy ENV=<env>` is enough.
 - For nginx-only updates, `make deploy-nginx ENV=<env>`, or run the **Deploy nginx** workflow from the Actions tab: pick
   the environment and it runs the same target against that environment's box, behind that environment's protection
@@ -103,17 +103,24 @@ curl -fsS https://paseo.li/host_version.json
 ```
 
 `hash` is a SHA-256 of the build's output, so it changes whenever the bundle's contents do. It is written by the build
-(`config/vite/src/build-info-plugin.ts`) and served `no-cache` (`nginx/snippets/dotli-host-version.conf`). The three
+(`config/vite/src/buildInfoPlugin.ts`) and served `no-cache` (`nginx/snippets/dotli-host-version.conf`). The three
 builds are rsynced separately, so check each origin to cover all of them:
 
 | URL                                      | Build    |
 | ---------------------------------------- | -------- |
 | `https://<base>/host_version.json`       | host     |
-| `https://host.<base>/host_version.json`  | protocol |
+| `https://<base>/p/host_version.json`     | protocol |
 | `https://x.app.<base>/host_version.json` | app      |
+
+The protocol build is served under `/p/` on `<base>`, from the same folder as before, so the rsync layout is unchanged.
+`host.<base>` no longer serves it, so `host` is an ordinary product label.
 
 ## dot.li and dev-dot.li (`ENV=summit`, `ENV=devnet`)
 
 These gateways are deployed manually, not by CI. Set `REMOTE_SUMMIT` in `deploy.env` to the box's SSH target, then run
 `make deploy ENV=<env>` and `make deploy-nginx ENV=<env>`. The on-box `build:prod` gets `VITE_NETWORKS` from
 `VITE_NETWORKS_<env>` in the Makefile, so no local `.env` is needed.
+
+Both serve the devnet, so every target that changes them runs only from a clean checkout of the `devnet` branch that
+matches `origin/devnet`. A successful `make deploy` tags the deployed commit `devnet/<YYYY-MM-DD>.<n>` and pushes the
+tag. To roll back, revert on `devnet` by PR and deploy again. Any other `ENV` is refused.

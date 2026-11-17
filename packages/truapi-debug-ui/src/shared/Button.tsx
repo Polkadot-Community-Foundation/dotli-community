@@ -1,7 +1,7 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The panel's action button, in the header, Diagnostics and Wallet.
+// The panel's action button.
 
 import type { JSX } from '@solidjs/web';
 import s from './Button.module.css';
@@ -13,6 +13,8 @@ export function Button(props: {
   icon?: boolean;
   /** A toggle that is on, such as Pause while paused. */
   active?: boolean;
+  /** `danger` for an action that ends something, such as signing out. */
+  tone?: 'danger' | undefined;
   /** For a button that shows or hides a region, whether it is shown. */
   expanded?: boolean | undefined;
   title?: string | undefined;
@@ -29,7 +31,8 @@ export function Button(props: {
       type={props.type ?? 'button'}
       data-testid={props.testId}
       data-active={props.active === true ? '' : undefined}
-      aria-expanded={props.expanded === undefined ? undefined : props.expanded ? 'true' : 'false'}
+      data-tone={props.tone}
+      aria-expanded={toAriaExpanded(props.expanded)}
       title={props.title}
       aria-label={props.label}
       disabled={props.disabled}
@@ -41,4 +44,11 @@ export function Button(props: {
       {props.children}
     </button>
   );
+}
+
+function toAriaExpanded(expanded: boolean | undefined): 'true' | 'false' | undefined {
+  if (expanded === undefined) {
+    return undefined;
+  }
+  return expanded ? 'true' : 'false';
 }

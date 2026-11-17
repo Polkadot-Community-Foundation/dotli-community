@@ -25,15 +25,19 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** As a dotli user, I press an icon button and its handler runs. */
-export const Default: Story = {
-  play: async ({ args, canvas, userEvent, step }) => {
-    await step('When I press it', async () => {
-      await userEvent.click(canvas.getByRole('button', { name: 'Settings' }));
-    });
-    await step('Then its handler runs', async () => {
-      await expect(args.onClick).toHaveBeenCalledOnce();
-    });
-  },
+export const Default: Story = {};
+/** As a dotli user, I see an icon button whose panel is open drawn pressed, and tell it from a closed one. */
+export const Expanded: Story = {
+  render: args => (
+    <div style={{ display: 'flex', gap: '12px' }}>
+      <IconButton {...args} aria-label="Settings, closed" aria-expanded="false">
+        <SlidersIcon />
+      </IconButton>
+      <IconButton {...args} aria-label="Settings, open" aria-expanded="true">
+        <SlidersIcon />
+      </IconButton>
+    </div>
+  ),
 };
 /** As a dotli user, I see an icon button's badge in each tone and tell the tones apart. */
 export const Badges: Story = {

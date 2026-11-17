@@ -1,23 +1,30 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-export { SANDBOX_CONTRACT_PARAMS, SANDBOX_SCHEMA_VERSION } from './contract-params.js';
-export { validateSandboxParams } from './host-sandbox-contract.js';
+export { removeContractParams, SANDBOX_CONTRACT_PARAMS, SANDBOX_SCHEMA_VERSION } from './contractParams.js';
+export { validateSandboxParams } from './validateSandboxParams.js';
+export { SandboxContractError } from './sandboxContractError.js';
+export type {
+  SandboxChannel,
+  SandboxMessageOf,
+  SandboxMessageType,
+  SandboxSender,
+  StartedSandboxChannel,
+} from './startSandboxChannel.js';
+export { startSandboxChannel } from './startSandboxChannel.js';
+export type {
+  ApiViolationMessage,
+  BitswapResultMessage,
+  HostToSandboxMessage,
+  SandboxLoadOutcome,
+  SandboxNavigateMessage,
+  SandboxRecoverAcceptedMessage,
+  SandboxToHostMessage,
+} from './sandboxMessages.js';
 export {
-  startSandboxChannel,
-  type SandboxChannel,
-  type SandboxChannelOptions,
-  type SandboxMessageOf,
-  type SandboxMessageType,
-  type SandboxSender,
-  type StartedSandboxChannel,
-} from './sandbox-channel.js';
-export {
+  isLoadedOutcome,
   parseApiViolationMessage,
   parseHostToSandboxMessage,
+  parseRecoverAcceptedMessage,
   postToHost,
-  type ApiViolationMessage,
-  type BitswapResultMessage,
-  type HostToSandboxMessage,
-  type SandboxToHostMessage,
-} from './sandbox-messages.js';
+} from './sandboxMessages.js';

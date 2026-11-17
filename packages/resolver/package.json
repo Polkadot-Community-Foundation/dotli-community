@@ -2,7 +2,7 @@
   "name": "@dotli/resolver",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.11.4",
+  "version": "0.14.0",
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -23,12 +23,13 @@
     "@dotli/config": "*",
     "@dotli/metrics": "*",
     "@dotli/shared": "*",
-    "@ensdomains/content-hash": "^3.1.1",
-    "@noble/hashes": "^2.4.0",
-    "@polkadot-api/json-rpc-provider": "^0.2.0",
+    "@ensdomains/content-hash": "3.2.0",
+    "@noble/hashes": "2.4.0",
+    "@polkadot-api/json-rpc-provider": "0.2.0",
     "@polkadot-api/substrate-bindings": "0.21.2",
     "@polkadot-api/substrate-client": "0.7.0",
     "@polkadot-api/utils": "0.4.0",
-    "polkadot-api": "^3.2.2"
+    "nanostores": "1.5.5",
+    "polkadot-api": "3.3.0"
   }
 }

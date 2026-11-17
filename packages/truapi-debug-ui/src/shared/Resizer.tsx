@@ -7,44 +7,47 @@
 import { onCleanup, onSettled } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { createDrags } from '@dotli/ui';
-import { keyDelta, type DividerSize } from '../resize-clamp.js';
+import { getKeyDelta, type Orientation } from '../getKeyDelta.js';
+import type { DividerSize } from '../stepPanelSize.js';
 import s from './Resizer.module.css';
 
 export function Resizer(props: {
   testId: string;
   /** Which way the divider runs. A `horizontal` one resizes up and down. */
-  orientation: 'horizontal' | 'vertical';
+  orientation: Orientation;
   /** What moving it resizes, for assistive tech. */
   label: string;
   /** Hidden from view and from the pointer, but still holding its place in the layout. */
   disabled?: boolean;
   hidden?: boolean;
+  /** Draws its line at rest too, for a divider between two panes. Otherwise the line shows only while in use. */
+  divider?: boolean;
   title?: string;
   class?: string | undefined;
   /** Before the first move, for anything the moves need measured once. */
-  onDragStart?: (el: HTMLElement) => void;
-  onDrag: (e: PointerEvent) => void;
+  onDragStart?: (element: HTMLElement) => void;
+  onDrag: (event: PointerEvent) => void;
   /** A key press, `delta` px along the screen axis, right or down positive. */
-  onKeyMove: (delta: number, el: HTMLElement) => void;
+  onKeyMove: (delta: number, element: HTMLElement) => void;
   /** The pane's size and bounds now. Read on mount, on focus and after a move, never during a drag. */
-  measure: (el: HTMLElement) => DividerSize;
+  measure: (element: HTMLElement) => DividerSize;
   /** On double-click, back to the default size. */
   onReset?: () => void;
 }): JSX.Element {
-  let el: HTMLDivElement | undefined;
+  let element: HTMLDivElement | undefined;
   const drags = createDrags();
   onCleanup(drags.stopAll);
 
   // Written straight to the node, as the drags write the panel, so a move costs no render.
-  const report = (): void => {
-    if (el === undefined) {
+  function report(): void {
+    if (element === undefined) {
       return;
     }
-    const size = props.measure(el);
-    el.setAttribute('aria-valuenow', String(Math.round(size.now)));
-    el.setAttribute('aria-valuemin', String(Math.round(size.min)));
-    el.setAttribute('aria-valuemax', String(Math.round(size.max)));
-  };
+    const size = props.measure(element);
+    element.setAttribute('aria-valuenow', String(Math.round(size.now)));
+    element.setAttribute('aria-valuemin', String(Math.round(size.min)));
+    element.setAttribute('aria-valuemax', String(Math.round(size.max)));
+  }
   onSettled(report);
 
   return (
@@ -53,6 +56,7 @@ export function Resizer(props: {
       data-testid={props.testId}
       data-orientation={props.orientation}
       data-disabled={props.disabled === true ? '' : undefined}
+      data-divider={props.divider === true ? '' : undefined}
       hidden={props.hidden}
       role="separator"
       aria-orientation={props.orientation}
@@ -60,31 +64,40 @@ export function Resizer(props: {
       tabindex="0"
       title={props.title}
       ref={node => {
-        el = node;
+        element = node;
       }}
       onFocus={report}
-      onKeyDown={e => {
-        const delta = keyDelta(e.key, props.orientation, e.shiftKey, e.altKey || e.ctrlKey || e.metaKey);
-        const target = el;
+      onKeyDown={event => {
+        const delta = getKeyDelta({
+          key: event.key,
+          orientation: props.orientation,
+          large: event.shiftKey,
+          modified: event.altKey || event.ctrlKey || event.metaKey,
+        });
+        const target = element;
         if (delta === null || props.disabled === true || target === undefined) {
           return;
         }
-        e.preventDefault();
+        event.preventDefault();
         props.onKeyMove(delta, target);
         report();
       }}
-      onPointerDown={e => {
-        const target = el;
+      onPointerDown={event => {
+        const target = element;
         if (props.disabled === true || target === undefined) {
           return;
         }
         props.onDragStart?.(target);
         target.setAttribute('data-dragging', '');
-        drags.start(target, e, {
-          move: props.onDrag,
-          end: () => {
-            target.removeAttribute('data-dragging');
-            report();
+        drags.start({
+          target,
+          down: event,
+          handlers: {
+            move: props.onDrag,
+            end() {
+              target.removeAttribute('data-dragging');
+              report();
+            },
           },
         });
       }}

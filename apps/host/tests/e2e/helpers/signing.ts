@@ -2,29 +2,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { expect, type Page, type Frame, type Locator } from '@playwright/test';
-import { entryText } from './run-test.js';
+import { entryText } from './runTest.js';
 
 type PageLike = Page | Frame;
 
 /** The title of a host dialog, as the host draws it. */
 export type HostDialogTitle =
-  | 'Account Access'
-  | 'Identity Disclosure'
-  | 'Permission Request'
-  | 'Product Account'
-  | 'Resource Allocation'
-  | 'Sign Message'
-  | 'Sign Transaction'
-  | 'Submit Preimage';
+  | 'Account access'
+  | 'Identity disclosure'
+  | 'Permission request'
+  | 'Product account'
+  | 'Approve an allowance'
+  | 'Sign message'
+  | 'Sign transaction';
 
 /** The button that answers a host dialog. */
 export type HostAnswer = 'Always allow' | 'Allow' | 'Allow once' | 'Sign';
 
 /** A dialog the host is expected to show, and the button that answers it. */
-export interface HostDialog {
+export type HostDialog = {
   title: HostDialogTitle;
   answer: HostAnswer;
-}
+};
 
 /**
  * Answers each expected dialog in order, failing when one never shows. The button is looked up inside the dialog with
@@ -66,18 +65,18 @@ export async function answerHostDialogs(page: Page, dialogs: readonly HostDialog
 
 /**
  * Answers the dialog the core opens before it first shares the product's account. The product's own account asks
- * "Product Account", and another product's asks "Account Access", whose lasting grant keeps later reads quiet.
+ * "Product account", and another product's asks "Account access", whose lasting grant keeps later reads quiet.
  */
 export async function answerAccountDialog(page: Page, timeoutMs: number): Promise<void> {
-  const ownAccount = page.getByRole('dialog', { name: 'Product Account', exact: true });
-  const otherAccount = page.getByRole('dialog', { name: 'Account Access', exact: true });
+  const ownAccount = page.getByRole('dialog', { name: 'Product account', exact: true });
+  const otherAccount = page.getByRole('dialog', { name: 'Account access', exact: true });
   await expect(ownAccount.or(otherAccount), 'the host asked to share the product account').toBeVisible({
     timeout: timeoutMs,
   });
   const dialog: HostDialog =
     (await ownAccount.count()) > 0
-      ? { title: 'Product Account', answer: 'Allow' }
-      : { title: 'Account Access', answer: 'Always allow' };
+      ? { title: 'Product account', answer: 'Allow' }
+      : { title: 'Account access', answer: 'Always allow' };
   await answerHostDialogs(page, [dialog], timeoutMs);
 }
 

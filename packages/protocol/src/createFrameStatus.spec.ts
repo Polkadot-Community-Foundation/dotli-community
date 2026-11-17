@@ -1,0 +1,84 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { describe, expect, it } from 'vitest';
+import { domain, err, ok } from '@dotli/transport';
+import { ProtocolFatalError, ProtocolInitFailedError } from './errors.js';
+import { createFrameStatus, type FrameStatus, type FrameStatusEnd } from './createFrameStatus.js';
+
+const context = { origin: null, hello: { resolutionId: null } };
+
+/** A host subscribed to `status`, recording how many times it heard ready and each end. */
+function subscribe(status: FrameStatus): { readies: number; ends: FrameStatusEnd[] } {
+  const heard: { readies: number; ends: FrameStatusEnd[] } = { readies: 0, ends: [] };
+  status.handler(undefined, context, {
+    send: () => {
+      heard.readies += 1;
+    },
+    interrupt: end => {
+      heard.ends.push(end);
+    },
+  });
+  return heard;
+}
+
+describe('the frame status', () => {
+  it('As the host, I subscribe after my frame failed and hear the failure at once', () => {
+    // Given
+    const status = createFrameStatus();
+    status.fail(new ProtocolInitFailedError('Unknown protocol mode: "nope"'));
+
+    // When
+    const heard = subscribe(status);
+
+    // Then
+    expect(heard).toEqual({
+      readies: 0,
+      ends: [err(domain({ tag: 'initFailed', value: 'Unknown protocol mode: "nope"' }))],
+    });
+  });
+
+  it('As the host, I subscribe after my frame became ready and hear ready at once', () => {
+    // Given
+    const status = createFrameStatus();
+    status.markReady();
+
+    // When
+    const heard = subscribe(status);
+
+    // Then
+    expect(heard).toEqual({ readies: 1, ends: [] });
+  });
+
+  it('As the host, I wait while my frame boots and hear ready once it is', () => {
+    // Given
+    const status = createFrameStatus();
+    const heard = subscribe(status);
+
+    // When
+    status.markReady();
+    status.markReady();
+
+    // Then
+    expect(heard).toEqual({ readies: 1, ends: [] });
+  });
+
+  it("As the host, I hear my status end with the fatal once my frame's light client dies after ready, and a later failure is not heard", () => {
+    // Given
+    const status = createFrameStatus();
+    status.markReady();
+    const heard = subscribe(status);
+
+    // When
+    status.fail(new ProtocolFatalError('Light client died'));
+    status.fail(new ProtocolInitFailedError('too late'));
+    status.interrupt(ok());
+    status.markReady();
+    const late = subscribe(status);
+
+    // Then
+    const fatal = err(domain({ tag: 'fatal', value: 'Light client died' }));
+    expect(heard).toEqual({ readies: 1, ends: [fatal] });
+    expect(late.ends).toEqual([fatal]);
+  });
+});

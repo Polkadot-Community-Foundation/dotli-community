@@ -3,22 +3,22 @@
 
 // A host for the debug panel with no page behind it. Its stores start as a fresh page's, and a test sets them.
 
-import { createSyncStore, type ReadableStore, type SyncStore } from '@dotli/shared';
+import { atom, type ReadableAtom, type WritableAtom } from 'nanostores';
 import type { DebugPanelHost, DiagnosticsRow, DockInset, HostAuth, HostProduct, HostWalletMode } from './host.js';
 
-export interface FakeDebugPanelHost {
+export type FakeDebugPanelHost = {
   host: DebugPanelHost;
-  product: SyncStore<HostProduct>;
-  auth: SyncStore<HostAuth>;
-  walletMode: SyncStore<HostWalletMode>;
-  topbarPresent: SyncStore<boolean>;
+  product: WritableAtom<HostProduct>;
+  auth: WritableAtom<HostAuth>;
+  walletMode: WritableAtom<HostWalletMode>;
+  topbarPresent: WritableAtom<boolean>;
   /** The last room the panel took from the product frame. */
-  dockInset: ReadableStore<DockInset>;
+  dockInset: ReadableAtom<DockInset>;
   /** Every room the panel reported, oldest first. */
   dockReports: readonly DockInset[];
   /** How often the panel asked to leave debug mode. */
   leaveRequests: () => number;
-}
+};
 
 const ROWS: DiagnosticsRow[] = [
   ['Site', 'app.dot.li', true],
@@ -27,40 +27,44 @@ const ROWS: DiagnosticsRow[] = [
 
 /** `parts` replace the host's own, such as a recording wallet switch. */
 export function fakeDebugPanelHost(parts: Partial<DebugPanelHost> = {}): FakeDebugPanelHost {
-  const product = createSyncStore<HostProduct>('fakeHostProduct', { status: 'none' });
-  const auth = createSyncStore<HostAuth>('fakeHostAuth', { tag: 'Restoring' });
-  const walletMode = createSyncStore<HostWalletMode>('fakeHostWalletMode', { mode: 'app', failure: null });
-  const topbarPresent = createSyncStore('fakeHostTopbarPresent', false);
-  const dockInset = createSyncStore<DockInset>('fakeHostDockInset', { right: 0, bottom: 0 });
+  const product = atom<HostProduct>({ status: 'none' });
+  const auth = atom<HostAuth>({ tag: 'Restoring' });
+  const walletMode = atom<HostWalletMode>({ mode: 'app', failure: null });
+  const topbarPresent = atom(false);
+  const dockInset = atom<DockInset>({ right: 0, bottom: 0 });
   const dockReports: DockInset[] = [];
   let leaves = 0;
   const host: DebugPanelHost = {
     product,
     auth,
     walletMode,
-    walletSwitch: {
-      useLocalWallet: () => Promise.resolve('reloading'),
-      usePolkadotApp: () => Promise.resolve('reloading'),
-    },
-    phraseToEntropy: () => null,
+    walletSwitch: { importPhrase: () => undefined, usePolkadotApp: () => undefined },
     diagnostics: {
-      rows: () => ROWS.map((row): DiagnosticsRow => [...row]),
-      lightClientVersion: () => '0.3.1',
-      packages: () => ({ polkadotApi: [], parityTruapi: [] }),
-      report: rows => Promise.resolve(rows.map(([label, value]) => `${label}: ${value}`).join('\n')),
+      snapshot: () => ({
+        rows: ROWS.map((row): DiagnosticsRow => [...row]),
+        productLabel: null,
+        lightClientVersion: '0.3.1',
+        polkadotApi: [],
+        parityTruapi: [],
+      }),
+      report: ({ rows }) => Promise.resolve(rows.map(([label, value]) => `${label}: ${value}`).join('\n')),
       openIssue: () => undefined,
     },
     archive: () => Promise.resolve({}),
     contentInsets: { top: '0px', bottom: '0px' },
-    topbarPresent: topbarPresent.get,
-    reportDockInset: inset => {
-      dockReports.push(inset);
-      dockInset.set(inset);
-    },
-    leaveDebugMode: () => {
-      leaves += 1;
-    },
+    topbarPresent: () => topbarPresent.get(),
+    reportDockInset,
+    leaveDebugMode,
     ...parts,
   };
   return { host, product, auth, walletMode, topbarPresent, dockInset, dockReports, leaveRequests: () => leaves };
+
+  function reportDockInset(inset: DockInset): void {
+    dockReports.push(inset);
+    dockInset.set(inset);
+  }
+
+  function leaveDebugMode(): void {
+    leaves += 1;
+  }
 }

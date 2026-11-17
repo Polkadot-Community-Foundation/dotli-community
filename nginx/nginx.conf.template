@@ -1,7 +1,7 @@
 # ${DOMAIN}: DO NOT EDIT THE INSTALLED COPY. Rendered per env by `make deploy-nginx` with envsubst.
 # ${RL} and ${SENTRY} are "" to enable their lines or "#" to comment them out. ${RL} is on for the production
 # domains, ${SENTRY} when SENTRY_DSN is set.
-#   host.${DOMAIN}    protocol build
+#   ${DOMAIN}         host build, and the protocol build under /p/
 #   *.${DOMAIN}       host build
 #   *.app.${DOMAIN}   app build
 
@@ -22,7 +22,7 @@ ${RL}limit_req_zone $${ZONE}_assets_key zone=${ZONE}_assets:10m rate=64r/s;
 
 server {
     listen 80;
-    server_name ${DOMAIN} *.${DOMAIN} host.${DOMAIN} *.app.${DOMAIN};
+    server_name ${DOMAIN} *.${DOMAIN} *.app.${DOMAIN};
     return 301 https://$host$request_uri;
 }
 
@@ -48,13 +48,21 @@ server {
     ${SENTRY}set $sentry_project "${SENTRY_PROJECT}";
     ${SENTRY}include /etc/nginx/snippets/dotli-sentry-tunnel.conf;
 
+    set $csp_ancestors "${DOMAIN} *.${DOMAIN} *.app.${DOMAIN} revx.dev stg.revx.dev http://localhost:*";
+    set $protocol_root "${WEBROOT}/protocol";
+    include /etc/nginx/snippets/dotli-protocol-frame.conf;
+    include /etc/nginx/snippets/dotli-session-page.conf;
+    include /etc/nginx/snippets/dotli-session-file.conf;
+
     # The landing page. Every other path gets the shell, which opens the product `/<label>` names and sends a URL with no
     # product back here.
     location = / {
         try_files /landing.html =404;
     }
 
+    # Revalidated on each load, so a reload never runs a stale shell that names removed chunks.
     location = /__preview {
+        expires -1;
         set $csp_ancestors "revx.dev stg.revx.dev http://localhost:*";
         include /etc/nginx/snippets/dotli-headers-iframeable.conf;
         try_files /index.html =404;
@@ -65,7 +73,9 @@ server {
 
     include /etc/nginx/snippets/dotli-host-version.conf;
 
+    # Revalidated on each load, so a reload never runs a stale shell that names removed chunks.
     location / {
+        expires -1;
         try_files $uri $uri/ /index.html;
     }
 }
@@ -104,40 +114,6 @@ server {
 
 server {
     listen 443 ssl http2;
-    server_name host.${DOMAIN};
-
-    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-    include /etc/nginx/snippets/dotli-ssl.conf;
-
-    ${RL}limit_req zone=${ZONE} burst=30 nodelay;
-    ${RL}limit_req zone=${ZONE}_assets burst=512 nodelay;
-    ${RL}limit_req_status 429;
-    set $csp_ancestors "${DOMAIN} *.${DOMAIN} *.app.${DOMAIN} revx.dev stg.revx.dev http://localhost:*";
-    include /etc/nginx/snippets/dotli-headers-iframeable.conf;
-    include /etc/nginx/snippets/dotli-precompressed.conf;
-
-    root ${WEBROOT}/protocol;
-    index index.html;
-
-    include /etc/nginx/snippets/dotli-assets-iframeable.conf;
-
-    ${SENTRY}set $sentry_ingest  "${SENTRY_INGEST}";
-    ${SENTRY}set $sentry_project "${SENTRY_PROJECT}";
-    ${SENTRY}include /etc/nginx/snippets/dotli-sentry-tunnel.conf;
-
-    include /etc/nginx/snippets/dotli-host-version.conf;
-
-    # Revalidated, so a deploy reaches every shell at once. A cached older frame never sends `listening` and fails.
-    # `expires` rather than add_header, which would drop the server block's headers here.
-    location / {
-        expires -1;
-        try_files $uri /index.html;
-    }
-}
-
-server {
-    listen 443 ssl http2;
     server_name *.${DOMAIN};
 
     ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
@@ -154,6 +130,7 @@ server {
 
     include /etc/nginx/snippets/dotli-assets-host.conf;
     include /etc/nginx/snippets/dotli-sw-host.conf;
+    include /etc/nginx/snippets/dotli-session-file.conf;
 
     ${SENTRY}set $sentry_ingest  "${SENTRY_INGEST}";
     ${SENTRY}set $sentry_project "${SENTRY_PROJECT}";
@@ -161,7 +138,9 @@ server {
 
     include /etc/nginx/snippets/dotli-host-version.conf;
 
+    # Revalidated on each load, so a reload never runs a stale shell that names removed chunks.
     location / {
+        expires -1;
         try_files $uri /index.html;
     }
 }

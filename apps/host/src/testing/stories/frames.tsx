@@ -5,10 +5,10 @@ import type { JSX } from '@solidjs/web';
 import type { SolidRenderer } from 'storybook-solidjs-vite';
 import type { StoryContext } from 'storybook/internal/types';
 import { expect, waitFor } from 'storybook/test';
-import { reachable, TopbarFrame } from './topbar-frame.js';
+import { reachable, TopbarFrame } from './topbarFrame.js';
 import { ActionGroup } from '@dotli/ui';
 import { byId, query } from '@dotli/ui/testing';
-import { TOPBAR_MORE } from '../../components/topbar/TopbarActions.js';
+import { TOPBAR_MORE } from '../../features/topbar/TopbarActions.js';
 
 /** The host bar with an action group `room` px wide, so the items that do not fit collapse into More. */
 export function GroupFrame(props: { room: number; children?: JSX.Element }): JSX.Element {

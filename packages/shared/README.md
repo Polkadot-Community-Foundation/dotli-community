@@ -1,71 +1,89 @@
 # `@dotli/shared`
 
-Small, framework-free helpers that every other package may use: logging, error serialization, the async task pool, the
-listener set, the sync store, the status cell and a few formatting helpers.
+## Overview
 
-## Responsibility
+Small helpers every package may use. Imports no UI framework.
 
-- Owns the primitives other layers build on: `createAsyncTaskPool`, `createListenerSet`, `createSyncStore`,
-  `createStatusCell`, `log`.
-- Owns generic helpers with no owner of their own: error copy, hex, byte sizes, timing, a timeout, abort, web storage
-  that never throws, the IndexedDB callbacks as promises and the wipe of an origin's stores.
-- Owns no page state, no dotNS rules, no metrics, no UI and no chain access. The log sink is bound from outside, and
-  listener errors are reported through callbacks the caller passes in.
+## Responsibilities
 
-## Design
-
-- One async task pool is the place for queueing, bounded concurrency, retries and abort. Callers name a pool and keep
-  their task idempotent instead of hand-rolling in-flight flags.
-- A module that waits takes `Timers`, the page's own by default, which read the globals at each call. A spec passes
-  `manualTimers` and moves time itself, so it fakes no globals.
-- The sync store imports no Solid. Notifications are synchronous, and every store registers a reset so tests can restore
-  all of them at once. It stays off Solid so boot-path code does not ship Solid's core.
-- A listener set delivers a value to every listener in order. A value emitted during delivery waits for the round in
-  progress, and a listener that throws is reported through a callback while the others still hear the value. Each owner
-  passes its own report.
-- IndexedDB's callbacks become promises in one helper: an open that rejects when an older tab blocks the upgrade, a
-  request, a transaction that resolves once it commits and rejects on an abort, and a delete that rejects when a
-  connection blocks it.
-- An origin wipe empties the databases, caches and service workers of one origin, each whatever happened to the one
-  before, and rejects naming every part it left behind. A browser that cannot list its databases fails that part.
-- Web storage that the browser blocks or that is full reads as empty and drops writes, in one adapter, so no module
-  wraps storage itself.
-- A pending-replies table pairs a request with the reply that carries its id. A settled id leaves the table, so a late
-  reply settles nothing, and a dead channel fails every open wait at once.
-- A lazy load runs one load at a time and keeps what it loaded for every later caller. A failed load rejects the caller
-  that ran it and is not kept, so the next caller loads again, and only the first failure is passed to the caller's
-  report hook.
-- A status cell is the status a layer publishes upward, over one listener set. Setting an equal value is ignored.
-- A timeout counts only time the page runs. A timer that fires seconds after it was due means the page was frozen, as a
-  backgrounded phone tab is, and the work with it, so the wait starts its budget again.
-- The logger writes to the console only in debug builds, read from the `VITE_APP_DEBUG` build flag at load so the first
-  log of every entry point honours it. Warn, error and event always reach the sink bound with `bindLogSink`.
-- Error helpers turn any thrown value into a string or a chain for wire formats, logs and Sentry.
+- **Owns** the primitives other layers build on:
+  - the async task pool
+  - the state machine
+  - the listener set
+  - the logger
+- **Owns** generic helpers with no other owner:
+  - errors
+  - encoding
+  - formatting
+  - timing
+  - safe web storage
+  - events
+  - IndexedDB
+  - the origin wipe
+- **Owns** wire constants several packages share, such as the halted chain marker.
+- **Does not own**:
+  - page state
+  - dotNS rules
+  - metrics
+  - UI
+  - chain access
+- The caller binds the log sink and reports listener errors.
 
 ## Public API
 
 ### `@dotli/shared`
 
-- Concurrency and state: `createAsyncTaskPool`, `createLazyLoad`, `createListenerSet`, `ListenerSet`,
-  `ListenerSetOptions`, `createSyncStore`, `StoreListenerError`, `registerStoreStateReset`, `shallowEqual`,
-  `createStatusCell`, `untilStatus` (a wait on a status cell until a verdict, which settles at once on the status there
-  is now and leaves through a signal), `toAbortError`, `createPendingReplies`, `PendingReplies`, `deferred` (a promise
-  with its resolve and reject).
-- Logging and errors: `log`, `bindLogSink`, `serializeError`, `fullErrorChain`, `errorName`, `errorMessage`, `toError`,
-  `named`, `endpointHost`, `gatewayUnreachable`.
-- Storage: `safeStorage`, `pageLocalStorage`, `pageSessionStorage`, `SafeStorage`.
-- IndexedDB: `openIdb`, `idbRequest`, `idbTransaction`, `deleteIdb`.
-- Origin wipe: `wipeOriginStores`, `deleteAllDatabases`, `OriginWipeError`, `OriginStores`, `OriginWipePart`.
-- Byte counts as people read them: `formatSize`, `formatRate`.
-- Encoding and timing: `toHex`, `fromHex`, `dur`, `elapsed`, `withTimeout`, `sleep`, `randomId`, `noop`, `Timers`,
-  `realTimers`.
+| Export                                                                                                           | What it does                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `createAsyncTaskPool`, `AsyncTaskPool`                                                                           | Named task pool.                                                                                          |
+| `createSharedRun`                                                                                                | One run shared by many callers.                                                                           |
+| `createStateMachine`, `nest`, `MachineTypes`, `HandlersOf`, `HandlerOf`, `StateHandlers`, `Transition`, `Update` | Serial transitions over one state, with side effects run after each, and nested lifecycles run inside it. |
+| `createLazyLoad`                                                                                                 | Loads once, retries on failure.                                                                           |
+| `createListenerSet`, `ListenerSet`                                                                               | Ordered listener delivery.                                                                                |
+| `createPendingReplies`, `PendingReplies`                                                                         | Pairs replies with requests.                                                                              |
+| `createDeferred`, `markHandled`, `toAbortError`                                                                  | Promise helpers.                                                                                          |
+| `waitForStatus`, `StatusSource`                                                                                  | Waits for a store's verdict.                                                                              |
+| `registerStoreStateReset`, `registerAtomReset`                                                                   | Test resets for stores.                                                                                   |
+| `isShallowEqual`, `isRecord`, `isStringArray`, `getKeys`, `Branded`                                              | Value checks and types.                                                                                   |
+| `log`, `LogLevel`, `bindLogSink`, `LogEntry`                                                                     | The logger and its sink.                                                                                  |
+| `serializeError`, `getErrorChain`, `getErrorName`, `getErrorMessage`, `toError`, `setErrorName`                  | Error reading and shaping.                                                                                |
+| `combineErrors`, `runEvery`                                                                                      | Several errors as one.                                                                                    |
+| `getEndpointHost`, `describeGatewayUnreachable`                                                                  | Endpoint copy for visitors.                                                                               |
+| `createSafeStorage`, `SafeStorage`, `ListableStorage`, `pageLocalStorage`, `pageSessionStorage`                  | Web storage that never throws.                                                                            |
+| `openIdb`, `IdbOpenBlockedError`, `waitForIdbRequest`, `runIdbTransaction`, `deleteIdb`                          | IndexedDB as promises.                                                                                    |
+| `wipeOriginStores`, `OriginWipeError`, `OriginStores`, `OriginWipePart`                                          | Wipes one origin's stores.                                                                                |
+| `listen`, `listenForDocumentVisible`, `listenForPageReturn`, `VisibilitySource`                                  | Event listeners that return stop.                                                                         |
+| `formatSize`, `formatRate`, `formatDuration`, `formatElapsed`                                                    | Human-readable numbers.                                                                                   |
+| `areBytesEqual`, `toHex`, `fromHex`, `hashBlake2b`                                                               | Bytes and hashing.                                                                                        |
+| `withTimeout`, `startActiveTimeout`, `sleep`, `Timers`, `realTimers`                                             | Timing.                                                                                                   |
+| `createRandomId`, `noop`                                                                                         | Small utilities.                                                                                          |
+| `CHAIN_HALTED_ERROR_DATA`, `isChainHaltedRpcError`                                                               | Halted chain marker.                                                                                      |
 
 ### `@dotli/shared/testing`
 
-Test-only helpers, apart from the main entry so no browser bundle reaches them.
+| Export                                                       | What it does                         |
+| ------------------------------------------------------------ | ------------------------------------ |
+| `resetAllStoresForTests`                                     | Runs every registered reset.         |
+| `createMemoryStorage`                                        | Storage in memory.                   |
+| `createManualTimers`, `ManualTimers`                         | Timers a spec moves by hand.         |
+| `createFakePage`, `FakePage`                                 | Fake document and window.            |
+| `recordLog`, `LogLine`                                       | Records log lines.                   |
+| `must`, `nth`, `catchError`, `catchRejection`, `readOutcome` | Assertion helpers.                   |
+| `waitForDom`                                                 | DOM wait, for functional tests only. |
 
-- `resetAllStoresForTests`, `memoryStorage`, `must`, `nth`, `manualTimers` (timers a spec moves by hand, which count the
-  timers still pending), `FakePage` (a page with a document and a window, each firing the events the browser fires on
-  it, `pagehide` included), `recordLog` with `LogLine` (what the shared log writes until a test ends, at one level if
-  asked).
-- `untilDom` waits on the page for functional tests. It reads the DOM, so only they call it.
+## Design
+
+- **Task pool:** the one place for async queues and concurrency limits. It is also the one place for retries and abort.
+- **State machine:** transitions run synchronously, one at a time. Each state handles the events it names and ignores
+  the rest. Effects a transition emits run in order after it. An event sent from inside a transition runs right after it
+  and its effects. An effect emitted to run after the drain waits until no event is queued, and an event it sends is
+  handled before it returns. Async work enters as a promise that resolves to its event. A lifecycle nested in a state,
+  such as one entry of a keyed set, is a value in that state. `nest` runs it through its own handlers. The state it
+  emits is stored back, or dropped when it leaves.
+- **Timing:** a deadline waits on active runtime. One the page was frozen past starts a whole span again on waking, and
+  a freeze that ends before its due time still counts. `withTimeout` races work against one.
+- **Safe storage:** blocked or full web storage reads as empty and drops writes. No module wraps storage itself.
+- **Logger:** prints to the console only in debug builds (`VITE_APP_DEBUG`). Warn, error and event always reach the
+  bound sink.
+- **Origin wipe:** tries every part and rejects naming the parts it left behind.
+- **Testing entry:** a separate entry, so no browser bundle reaches it.

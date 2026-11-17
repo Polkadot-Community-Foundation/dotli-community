@@ -9,40 +9,35 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import solid, { type Options as ViteSolidPluginOptions } from '@solidjs/vite-plugin';
 import type { AstroIntegration } from 'astro';
-import type { Plugin, PluginOption } from 'vite';
+import type { Plugin } from 'vite';
 import { crawlFrameworkPkgs } from 'vitefu';
-import { getContainerRenderer } from './container-renderer.ts';
+import { PACKAGE_NAME } from './packageName.ts';
 
-type Options = Pick<ViteSolidPluginOptions, 'include' | 'exclude' | 'compiler'>;
+type Params = Pick<ViteSolidPluginOptions, 'include' | 'exclude' | 'compiler'>;
 
-interface ManifestSource {
+type ManifestSource = {
+  /** The Astro command, which picks the live dev manifest or the one the client build left. */
   command: string;
   /** Where the client build writes its manifest, the static site's output folder. */
   clientDir: string;
+  /** The site's base path, which prefixes the manifest's asset URLs. */
   base: string;
-}
+};
 
-const PACKAGE = '@config/astro-solid';
+const VIRTUAL_MANIFEST_ID = 'virtual:astro-solid-manifest';
+const RESOLVED_VIRTUAL_MANIFEST_ID = '\0' + VIRTUAL_MANIFEST_ID;
 
-function getViteConfiguration(
-  { include, exclude, compiler }: Options,
-  solidNoExternal: string[],
-  manifestSource: ManifestSource,
-): { plugins: PluginOption[] } {
-  const plugins: PluginOption[] = [
-    solid({
-      ...(include === undefined ? {} : { include }),
-      ...(exclude === undefined ? {} : { exclude }),
-      ...(compiler === undefined ? {} : { compiler }),
-      ssr: true,
-    }),
-    configEnvironmentPlugin(solidNoExternal, manifestSource),
-  ];
+// Hands the manifest from the client build to prerendering in the same process. Astro deletes every `.vite` folder
+// right after write, so it cannot be read from disk later.
+const MANIFEST_REGISTRY_KEY = `${PACKAGE_NAME}:client-manifest`;
 
-  return { plugins };
-}
-
-export default function astroSolid(options: Options = {}): AstroIntegration {
+/**
+ * Returns the Astro integration that adds the Solid renderer and its Vite plugins.
+ *
+ * Its setup hook rejects when the project's Solid libraries cannot be listed, and a build fails when the client build
+ * leaves no manifest.
+ */
+export default function astroSolid(options: Params = {}): AstroIntegration {
   // Filled in at `astro:config:done`, before dev or build starts.
   const manifestSource: ManifestSource = {
     command: 'dev',
@@ -51,27 +46,36 @@ export default function astroSolid(options: Options = {}): AstroIntegration {
   };
 
   return {
-    name: PACKAGE,
+    name: PACKAGE_NAME,
     hooks: {
-      'astro:config:setup': async ({ command, config, addRenderer, updateConfig }) => {
+      async 'astro:config:setup'({ command, config, addRenderer, updateConfig }) {
         manifestSource.command = command;
         // Solid libraries must go through Vite outside the client, or Node resolves their `default` condition to
         // browser-only code that crashes prerendering.
         const solidPackages = await crawlFrameworkPkgs({
           root: fileURLToPath(config.root),
           isBuild: false,
-          isFrameworkPkgByJson(pkgJson: { peerDependencies?: Record<string, string> }) {
-            const peers = pkgJson.peerDependencies ?? {};
+          isFrameworkPkgByJson(packageJson: { peerDependencies?: Record<string, string> }) {
+            const peers = packageJson.peerDependencies ?? {};
             return 'solid-js' in peers || '@solidjs/web' in peers;
           },
         });
 
-        addRenderer(getContainerRenderer());
+        addRenderer({
+          name: PACKAGE_NAME,
+          clientEntrypoint: `${PACKAGE_NAME}/client.js`,
+          serverEntrypoint: `${PACKAGE_NAME}/server.js`,
+        });
         updateConfig({
-          vite: getViteConfiguration(options, solidPackages.ssr.noExternal, manifestSource),
+          vite: {
+            plugins: [
+              solid({ ...options, ssr: true }),
+              createConfigEnvironmentPlugin(solidPackages.ssr.noExternal, manifestSource),
+            ],
+          },
         });
       },
-      'astro:config:done': ({ config }) => {
+      'astro:config:done'({ config }) {
         // The static build writes the client, and its manifest, to the site's output folder.
         manifestSource.clientDir = fileURLToPath(config.outDir);
         manifestSource.base = config.base;
@@ -80,37 +84,30 @@ export default function astroSolid(options: Options = {}): AstroIntegration {
   };
 }
 
-const VIRTUAL_MANIFEST_ID = 'virtual:astro-solid-manifest';
-const RESOLVED_VIRTUAL_MANIFEST_ID = '\0' + VIRTUAL_MANIFEST_ID;
-
-// Hands the manifest from the client build to prerendering in the same process. Astro deletes every `.vite` folder
-// right after write, so it cannot be read from disk later.
-const MANIFEST_REGISTRY_KEY = `${PACKAGE}:client-manifest`;
-
 // Per project output, so several builds in one process don't read each other's manifests.
-function manifestRegistryKey(manifestSource: ManifestSource): string {
+function getManifestRegistryKey(manifestSource: ManifestSource): string {
   return `${MANIFEST_REGISTRY_KEY}:${manifestSource.clientDir}`;
 }
 
-function configEnvironmentPlugin(solidNoExternal: string[], manifestSource: ManifestSource): Plugin {
+function createConfigEnvironmentPlugin(solidNoExternal: string[], manifestSource: ManifestSource): Plugin {
   return {
-    name: `${PACKAGE}:config-environment`,
+    name: `${PACKAGE_NAME}:config-environment`,
     configEnvironment(environmentName) {
       if (environmentName === 'client') {
         return {
-          // The server render resolves lazy boundary assets from it.
+          // Lazy boundary assets resolve from the manifest in server renders.
           build: { manifest: true },
           optimizeDeps: {
-            include: [`${PACKAGE}/client.js`],
-            exclude: [`${PACKAGE}/server.js`],
+            include: [`${PACKAGE_NAME}/client.js`],
+            exclude: [`${PACKAGE_NAME}/server.js`],
           },
         };
       }
       return {
-        // The integration goes through Vite so `virtual:astro-solid-manifest` resolves inside server.ts.
-        resolve: { noExternal: [...solidNoExternal, PACKAGE] },
+        // The integration goes through Vite, so its virtual manifest module resolves in server renders.
+        resolve: { noExternal: [...solidNoExternal, PACKAGE_NAME] },
         optimizeDeps: {
-          exclude: [`${PACKAGE}/server.js`],
+          exclude: [`${PACKAGE_NAME}/server.js`],
         },
       };
     },
@@ -129,7 +126,7 @@ function configEnvironmentPlugin(solidNoExternal: string[], manifestSource: Mani
       return (
         `const base = ${JSON.stringify(manifestSource.base)};\n` +
         `export function loadManifest() {\n` +
-        `  const manifest = globalThis[Symbol.for(${JSON.stringify(manifestRegistryKey(manifestSource))})];\n` +
+        `  const manifest = globalThis[Symbol.for(${JSON.stringify(getManifestRegistryKey(manifestSource))})];\n` +
         `  if (manifest == null) return null;\n` +
         `  manifest._base = base;\n` +
         `  return manifest;\n` +
@@ -139,13 +136,14 @@ function configEnvironmentPlugin(solidNoExternal: string[], manifestSource: Mani
     writeBundle: {
       sequential: true,
       async handler() {
-        // Before Astro's `astro:ssr-assets` plugin deletes the .vite folder. The client build always writes the
-        // manifest, as its environment asks for one, so a missing one fails the build.
+        // Before Astro deletes the .vite folder. The client build always writes the manifest, as its environment asks
+        // for one, so a missing one fails the build.
         if (this.environment.name !== 'client') {
           return;
         }
         const raw = await readFile(join(manifestSource.clientDir, '.vite/manifest.json'), 'utf-8');
-        (globalThis as Record<symbol, unknown>)[Symbol.for(manifestRegistryKey(manifestSource))] = JSON.parse(raw);
+        // globalThis declares no symbol keys, and the registry entry is read back untyped.
+        (globalThis as Record<symbol, unknown>)[Symbol.for(getManifestRegistryKey(manifestSource))] = JSON.parse(raw);
       },
     },
   };

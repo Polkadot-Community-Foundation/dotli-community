@@ -50,7 +50,8 @@ if (localProductUrl !== undefined) {
 export default defineConfig({
   ...baseConfig,
   webServer,
-  testDir: '.',
+  testDir: '../../src',
+  testMatch: '**/__tests__/e2e/**/*.spec.ts',
   // Beside results.json, since the CI upload step doesn't cover the default packageJsonDir/test-results.
   outputDir: 'test-results',
   timeout: 60_000,
@@ -58,7 +59,7 @@ export default defineConfig({
   workers: 1,
   globalTimeout: 30 * 60_000,
   // globalSetup returns the teardown closure that stops the signing host.
-  globalSetup: './global-setup.ts',
+  globalSetup: './globalSetup.ts',
   use: {
     ...baseConfig.use,
     trace: 'retain-on-failure',

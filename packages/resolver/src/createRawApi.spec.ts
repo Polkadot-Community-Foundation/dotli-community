@@ -1,0 +1,583 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { DisjointError, OperationInaccessibleError, OperationLimitError } from '@polkadot-api/substrate-client';
+import { bindRecordingSentry, recordReports } from '@dotli/metrics/testing';
+import { createDeferred } from '@dotli/shared';
+import { catchError } from '@dotli/shared/testing';
+import { ApiStoppedError } from './apiStoppedError.js';
+import { createRawApi, type Api } from './createRawApi.js';
+import { getAccountInfoKey, getChildSlotKey } from './reviveStorageKeys.js';
+import { CONTRACT_ACCOUNT_INFO, CONTRACT_ADDRESS } from './testing/constants.js';
+import { createFakeSubstrateClient } from './testing/createFakeSubstrateClient.js';
+import { createNewBlockEvent } from './testing/createNewBlockEvent.js';
+
+/** The trie id `CONTRACT_ACCOUNT_INFO` holds. */
+const TRIE_ID = new Uint8Array([1]);
+
+describe('createRawApi', () => {
+  it('As a dotli user on a light client, I let finality move on and the resolver unpins the blocks it left behind', () => {
+    // Given
+    const { client, follow } = createFakeSubstrateClient();
+    createRawApi({ client });
+    follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x00', '0x0a'] });
+    follow.emit(createNewBlockEvent('0x1a', '0x0a'));
+    follow.emit(createNewBlockEvent('0x1b', '0x0a'));
+    follow.emit(createNewBlockEvent('0x2a', '0x1a'));
+    follow.emit({ type: 'bestBlockChanged', bestBlockHash: '0x2a' });
+
+    // When
+    follow.emit({ type: 'finalized', finalizedBlockHashes: ['0x1a'], prunedBlockHashes: ['0x1b'] });
+    follow.emit({ type: 'finalized', finalizedBlockHashes: ['0x2a'], prunedBlockHashes: [] });
+
+    // Then
+    expect(follow.unpin.mock.calls).toEqual([[['0x00']], [['0x0a', '0x1b']], [['0x1a']]]);
+  });
+
+  it('As a dotli user on a light client, I read at a block while finality moves on and the block stays pinned until the read finishes', async () => {
+    // Given
+    const { client, follow } = createFakeSubstrateClient();
+    const api = createRawApi({ client });
+    follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+    const holdTaken = createDeferred<undefined>();
+    const readFinished = createDeferred<undefined>();
+    const read = api.withBestBlock(() => {
+      holdTaken.resolve(undefined);
+      return readFinished.promise;
+    });
+    await holdTaken.promise;
+
+    // When
+    follow.emit(createNewBlockEvent('0x1a', '0x0a'));
+    follow.emit({ type: 'finalized', finalizedBlockHashes: ['0x1a'], prunedBlockHashes: [] });
+    const unpinnedDuringRead = [...follow.unpin.mock.calls];
+    readFinished.resolve(undefined);
+    await read;
+
+    // Then
+    expect(unpinnedDuringRead).toEqual([]);
+    expect(follow.unpin.mock.calls).toEqual([[['0x0a']]]);
+  });
+
+  describe('a storage read the light client cannot serve yet', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('As the resolver, I read a slot no peer serves, and the read fails after about 30 s even when each attempt is slow', async () => {
+      // Given
+      const { client, follow } = createFakeSubstrateClient();
+      let clock = 0;
+      const api = createRawApi({
+        client,
+        now: () => {
+          const reading = clock;
+          clock += 10_000;
+          return reading;
+        },
+      });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      follow.storage.mockImplementation(() => Promise.reject(new OperationInaccessibleError()));
+
+      // When
+      const read = api.resolveTrieId(CONTRACT_ADDRESS, '0x0a').catch((error: unknown) => error);
+      await vi.runAllTimersAsync();
+      const error = await read;
+
+      // Then
+      expect(error).toBeInstanceOf(OperationInaccessibleError);
+      expect(follow.storage.mock.calls.length).toBeLessThanOrEqual(4);
+    });
+
+    it('As a dotli user on a light client, I wait on a read retry and the read stops when the chain follow stops', async () => {
+      // Given
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      const storageAsked = createDeferred<undefined>();
+      follow.storage.mockImplementation(() => {
+        storageAsked.resolve(undefined);
+        return Promise.reject(new OperationInaccessibleError());
+      });
+      const read = api.resolveTrieId(CONTRACT_ADDRESS, '0x0a').catch((error: unknown) => error);
+      await storageAsked.promise;
+
+      // When
+      follow.stop();
+      await vi.runAllTimersAsync();
+      const error = await read;
+
+      // Then
+      expect(error).toBeInstanceOf(ApiStoppedError);
+      expect(follow.storage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("the follow's storage operations", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('As the resolver, I start seventeen slot reads at once and the follow runs sixteen of them until one ends', async () => {
+      // Given
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      const answers: ReturnType<typeof createDeferred<string | null>>[] = [];
+      follow.storage.mockImplementation(() => {
+        const answer = createDeferred<string | null>();
+        answers.push(answer);
+        return answer.promise;
+      });
+
+      // When seventeen reads start and the first one ends
+      for (let index = 0; index < 17; index += 1) {
+        void readSlotAt(api, index);
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      const before = follow.storage.mock.calls.length;
+      answers[0]?.resolve(null);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Then
+      expect(before).toBe(16);
+      expect(follow.storage.mock.calls.length).toBe(17);
+    });
+
+    it('As the resolver, I wait on sixteen read retries and a seventeenth read still runs', async () => {
+      // Given
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      let calls = 0;
+      follow.storage.mockImplementation(() => {
+        calls += 1;
+        return calls <= 16 ? Promise.reject(new OperationInaccessibleError()) : Promise.resolve(null);
+      });
+      for (let index = 0; index < 16; index += 1) {
+        readSlotAt(api, index).catch(() => undefined);
+      }
+      await vi.advanceTimersByTimeAsync(0);
+
+      // When a seventeenth read starts while the sixteen wait to retry
+      let ninthSettled = false;
+      void readSlotAt(api, 16).then(() => {
+        ninthSettled = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Then
+      expect(ninthSettled).toBe(true);
+      expect(follow.storage).toHaveBeenCalledTimes(17);
+    });
+
+    it('As the resolver, I queue a read behind sixteen running ones and it stops without asking the follow once the follow stops', async () => {
+      // Given
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      const answers: ReturnType<typeof createDeferred<string | null>>[] = [];
+      for (let index = 0; index < 16; index += 1) {
+        const answer = createDeferred<string | null>();
+        answers.push(answer);
+        follow.storage.mockImplementationOnce(() => answer.promise);
+      }
+      for (let index = 0; index < 16; index += 1) {
+        void readSlotAt(api, index);
+      }
+      const seventeenth = readSlotAt(api, 16).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // When the follow stops and a running read ends
+      follow.stop();
+      answers[0]?.resolve(null);
+      await vi.advanceTimersByTimeAsync(0);
+      const error = await seventeenth;
+
+      // Then
+      expect(error).toBeInstanceOf(ApiStoppedError);
+      expect(follow.storage).toHaveBeenCalledTimes(16);
+    });
+
+    it('As a dotli user on a busy follow, I read a slot the server refuses for its operation limit and the read is retried until it answers', async () => {
+      // Given
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      follow.storage
+        .mockImplementationOnce(() => Promise.reject(new OperationLimitError()))
+        .mockImplementationOnce(() => Promise.resolve(`0x${'00'.repeat(31)}01`));
+
+      // When
+      const read = readSlotAt(api, 0);
+      await vi.runAllTimersAsync();
+      const value = await read;
+
+      // Then
+      expect(value).toBeInstanceOf(Uint8Array);
+      expect(value?.length).toBe(32);
+      expect(value?.at(-1)).toBe(1);
+      expect(follow.storage).toHaveBeenCalledTimes(2);
+    });
+
+    it('As a dotli user on a follow that keeps refusing, I read a slot and the read fails with the operation limit error instead of retrying forever', async () => {
+      // Given
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      follow.storage.mockImplementation(() => Promise.reject(new OperationLimitError()));
+
+      // When
+      const read = readSlotAt(api, 0).catch((error: unknown) => error);
+      await vi.runAllTimersAsync();
+      const error = await read;
+
+      // Then
+      expect(error).toBeInstanceOf(OperationLimitError);
+    });
+  });
+
+  describe('batched reads', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('As the resolver, I read three slots of one contract and get them in order, with null for the unset one', async () => {
+      // Given a contract whose first and third slots are set
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      const answers = new Map<string, string>([
+        [getChildSlotKey(slotKeyAt(0)), '0x0a'],
+        [getChildSlotKey(slotKeyAt(2)), '0x0c'],
+      ]);
+      follow.storage.mockImplementation((_hash, _type, key) => Promise.resolve(answers.get(key) ?? null));
+
+      // When
+      const values = await readSlotsUpTo(api, 3);
+
+      // Then
+      expect(values).toEqual([new Uint8Array([0x0a]), null, new Uint8Array([0x0c])]);
+    });
+
+    it('As the resolver, I read 300 slots on a server that holds every call open and the follow runs sixteen of them at once', async () => {
+      // Given a server that answers no call
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      follow.storage.mockImplementation(() => new Promise(() => undefined));
+
+      // When
+      void readSlotsUpTo(api, 300);
+      await vi.runAllTimersAsync();
+
+      // Then
+      expect(follow.storage).toHaveBeenCalledTimes(16);
+    });
+
+    it('As the resolver, I read two slots, one read fails while the other runs, and the read rejects only once both ended', async () => {
+      // Given a first slot read that fails and a second one the light client holds open
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      const failure = new Error('storage call failed');
+      const secondCall = createDeferred<string | null>();
+      const secondCallAsked = createDeferred<undefined>();
+      follow.storage.mockRejectedValueOnce(failure).mockImplementationOnce(() => {
+        secondCallAsked.resolve(undefined);
+        return secondCall.promise;
+      });
+      let settled = false;
+      const read = readSlotsUpTo(api, 2).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      void read.finally(() => {
+        settled = true;
+      });
+      await secondCallAsked.promise;
+      await vi.runAllTimersAsync();
+
+      // When
+      const settledWhileCallRan = settled;
+      secondCall.resolve(null);
+      const error = await read;
+
+      // Then
+      expect(settledWhileCallRan).toBe(false);
+      expect(error).toBe(failure);
+    });
+
+    it('As the resolver, I resolve the trie ids of two contracts and an account from the main trie and get null for the account that is not a contract', async () => {
+      // Given two contracts and an account that is not one
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      const otherContract = '0x0000000000000000000000000000000000000002';
+      const account = '0x0000000000000000000000000000000000000003';
+      const accountInfos = new Map<string, string>([
+        [getAccountInfoKey(CONTRACT_ADDRESS), CONTRACT_ACCOUNT_INFO],
+        [getAccountInfoKey(otherContract), '0x000402'],
+        [getAccountInfoKey(account), '0x01'],
+      ]);
+      follow.storage.mockImplementation((_hash, _type, key) => Promise.resolve(accountInfos.get(key) ?? null));
+
+      // When
+      const trieIds = await api.resolveTrieIds([CONTRACT_ADDRESS, otherContract, account], '0x0a');
+
+      // Then
+      expect(new Set(follow.storage.mock.calls.map(([, , , childTrie]) => childTrie))).toEqual(new Set([null]));
+      expect(trieIds).toEqual(
+        new Map([
+          [CONTRACT_ADDRESS, TRIE_ID],
+          [otherContract, new Uint8Array([2])],
+          [account, null],
+        ]),
+      );
+    });
+
+    it('As the resolver, I read slots the light client cannot serve yet and the read is retried until it answers', async () => {
+      // Given a light client that cannot serve the first call
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client, now: () => 0 });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      follow.storage.mockResolvedValue('0x01').mockRejectedValueOnce(new OperationInaccessibleError());
+
+      // When
+      const read = readSlotsUpTo(api, 2);
+      await vi.runAllTimersAsync();
+      const values = await read;
+
+      // Then
+      expect(values).toEqual([new Uint8Array([1]), new Uint8Array([1])]);
+    });
+
+    it('As the resolver, I wait on an open slot read and the read fails as disjoint when the follow stops', async () => {
+      // Given a slot read the light client holds open
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      const call = createDeferred<string | null>();
+      const callAsked = createDeferred<undefined>();
+      follow.storage.mockImplementation(() => {
+        callAsked.resolve(undefined);
+        return call.promise;
+      });
+      const read = readSlotsUpTo(api, 1).catch((error: unknown) => error);
+      await callAsked.promise;
+
+      // When
+      follow.stop();
+      call.reject(new DisjointError());
+      const error = await read;
+
+      // Then
+      expect(error).toBeInstanceOf(DisjointError);
+      expect(follow.storage).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('the end of the chain follow', () => {
+    it('As a resolver whose stop listener throws, I am reported and the next stop listener still hears the stop', () => {
+      // Given
+      const captured = recordReports({ onFinished: onTestFinished }).exceptions;
+      const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      api.onStop(() => {
+        throw new TypeError('listener broke');
+      });
+      let heard = 0;
+      api.onStop(() => {
+        heard += 1;
+      });
+
+      // When
+      follow.stop();
+
+      // Then
+      expect(heard).toBe(1);
+      expect(captured).toMatchObject([{ step: 'listener', tags: { owner: 'resolver.stop' } }]);
+      expect(metrics.counted('listener.delivery')).toEqual([
+        { outcome: 'error', reason: 'TypeError', owner: 'resolver.stop' },
+      ]);
+    });
+
+    it('As a stop listener that subscribes after the follow stopped and throws, I am reported and my registration returns', () => {
+      // Given
+      const captured = recordReports({ onFinished: onTestFinished }).exceptions;
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+      follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+      follow.stop();
+
+      // When
+      const error = catchError(() =>
+        api.onStop(() => {
+          throw new TypeError('late listener broke');
+        }),
+      );
+
+      // Then
+      expect(error).toBeUndefined();
+      expect(captured).toMatchObject([{ step: 'listener', tags: { owner: 'resolver.stop' } }]);
+    });
+
+    it('As the resolver, I read on a follow that initialized with no finalized block, and the read fails as stopped', async () => {
+      // Given
+      const { client, follow } = createFakeSubstrateClient();
+      const api = createRawApi({ client });
+
+      // When
+      follow.emit({ type: 'initialized', finalizedBlockHashes: [] });
+      const waited = api.whenReady().catch((error: unknown) => error);
+      const read = api
+        .withBestBlock(hash => api.readSlot(CONTRACT_ADDRESS, '0x01', { atHash: hash }))
+        .catch((error: unknown) => error);
+
+      // Then
+      expect(await waited).toBeInstanceOf(ApiStoppedError);
+      expect(await read).toBeInstanceOf(ApiStoppedError);
+    });
+  });
+
+  it('As the resolver, I destroy the raw API twice before its follow is ready and the wait fails as stopped and stop listeners hear it once', async () => {
+    // Given
+    const { client } = createFakeSubstrateClient();
+    const api = createRawApi({ client });
+    const waited = api.whenReady().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    let heard = 0;
+    api.onStop(() => {
+      heard += 1;
+    });
+
+    // When
+    api.destroy();
+    api.destroy();
+
+    // Then
+    expect(await waited).toBeInstanceOf(ApiStoppedError);
+    expect(heard).toBe(1);
+  });
+
+  it('As a dotli user, I let finality move on, the follow stops while an unpin is in flight, and its refusal is not reported', async () => {
+    // Given
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const { client, follow } = createFakeSubstrateClient();
+    const unpinAnswer = createDeferred<undefined>();
+    follow.unpin.mockImplementation(() => unpinAnswer.promise);
+    createRawApi({ client });
+    follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x00', '0x0a'] });
+
+    // When the follow stops, then the light client refuses the unpin
+    follow.stop();
+    unpinAnswer.reject(new TypeError('Invalid block hash'));
+    // The refusal reaches the machine only as a reaction, and nothing it does can be polled for.
+    await new Promise(resolve => {
+      setImmediate(resolve);
+    });
+
+    // Then
+    expect(captured).toEqual([]);
+    expect(metrics.counted('resolve.unpin')).toEqual([]);
+  });
+
+  it('As a dotli user, I let finality move on and an unpin refused because the follow is gone is not reported, while a later refusal is', async () => {
+    // Given
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const { client, follow } = createFakeSubstrateClient();
+    follow.unpin
+      .mockImplementationOnce(() => Promise.reject(new DisjointError()))
+      .mockImplementationOnce(() => Promise.reject(new TypeError('Invalid block hash')));
+    createRawApi({ client });
+
+    // When finality leaves a block behind twice, and the second refusal is the signal both were judged
+    follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x00', '0x0a'] });
+    follow.emit(createNewBlockEvent('0x1a', '0x0a'));
+    follow.emit({ type: 'finalized', finalizedBlockHashes: ['0x1a'], prunedBlockHashes: [] });
+    await vi.waitFor(() => {
+      if (metrics.counted('resolve.unpin').length === 0) {
+        throw new Error('the second refusal is not judged yet');
+      }
+    });
+
+    // Then
+    expect(metrics.counted('resolve.unpin')).toEqual([{ outcome: 'error', reason: 'TypeError' }]);
+    expect(captured).toMatchObject([{ step: 'unpin' }]);
+  });
+
+  it('As an operator, I see an unfollow that throws as the raw API is destroyed reported and counted, and the stop is still told', () => {
+    // Given a ready follow whose unfollow throws, and a stop listener
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const { client, follow } = createFakeSubstrateClient();
+    follow.unfollow.mockImplementation(() => {
+      throw new TypeError('client is gone');
+    });
+    const api = createRawApi({ client });
+    follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x0a'] });
+    const onStop = vi.fn();
+    api.onStop(onStop);
+
+    // When
+    api.destroy();
+
+    // Then
+    expect(captured).toMatchObject([{ step: 'unfollow' }]);
+    expect(metrics.counted('resolve.unfollow')).toEqual([{ outcome: 'error', reason: 'TypeError' }]);
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it('As an operator, I see an unpin the light client refuses while the follow runs reported and counted', async () => {
+    // Given
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const { client, follow } = createFakeSubstrateClient();
+    const refused = Promise.reject(new TypeError('Invalid block hash'));
+    follow.unpin.mockImplementation(() => refused);
+    createRawApi({ client });
+
+    // When finality leaves a block behind
+    follow.emit({ type: 'initialized', finalizedBlockHashes: ['0x00', '0x0a'] });
+    await vi.waitFor(() => {
+      if (metrics.counted('resolve.unpin').length === 0) {
+        throw new Error('the refusal is not judged yet');
+      }
+    });
+
+    // Then
+    expect(captured).toMatchObject([{ step: 'unpin', tags: undefined }]);
+    expect(metrics.counted('resolve.unpin')).toEqual([{ outcome: 'error', reason: 'TypeError' }]);
+  });
+});
+
+/** Reads slot `index` pinned to `0x0a` with a known trie id, so the read is exactly one storage call. */
+function readSlotAt(api: Api, index: number): Promise<Uint8Array | null> {
+  return api.readSlot(CONTRACT_ADDRESS, slotKeyAt(index), { atHash: '0x0a', trieId: TRIE_ID });
+}
+
+/** Reads slots `0..count` pinned to `0x0a` with a known trie id, so the read asks for no `trie_id`. */
+function readSlotsUpTo(api: Api, count: number): Promise<(Uint8Array | null)[]> {
+  const slotKeys = Array.from({ length: count }, (_, index) => slotKeyAt(index));
+  return api.readSlots(CONTRACT_ADDRESS, slotKeys, { atHash: '0x0a', trieId: TRIE_ID });
+}
+
+function slotKeyAt(index: number): `0x${string}` {
+  return `0x${index.toString(16).padStart(64, '0')}`;
+}

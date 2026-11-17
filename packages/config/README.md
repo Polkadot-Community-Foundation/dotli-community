@@ -1,53 +1,89 @@
 # `@dotli/config`
 
-Build-time and runtime configuration for dotli: the environment, networks, chain services, the settings a user picks and
-timeouts.
+## Overview
 
-## Responsibility
+Build-time and runtime configuration:
 
-- Owns the network table (dotNS contracts, chain services, TLD) and the active network choice.
-- Owns the backend and cache settings, their storage keys and the URL form that carries them to another origin.
-- Does not own the host to sandbox wire, logging, metrics or storage of product data.
+- the environment
+- networks
+- chain services
+- user settings
+- timeouts
 
-## Design
+## Responsibilities
 
-- The base domain and site id come from the hostname, and `DEBUG` from the build environment. A base domain is never
-  defaulted silently, since the cross-origin allowlist is keyed on it.
-- The network table holds per-network service config. The active network is part of the settings, which the protocol
-  frame and the sandbox set from their URL.
-- Backend (`smoldot-direct`, `smoldot-shared-worker`, `rpc-gateway`) and cache switches are settings beside the network.
-  One pure function resolves them from the link, the cross-subdomain store and this origin's storage. A page sets its
-  settings once at boot and the getters return them. A change reloads the page, so nothing sets them after. The resolver
-  also says when the shared light client was chosen and this browser runs the per-tab one instead.
-- A chain is named by its role (`relay`, `assethub`, `bulletin`, `people`) everywhere: the network table, sync events,
-  the light client's database outcomes and the UI. A genesis hash maps to its role from the fixed config, so a worker
-  that never sees the runtime network config may read it.
-- The `./fixed` entry holds only what reads no overridable field, so a worker that never receives the runtime network
-  config imports it and never the bare entry.
-- Settings travel between origins as URL params. Default values are stripped, so a clean URL means every axis is at its
-  default.
+- **Owns** the network table (dotNS contracts, chain services, TLD) and the active network.
+- **Owns** each network's signed Trinity stack, which the TrUAPI core boots from.
+- **Owns** the local roots, read by pages and the local servers.
+- **Owns** the backend and cache settings with their storage keys. It also owns the settings' URL form.
+- **Does not own**:
+  - the host to sandbox wire
+  - logging
+  - metrics
+  - product data storage
 
 ## Public API
 
 ### `@dotli/config`
 
-- Environment: `BASE_DOMAIN`, `SITE_ID`, `DEBUG`, `DEV_PROTOCOL_PORT`, `DEV_SANDBOX_PORT`, `isLocalhost`,
-  `isSandboxOrigin`, `TIMEOUTS`, the waits more than one package keeps in step.
-- Networks: `NetworkName`, `getNetwork`, `getEnabledNetworks`, `getActiveServicesConfig`, `getActiveTldSuffix`,
-  `withActiveTld`, the chain role helpers (`CHAIN_ROLES`, `chainRoleForGenesis`, `getActiveChainRoles`) and the gateway
-  and genesis hash readers.
-- Settings: `getSettings`, `setSettings`, `subscribeSettings`, `getBackend`, `parseBackend`, `getCacheSettings`,
-  `isSharedWorkerAvailable`, `isVerifiedSession`, `parseSettingsFromSearch`, `writeSettingsToSearch`, `resolveSettings`,
-  `setActiveNetwork`, `writeLocalSettings`, `sharedSettingsOf`, `hasStoredSettings`, `ResolvedSettings`, `Settings`,
-  `SharedSettings`.
+| Export                                                                                         | What it does                  |
+| ---------------------------------------------------------------------------------------------- | ----------------------------- |
+| `BASE_DOMAIN`, `SITE_ID`, `SiteId`, `DEBUG`, `TIMEOUTS`                                        | Environment and shared waits. |
+| `DEV_HOST_PORT`, `DEV_PROTOCOL_PORT`, `DEV_SANDBOX_PORT`                                       | Dev server ports.             |
+| `LOCAL_ROOT`, `isLocalhost`, `getLocalRoot`                                                    | Local roots.                  |
+| `getHostPlace`, `isSiteOrigin`, `isSandboxOrigin`                                              | What an origin is.            |
+| `NETWORK_NAMES`, `Network`, `isValidNetwork`, `NETWORK_KEY`, `NETWORK_NAME_TO_SERVICES_CONFIG` | The network table.            |
+| `getNetwork`, `getEnabledNetworks`, `getDefaultNetwork`, `setActiveNetwork`                    | The active network.           |
+| `getActiveServicesConfig`, `getActiveTldSuffix`, `withActiveTld`                               | Its services and TLD.         |
+| `getActiveSupportedGenesisHashes`, `getActiveGatewaySupportedGenesisHashes`                    | Genesis hashes for products.  |
+| `loadStack`, `BundledStack`                                                                    | A network's signed stack.     |
+| `getActiveCoreGatewayChains`, `getActiveCoreGatewaySupportedGenesisHashes`                     | Core gateway chains.          |
+| `CHAIN_ROLES`, `ChainRole`, `CHAIN_ROLE_LABELS`, `getChainRoleForGenesis`                      | Chain roles.                  |
+| `getActiveChainRoles`, `ActiveChainRole`                                                       | The active network's chains.  |
+| `ChainService`, `FixedChainService`, `FixedServicesConfig`, `DotnsContracts`                   | Network table types.          |
+| `getSettings`, `setSettings`, `subscribeSettings`                                              | The context's settings.       |
+| `resolveSettings`, `ResolvedSettings`, `Settings`, `SettingsSources`                           | Resolves settings at boot.    |
+| `getSharedSettings`, `SharedSettings`, `hasStoredSettings`, `writeLocalSettings`               | Stored settings.              |
+| `parseSettingsFromSearch`, `writeSettingsToSearch`, `ParsedUrlSettings`                        | Settings in URL params.       |
+| `getBackend`, `parseBackend`, `Backend`, `BACKEND_KEY`, `BACKEND_FACTS`                        | The backend setting.          |
+| `hasLightClient`, `hasSharedWorker`, `isVerifiedSession`, `isSharedWorkerAvailable`            | What a backend can do.        |
+| `getCacheSettings`, `CacheSettings`, `CACHE_KEY`                                               | Cache switches.               |
 
 ### `@dotli/config/fixed`
 
-What a context that never receives the runtime network config may read: `DEBUG`, `CHAIN_ROLES`, `ChainRole`,
-`chainRoleForGenesis`, `getActiveFixedServicesConfig`, `FixedServicesConfig`, `getActiveSupportedGenesisHashes`,
-`isValidNetwork`, `Network`. A name joins only once it reads no overridable field.
+For a context without the runtime config. A name joins only once it reads no overridable field.
+
+`DEBUG`, `CHAIN_ROLES`, `ChainRole`, `getChainRoleForGenesis`, `getActiveFixedServicesConfig`, `FixedServicesConfig`,
+`getActiveSupportedGenesisHashes`, `isValidNetwork`, `Network`.
+
+### `@dotli/config/local-roots`
+
+Imports nothing, so pages, build configs and Node scripts load it.
+
+`LOCAL_ROOTS`, `LOOPBACK_ROOT`, `getTrustedLocalRoots(dev)`.
 
 ### `@dotli/config/networks`
 
-The network table for Node tooling, which cannot load the bare entry: `NETWORK_NAME_TO_SERVICES_CONFIG`, `NetworkName`,
-`isValidNetwork`, `Network`. It reads no page state at load.
+The network table for Node tooling. Reads no page state.
+
+`NETWORK_NAME_TO_SERVICES_CONFIG`, `NETWORK_NAMES`, `isValidNetwork`, `Network`.
+
+## Design
+
+- **Base domain:** comes from the hostname and is never defaulted silently. The cross-origin allowlist is keyed on it.
+- **Local roots:** `localhost` and `local.host` stand for the root domain. `local.host` is a public name, so only a
+  development build trusts it.
+- **Runtime config:** a build made for it reads a global that a blocking script sets. It may override endpoints and the
+  enabled networks. It may also override `baseDomain`. A bad value stops the boot, since an ignored override would run
+  against the public chain.
+- **Settings:** a page resolves them once at boot. A change reloads the page. The settings are:
+  - the network
+  - `smoldot-direct`, `smoldot-shared-worker` or `rpc-gateway` as the backend
+  - cache switches
+- **Backend facts:** ask what a backend can do (`hasLightClient`), never compare its name.
+- **Chain roles:** a chain is named by its role (`relay`, `assethub`, `bulletin`, `people`) everywhere.
+- **URL form:** settings travel between origins as URL params. Defaults are stripped, so a clean URL means defaults.
+- **Fixed entry:** a worker never receives the runtime config, so it imports `./fixed`, never the bare entry.
+- **Stacks:** each network's link and signed descriptor are build copies that the `trinity-stack` CLI keeps and
+  verifies. `npm run stacks:update` fetches newer copies, and a chain wipe needs one, since the core dials only the
+  genesis hashes the descriptor names. A page loads one network's copy as served, since the core checks its signature.

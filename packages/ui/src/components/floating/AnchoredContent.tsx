@@ -1,33 +1,52 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Show } from 'solid-js';
+import { lazy, Loading, onSettled, Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import type { Anchored } from './anchored.js';
-import { BottomSheet, SHEET_EXIT_MS, type BottomSheetProps } from './BottomSheet.js';
+import { isPhoneViewport } from '../../page/phoneViewport.js';
+import { preloadWhenIdle } from '../../page/preloadWhenIdle.js';
+import type { Anchored } from './createAnchored.js';
+import type { BottomSheetProps } from './BottomSheet.js';
 import { FloatingLayer, type Placement } from './FloatingLayer.js';
-import { createPresence } from './presence.js';
+import { createPresence } from './createPresence.js';
+
+/** Matches `--dur-morph`. */
+const SHEET_EXIT_MS = 460;
+
+// Only a phone shows a sheet, so a wide screen never loads its chunk.
+const BottomSheet = lazy(() => import('./BottomSheet.js'), { export: 'BottomSheet' });
+
+/**
+ * Preloads the sheet's chunk when the browser is idle on a phone, so a first opening there shows the sheet in the same
+ * frame. Called inside a component, which cancels the preload when it is disposed. Never throws.
+ */
+export function createSheetPreload(): void {
+  onSettled(() => (isPhoneViewport() ? preloadWhenIdle(BottomSheet) : undefined));
+}
 
 /** A FloatingLayer, or a BottomSheet on a phone whose content stays mounted until its slide out has played. */
 export function AnchoredContent(props: {
   state: Anchored;
   role: 'dialog' | 'menu';
   placement: Placement | undefined;
-  class: string;
+  class: JSX.ClassValue;
   testId?: string | undefined;
   trapFocus?: boolean | undefined;
   onOpened: (surface: HTMLElement) => void;
-  onKeyDown?: ((ev: KeyboardEvent, surface: HTMLElement) => void) | undefined;
+  onKeyDown?: ((event: KeyboardEvent, surface: HTMLElement) => void) | undefined;
   children: JSX.Element;
   sheetTestId: string;
   sheetBody?: BottomSheetProps['body'];
-  sheetClass?: string | undefined;
-  onSheetPointerMove?: ((ev: PointerEvent) => void) | undefined;
+  sheetClass?: JSX.ClassValue;
+  onSheetPointerMove?: ((event: PointerEvent) => void) | undefined;
   sheetFocus: (wrapper: HTMLDivElement) => HTMLElement | undefined;
   sheetChildren: (wrapper: () => HTMLDivElement | undefined) => JSX.Element;
 }): JSX.Element {
   let wrapper: HTMLDivElement | undefined;
-  const sheetPresence = createPresence(() => props.state.sheet() && props.state.open(), SHEET_EXIT_MS);
+  const sheetPresence = createPresence({
+    open: () => props.state.sheet() && props.state.open(),
+    exitMs: SHEET_EXIT_MS,
+  });
   return (
     <Show
       when={props.state.sheet()}
@@ -49,38 +68,40 @@ export function AnchoredContent(props: {
           onOpened={surface => {
             props.onOpened(surface);
           }}
-          onKeyDown={(ev, surface) => {
-            props.onKeyDown?.(ev, surface);
+          onKeyDown={(event, surface) => {
+            props.onKeyDown?.(event, surface);
           }}
         >
           {props.children}
         </FloatingLayer>
       }
     >
-      <BottomSheet
-        open={props.state.open()}
-        onOpenChange={next => {
-          props.state.setOpen(next, 'sheet');
-        }}
-        title={props.state.title}
-        id={props.state.id}
-        testId={props.sheetTestId}
-        body={props.sheetBody}
-        initialFocus={() => (wrapper === undefined ? undefined : props.sheetFocus(wrapper))}
-      >
-        <div
-          ref={el => {
-            wrapper = el;
+      <Loading>
+        <BottomSheet
+          open={props.state.open()}
+          onOpenChange={next => {
+            props.state.setOpen(next, 'sheet');
           }}
-          class={props.sheetClass}
-          data-sheet=""
-          onPointerMove={ev => props.onSheetPointerMove?.(ev)}
+          title={props.state.title}
+          id={props.state.id}
+          testId={props.sheetTestId}
+          body={props.sheetBody}
+          initialFocus={() => (wrapper === undefined ? undefined : props.sheetFocus(wrapper))}
         >
-          <Show when={sheetPresence()} keyed>
-            {(_opening: number) => props.sheetChildren(() => wrapper)}
-          </Show>
-        </div>
-      </BottomSheet>
+          <div
+            ref={element => {
+              wrapper = element;
+            }}
+            class={props.sheetClass}
+            data-sheet=""
+            onPointerMove={event => props.onSheetPointerMove?.(event)}
+          >
+            <Show when={sheetPresence()} keyed>
+              {(_opening: number) => props.sheetChildren(() => wrapper)}
+            </Show>
+          </div>
+        </BottomSheet>
+      </Loading>
     </Show>
   );
 }

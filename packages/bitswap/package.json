@@ -2,7 +2,7 @@
   "name": "@dotli/bitswap",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.11.4",
+  "version": "0.14.0",
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -20,12 +20,10 @@
     "@config/vite": "*"
   },
   "dependencies": {
-    "@dotli/chains": "*",
     "@dotli/config": "*",
     "@dotli/metrics": "*",
-    "@dotli/protocol": "*",
     "@dotli/sandbox-wire": "*",
     "@dotli/shared": "*",
-    "@polkadot-api/json-rpc-provider": "^0.2.0"
+    "@polkadot-api/json-rpc-provider": "0.2.0"
   }
 }

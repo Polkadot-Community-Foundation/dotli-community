@@ -1,0 +1,734 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { describe, it, expect, beforeEach, onTestFinished } from 'vitest';
+
+import type { ChainLifecycle } from '@parity/truapi-provider';
+import { getActiveServicesConfig } from '@dotli/config';
+import type { ChainRole } from '@dotli/config/fixed';
+import { bindCaptureSink } from '@dotli/metrics';
+import { bindRecordingSentry, recordReports, type RecordingSentry } from '@dotli/metrics/testing';
+
+import {
+  createChainSyncReporter,
+  type ChainSyncEvent,
+  type ChainSyncReporter,
+  type ChainSyncTap,
+  type ParsedRpcMessage,
+} from './createChainSyncReporter.js';
+
+// History and opt-ins belong to the reporter, so each test builds its own.
+let reporter: ChainSyncReporter;
+
+beforeEach(() => {
+  reporter = createChainSyncReporter({ askPeers: true });
+});
+
+type Lifecycle = ChainLifecycle;
+
+/**
+ * Stands in for a truapi-provider connection. `deliver` plays a response through the tap as a light client would,
+ * and whatever the tap does not claim would have reached polkadot-api.
+ */
+type Pipe = {
+  tap: ChainSyncTap;
+  sent: string[];
+  forwarded: string[];
+  closed(): boolean;
+  push(...states: Lifecycle[]): Promise<void>;
+  deliver(raw: string): boolean;
+};
+
+function openPipe(chain: 'relay' | 'assethub', from: ChainSyncReporter = reporter): Pipe | null {
+  const sent: string[] = [];
+  const forwarded: string[] = [];
+  const queued: (Lifecycle | undefined)[] = [];
+  let waiting: ((state: Lifecycle | undefined) => void) | null = null;
+  // The tap asks for its next state only after it has applied the one it was handed.
+  let asked: (() => void) | null = null;
+  let closed = false;
+  function offer(state: Lifecycle | undefined): void {
+    if (waiting === null) {
+      queued.push(state);
+      return;
+    }
+    const resolve = waiting;
+    waiting = null;
+    resolve(state);
+  }
+  const tap = from.attachChainSync({
+    chain,
+    send: raw => sent.push(raw),
+    watchLifecycle: () => ({
+      next: () => {
+        asked?.();
+        asked = null;
+        return queued.length > 0
+          ? Promise.resolve(queued.shift())
+          : new Promise(resolve => {
+              waiting = resolve;
+            });
+      },
+      close: () => {
+        closed = true;
+        offer(undefined);
+      },
+    }),
+  });
+  if (tap === null) {
+    return null;
+  }
+  return {
+    tap,
+    sent,
+    forwarded,
+    closed: () => closed,
+    async push(...states: Lifecycle[]): Promise<void> {
+      for (const state of states) {
+        const applied = new Promise<void>(resolve => {
+          asked = resolve;
+        });
+        offer(state);
+        await applied;
+      }
+    },
+    deliver(raw: string): boolean {
+      // Each test response is a JSON-RPC object, whose fields the tap reads as unknown.
+      const claimed = tap.intercept(JSON.parse(raw) as ParsedRpcMessage);
+      if (!claimed) {
+        forwarded.push(raw);
+      }
+      return claimed;
+    },
+  };
+}
+
+/** Open a pipe that the test has already opted into reporting. */
+function requirePipe(chain: 'relay' | 'assethub', from: ChainSyncReporter = reporter): Pipe {
+  const pipe = openPipe(chain, from);
+  if (pipe === null) {
+    throw new Error(`${chain} was not opted into sync reporting`);
+  }
+  return pipe;
+}
+
+/** The whole chain state, as the watch reports it every time. */
+function createLifecycle({
+  phase,
+  peers,
+  health = { kind: 'ok' },
+}: {
+  phase: Lifecycle['phase'];
+  peers: number;
+  health?: Lifecycle['health'];
+}): Lifecycle {
+  return { phase, peers, health };
+}
+
+const CONNECTING = { kind: 'connecting' } as const;
+const READY = { kind: 'ready' } as const;
+const OK = { kind: 'ok' } as const;
+
+function createSyncingPhase(at: number, target: number): Lifecycle['phase'] {
+  return { kind: 'syncing', at, target };
+}
+
+function createStalledHealth(reason: 'noPeers' | 'noProgress'): Lifecycle['health'] {
+  return { kind: 'stalled', reason };
+}
+
+describe('Light client sync reporting works', () => {
+  it('As a user waiting for a domain, I see the shell learn when the first peer arrives and when the chain is ready', async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    const seen: unknown[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // When
+    await pipe.push(createLifecycle({ phase: CONNECTING, peers: 0 }), createLifecycle({ phase: READY, peers: 2 }));
+
+    // Then
+    expect(seen).toEqual([
+      { chain: 'relay', kind: 'peers', peers: 0, isSyncing: true },
+      { chain: 'relay', kind: 'connecting' },
+      { chain: 'relay', kind: 'firstPeer' },
+      { chain: 'relay', kind: 'peers', peers: 2, isSyncing: false },
+      { chain: 'relay', kind: 'bootstrapComplete' },
+    ]);
+  });
+
+  it('As a user on a chain with real catching up to do, I see the shell learn how far along the warp is', async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    const seen: unknown[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // When
+    await pipe.push(
+      createLifecycle({ phase: createSyncingPhase(20, 100), peers: 3 }),
+      createLifecycle({ phase: createSyncingPhase(75, 100), peers: 3 }),
+    );
+
+    // Then
+    expect(seen).toEqual([
+      { chain: 'relay', kind: 'firstPeer' },
+      { chain: 'relay', kind: 'peers', peers: 3, isSyncing: true },
+      { chain: 'relay', kind: 'warpSyncProgress', at: 20, target: 100 },
+      { chain: 'relay', kind: 'warpSyncProgress', at: 75, target: 100 },
+    ]);
+  });
+
+  it('As a user whose relay finishes warping, I see the shell learn where the warp landed before the chain reports ready', async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    const seen: unknown[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // When
+    await pipe.push(
+      createLifecycle({ phase: createSyncingPhase(980, 1000), peers: 3 }),
+      createLifecycle({ phase: READY, peers: 3 }),
+    );
+
+    // Then
+    expect(seen).toEqual([
+      { chain: 'relay', kind: 'firstPeer' },
+      { chain: 'relay', kind: 'peers', peers: 3, isSyncing: true },
+      { chain: 'relay', kind: 'warpSyncProgress', at: 980, target: 1000 },
+      { chain: 'relay', kind: 'warpSyncFinished', finalized: 980 },
+      { chain: 'relay', kind: 'bootstrapComplete' },
+    ]);
+  });
+
+  it('As a user whose connection drops mid-sync, I see the shell learn why it stalled and when it recovered', async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    const seen: unknown[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // When
+    await pipe.push(
+      createLifecycle({ phase: createSyncingPhase(10, 50), peers: 1, health: OK }),
+      createLifecycle({ phase: createSyncingPhase(10, 50), peers: 0, health: createStalledHealth('noPeers') }),
+      createLifecycle({ phase: createSyncingPhase(10, 50), peers: 2, health: OK }),
+    );
+
+    // Then
+    expect(seen).toEqual([
+      { chain: 'relay', kind: 'firstPeer' },
+      { chain: 'relay', kind: 'peers', peers: 1, isSyncing: true },
+      { chain: 'relay', kind: 'warpSyncProgress', at: 10, target: 50 },
+      { chain: 'relay', kind: 'peers', peers: 0, isSyncing: true },
+      { chain: 'relay', kind: 'warpSyncProgress', at: 10, target: 50 },
+      { chain: 'relay', kind: 'stalled', reason: 'noPeers' },
+      { chain: 'relay', kind: 'peers', peers: 2, isSyncing: true },
+      { chain: 'relay', kind: 'warpSyncProgress', at: 10, target: 50 },
+      { chain: 'relay', kind: 'recovered', reason: 'noPeers' },
+    ]);
+  });
+
+  it('As a user whose stall changes cause, I am told the new reason rather than the old one', async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    const seen: ChainSyncEvent[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // When
+    await pipe.push(
+      createLifecycle({ phase: createSyncingPhase(10, 50), peers: 0, health: createStalledHealth('noPeers') }),
+      createLifecycle({ phase: createSyncingPhase(10, 50), peers: 1, health: createStalledHealth('noProgress') }),
+    );
+
+    // Then
+    expect(seen.filter(e => e.kind === 'stalled')).toEqual([
+      { chain: 'relay', kind: 'stalled', reason: 'noPeers' },
+      { chain: 'relay', kind: 'stalled', reason: 'noProgress' },
+    ]);
+  });
+
+  it('As a user with a steady connection, I see the peer count change only when the number really changes', async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    const seen: ChainSyncEvent[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // When
+    await pipe.push(
+      createLifecycle({ phase: CONNECTING, peers: 2 }),
+      createLifecycle({ phase: CONNECTING, peers: 2, health: createStalledHealth('noProgress') }),
+      createLifecycle({ phase: CONNECTING, peers: 5, health: createStalledHealth('noProgress') }),
+    );
+
+    // Then
+    expect(seen.filter(e => e.kind === 'peers')).toEqual([
+      { chain: 'relay', kind: 'peers', peers: 2, isSyncing: true },
+      { chain: 'relay', kind: 'peers', peers: 5, isSyncing: true },
+    ]);
+  });
+
+  it('As a user opening the loading screen late, I see the newest sync state rather than a replay of every step', async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    await pipe.push(
+      createLifecycle({ phase: CONNECTING, peers: 0 }),
+      createLifecycle({ phase: createSyncingPhase(1, 4), peers: 1 }),
+      createLifecycle({ phase: READY, peers: 4 }),
+    );
+
+    // When
+    const seen: unknown[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // Then
+    expect(seen).toEqual([
+      { chain: 'relay', kind: 'connecting' },
+      { chain: 'relay', kind: 'firstPeer' },
+      { chain: 'relay', kind: 'warpSyncProgress', at: 1, target: 4 },
+      { chain: 'relay', kind: 'peers', peers: 4, isSyncing: false },
+      { chain: 'relay', kind: 'warpSyncFinished', finalized: 1 },
+      { chain: 'relay', kind: 'bootstrapComplete' },
+    ]);
+  });
+
+  it('As a user whose sync recovered before I looked, I am not told it is still stalled', async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    await pipe.push(
+      createLifecycle({ phase: createSyncingPhase(10, 50), peers: 0, health: createStalledHealth('noProgress') }),
+      createLifecycle({ phase: createSyncingPhase(10, 50), peers: 2, health: OK }),
+    );
+
+    // When
+    const seen: unknown[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // Then
+    expect(seen).toContainEqual({
+      chain: 'relay',
+      kind: 'recovered',
+      reason: 'noProgress',
+    });
+    expect(seen).not.toContainEqual(expect.objectContaining({ kind: 'stalled' }));
+  });
+
+  it('As a maintainer, I see the peers a chain held when it came up recorded once', async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    const details: unknown[] = [];
+    reporter.onChainDetail(detail => details.push(detail));
+
+    // When
+    await pipe.push(
+      createLifecycle({ phase: READY, peers: 1 }),
+      createLifecycle({ phase: createSyncingPhase(5, 9), peers: 1 }),
+      createLifecycle({ phase: READY, peers: 1 }),
+    );
+    const claimed = pipe.deliver(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: '__dotli_peers__:relay',
+        result: [{ peerId: '12D3KooW', roles: 'FULL', bestNumber: 9 }],
+      }),
+    );
+
+    // Then
+    expect(pipe.sent.filter(raw => raw.includes('system_peers'))).toHaveLength(1);
+    expect(claimed).toBe(true);
+    expect(details).toEqual([
+      {
+        chain: 'relay',
+        peers: [{ peerId: '12D3KooW', roles: 'FULL', bestNumber: 9 }],
+      },
+    ]);
+  });
+
+  it('As a user on a build without metrics, I never have the chain asked for its peers', async () => {
+    // Given
+    const quiet = createChainSyncReporter({ askPeers: false });
+    quiet.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay', quiet);
+
+    // When
+    await pipe.push(createLifecycle({ phase: READY, peers: 1 }));
+
+    // Then
+    expect(pipe.sent).toEqual([]);
+  });
+
+  it("As a user loading an app, I get the app's chain traffic without the sync questions the shell asks", async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    const appResponse = JSON.stringify({
+      jsonrpc: '2.0',
+      id: '1-42',
+      result: '0x00',
+    });
+
+    // When
+    await pipe.push(createLifecycle({ phase: READY, peers: 1 }));
+    pipe.deliver(appResponse);
+
+    // Then
+    expect(pipe.forwarded).toEqual([appResponse]);
+  });
+
+  it('As a user leaving the page, I stop the tap and it closes the lifecycle watch', () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+
+    // When
+    pipe.tap.stop();
+
+    // Then
+    expect(pipe.closed()).toBe(true);
+  });
+
+  it('As a user, I stop a tap whose next snapshot is already on its way and it reports nothing more', async () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    const seen: ChainSyncEvent[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // When
+    const pushed = pipe.push(createLifecycle({ phase: CONNECTING, peers: 1 }));
+    pipe.tap.stop();
+    await pushed;
+
+    // Then
+    expect(seen).toEqual([]);
+  });
+});
+
+describe('A chain keeps its sync across the connections that report it', () => {
+  it('As a user whose chain stalled under one connection, I see it recovered when another connection takes over its sync', async () => {
+    // Given a stalled chain whose sync a second connection takes over
+    reporter.enableSyncReporting(['relay']);
+    const first = requirePipe('relay');
+    await first.push(
+      createLifecycle({ phase: createSyncingPhase(10, 50), peers: 0, health: createStalledHealth('noProgress') }),
+    );
+    first.tap.stop();
+    const second = requirePipe('relay');
+    await second.push(createLifecycle({ phase: createSyncingPhase(10, 50), peers: 2 }));
+
+    // When
+    const seen: ChainSyncEvent[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // Then
+    expect(seen).toContainEqual({ chain: 'relay', kind: 'recovered', reason: 'noProgress' });
+    expect(seen).not.toContainEqual(expect.objectContaining({ kind: 'stalled' }));
+  });
+
+  it('As a user, I see the first peer and the ready chain once, though a second connection takes over a chain that is up', async () => {
+    // Given a ready chain whose sync a second connection takes over, and a listener that already heard the replay
+    reporter.enableSyncReporting(['relay']);
+    const first = requirePipe('relay');
+    await first.push(createLifecycle({ phase: CONNECTING, peers: 0 }), createLifecycle({ phase: READY, peers: 3 }));
+    first.tap.stop();
+    const second = requirePipe('relay');
+    const seen: ChainSyncEvent[] = [];
+    reporter.onChainSync(event => seen.push(event));
+    seen.length = 0;
+
+    // When
+    await second.push(createLifecycle({ phase: READY, peers: 3 }));
+
+    // Then
+    expect(seen).toEqual([]);
+  });
+
+  it('As a user whose relay warp is taken over by a second connection, I still see where the warp landed', async () => {
+    // Given a warping chain whose sync a second connection takes over and finishes
+    reporter.enableSyncReporting(['relay']);
+    const first = requirePipe('relay');
+    await first.push(createLifecycle({ phase: createSyncingPhase(5, 10), peers: 1 }));
+    first.tap.stop();
+    const second = requirePipe('relay');
+    await second.push(createLifecycle({ phase: READY, peers: 1 }));
+
+    // When
+    const seen: ChainSyncEvent[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // Then
+    expect(seen).toContainEqual({ chain: 'relay', kind: 'warpSyncFinished', finalized: 5 });
+  });
+});
+
+describe("A late subscriber replays a chain's current run", () => {
+  it('As a user opening the loading screen while a released chain connects again, I see it connecting, not ready', async () => {
+    // Given a chain that came up, was released and connects again on a new connection
+    reporter.enableSyncReporting(['assethub']);
+    const first = requirePipe('assethub');
+    await first.push(createLifecycle({ phase: CONNECTING, peers: 0 }), createLifecycle({ phase: READY, peers: 4 }));
+    first.tap.stop();
+    const second = requirePipe('assethub');
+    await second.push(createLifecycle({ phase: CONNECTING, peers: 0 }));
+
+    // When
+    const seen: ChainSyncEvent[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // Then
+    const kinds = seen.map(event => event.kind);
+    expect(kinds).toContain('connecting');
+    expect(kinds).not.toContain('firstPeer');
+    expect(kinds).not.toContain('bootstrapComplete');
+  });
+
+  it('As a user opening the loading screen while a chain warps again, I see it syncing, not ready', async () => {
+    // Given a chain that came up and then started a new warp
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    await pipe.push(
+      createLifecycle({ phase: CONNECTING, peers: 0 }),
+      createLifecycle({ phase: createSyncingPhase(1, 4), peers: 1 }),
+      createLifecycle({ phase: READY, peers: 4 }),
+      createLifecycle({ phase: createSyncingPhase(5, 8), peers: 4 }),
+    );
+
+    // When
+    const seen: ChainSyncEvent[] = [];
+    reporter.onChainSync(event => seen.push(event));
+
+    // Then
+    expect(seen).toContainEqual({ chain: 'relay', kind: 'warpSyncProgress', at: 5, target: 8 });
+    expect(seen).not.toContainEqual(expect.objectContaining({ kind: 'warpSyncFinished' }));
+    expect(seen).not.toContainEqual(expect.objectContaining({ kind: 'bootstrapComplete' }));
+  });
+});
+
+describe('Light client sync reporting is opt-in', () => {
+  it.each<{ role: string; shown: ChainRole[] }>([
+    { role: 'a user loading only Asset Hub', shown: ['assethub'] },
+    { role: 'a user with no loading screen to feed', shown: [] },
+  ])('As $role, I have no watch on the relay chain', ({ shown }) => {
+    // Given
+    reporter.enableSyncReporting(shown);
+
+    // When
+    const pipe = openPipe('relay');
+
+    // Then
+    expect(pipe).toBeNull();
+  });
+
+  it('As a user on a chain that refuses a lifecycle watch, I still get its traffic through', () => {
+    // Given
+    reporter.enableSyncReporting(['relay']);
+    const tap = reporter.attachChainSync({
+      chain: 'relay',
+      send: () => undefined,
+      watchLifecycle: () => {
+        throw new Error('chain is not connected');
+      },
+    });
+    const appResponse = { jsonrpc: '2.0', id: '1-1', result: '0x00' };
+
+    // When
+    const claimed = tap?.intercept(appResponse);
+
+    // Then
+    expect(claimed).toBe(false);
+  });
+});
+
+describe('An ended or refused lifecycle watch is counted', () => {
+  it('As a maintainer, I watch a lifecycle watch end in an error and see it counted', async () => {
+    // Given sync reporting on the relay chain, a sink that hears the first report, and a watch whose stream fails
+    const firstReport = new Promise<{ kind: 'exception' | 'expected'; step: string }>(resolve => {
+      onTestFinished(
+        bindCaptureSink({
+          exception: (_error, { step }) => {
+            resolve({ kind: 'exception', step });
+          },
+          expected: (_error, { step }) => {
+            resolve({ kind: 'expected', step });
+          },
+        }),
+      );
+    });
+    reporter.enableSyncReporting(['relay']);
+
+    // When the chain attaches and its watch fails
+    reporter.attachChainSync({
+      chain: 'relay',
+      send: () => undefined,
+      watchLifecycle: () => ({
+        next: () => Promise.reject(new Error('chain removed')),
+        close: () => undefined,
+      }),
+    });
+    const report = await firstReport;
+
+    // Then the failure is counted as an expected one
+    expect(report).toEqual({ kind: 'expected', step: 'chain_lifecycle_watch' });
+  });
+
+  it('As a maintainer, I attach a chain that refuses a lifecycle watch and see it counted', () => {
+    // Given sync reporting on the relay chain, and a chain that refuses a watch
+    const reports = recordReports({ onFinished: onTestFinished });
+    reporter.enableSyncReporting(['relay']);
+
+    // When the chain attaches
+    reporter.attachChainSync({
+      chain: 'relay',
+      send: () => undefined,
+      watchLifecycle: () => {
+        throw new Error('chain is not connected');
+      },
+    });
+
+    // Then the refusal is counted as an expected failure
+    expect(reports.expected).toMatchObject([{ step: 'chain_lifecycle_watch' }]);
+  });
+
+  it('As a maintainer, I see a peer-list request counted when the chain it goes to is already gone', async () => {
+    // Given sync reporting on the relay chain, whose connection is gone by the time it reports ready
+    const reports = recordReports({ onFinished: onTestFinished });
+    reporter.enableSyncReporting(['relay']);
+    let readyApplied: () => void = () => undefined;
+    const applied = new Promise<void>(resolve => {
+      readyApplied = resolve;
+    });
+    let reads = 0;
+
+    // When the chain reports ready
+    reporter.attachChainSync({
+      chain: 'relay',
+      send: () => {
+        throw new Error('connection closed');
+      },
+      watchLifecycle: () => ({
+        next: () => {
+          reads += 1;
+          if (reads === 1) {
+            return Promise.resolve(createLifecycle({ phase: READY, peers: 1 }));
+          }
+          readyApplied();
+          return new Promise(() => undefined);
+        },
+        close: () => undefined,
+      }),
+    });
+    await applied;
+
+    // Then the failed request is counted as an expected failure
+    expect(reports.expected).toMatchObject([{ step: 'chain_peers_request' }]);
+  });
+});
+
+describe('Chain detail reporting works', () => {
+  it('As a maintainer, I see a warm start kept when a second connection to the same chain reports cold', () => {
+    // Given
+    const genesis = getActiveServicesConfig().bulletin.genesis;
+    const seen: unknown[] = [];
+    reporter.onChainDetail(detail => seen.push(detail));
+
+    // When
+    reporter.reportDbCache(genesis, true);
+    reporter.reportDbCache(genesis, false);
+
+    // Then
+    expect(seen).toEqual([{ chain: 'bulletin', dbCache: 'hit' }]);
+  });
+
+  it('As a maintainer, I open a panel late and still see the warm start rather than the later miss', () => {
+    // Given
+    const genesis = getActiveServicesConfig().bulletin.genesis;
+    reporter.reportDbCache(genesis, true);
+    reporter.reportDbCache(genesis, false);
+
+    // When
+    const seen: unknown[] = [];
+    reporter.onChainDetail(detail => seen.push(detail));
+
+    // Then
+    expect(seen).toEqual([{ chain: 'bulletin', dbCache: 'hit' }]);
+  });
+});
+
+type ListenerReports = {
+  captured: { step: string; tags: Record<string, string> | undefined }[];
+  metrics: RecordingSentry;
+};
+
+/** Record the captures and metrics a throwing listener leaves, until the test ends. */
+function recordListenerReports(): ListenerReports {
+  const captured: ListenerReports['captured'] = [];
+  onTestFinished(
+    bindCaptureSink({
+      exception: (_err, ctx) => captured.push({ step: ctx.step, tags: ctx.tags }),
+      expected: () => undefined,
+    }),
+  );
+  return { captured, metrics: bindRecordingSentry({ onFinished: onTestFinished }) };
+}
+
+describe('A throwing chain sync listener is reported', () => {
+  it('As a listener that subscribes while a fact is delivered, I hear that fact once, as the replay', () => {
+    // Given a listener that subscribes a second one when it hears the first fact
+    const seen: unknown[] = [];
+    let attached = false;
+    reporter.onChainDetail(() => {
+      if (!attached) {
+        attached = true;
+        reporter.onChainDetail(detail => seen.push(detail));
+      }
+    });
+
+    // When the database cache result arrives
+    reporter.reportDbCache(getActiveServicesConfig().bulletin.genesis, true);
+
+    // Then the late listener heard it once
+    expect(seen).toEqual([{ chain: 'bulletin', dbCache: 'hit' }]);
+  });
+
+  it('As a late subscriber that throws during the replay, I am reported, the rest of the replay still runs and I stay subscribed', async () => {
+    // Given a chain that reported sync events and a database result before anyone listened
+    const reports = recordListenerReports();
+    reporter.enableSyncReporting(['relay']);
+    const pipe = requirePipe('relay');
+    await pipe.push(createLifecycle({ phase: CONNECTING, peers: 0 }));
+    reporter.reportDbCache(getActiveServicesConfig().bulletin.genesis, false);
+
+    // When listeners that throw on every call attach late
+    const syncCalls: string[] = [];
+    reporter.onChainSync(event => {
+      syncCalls.push(event.kind);
+      throw new Error('listener broke');
+    });
+    const detailCalls: unknown[] = [];
+    reporter.onChainDetail(detail => {
+      detailCalls.push(detail);
+      throw new Error('listener broke');
+    });
+    await pipe.push(createLifecycle({ phase: READY, peers: 1 }));
+
+    // Then each replayed and live call reached them and each throw was reported
+    expect(syncCalls).toEqual(['peers', 'connecting', 'firstPeer', 'peers', 'bootstrapComplete']);
+    expect(detailCalls).toEqual([{ chain: 'bulletin', dbCache: 'miss' }]);
+    expect(reports.captured.map(({ tags }) => tags?.['owner'])).toEqual([
+      'chain_sync.sync',
+      'chain_sync.sync',
+      'chain_sync.detail',
+      'chain_sync.sync',
+      'chain_sync.sync',
+      'chain_sync.sync',
+    ]);
+    expect(reports.metrics.counted('listener.delivery')).toHaveLength(6);
+  });
+});

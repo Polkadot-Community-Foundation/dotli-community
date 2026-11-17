@@ -1,0 +1,162 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* Lifted above the middle like the loading screen, so a failed load swaps one for the other in place. */
+
+.page {
+  /* `#app` is a centring flex container, so stretch rather than collapse to the longest line. */
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--content-height);
+  margin: 0;
+  padding: 0 calc(var(--sp-8) + var(--safe-right)) 80px calc(var(--sp-8) + var(--safe-left));
+  color: var(--text-strong);
+  font-family: var(--font-sans);
+  text-align: center;
+  color-scheme: dark;
+}
+
+/* The sandbox has no `#app`, so the page fills its transparent body itself. */
+.standalone {
+  min-height: 100dvh;
+  background: var(--bg-page);
+}
+
+.inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 440px;
+  margin: 0;
+  padding: 0;
+}
+
+/* Bare on the page. */
+.glyph {
+  display: flex;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  color: var(--text-secondary);
+}
+
+.glyph[data-warning] {
+  color: var(--chrome-warn);
+}
+
+.glyph-icon {
+  display: block;
+}
+
+.title {
+  margin: var(--sp-4) 0 0;
+  padding: 0;
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+  color: var(--text-strong);
+  text-wrap: balance;
+}
+
+/* Focused only by script, never by Tab, so a ring would mark nothing actionable. */
+.title:focus {
+  outline: none;
+}
+
+.detail {
+  margin: var(--sp-2) 0 0;
+  padding: 0;
+  font-size: var(--fs-title);
+  line-height: var(--lh-body);
+  text-wrap: balance;
+  color: var(--text-secondary);
+}
+
+.detail strong {
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+
+.tips {
+  box-sizing: border-box;
+  margin: var(--sp-6) 0 0;
+}
+/* The well hugs its longest tip, so it does not set a third width between the title and the actions. */
+.tips[data-layout='list'] {
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  text-align: left;
+}
+
+.tips-label {
+  margin: 0;
+  padding: 0;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.tip {
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text-strong);
+  text-wrap: pretty;
+}
+
+.tips-list {
+  margin: var(--sp-2) 0 0;
+  padding: 0 0 0 var(--sp-5);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text-strong);
+}
+
+.actions {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: stretch;
+  justify-content: center;
+  box-sizing: border-box;
+  margin: var(--sp-8) 0 0;
+  padding: 0;
+}
+
+/* A caller's icon may carry its own size. */
+.action-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+/* Phones stack the buttons full width in reading order, the recommended one last as in a dialog sheet. */
+@media (max-width: 560px) {
+  .page {
+    padding: 0 calc(var(--sp-4) + var(--safe-right)) var(--sp-14) calc(var(--sp-4) + var(--safe-left));
+  }
+
+  .tips[data-layout='list'] {
+    width: 100%;
+  }
+
+  .actions {
+    flex-direction: column;
+    width: 100%;
+  }
+}

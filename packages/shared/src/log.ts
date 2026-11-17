@@ -2,23 +2,40 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Console output only under DEBUG, while warn, error and event always reach the sink so production keeps a trace.
-// The sink is bound from `@dotli/metrics`, since this package cannot depend on it.
+// The sink is bound from outside, since this package cannot depend on the code that binds it.
 
 import { noop } from './noop.js';
+import { serializeError } from './serializeError.js';
 
 // Read from the build flag here rather than set at boot, so the first log of every entry point already honours it.
 // Node loaders other than Vite's, such as Playwright's for test helpers, define no `import.meta.env`.
 const env = import.meta.env as ImportMetaEnv | undefined;
 const DEBUG = env?.VITE_APP_DEBUG === 'true';
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogLevel = 'info' | 'warn' | 'error';
 
-export interface LogSink {
-  /** Called for every warn, error and event. A throw is swallowed. */
-  emit: (level: LogLevel, message: string, attrs?: Record<string, unknown>, args?: unknown[]) => void;
-}
+/** One line the log hands its sink. `args` are what a warn or error was called with. */
+export type LogEntry = {
+  level: LogLevel;
+  message: string;
+  attrs: Record<string, unknown>;
+  args?: unknown[];
+};
+
+export type LogSink = {
+  /** Called for every warn, error and event. A throw never reaches the caller of the log, and leaves one console line. */
+  emit: (entry: LogEntry) => void;
+};
+
+type BoundLogger = ReturnType<typeof createLogger>;
 
 let sink: LogSink | null = null;
+
+// Bound rather than wrapped, so the console shows the caller's line.
+// eslint-disable-next-line no-console -- the logger is what writes to the console
+const debug: (...args: unknown[]) => void = DEBUG ? console.debug.bind(console) : noop;
+
+export const log = createLogger({});
 
 /** A later bind replaces the earlier sink. Returns a function that puts back the sink bound before. */
 export function bindLogSink(next: LogSink): () => void {
@@ -29,103 +46,57 @@ export function bindLogSink(next: LogSink): () => void {
   };
 }
 
-function safeEmit(level: LogLevel, message: string, attrs?: Record<string, unknown>, args?: unknown[]): void {
-  const s = sink;
-  if (s === null) {
-    return;
-  }
-  try {
-    s.emit(level, message, attrs, args);
-    // eslint-disable-next-line no-restricted-syntax -- a throwing sink would break every `log.error` caller, error handlers included.
-  } catch {
-    /* sinks must not break logging */
-  }
-}
-
-interface BoundLogger {
-  debug: (...args: unknown[]) => void;
-  warn: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
-  /** Always-on lifecycle marker, sent to the sink as `info`. */
-  event: (name: string, attrs?: Record<string, unknown>) => void;
-  child: (scope: Record<string, unknown>) => BoundLogger;
-}
-
-function createLogger(scope: Record<string, unknown>): BoundLogger {
+function createLogger(scope: Record<string, unknown>) {
   return {
-    // eslint-disable-next-line no-console -- intentional: logger module
-    debug: DEBUG ? console.debug.bind(console) : noop,
-    warn: (...args: unknown[]) => {
-      if (DEBUG) {
-        // eslint-disable-next-line no-console -- the logger is what writes to the console
-        console.warn(...args);
-      }
-      safeEmit('warn', stringifyArgs(args), scope, args);
-    },
-    error: (...args: unknown[]) => {
-      if (DEBUG) {
-        // eslint-disable-next-line no-console -- the logger is what writes to the console
-        console.error(...args);
-      }
-      safeEmit('error', stringifyArgs(args), scope, args);
-    },
-    event: (name: string, attrs?: Record<string, unknown>) => {
-      const merged = attrs === undefined ? scope : { ...scope, ...attrs };
-      if (DEBUG) {
-        // eslint-disable-next-line no-console -- intentional info channel
-        console.info(`[event] ${name}`, merged);
-      }
-      safeEmit('info', name, merged);
-    },
-    child: (extra: Record<string, unknown>) => createLogger({ ...scope, ...extra }),
+    debug,
+    warn,
+    error,
+    /** Always-on lifecycle marker, sent to the sink as `info`. */
+    event,
+    createChild,
   };
-}
 
-function stringifyArgs(args: unknown[]): string {
-  if (args.length === 0) {
-    return '';
-  }
-  if (args.length === 1) {
-    const a = args[0];
-    return typeof a === 'string' ? a : safeToString(a);
-  }
-  return args.map(a => (typeof a === 'string' ? a : safeToString(a))).join(' ');
-}
-
-function safeToString(v: unknown): string {
-  if (v === null) {
-    return 'null';
-  }
-  if (v === undefined) {
-    return 'undefined';
-  }
-  if (v instanceof Error) {
-    return v.message || v.name || 'Error';
-  }
-  if (typeof v === 'object') {
-    try {
-      const json = JSON.stringify(v);
-      if (typeof json === 'string') {
-        return json;
-      }
-      return Object.prototype.toString.call(v);
-    } catch {
-      return Object.prototype.toString.call(v);
+  function warn(...args: unknown[]): void {
+    if (DEBUG) {
+      // eslint-disable-next-line no-console -- the logger is what writes to the console
+      console.warn(...args);
     }
+    emitToSink({ level: 'warn', message: stringifyArgs(args), attrs: scope, args });
   }
-  if (typeof v === 'symbol') {
-    return v.toString();
+
+  function error(...args: unknown[]): void {
+    if (DEBUG) {
+      // eslint-disable-next-line no-console -- the logger is what writes to the console
+      console.error(...args);
+    }
+    emitToSink({ level: 'error', message: stringifyArgs(args), attrs: scope, args });
   }
-  if (typeof v === 'function') {
-    return v.name ? `[function ${v.name}]` : '[function]';
+
+  function event(name: string, attrs?: Record<string, unknown>): void {
+    const merged = { ...scope, ...attrs };
+    if (DEBUG) {
+      // eslint-disable-next-line no-console -- intentional info channel
+      console.info(`[event] ${name}`, merged);
+    }
+    emitToSink({ level: 'info', message: name, attrs: merged });
   }
-  if (typeof v === 'bigint') {
-    return v.toString();
+
+  function createChild(extra: Record<string, unknown>): BoundLogger {
+    return createLogger({ ...scope, ...extra });
   }
-  if (typeof v === 'number' || typeof v === 'boolean') {
-    return v.toString();
-  }
-  return Object.prototype.toString.call(v);
 }
 
-export const log: BoundLogger = createLogger({});
+function emitToSink(entry: LogEntry): void {
+  try {
+    sink?.emit(entry);
+  } catch (error) {
+    // The logger cannot report through itself, and a throwing sink must not break its caller, error handlers included.
+    // eslint-disable-next-line no-console -- the one trace a broken sink leaves
+    console.error('[dot.li log] The log sink threw:', error);
+  }
+}
+
+// Strings stay as written, an empty one included. Every other argument reads as a thrown value does.
+function stringifyArgs(args: unknown[]): string {
+  return args.map(a => (typeof a === 'string' ? a : serializeError(a))).join(' ');
+}

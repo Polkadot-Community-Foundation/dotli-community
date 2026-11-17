@@ -21,5 +21,14 @@ export default defineConfig([
     },
   },
   ...importBans([scopeBan]),
-  ...importBans([scopeBan, fixedConfigOnly], ['src/provider.ts', 'src/chain-sync.ts']),
+  ...importBans(
+    [scopeBan, fixedConfigOnly],
+    [
+      'src/createLightClient.ts',
+      'src/createChainSyncReporter.ts',
+      'src/createChainSyncTaps.ts',
+      'src/createPrefetchingStore.ts',
+      'src/startTruapiProvider.ts',
+    ],
+  ),
 ]);

@@ -1,15 +1,31 @@
 # `@dotli/bitswap`
 
-Fetches single blocks from the Bulletin Chain through the light client, and relays a sandbox frame's block requests to
-the host.
+## Overview
 
-## Responsibility
+Fetches single blocks from the Bulletin Chain, and relays a sandbox frame's block requests to the host.
 
-- Owns the `bitswap_v1_get` client: one connection, retries and same-CID request sharing.
-- Owns the host side relay that serves sandbox block requests and reports content progress.
-- Owns the per-block check on the Bitswap path: every block it serves, from the cache or the network, has been hashed
-  against its CID by the verifier it is given, and a block that cannot be checked is refused.
-- Does not own the hash functions, the block cache or the light client.
+## Responsibilities
+
+- **Owns:**
+  - the `bitswap_v1_get` client
+  - the host-side relay with content progress
+  - the per-block check on the Bitswap path
+- **Does not own:**
+  - the hash functions
+  - the block cache
+  - the light client
+
+## Public API
+
+### `@dotli/bitswap`
+
+| Export                                         | What it does                                  |
+| ---------------------------------------------- | --------------------------------------------- |
+| `createBitswapClient(params)`, `BitswapClient` | A client over the caller's Bulletin provider. |
+| `createSandboxBlockRelay`, `SandboxBlockRelay` | The host-side relay.                          |
+| `BlockCache`                                   | The block cache the relay takes.              |
+| `BlockOrigin`                                  | `cache` or `network`.                         |
+| `ContentProgress`                              | Bytes fetched out of the total, and speed.    |
 
 ## Design
 
@@ -17,34 +33,16 @@ the host.
 flowchart LR
   sandbox -- postMessage --> relay --> cache{"block cache hit?"}
   cache -- yes --> verify{"hash matches CID?"}
-  cache -- no --> client --> frame[protocol frame] --> lc[light client] --> peers[Bulletin peers]
+  cache -- no --> client --> conn["Bulletin connection from the caller"]
   client --> verify
   verify -- yes --> reply
   verify -- "no, or cannot check" --> refuse[refuse]
 ```
 
-- The client keeps one Bulletin connection to the protocol frame, redialled after a halt. Retryable errors go through
-  `createAsyncTaskPool` within a total time budget. A "block not found" answer is retried a few times because it only
-  means the connected peers lacked the block. Other errors are terminal. A second request for the same CID waits on the
-  first.
-- The page has one client, built on first use over the protocol frame's remote chain provider.
-- The relay listens on the host's sandbox channel. It takes the cache and the client through `SandboxBlockRelayDeps` and
-  tags each block with its `BlockOrigin`. The host holds the blocks because the sandbox's credentialless origin loses
-  its storage on reload.
-- A block cache read, delete or write that fails and is worked around is captured, logged as an error and counted as
-  `content.block_relay` with its `step`, so the fallback never hides it. A verifier that cannot run reports why itself,
-  so each block it leaves unchecked is a breadcrumb and a `verify` count. That block is refused with
-  `ContentVerificationError`, never served and never kept.
-- Progress totals come from a hand-decoded dag-pb root that sums link sizes, which keeps the `@ipld/dag-pb` decoder out
-  of the eager host bundle. A walk asks for its root once, so the root asked again, by a retry or a frame rendered
-  again, starts the count from zero.
-- Errors carry stable names. The sandbox rebuilds errors by name across `postMessage`, so callers branch on
-  `error.name`.
-
-## Public API
-
-### `@dotli/bitswap`
-
-- Client: `bitswapGet`.
-- Relay: `createSandboxBlockRelay`, `SandboxBlockRelay`, `SandboxBlockRelayDeps`, `BlockCache`, `BlockOrigin`,
-  `ContentProgress`.
+- **Every block is checked:** from cache or network, against its CID. A block that cannot be checked is refused.
+- **Connection:** the caller gives it. The client holds it while fetches run and closes it after the last one.
+- **Retries:** within a total time budget. "Block not found" is retried a few times. Other errors are terminal.
+- **Sharing:** a second request for the same CID waits on the first.
+- **Host holds blocks:** the sandbox's credentialless origin loses its storage on reload.
+- **Progress:** totals come from a hand-decoded dag-pb root, to keep the decoder out of the eager bundle.
+- **Errors:** carry stable names, since the sandbox rebuilds them across `postMessage`.

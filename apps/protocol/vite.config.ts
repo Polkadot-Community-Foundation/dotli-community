@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { defineConfig } from 'vite';
-import { dotliApp } from '@config/vite/app';
+import { createDotliApp } from '@config/vite/app';
 import { modeSync } from '@config/vite/mode-sync';
+import { LOCAL_ROOTS } from '@dotli/config/local-roots';
 
-const app = dotliApp(import.meta.dirname, 'protocol');
+const app = createDotliApp({ appDir: import.meta.dirname, site: 'protocol', roots: LOCAL_ROOTS });
 
 export default defineConfig(
-  app.vite({
+  app.createViteConfig({
     base: app.base,
     plugins: [modeSync()],
     server: {
-      // Must match DEV_PROTOCOL_PORT in @dotli/config.
-      port: 4323,
+      port: 4003,
     },
   }),
 );

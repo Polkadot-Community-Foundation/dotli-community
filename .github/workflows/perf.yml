@@ -35,7 +35,7 @@ jobs:
       - name: Download baseline from main
         if: github.event_name == 'pull_request'
         id: baseline
-        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
+        uses: dawidd6/action-download-artifact@a92c7ae74cf1df8810783758581e485ac3aaa309 # v28
         with:
           name: perf-baseline
           workflow: perf.yml
@@ -63,7 +63,7 @@ jobs:
           PERF_DOMAIN_A: browse
           PERF_DOMAIN_B: host-playground
         run:
-          npx playwright test --config=tests/performance/playwright.config.ts tests/performance/cold-start.spec.ts ||
+          npx playwright test --config=tests/performance/playwright.config.ts tests/performance/coldStart.spec.ts ||
           true
 
       - name: Run perf tests (PR)
@@ -74,7 +74,7 @@ jobs:
           PERF_DOMAIN_A: browse
           PERF_DOMAIN_B: host-playground
         run:
-          npx playwright test --config=tests/performance/playwright.config.ts tests/performance/cold-start.spec.ts ||
+          npx playwright test --config=tests/performance/playwright.config.ts tests/performance/coldStart.spec.ts ||
           true
 
       - name: Upload baseline artifact

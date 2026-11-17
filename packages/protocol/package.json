@@ -2,7 +2,7 @@
   "name": "@dotli/protocol",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.11.4",
+  "version": "0.14.0",
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -26,7 +26,8 @@
     "@dotli/resolver": "*",
     "@dotli/shared": "*",
     "@dotli/transport": "*",
-    "@polkadot-api/json-rpc-provider": "^0.2.0",
-    "scale-ts": "^1.6.1"
+    "@polkadot-api/json-rpc-provider": "0.2.0",
+    "nanostores": "1.5.5",
+    "scale-ts": "1.6.1"
   }
 }

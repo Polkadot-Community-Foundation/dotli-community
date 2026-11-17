@@ -1,17 +1,20 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createSignal } from 'solid-js';
+import { createSignal, Show } from 'solid-js';
+import { Portal } from '@solidjs/web';
 import type { Meta, StoryObj } from 'storybook-solidjs-vite';
 import { expect, fn, waitFor, within } from 'storybook/test';
 import { TrashIcon } from '../icons/TrashIcon.js';
 import { Button } from '../primitives/Button.js';
-import { Callout } from '../primitives/Well.js';
 import { Modal } from './Modal.js';
+import { Popover } from './Popover.js';
 
 const onOpenChange = fn().mockName('onOpenChange');
 // The modal is portalled into the body, outside the story's canvas.
 const body = within(document.body);
+const [swapOpen, setSwapOpen] = createSignal(false);
+const [step, setStep] = createSignal(1);
 
 function Harness() {
   const [open, setOpen] = createSignal(true);
@@ -24,13 +27,14 @@ function Harness() {
         setOpen(next);
       }}
       title="Clear site data"
+      icon={TrashIcon}
       labelledBy="story-modal-title"
       initialFocus={() => input}
       testId="story-modal"
     >
       <Modal.Head titleId="story-modal-title" title="Clear site data" icon={TrashIcon} />
       <Modal.Body>
-        <Callout>The site forgets its settings and signs you out.</Callout>
+        <p style={{ margin: '0' }}>The site forgets its settings and signs you out.</p>
         <input
           ref={el => {
             input = el;
@@ -65,9 +69,12 @@ type Story = StoryObj<typeof meta>;
 
 /** As a keyboard user, I tab past the last answer in the card and focus wraps inside it, and Escape reports it closed once. */
 export const Desktop: Story = {
-  play: async ({ userEvent, step }) => {
-    onOpenChange.mockClear();
-    await step('Given focus starts in the password field', async () => {
+  play: async ({ userEvent, mount, step }) => {
+    await step('When the dialog renders', async () => {
+      await mount();
+      onOpenChange.mockClear();
+    });
+    await step('Then focus starts in the password field', async () => {
       await waitFor(() => expect(body.getByTestId('story-password')).toHaveFocus());
     });
     await step('When I Tab past the last answer', async () => {
@@ -89,28 +96,53 @@ export const Desktop: Story = {
   },
 };
 
-/** As a phone user, I see the dialog as a sheet with its title. */
+/** As a dotli user, I see the dialog as a card headed by its icon and title, with its body and answers. */
+export const Card: Story = {
+  play: async ({ mount, step }) => {
+    await step('When the dialog renders', async () => {
+      await mount();
+    });
+    await step('Then the card shows its title, its field and both answers', async () => {
+      const card = within(body.getByTestId('story-modal'));
+      // The card fades in as it opens.
+      await waitFor(() => expect(card.getByRole('heading', { level: 2, name: 'Clear site data' })).toBeVisible());
+      await waitFor(() => expect(body.getByTestId('story-password')).toHaveFocus());
+      await expect(card.getByRole('button', { name: 'Cancel' })).toBeVisible();
+      await expect(card.getByRole('button', { name: 'Clear' })).toBeVisible();
+    });
+  },
+};
+
+/** As a phone user, I see the dialog as a sheet headed by its icon and title. */
 export const Phone: Story = {
   globals: { viewport: { value: 'phone', isRotated: false } },
-  play: async ({ step }) => {
-    await step('Then it is a sheet titled Clear site data', async () => {
-      await waitFor(() => expect(body.getByTestId('story-modal-sheet-title')).toHaveTextContent('Clear site data'));
+  play: async ({ mount, step }) => {
+    await step('When the dialog renders', async () => {
+      await mount();
+    });
+    await step('Then the sheet head leads with the icon and the title', async () => {
+      const head = within(await body.findByTestId('story-modal-sheet-head'));
+      await expect(head.getByTestId('story-modal-sheet-icon').querySelector('svg')).not.toBeNull();
+      await expect(head.getByTestId('story-modal-sheet-title')).toHaveTextContent('Clear site data');
     });
   },
 };
 
 /** As a dotli user, I resize the window across the phone breakpoint and the dialog keeps my typed value and focus. */
 export const SwitchesFormKeepingContent: Story = {
-  play: async ({ userEvent, step }) => {
+  play: async ({ userEvent, mount, step }) => {
     const input = () => body.getByTestId<HTMLInputElement>('story-password');
     const { page } = await import('vitest/browser');
     const wide = { width: window.innerWidth, height: window.innerHeight };
     try {
-      await step('Given I typed a password in the card', async () => {
-        await waitFor(() => expect(input()).toHaveFocus());
-        await userEvent.type(input(), 'hunter2');
+      await step('When the dialog renders as a card', async () => {
+        await mount();
       });
-      await step('When the window narrows to a phone', async () => {
+      await step('Then focus starts in the password field of the card', async () => {
+        await waitFor(() => expect(input()).toHaveFocus());
+      });
+      await step('When I type a password and the window narrows to a phone', async () => {
+        await userEvent.type(input(), 'hunter2');
         await page.viewport(390, 844);
       });
       await step('Then the sheet shows the same field, value and focus', async () => {
@@ -130,5 +162,206 @@ export const SwitchesFormKeepingContent: Story = {
       // The next story must not inherit the phone.
       await page.viewport(wide.width, wide.height);
     }
+  },
+};
+
+/**
+ * The phone bar, a body child that stays pressable under a sheet in these stories, with a button that opens a popover, and a modal
+ * open from the start. With `mustAnswer` the modal ignores a dismiss, as a prompt the user must answer does.
+ */
+function BarHarness(props: { mustAnswer?: boolean }) {
+  const [open, setOpen] = createSignal(true);
+  const [trigger, setTrigger] = createSignal<HTMLButtonElement | undefined>(undefined, { ownedWrite: true });
+  return (
+    <>
+      <Portal>
+        <header data-over-sheets="" data-testid="story-bar">
+          <button ref={setTrigger} type="button" data-testid="story-bar-button">
+            Bar
+          </button>
+        </header>
+      </Portal>
+      <Popover id="bar-popover" title="Account" trigger={trigger()}>
+        <p style={{ margin: '0', padding: '0 16px' }}>Signed in as Alice.</p>
+      </Popover>
+      <Modal
+        open={open()}
+        onOpenChange={(next, reason) => {
+          if (props.mustAnswer === true && !next && reason === 'dismiss') {
+            return;
+          }
+          setOpen(next);
+        }}
+        title="Clear site data"
+        labelledBy="bar-modal-title"
+        testId="bar-modal"
+      >
+        <Modal.Head titleId="bar-modal-title" title="Clear site data" />
+        <Modal.Body>
+          <p style={{ margin: '0' }}>The site forgets its settings and signs you out.</p>
+        </Modal.Body>
+      </Modal>
+    </>
+  );
+}
+
+/** As a phone user, I turn the screen with a dialog open and the bar answers under its sheet, and goes inert again under its card. */
+export const BarFollowsLayout: Story = {
+  render: () => <BarHarness />,
+  play: async ({ mount, step }) => {
+    const bar = () => body.getByTestId('story-bar');
+    const { page } = await import('vitest/browser');
+    const wide = { width: window.innerWidth, height: window.innerHeight };
+    try {
+      await step('Given a dialog open as a card over the bar', async () => {
+        await mount();
+        await waitFor(() => expect(body.getByTestId('bar-modal')).toBeInTheDocument());
+        await waitFor(() => expect(bar()).toHaveAttribute('inert'));
+      });
+      await step('When the window narrows to a phone', async () => {
+        await page.viewport(390, 844);
+      });
+      await step('Then the dialog is a sheet and the bar answers', async () => {
+        await waitFor(() => expect(body.getByTestId('bar-modal-sheet-head')).toBeInTheDocument());
+        await waitFor(() => expect(bar()).not.toHaveAttribute('inert'));
+      });
+      await step('When the window widens back to a desktop', async () => {
+        await page.viewport(wide.width, wide.height);
+      });
+      await step('Then the dialog is a card again and the bar is inert', async () => {
+        await waitFor(() => expect(body.queryByTestId('bar-modal-sheet-head')).not.toBeInTheDocument());
+        await waitFor(() => expect(bar()).toHaveAttribute('inert'));
+      });
+    } finally {
+      // The next story must not inherit the phone.
+      await page.viewport(wide.width, wide.height);
+    }
+  },
+};
+
+/** As a phone user, I press a bar button over a dialog I must answer and its sheet slides in over the dialog, which stays. */
+export const BarPressOverMustAnswerSheetSlides: Story = {
+  globals: { viewport: { value: 'phone', isRotated: false } },
+  render: () => <BarHarness mustAnswer />,
+  play: async ({ mount, step }) => {
+    await step("Given the dialog's sheet is open", async () => {
+      await mount();
+      await waitFor(() => expect(body.getByTestId('bar-modal-sheet-head')).toBeInTheDocument());
+    });
+    await step('When I press the bar button', () => {
+      // Targets the button whatever covers it, since the bar has no position of its own here.
+      body.getByTestId('story-bar-button').click();
+    });
+    await step("Then the button's sheet slides in and the dialog stays", async () => {
+      const popover = () => document.getElementById('bar-popover');
+      await waitFor(() => expect(popover()).toHaveAttribute('data-open'));
+      await expect(popover()).not.toHaveAttribute('data-handoff');
+      await expect(body.getByTestId('bar-modal-backdrop')).toHaveAttribute('data-open');
+    });
+  },
+};
+
+/** As a phone user, I press a bar button over a dialog sheet and the dialog closes and the button's sheet takes its place with focus. */
+export const BarPressOverSheetHandsOff: Story = {
+  globals: { viewport: { value: 'phone', isRotated: false } },
+  render: () => <BarHarness />,
+  play: async ({ mount, step }) => {
+    await step("Given the dialog's sheet is open", async () => {
+      await mount();
+      await waitFor(() => expect(body.getByTestId('bar-modal-sheet-head')).toBeInTheDocument());
+    });
+    await step('When I press the bar button', () => {
+      // Targets the button whatever covers it, since the bar has no position of its own here.
+      body.getByTestId('story-bar-button').click();
+    });
+    await step("Then the dialog closes and the button's sheet takes its place with focus", async () => {
+      const popover = () => document.getElementById('bar-popover');
+      await waitFor(() => expect(popover()).toHaveAttribute('data-open'));
+      await expect(popover()).toHaveAttribute('data-handoff');
+      await expect(body.getByTestId('bar-modal-backdrop')).not.toHaveAttribute('data-open');
+      await waitFor(() => expect(popover()?.contains(document.activeElement)).toBe(true));
+    });
+  },
+};
+
+/** A modal mounted closed whose content swaps in place from step to step, and its trigger. */
+function SwapHarness() {
+  return (
+    <>
+      <Button
+        testId="swap-modal-trigger"
+        onClick={() => {
+          setSwapOpen(true);
+        }}
+      >
+        Pair
+      </Button>
+      <Modal
+        open={swapOpen()}
+        onOpenChange={next => {
+          setSwapOpen(next);
+        }}
+        title="Pair a device"
+        labelledBy="swap-modal-title"
+        initialFocus={() => document.querySelector<HTMLElement>('[data-testid="swap-modal-answer"]') ?? undefined}
+        refocusOn={step}
+        testId="swap-modal"
+      >
+        <Modal.Head titleId="swap-modal-title" title={`Step ${String(step())}`} />
+        <Modal.Actions>
+          <Show when={step()} keyed>
+            {current => (
+              <Button variant="secondary" block testId="swap-modal-answer">
+                {`Answer ${String(current)}`}
+              </Button>
+            )}
+          </Show>
+        </Modal.Actions>
+      </Modal>
+    </>
+  );
+}
+
+/**
+ * As a keyboard user, I see a dialog whose content swaps as it opens start on its answer, keep focus in it as its
+ * content swaps while open, and get focus back on its trigger when it closes as its content swaps.
+ */
+export const RefocusesOnSwapWhileOpen: Story = {
+  render: () => <SwapHarness />,
+  beforeEach: () => {
+    setSwapOpen(false);
+    setStep(1);
+  },
+  play: async ({ step: storyStep }) => {
+    const answer = (): HTMLElement => body.getByTestId('swap-modal-answer');
+    const trigger = (): HTMLElement => body.getByTestId('swap-modal-trigger');
+    await storyStep('Given focus on the trigger', async () => {
+      trigger().focus();
+      await expect(trigger()).toHaveFocus();
+    });
+    await storyStep('When it opens on content swapped as it opens', () => {
+      setStep(2);
+      setSwapOpen(true);
+    });
+    await storyStep('Then focus is on its answer', async () => {
+      await waitFor(() => expect(answer()).toHaveFocus());
+      await expect(answer()).toHaveTextContent('Answer 2');
+    });
+    await storyStep('When the content swaps while open', () => {
+      setStep(3);
+    });
+    await storyStep('Then the answer is new and focus is on the card, not the page', async () => {
+      await waitFor(() => expect(answer()).toHaveTextContent('Answer 3'));
+      await waitFor(() => expect(body.getByTestId('swap-modal')).toHaveFocus());
+    });
+    await storyStep('When it closes as its content swaps', () => {
+      setStep(4);
+      setSwapOpen(false);
+    });
+    await storyStep('Then focus is back on the trigger, not on the card fading out', async () => {
+      await waitFor(() => expect(trigger()).toHaveFocus());
+      await expect(body.getByTestId('swap-modal-backdrop')).not.toHaveAttribute('data-open');
+      await expect(trigger()).toHaveFocus();
+    });
   },
 };

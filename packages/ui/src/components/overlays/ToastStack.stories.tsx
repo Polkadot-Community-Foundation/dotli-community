@@ -4,29 +4,13 @@
 import { resetAllStoresForTests } from '@dotli/shared/testing';
 import type { Meta, StoryObj } from 'storybook-solidjs-vite';
 import { expect, fn, waitFor, within } from 'storybook/test';
-import { dismissToast, pushToast, toastsStore, type ToastInput } from '../../page/state/toasts.js';
-import { BellIcon } from '../icons/BellIcon.js';
+import { toasts, type ToastInput } from '../../page/state/createToasts.js';
 import { ToastStack } from './ToastStack.js';
 
-const toast = (text: string): ToastInput => ({ text, label: 'playground.dot', icon: BellIcon, dismissMs: 0 });
-const labelled = (label: string, over: Partial<ToastInput> = {}): ToastInput => ({
-  text: `${label} happened`,
-  label,
-  icon: BellIcon,
-  dismissMs: 0,
-  ...over,
-});
 const onAction = fn<() => void>().mockName('onAction');
 /** Ids of the toasts the story's beforeEach pushed, oldest first. */
 let pushed: number[] = [];
-const showLabelled =
-  (labels: string[], over: Partial<ToastInput> = {}) =>
-  () => {
-    resetAllStoresForTests();
-    onAction.mockClear();
-    pushed = labels.map(label => pushToast(labelled(label, over)));
-    return resetAllStoresForTests;
-  };
+const MANY = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
 
 const meta = {
   title: 'Primitives/ToastStack',
@@ -38,45 +22,26 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-const showOne = () => {
-  resetAllStoresForTests();
-  pushToast(toast('Your transfer is in a block'));
-  return resetAllStoresForTests;
-};
-
-const showThree = () => {
-  resetAllStoresForTests();
-  pushToast(toast('Account connected'));
-  pushToast(toast('Your transfer is in a block'));
-  pushToast(toast('Transfer finalized'));
-  return resetAllStoresForTests;
-};
-
 /** As a dotli user, I see a stack holding one toast. */
 export const OneToast: Story = { beforeEach: showOne };
 
 /** As a dotli user, I see three toasts stacked. */
 export const ThreeToasts: Story = { beforeEach: showThree };
 
-const titles = (canvasElement: HTMLElement, shown: boolean): string[] =>
-  within(canvasElement)
-    .getAllByTestId('notif-card')
-    .filter(card => card.hasAttribute('data-hidden') !== shown)
-    .map(card => within(card).getByTestId('notif-title').textContent);
-
-/** As a dotli user, I see only the newest three of four toasts, with Dismiss all offered. */
+/** As a dotli user, I see only the newest three of four toasts, with how many the pile holds and its front card's close. */
 export const FourToastsShowNewestThree: Story = {
   beforeEach: showLabelled(['A', 'B', 'C', 'D']),
-  play: async ({ canvas, canvasElement, step }) => {
-    await step('Then only the newest three show, and Dismiss all is offered', async () => {
-      await expect(titles(canvasElement, true)).toEqual(['B', 'C', 'D']);
-      await expect(titles(canvasElement, false)).toEqual(['A']);
-      await expect(canvas.getByRole('button', { name: 'Dismiss all' })).toBeVisible();
+  play: async ({ canvas, step }) => {
+    await step('Then the pile counts all four and offers to close its front card', async () => {
+      await expect(canvas.getByTestId('notif-count')).toBeVisible();
+      await expect(canvas.getByTestId('notif-count')).toHaveTextContent('4');
+      await waitFor(() => expect(canvas.getByRole('button', { name: 'Dismiss' })).toBeVisible());
+      await expect(canvas.getByTestId('notif-close-all')).not.toBeVisible();
     });
   },
 };
 
-/** As a dotli user, I see a toast's tinted icon, title, link, action and close button, and pressing the action runs it once. */
+/** As a dotli user, I see a toast's toned icon, title, link, action and close button, and pressing the action runs it once. */
 export const ToastParts: Story = {
   beforeEach: showLabelled(['Update available'], {
     deeplink: 'https://dot.li/',
@@ -90,21 +55,18 @@ export const ToastParts: Story = {
   }),
   play: async ({ canvas, userEvent, step }) => {
     const card = canvas.getByTestId('notif-card');
-    await step(
-      'Then the toast shows its tinted icon, title, link, action and close button, read politely',
-      async () => {
-        await expect(within(card).getByTestId('notif-icon')).toHaveAttribute('data-tone', 'err');
-        await expect(within(card).getByTestId('notif-title')).toHaveTextContent('Update available');
-        const link = within(card).getByRole('link', { name: 'Update available happened' });
-        await expect(link).toHaveAttribute('href', 'https://dot.li/');
-        await expect(link).toHaveAttribute('target', '_blank');
-        await expect(link).toHaveAttribute('rel', 'noopener');
-        await expect(within(card).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
-        const live = canvas.getByRole('status');
-        await expect(live).toHaveAttribute('aria-live', 'polite');
-        await expect(canvas.queryByRole('button', { name: 'Dismiss all' })).toBeNull();
-      },
-    );
+    await step('Then the toast shows its toned icon, title, link, action and close button, read politely', async () => {
+      await expect(within(card).getByTestId('notif-icon')).toHaveAttribute('data-tone', 'err');
+      await expect(within(card).getByTestId('notif-title')).toHaveTextContent('Update available');
+      const link = within(card).getByRole('link', { name: 'Update available happened' });
+      await expect(link).toHaveAttribute('href', 'https://dot.li/');
+      await expect(link).toHaveAttribute('target', '_blank');
+      await expect(link).toHaveAttribute('rel', 'noopener');
+      await expect(within(card).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+      const live = canvas.getByRole('status');
+      await expect(live).toHaveAttribute('aria-live', 'polite');
+      await expect(canvas.getByTestId('notif-close-all')).not.toBeVisible();
+    });
     await step('When I press its action', async () => {
       await userEvent.click(within(card).getByRole('button', { name: 'Reload' }));
     });
@@ -122,8 +84,11 @@ export const DismissOne: Story = {
   // Its play empties the stack, which a docs page would show as a blank block.
   tags: ['!autodocs'],
   beforeEach: showOne,
-  play: async ({ canvas, userEvent, step }) => {
-    await step('Given one toast shows', async () => {
+  play: async ({ canvas, userEvent, mount, step }) => {
+    await step('When the stack renders', async () => {
+      await mount();
+    });
+    await step('Then one toast shows', async () => {
       await expect(canvas.getAllByTestId('notif-card')).toHaveLength(1);
     });
     await step('When I dismiss it', async () => {
@@ -132,28 +97,50 @@ export const DismissOne: Story = {
     await step('Then it plays its exit, and once that ends the stack is empty', async () => {
       await expect(canvas.getByTestId('notif-card')).toHaveAttribute('data-leaving');
       await waitFor(() => expect(canvas.queryByTestId('notif-stack')).toBeNull());
-      await expect(toastsStore.get().items).toEqual([]);
+      await expect(toasts.store.get().items).toEqual([]);
     });
   },
 };
 
-/** As a dotli user, I dismiss all toasts and each plays its exit, leaving the stack empty. */
-export const DismissAll: Story = {
+/** As a dotli user, I clear an expanded stack with its labelled Clear all and the stack empties. */
+export const ClearAllWhenExpanded: Story = {
+  tags: ['!autodocs'],
+  beforeEach: showLabelled(['A', 'B', 'C', 'D']),
+  play: async ({ canvas, canvasElement, userEvent, step }) => {
+    await step('Given the stack is expanded', async () => {
+      await userEvent.click(canvas.getAllByTestId('notif-text').at(-1) ?? canvasElement);
+      await waitFor(() => expect(canvas.getByTestId('notif-stack')).toHaveAttribute('data-expanded'));
+    });
+    await step('When I press Clear all', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: 'Clear all' }));
+    });
+    await step('Then the stack collapses and empties', async () => {
+      await expect(toasts.store.get().expanded).toBe(false);
+      await waitFor(() => expect(canvas.queryByTestId('notif-stack')).toBeNull());
+    });
+  },
+};
+
+/** As a dotli user, I close the front card of the pile and only that toast leaves. */
+export const DismissFront: Story = {
   tags: ['!autodocs'],
   beforeEach: showThree,
-  play: async ({ canvas, userEvent, step }) => {
-    await step('Given three toasts are stacked', async () => {
+  play: async ({ canvas, canvasElement, userEvent, mount, step }) => {
+    await step('When the stack renders', async () => {
+      await mount();
+    });
+    await step('Then three toasts are stacked', async () => {
       await expect(canvas.getAllByTestId('notif-card')).toHaveLength(3);
     });
-    await step('When I dismiss them all', async () => {
-      await userEvent.click(canvas.getByRole('button', { name: 'Dismiss all' }));
+    await step('When I press the close button on the front card', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: 'Dismiss' }));
     });
-    await step('Then every toast plays its exit, and once they end the stack is empty', async () => {
-      for (const card of canvas.getAllByTestId('notif-card')) {
-        await expect(card).toHaveAttribute('data-leaving');
-      }
-      await expect(toastsStore.get().expanded).toBe(false);
-      await waitFor(() => expect(canvas.queryByTestId('notif-stack')).toBeNull());
+    await step('Then only the front card leaves, and the other two stay', async () => {
+      await waitFor(() =>
+        expect(readTitles(canvasElement, true)).toEqual(['Account connected', 'Your transfer is in a block']),
+      );
+      await expect(canvas.getAllByTestId('notif-card')).toHaveLength(2);
+      await expect(toasts.store.get().expanded).toBe(false);
     });
   },
 };
@@ -164,11 +151,11 @@ export const HiddenToastDismissedAtOnce: Story = {
   beforeEach: showLabelled(['A', 'B', 'C', 'D']),
   play: async ({ canvas, step }) => {
     await step('When the toast hidden behind the pile is dismissed', () => {
-      dismissToast(pushed[0] ?? -1);
+      toasts.dismiss(pushed[0] ?? -1);
     });
     await step('Then it is gone at once, with no exit to wait for', async () => {
       await waitFor(() => expect(canvas.getAllByTestId('notif-card')).toHaveLength(3));
-      await expect(toastsStore.get().items.map(t => t.label)).toEqual(['B', 'C', 'D']);
+      await expect(toasts.store.get().items.map(toast => toast.label)).toEqual(['B', 'C', 'D']);
     });
   },
 };
@@ -183,16 +170,18 @@ export const ClickExpandsOutsideCollapses: Story = {
     });
     await step('Then it expands to every toast', async () => {
       await waitFor(() => expect(canvas.getByTestId('notif-stack')).toHaveAttribute('data-expanded'));
-      await expect(toastsStore.get().expanded).toBe(true);
-      await expect(titles(canvasElement, true)).toEqual(['A', 'B', 'C', 'D']);
+      await expect(toasts.store.get().expanded).toBe(true);
+      await expect(readTitles(canvasElement, true)).toEqual(['A', 'B', 'C', 'D']);
+      await expect(canvas.getByRole('button', { name: 'Clear all' })).toBeVisible();
+      await expect(canvas.getByTestId('notif-count')).not.toBeVisible();
     });
     await step('When I click outside it', async () => {
       await userEvent.click(document.body);
     });
     await step('Then it collapses to the newest three', async () => {
       await waitFor(() => expect(canvas.getByTestId('notif-stack')).not.toHaveAttribute('data-expanded'));
-      await expect(toastsStore.get().expanded).toBe(false);
-      await expect(titles(canvasElement, true)).toEqual(['B', 'C', 'D']);
+      await expect(toasts.store.get().expanded).toBe(false);
+      await expect(readTitles(canvasElement, true)).toEqual(['B', 'C', 'D']);
     });
   },
 };
@@ -211,13 +200,11 @@ export const LinkDoesNotExpand: Story = {
       await userEvent.click(link);
     });
     await step('Then the pile stays collapsed', async () => {
-      await expect(toastsStore.get().expanded).toBe(false);
+      await expect(toasts.store.get().expanded).toBe(false);
       await expect(canvas.getByTestId('notif-stack')).not.toHaveAttribute('data-expanded');
     });
   },
 };
-
-const MANY = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
 
 /** As a dotli user, I scroll back in an expanded stack and it stays put, then a new toast scrolls the list to it. */
 export const NewToastScrollsWhenExpanded: Story = {
@@ -225,25 +212,27 @@ export const NewToastScrollsWhenExpanded: Story = {
   beforeEach: showLabelled(MANY),
   play: async ({ canvas, userEvent, step }) => {
     const list = canvas.getByRole('status');
-    const atEnd = (): boolean => Math.abs(list.scrollHeight - list.clientHeight - list.scrollTop) <= 1;
-    await step('Given the stack is expanded and I scrolled back to the oldest', async () => {
+    const isAtEnd = (): boolean => Math.abs(list.scrollHeight - list.clientHeight - list.scrollTop) <= 1;
+    await step('When I click the pile', async () => {
       await userEvent.click(canvas.getAllByTestId('notif-text').at(-1) ?? list);
+    });
+    await step('Then the stack expands into a list longer than it shows', async () => {
       await waitFor(() => expect(canvas.getByTestId('notif-stack')).toHaveAttribute('data-expanded'));
       await waitFor(() => expect(list.scrollHeight).toBeGreaterThan(list.clientHeight));
+    });
+    await step('When I scroll back to the oldest and a toast is dismissed', () => {
       list.scrollTop = 0;
+      toasts.dismiss(pushed.at(-1) ?? -1);
     });
-    await step('When a toast is dismissed and finishes leaving', async () => {
-      dismissToast(pushed.at(-1) ?? -1);
-      await waitFor(() => expect(toastsStore.get().items).toHaveLength(MANY.length - 1));
-    });
-    await step('Then the list stays where I left it', async () => {
+    await step('Then the toast finishes leaving and the list stays where I left it', async () => {
+      await waitFor(() => expect(toasts.store.get().items).toHaveLength(MANY.length - 1));
       await expect(list.scrollTop).toBe(0);
     });
     await step('When a new toast arrives', () => {
-      pushToast(labelled('M'));
+      toasts.push(buildLabelled('M'));
     });
     await step('Then the list scrolls to it', async () => {
-      await waitFor(() => expect(atEnd()).toBe(true));
+      await waitFor(() => expect(isAtEnd()).toBe(true));
     });
   },
 };
@@ -253,15 +242,17 @@ export const LeavingToastDoesNotExpand: Story = {
   tags: ['!autodocs'],
   beforeEach: showLabelled(['A', 'B']),
   play: async ({ canvas, userEvent, step }) => {
-    await step('Given one of the two toasts is leaving', async () => {
-      dismissToast(pushed[0] ?? -1);
+    await step('When one of the two toasts is dismissed', () => {
+      toasts.dismiss(pushed[0] ?? -1);
+    });
+    await step('Then it is leaving', async () => {
       await waitFor(() => expect(canvas.getAllByTestId('notif-card')[0]).toHaveAttribute('data-leaving'));
     });
     await step('When I click the live one', async () => {
       await userEvent.click(within(canvas.getAllByTestId('notif-card')[1] ?? document.body).getByTestId('notif-text'));
     });
     await step('Then the stack does not expand', async () => {
-      await expect(toastsStore.get().expanded).toBe(false);
+      await expect(toasts.store.get().expanded).toBe(false);
     });
   },
 };
@@ -272,9 +263,9 @@ export const ActionInPileRunsOnce: Story = {
   beforeEach: () => {
     resetAllStoresForTests();
     onAction.mockClear();
-    pushToast(labelled('A'));
-    pushToast(
-      labelled('B', {
+    toasts.push(buildLabelled('A'));
+    toasts.push(
+      buildLabelled('B', {
         action: {
           label: 'Reload',
           onClick: () => {
@@ -291,8 +282,8 @@ export const ActionInPileRunsOnce: Story = {
     });
     await step('Then it ran once, and the pile stayed as it was', async () => {
       await expect(onAction).toHaveBeenCalledOnce();
-      await expect(toastsStore.get().expanded).toBe(false);
-      await expect(toastsStore.get().items.map(t => t.leaving)).toEqual([false, false]);
+      await expect(toasts.store.get().expanded).toBe(false);
+      await expect(toasts.store.get().items.map(toast => toast.leaving)).toEqual([false, false]);
     });
   },
 };
@@ -302,16 +293,61 @@ export const TimedToastLeavesOnItsOwn: Story = {
   // Its play empties the stack, which a docs page would show as a blank block.
   tags: ['!autodocs'],
   beforeEach: showLabelled(['Saved'], { dismissMs: 1000 }),
-  play: async ({ canvas, step }) => {
-    await step('Given the stack shows the toast', async () => {
+  play: async ({ canvas, mount, step }) => {
+    await step('When the stack renders', async () => {
+      await mount();
+    });
+    await step('Then the stack shows the toast', async () => {
       await expect(canvas.getByTestId('notif-card')).toBeInTheDocument();
     });
     await step(
       'Then the toast counts down once the stack shows it, plays its exit and leaves the stack empty',
       async () => {
         await waitFor(() => expect(canvas.queryByTestId('notif-stack')).toBeNull(), { timeout: 3000 });
-        await expect(toastsStore.get().items).toEqual([]);
+        await expect(toasts.store.get().items).toEqual([]);
       },
     );
   },
 };
+
+function buildToast(label: string): ToastInput {
+  return { text: 'playground.dot', label, dismissMs: 0 };
+}
+
+function buildLabelled(label: string, overrides: Partial<ToastInput> = {}): ToastInput {
+  return { text: `${label} happened`, label, dismissMs: 0, ...overrides };
+}
+
+/** A beforeEach that pushes one toast per label, with `overrides`, and resets the page after the story. */
+function showLabelled(labels: string[], overrides: Partial<ToastInput> = {}): () => () => void {
+  return pushLabelled;
+
+  function pushLabelled(): () => void {
+    resetAllStoresForTests();
+    onAction.mockClear();
+    pushed = labels.map(label => toasts.push(buildLabelled(label, overrides)));
+    return resetAllStoresForTests;
+  }
+}
+
+function showOne(): () => void {
+  resetAllStoresForTests();
+  toasts.push(buildToast('Your transfer is in a block'));
+  return resetAllStoresForTests;
+}
+
+function showThree(): () => void {
+  resetAllStoresForTests();
+  toasts.push(buildToast('Account connected'));
+  toasts.push(buildToast('Your transfer is in a block'));
+  toasts.push(buildToast('Transfer finalized'));
+  return resetAllStoresForTests;
+}
+
+/** The titles of the cards shown, or of those hidden behind the pile. */
+function readTitles(canvasElement: HTMLElement, shown: boolean): string[] {
+  return within(canvasElement)
+    .getAllByTestId('notif-card')
+    .filter(card => card.hasAttribute('data-hidden') !== shown)
+    .map(card => within(card).getByTestId('notif-title').textContent);
+}

@@ -1,6 +1,6 @@
 # Docker profile, rendered by docker/entrypoint.sh with envsubst. Keep in sync with nginx.conf.template by hand.
 # Differs only in plain HTTP on one port, no rate limiting, no Sentry tunnel, and serving the runtime network config.
-#   host.${DOMAIN}    protocol build
+#   ${DOMAIN}         host build, and the protocol build under /p/
 #   *.${DOMAIN}       host build
 #   *.app.${DOMAIN}   app build
 
@@ -14,13 +14,21 @@ server {
     include /etc/nginx/snippets/dotli-headers-host.conf;
     include /etc/nginx/snippets/dotli-precompressed.conf;
 
+    set $csp_ancestors "${CSP}";
+    set $protocol_root "${WEBROOT}/protocol";
+    include /etc/nginx/snippets/dotli-protocol-frame.conf;
+    include /etc/nginx/snippets/dotli-session-page.conf;
+    include /etc/nginx/snippets/dotli-session-file.conf;
+
     # The landing page. Every other path gets the shell, which opens the product `/<label>` names and sends a URL with no
     # product back here.
     location = / {
         try_files /landing.html =404;
     }
 
+    # Revalidated on each load, so a reload never runs a stale shell that names removed chunks.
     location = /__preview {
+        expires -1;
         set $csp_ancestors "${CSP}";
         include /etc/nginx/snippets/dotli-headers-iframeable.conf;
         try_files /index.html =404;
@@ -33,7 +41,9 @@ server {
 
     include /etc/nginx/snippets/dotli-host-version.conf;
 
+    # Revalidated on each load, so a reload never runs a stale shell that names removed chunks.
     location / {
+        expires -1;
         try_files $uri $uri/ /index.html;
     }
 }
@@ -63,31 +73,6 @@ server {
 
 server {
     listen ${PORT};
-    server_name host.${DOMAIN};
-
-    set $csp_ancestors "${CSP}";
-    include /etc/nginx/snippets/dotli-headers-iframeable.conf;
-    include /etc/nginx/snippets/dotli-precompressed.conf;
-
-    root ${WEBROOT}/protocol;
-    index index.html;
-
-    include /etc/nginx/snippets/dotli-assets-iframeable.conf;
-
-    include /etc/nginx/snippets/dotli-runtime-network.conf;
-
-    include /etc/nginx/snippets/dotli-host-version.conf;
-
-    # Revalidated, so a deploy reaches every shell at once. A cached older frame never sends `listening` and fails.
-    # `expires` rather than add_header, which would drop the server block's headers here.
-    location / {
-        expires -1;
-        try_files $uri /index.html;
-    }
-}
-
-server {
-    listen ${PORT};
     server_name *.${DOMAIN};
 
     include /etc/nginx/snippets/dotli-headers-host.conf;
@@ -97,12 +82,15 @@ server {
 
     include /etc/nginx/snippets/dotli-assets-host.conf;
     include /etc/nginx/snippets/dotli-sw-host.conf;
+    include /etc/nginx/snippets/dotli-session-file.conf;
 
     include /etc/nginx/snippets/dotli-runtime-network.conf;
 
     include /etc/nginx/snippets/dotli-host-version.conf;
 
+    # Revalidated on each load, so a reload never runs a stale shell that names removed chunks.
     location / {
+        expires -1;
         try_files $uri /index.html;
     }
 }

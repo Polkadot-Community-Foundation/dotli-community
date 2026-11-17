@@ -1,18 +1,18 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createSignal, For } from 'solid-js';
+import { createEffect, createSignal, For } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { rovingTarget } from './roving.js';
+import { getRovingTarget } from './getRovingTarget.js';
 import s from './Tabs.module.css';
 
-export interface TabOption<T extends string> {
+export type TabOption<T extends string> = {
   value: T;
   label: string;
-}
+};
 
 /** The id of the tab for `value` in the strip whose ids start with `idPrefix`, which its panel names as its label. */
-export function tabId(idPrefix: string, value: string): string {
+export function getTabId(idPrefix: string, value: string): string {
   return `${idPrefix}-${value}`;
 }
 
@@ -24,6 +24,8 @@ export function Tabs<T extends string>(props: {
   tabs: readonly TabOption<T>[];
   /** None while the strip's panel is folded away, so no tab claims to show it. */
   selected: T | null;
+  /** Drawn as the current tab while none is selected, such as the one a folded panel opens on. */
+  current?: T | undefined;
   onSelect: (value: T) => void;
   /** `primary` for the panel's top-level tabs, `secondary` for tabs inside one. */
   variant: 'primary' | 'secondary';
@@ -38,6 +40,18 @@ export function Tabs<T extends string>(props: {
   hidden?: boolean;
   class?: string | undefined;
 }): JSX.Element {
+  let strip: HTMLDivElement | undefined;
+  // A strip that scrolls brings the shown tab into view, so the tab a panel opens on is never cut off.
+  createEffect(
+    () => props.selected ?? props.current ?? null,
+    value => {
+      if (value !== null) {
+        strip
+          ?.querySelector(`:scope > [data-value="${value}"]`)
+          ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    },
+  );
   // Without it, Tab from an arrow-focused tab stops on the selected one before leaving.
   const [focused, setFocused] = createSignal<number | null>(null);
   const tabStop = (): number =>
@@ -47,42 +61,50 @@ export function Tabs<T extends string>(props: {
       0,
     );
 
-  const tabsOf = (strip: HTMLElement): HTMLButtonElement[] =>
+  const listTabs = (strip: HTMLElement): HTMLButtonElement[] =>
     Array.from(strip.querySelectorAll<HTMLButtonElement>(':scope > [role="tab"]'));
 
-  const onFocusIn = (e: FocusEvent): void => {
-    const { currentTarget, target } = e;
+  function handleFocusIn(event: FocusEvent): void {
+    const { currentTarget, target } = event;
     if (!(currentTarget instanceof HTMLElement) || !(target instanceof HTMLButtonElement)) {
       return;
     }
-    const index = tabsOf(currentTarget).indexOf(target);
+    const index = listTabs(currentTarget).indexOf(target);
     setFocused(index < 0 ? null : index);
-  };
+  }
 
-  const onFocusOut = (e: FocusEvent): void => {
-    const { currentTarget, relatedTarget } = e;
+  function handleFocusOut(event: FocusEvent): void {
+    const { currentTarget, relatedTarget } = event;
     if (
       currentTarget instanceof HTMLElement &&
       !(relatedTarget instanceof Node && currentTarget.contains(relatedTarget))
     ) {
       setFocused(null);
     }
-  };
+  }
 
-  const onKeyDown = (e: KeyboardEvent): void => {
-    const { currentTarget, target } = e;
+  function handleKeyDown(event: KeyboardEvent): void {
+    const { currentTarget, target } = event;
     if (!(currentTarget instanceof HTMLElement) || !(target instanceof HTMLButtonElement)) {
       return;
     }
-    const tabs = tabsOf(currentTarget);
+    const tabs = listTabs(currentTarget);
     const index = tabs.indexOf(target);
-    const next = index < 0 ? null : rovingTarget(e.key, index, tabs.length, e.altKey || e.ctrlKey || e.metaKey);
+    const next =
+      index < 0
+        ? null
+        : getRovingTarget({
+            key: event.key,
+            index,
+            count: tabs.length,
+            modified: event.altKey || event.ctrlKey || event.metaKey,
+          });
     if (next === null) {
       return;
     }
-    e.preventDefault();
+    event.preventDefault();
     tabs[next]?.focus();
-  };
+  }
 
   return (
     <div
@@ -91,19 +113,23 @@ export function Tabs<T extends string>(props: {
       role="tablist"
       aria-label={props.label}
       hidden={props.hidden}
-      onKeyDown={onKeyDown}
-      onFocusIn={onFocusIn}
-      onFocusOut={onFocusOut}
+      ref={element => {
+        strip = element;
+      }}
+      onKeyDown={handleKeyDown}
+      onFocusIn={handleFocusIn}
+      onFocusOut={handleFocusOut}
     >
       <For each={props.tabs}>
         {(tab, index) => (
           <button
-            id={tabId(props.idPrefix, tab.value)}
+            id={getTabId(props.idPrefix, tab.value)}
             class={[s['tab'], s[props.variant]]}
             data-testid={props.tabTestId}
             data-value={tab.value}
             role="tab"
             aria-selected={props.selected === tab.value ? 'true' : 'false'}
+            data-current={props.selected === null && props.current === tab.value ? '' : undefined}
             aria-controls={props.panelId}
             tabindex={index() === tabStop() ? 0 : -1}
             type="button"

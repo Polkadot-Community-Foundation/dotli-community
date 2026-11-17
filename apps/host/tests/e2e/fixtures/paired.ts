@@ -4,8 +4,9 @@
 import { test as base, expect, type Page, type Frame } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { STATE_FILE } from './paths.js';
-import { E2E_CHAIN_BACKEND, initializeChainBackend } from '../helpers/chain-backend.js';
+import { E2E_CHAIN_BACKEND, initializeChainBackend } from '../helpers/chainBackend.js';
 import { answerAccountDialog } from '../helpers/signing.js';
+import { BROWSER_PERMISSIONS } from '../../functional/fixtures/permissions.js';
 
 const PORT = process.env['PORT'] ?? '5173';
 const HOST = process.env['E2E_HOST'] ?? 'host-playground';
@@ -96,7 +97,9 @@ export const test = base.extend<{ productFrame: Frame }, { pairedPage: Page }>({
         );
       }
 
-      const ctx = await browser.newContext({ storageState: STATE_FILE });
+      // The host asks the browser when the user allows a permission, and a browser that denies shows a dialog these
+      // steps do not answer.
+      const ctx = await browser.newContext({ storageState: STATE_FILE, permissions: [...BROWSER_PERMISSIONS] });
       const page = await ctx.newPage();
 
       // Filtered to dotli internals, enough to diagnose SDK calls that never resolve without flooding logs.

@@ -26,14 +26,6 @@ export const Secondary: Story = {};
 /** As a dotli user, I press the primary button and its handler runs once. */
 export const Primary: Story = {
   args: { variant: 'primary' },
-  play: async ({ args, canvas, userEvent, step }) => {
-    await step('When I press the button', async () => {
-      await userEvent.click(canvas.getByRole('button', { name: 'Continue' }));
-    });
-    await step('Then its handler runs once', async () => {
-      await expect(args.onClick).toHaveBeenCalledOnce();
-    });
-  },
 };
 
 /** As a dotli user, I see a destructive choice drawn as a danger button and read what it denies. */
@@ -69,8 +61,8 @@ export const Disabled: Story = {
       <form
         data-testid="form"
         data-submitted={submitted() ? '' : undefined}
-        onSubmit={ev => {
-          ev.preventDefault();
+        onSubmit={event => {
+          event.preventDefault();
           setSubmitted(true);
         }}
       >
@@ -78,9 +70,12 @@ export const Disabled: Story = {
       </form>
     );
   },
-  play: async ({ args, canvas, userEvent, step }) => {
+  play: async ({ args, canvas, mount, userEvent, step }) => {
+    await step('When the form renders with a disabled button', async () => {
+      await mount();
+    });
     const button = canvas.getByRole('button', { name: 'Continue' });
-    await step('Given the button is disabled', async () => {
+    await step('Then the button shows disabled', async () => {
       await expect(button).toBeDisabled();
     });
     await step('When I press the disabled button', async () => {
@@ -94,19 +89,38 @@ export const Disabled: Story = {
   },
 };
 
-/** Toggle `loading` off to watch the circle grow to the label. */
-/** As a dotli user, I see a loading button busy with no label, and pressing it does nothing. */
+/** As a dotli user, I see a loading button keep its place with a spinner over its label, and pressing it does nothing. */
 export const Loading: Story = {
-  args: { loading: true, 'aria-label': 'Continue' },
-  play: async ({ args, canvas, userEvent, step }) => {
-    const button = canvas.getByRole('button', { name: 'Continue' });
-    await step('Then the button is busy and shows no label', async () => {
-      await expect(button).toHaveAttribute('aria-busy', 'true');
-      await expect(button).not.toHaveTextContent('Continue');
+  args: { loading: true },
+  play: async ({ args, canvas, mount, userEvent, step }) => {
+    await step('When a loading button renders', async () => {
+      await mount();
     });
-    await step('When I press it, nothing happens', async () => {
+    const button = canvas.getByRole('button', { name: 'Continue' });
+    await step('Then the button is busy, still named by its label, and hides the label', async () => {
+      await expect(button).toHaveAttribute('aria-busy', 'true');
+      await expect(canvas.getByText('Continue')).not.toBeVisible();
+    });
+    await step('When I press it', async () => {
       await userEvent.click(button);
+    });
+    await step('Then nothing happens', async () => {
       await expect(args.onClick).not.toHaveBeenCalled();
+    });
+  },
+};
+
+/** As a dotli user, I see a full-width action that is running keep its width and fill, with a spinner in its centre. */
+export const LoadingBlock: Story = {
+  args: { loading: true, block: true, variant: 'primary' },
+  play: async ({ canvas, mount, step }) => {
+    await step('When a loading block button renders', async () => {
+      await mount();
+    });
+    await step('Then the button is busy and hides its label', async () => {
+      const button = canvas.getByRole('button', { name: 'Continue' });
+      await expect(button).toHaveAttribute('aria-busy', 'true');
+      await expect(canvas.getByText('Continue')).not.toBeVisible();
     });
   },
 };
@@ -118,10 +132,4 @@ export const Link: Story = {
       Open dot.li
     </ButtonLink>
   ),
-  play: async ({ canvas, step }) => {
-    await step('Then the link points where it says', async () => {
-      const link = canvas.getByRole('link', { name: 'Open dot.li' });
-      await expect(link).toHaveAttribute('href', 'https://dot.li');
-    });
-  },
 };

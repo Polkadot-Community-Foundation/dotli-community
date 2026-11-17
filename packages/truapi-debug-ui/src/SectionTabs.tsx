@@ -2,30 +2,37 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { JSX } from '@solidjs/web';
-import type { PanelSection } from './model/section-storage.js';
+import { PANEL_SECTIONS, type PanelSection } from './model/createSectionStorage.js';
 import { Tabs, type TabOption } from './shared/Tabs.js';
 import s from './SectionTabs.module.css';
 
 export const SECTION_TABS_ID = 'td-section-tab';
 export const SECTION_PANEL_ID = 'td-section-panel';
 
-const SECTIONS: readonly TabOption<PanelSection>[] = [
-  { value: 'truapi', label: 'TrUAPI' },
-  { value: 'resolution', label: 'Resolution' },
-  { value: 'archive', label: 'Archive' },
-  { value: 'diagnostics', label: 'Diagnostics' },
-  { value: 'wallet', label: 'Wallet' },
-];
+const SECTION_LABELS: Record<PanelSection, string> = {
+  truapi: 'TrUAPI',
+  resolution: 'Resolution',
+  archive: 'Archive',
+  diagnostics: 'Diagnostics',
+  wallet: 'Wallet',
+};
 
-/** In the header, so they stay in reach while the panel is collapsed. A collapsed panel selects none. */
+const SECTIONS: readonly TabOption<PanelSection>[] = PANEL_SECTIONS.map(section => ({
+  value: section,
+  label: SECTION_LABELS[section],
+}));
+
+/** In the header, so they stay in reach while the panel is collapsed. A collapsed panel selects none, but still marks the tab it opens on. */
 export function SectionTabs(props: {
-  section: PanelSection | null;
+  section: PanelSection;
+  collapsed: boolean;
   onSelect: (section: PanelSection) => void;
 }): JSX.Element {
   return (
     <Tabs
       tabs={SECTIONS}
-      selected={props.section}
+      selected={props.collapsed ? null : props.section}
+      current={props.section}
       onSelect={props.onSelect}
       variant="primary"
       label="Panel sections"
