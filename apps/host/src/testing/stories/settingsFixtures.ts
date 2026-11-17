@@ -25,7 +25,6 @@ export const DEFAULT_SETTINGS: SavedSettings = {
   network: 'paseo-next-v2',
   enabledNetworks: ['paseo-next-v2', 'previewnet'],
   sharedWorkerAvailable: true,
-  lightClientAvailable: true,
   verified: true,
 };
 

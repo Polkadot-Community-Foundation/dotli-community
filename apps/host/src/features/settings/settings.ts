@@ -9,8 +9,6 @@ import type { Network, Settings } from '@dotli/config';
 export type SavedSettings = {
   enabledNetworks: readonly Network[];
   sharedWorkerAvailable: boolean;
-  /** Whether the active network can be reached through a light client. */
-  lightClientAvailable: boolean;
   /** Whether the backend verifies chain data. */
   verified: boolean;
 } & Settings;

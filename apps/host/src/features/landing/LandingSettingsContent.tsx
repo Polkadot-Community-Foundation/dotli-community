@@ -116,7 +116,6 @@ function LandingSettingsPanel(props: LandingSettingsContentProps & { saved: Save
           <TransportChoices
             value={backend()}
             sharedWorkerAvailable={saved.sharedWorkerAvailable}
-            lightClientAvailable={saved.lightClientAvailable}
             onChoose={setBackend}
           />
         </Show>

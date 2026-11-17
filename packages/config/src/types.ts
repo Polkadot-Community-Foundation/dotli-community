@@ -67,10 +67,4 @@ export type ServicesConfig = {
   readonly bulletin: BulletinService;
   readonly people: ChainService;
   readonly dotns: DotnsContracts;
-  /**
-   * `false` when truapi-provider's bundled catalog cannot serve this
-   * network's parachains, leaving `rpc-gateway` as the only working transport.
-   * Absent means supported.
-   */
-  readonly lightClient?: boolean;
 } & FixedServicesConfig;

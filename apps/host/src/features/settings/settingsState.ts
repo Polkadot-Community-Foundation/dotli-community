@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
-  activeNetworkSupportsLightClient,
   getBackend,
   getCacheSettings,
   isSharedWorkerAvailable,
@@ -23,8 +22,6 @@ export type SettingsState = {
   network: Network;
   enabledNetworks: Network[];
   sharedWorkerAvailable: boolean;
-  /** Whether the active network can be reached through a light client. */
-  lightClientAvailable: boolean;
   /** Whether the backend verifies chain data. */
   verified: boolean;
 };
@@ -54,7 +51,6 @@ function init(): void {
     network: getNetwork(),
     enabledNetworks: getEnabledNetworks(),
     sharedWorkerAvailable: isSharedWorkerAvailable(),
-    lightClientAvailable: activeNetworkSupportsLightClient(),
     verified: isVerifiedSession(backend),
   });
 }

@@ -3,7 +3,7 @@
 
 import { For } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { BACKEND_FACTS, hasLightClient, hasSharedWorker, type Backend } from '@dotli/config';
+import { BACKEND_FACTS, hasSharedWorker, type Backend } from '@dotli/config';
 import { Chip, Choice, SectionLabel, Stack } from '@dotli/ui';
 
 /** The order the transport choices are listed in. */
@@ -21,17 +21,13 @@ export type TransportChoicesProps = {
   value: Backend;
   /** Whether this browser can run a SharedWorker. A backend that needs one is disabled without it. */
   sharedWorkerAvailable: boolean;
-  /** Whether the active network can be reached through a light client. A backend that needs one is disabled without it. */
-  lightClientAvailable: boolean;
   /** A backend was picked. */
   onChoose: (backend: Backend) => void;
 };
 
 /** The network transport choice: a labelled radio list of the backends a page reaches the chains through. */
 export function TransportChoices(props: TransportChoicesProps): JSX.Element {
-  const lightClientOff = (value: Backend): boolean => hasLightClient(value) && !props.lightClientAvailable;
-  const workerOff = (value: Backend): boolean => hasSharedWorker(value) && !props.sharedWorkerAvailable;
-  const unavailable = (value: Backend): boolean => lightClientOff(value) || workerOff(value);
+  const unavailable = (value: Backend): boolean => hasSharedWorker(value) && !props.sharedWorkerAvailable;
   return (
     <Stack>
       <SectionLabel text="Network transport" />
@@ -41,11 +37,9 @@ export function TransportChoices(props: TransportChoicesProps): JSX.Element {
             <Choice
               title={BACKEND_FACTS[value].label}
               description={
-                lightClientOff(value)
-                  ? 'Not available on this network yet'
-                  : workerOff(value)
-                    ? 'Unavailable in this browser or private window'
-                    : TRANSPORT_FACTS[value].description
+                unavailable(value)
+                  ? 'Unavailable in this browser or private window'
+                  : TRANSPORT_FACTS[value].description
               }
               chip={getMarkChip(TRANSPORT_FACTS[value].mark)}
               selected={props.value === value}

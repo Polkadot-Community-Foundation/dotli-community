@@ -31,20 +31,6 @@ export function getActiveServicesConfig(): ServicesConfig {
   return NETWORK_NAME_TO_SERVICES_CONFIG[getNetwork()];
 }
 
-/**
- * Whether the light-client transports can serve the active network.
- * True when no network is configured, so callers keep upstream's behaviour there.
- */
-export function activeNetworkSupportsLightClient(): boolean {
-  let config: ServicesConfig;
-  try {
-    config = getActiveServicesConfig();
-  } catch {
-    return true;
-  }
-  return config.lightClient !== false;
-}
-
 /** The active network's fields no override can change, for a context that never sees the runtime config. */
 export function getActiveFixedServicesConfig(): FixedServicesConfig {
   return BUILTIN_NETWORK_SERVICES[getNetwork()];
