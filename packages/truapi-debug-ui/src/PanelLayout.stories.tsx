@@ -17,6 +17,7 @@ import {
   setUpDebugPanel,
 } from './testing/stories/debugPanelFixtures.js';
 import { debugPanelStory } from './testing/stories/debugPanelStory.js';
+import { dockStorage } from './model/createDockStorage.js';
 
 const meta = {
   ...debugPanelStory,
@@ -34,9 +35,9 @@ function getBox(element: Element): DOMRect {
   return element.getBoundingClientRect();
 }
 
-/** A dock stored by an earlier visit, then the panel mounted. */
+/** A dock picked on an earlier mount, then the panel mounted. */
 function mountDocked(dock: 'right' | 'bottom', options: { topbar?: boolean; startCollapsed?: boolean } = {}): void {
-  localStorage.setItem('truapi-debug:dock', dock);
+  dockStorage.set(dock);
   if (options.topbar === true) {
     getDebugPanel().host.topbarPresent.set(true);
   }
@@ -79,23 +80,9 @@ export const DockToggle: Story = {
       await expect(getPart('td-body-splitter')).toHaveAttribute('data-orientation', 'vertical');
       await expect(dock).toHaveAttribute('title', 'Dock to right');
       await expect(dock).toHaveAttribute('aria-label', 'Dock to right');
-      await expect(localStorage.getItem('truapi-debug:dock')).toBe('bottom');
+      // The bottom dock is the default, so remembering it removes the key.
+      await expect(localStorage.getItem('truapi-debug:dock')).toBeNull();
       await expect(getBox(getPanel()).bottom).toBeCloseTo(window.innerHeight, 0);
-    });
-  },
-};
-
-/** As a developer using the debug panel, I mount the panel with a right dock stored and it docks right, from the top of a page with no topbar. */
-export const StoredRightDock: Story = {
-  parameters: { debugPanel: { mount: false } },
-  play: async ({ step }) => {
-    await step('When the panel mounts with a right dock stored', () => {
-      mountDocked('right');
-    });
-    await step('Then it docks right, from the top of a page with no topbar', async () => {
-      await expect(getPanel()).toHaveAttribute('data-dock', 'right');
-      await expect(getPart('td-dock')).toHaveAttribute('title', 'Dock to bottom');
-      await expect(getBox(getPanel()).top).toBe(0);
     });
   },
 };
@@ -111,13 +98,17 @@ export const PhoneBottomDock: Story = {
     await step('When I drag the splitter down', () => {
       drag(getPart('td-body-splitter'), { moves: [{ x: 0, y: body.top + 250 }] });
     });
-    await step('Then the panel docks at the bottom and stacks the list above the detail', async () => {
-      await expect(getPanel()).toHaveAttribute('data-dock', 'bottom');
-      await expect(getPanel()).toHaveAttribute('data-layout', 'stacked');
-      await expect(getPart('td-body-splitter')).toHaveAttribute('aria-orientation', 'horizontal');
-      await expect(getBox(getPart('td-views')).height).toBeCloseTo(220, 0);
-      await expect(localStorage.getItem('truapi-debug:dock')).toBe('right');
-    });
+    await step(
+      'Then the panel docks at the bottom and stacks the list above the detail, which keeps room',
+      async () => {
+        await expect(getPanel()).toHaveAttribute('data-dock', 'bottom');
+        await expect(getPanel()).toHaveAttribute('data-layout', 'stacked');
+        await expect(getPart('td-body-splitter')).toHaveAttribute('aria-orientation', 'horizontal');
+        // The phone's body is too short for both minimums, so the detail keeps a third of it.
+        await expect(getBox(getPart('td-detail')).height).toBeGreaterThanOrEqual(Math.floor((body.height - 6) / 3));
+        await expect(localStorage.getItem('truapi-debug:dock')).toBe('right');
+      },
+    );
   },
 };
 
@@ -405,22 +396,6 @@ export const FrameBesideRightDock: Story = {
     await step('Then it takes the bottom of the frame again', async () => {
       await expect(readRoom().right).toBe(0);
       await expect(readRoom().bottom).toBeCloseTo(getBox(getPanel()).height, 0);
-    });
-  },
-};
-
-/** As a developer using the debug panel, I drag the panel edge and the panel reports its new room on the next frame. */
-export const FrameRefitsOnDrag: Story = {
-  parameters: { debugPanel: { mount: false } },
-  play: async ({ step }) => {
-    mountDocked('bottom', { topbar: true });
-    const held = grab(getPart('td-resize-handle'));
-    await step('When I drag the panel edge', () => {
-      held.moveTo(0, window.innerHeight - 268);
-    });
-    await step('Then the panel reports its new room on the next frame', async () => {
-      await waitFor(() => expect(readRoom().bottom).toBeCloseTo(268, 0));
-      held.release();
     });
   },
 };

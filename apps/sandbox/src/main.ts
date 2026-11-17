@@ -5,30 +5,32 @@
 // page's real browser APIs. No name resolution happens here.
 
 // Must stay the first import: it starts Sentry before any other module evaluates.
-import './boot.js';
+import './boot/boot.js';
 import '@dotli/ui/styles.css';
-import { BASE_DOMAIN, getActiveServicesConfig, setActiveNetwork } from '@dotli/config';
+import { BASE_DOMAIN, getActiveServicesConfig, hasLightClient, setActiveNetwork } from '@dotli/config';
 import { decryptContent, fetchArchive, isEncrypted, parseIpfsResponse } from '@dotli/content';
 import { m, setResolutionId } from '@dotli/metrics';
 import { getEndpointHost } from '@dotli/shared';
 
-import { createDecryptIfNeeded } from './createDecryptIfNeeded.js';
-import { SANDBOX_TIMEOUTS } from './timeouts.js';
+import { createDecryptIfNeeded } from './archive/createDecryptIfNeeded.js';
+import { SANDBOX_TIMEOUTS } from './kit/timeouts.js';
 import { createReloadOffer, listenForChunkFailures, showNotification, toasts } from '@dotli/ui';
-import { loadPageUi, loadSandboxChecker } from './lazy.js';
-import { createFallbackScreen } from './createFallbackScreen.js';
-import { createSandboxUi } from './createSandboxUi.js';
-import { showPasswordPrompt } from './showPasswordPrompt.js';
-import { createHostMessages } from './createHostMessages.js';
-import { stripContractParams } from './stripContractParams.js';
-import { createBitswapBridge, createHostOriginRule } from './createBitswapBridge.js';
-import { loadProduct, type BlockSource, type SandboxParams } from './loadProduct.js';
-import { purgeSandboxOriginState } from './purgeSandboxOriginState.js';
-import { runSandbox } from './runSandbox.js';
-import { listenForArchiveFailures } from './listenForArchiveFailures.js';
-import { offerReloadNotice } from './offerReloadNotice.js';
-import { registerAppServiceWorker, type AppServiceWorker } from './registerAppServiceWorker.js';
-import { storeArchiveInServiceWorker } from './storeArchiveInServiceWorker.js';
+import { loadPageUi, loadSandboxChecker } from './boot/lazy.js';
+import { createFallbackScreen } from './screens/createFallbackScreen.js';
+import { createSandboxUi } from './screens/createSandboxUi.js';
+import { showPasswordPrompt } from './screens/showPasswordPrompt.js';
+import { createHostMessages } from './hostLink/createHostMessages.js';
+import { getHostUrls } from './hostLink/getHostUrls.js';
+import { stripContractParams } from './boot/stripContractParams.js';
+import { createBitswapBridge, createHostOriginRule, type BitswapBridge } from './hostLink/createBitswapBridge.js';
+import { loadProduct, type SandboxParams } from './boot/loadProduct.js';
+import { purgeSandboxOriginState } from './boot/purgeSandboxOriginState.js';
+import { runSandbox } from './boot/runSandbox.js';
+import { waitForRecoverAccepted } from './hostLink/waitForRecoverAccepted.js';
+import { listenForArchiveFailures } from './archive/listenForArchiveFailures.js';
+import { offerReloadNotice } from './screens/offerReloadNotice.js';
+import { registerAppServiceWorker, type AppServiceWorker } from './archive/registerAppServiceWorker.js';
+import { storeArchiveInServiceWorker } from './archive/storeArchiveInServiceWorker.js';
 
 listenForChunkFailures({
   target: window,
@@ -37,13 +39,14 @@ listenForChunkFailures({
 
 const hostMessages = createHostMessages({ parent: window.parent });
 
+const isHostOrigin = createHostOriginRule(BASE_DOMAIN);
+
 const fallbackScreen = createFallbackScreen({ page: document, reload: reloadPage });
 
 const ui = createSandboxUi({
   load: loadPageUi,
   toasts: toasts.store,
-  showFallback: fallbackScreen.show,
-  hideFallback: fallbackScreen.hide,
+  fallback: fallbackScreen,
 });
 
 const STARTED_AT = performance.now();
@@ -85,19 +88,6 @@ function writeProductPage(html: string): void {
   document.close();
 }
 
-/** Shows the run's failure on the sandbox's error page, with its retry. */
-function showFailure(title: string, message: string, { retry }: { retry?: (() => Promise<void>) | undefined }): void {
-  if (retry === undefined) {
-    ui.showError(title, message);
-    return;
-  }
-  ui.showError(title, message, {
-    retry: () => {
-      void retry();
-    },
-  });
-}
-
 /** Inline, since document.write() replaces the page. */
 async function injectCheckerIfEnabled(html: string): Promise<string> {
   if (import.meta.env.VITE_SANDBOX_CHECKER !== 'true') {
@@ -108,11 +98,10 @@ async function injectCheckerIfEnabled(html: string): Promise<string> {
 }
 
 // One bridge for the document, so every retry reuses its listeners. Built in `configure`, once the backend is known.
-let blockSource: BlockSource | null = null;
+let blockSource: BitswapBridge['requestBlock'] | null = null;
 
 function configure(params: SandboxParams): void {
-  // Said at once, since the sandbox must not stay silent, and the purge and the worker registration before the next
-  // progress can take seconds.
+  // Said at once, since the sandbox must not stay silent, and the purge before the next progress can take seconds.
   hostMessages.showStatus('Starting the app');
   // Before the first load, so a failure in it is still attributed to its page load.
   if (params.resolutionId !== null) {
@@ -122,23 +111,25 @@ function configure(params: SandboxParams): void {
   m.setDefaults({ chain_backend: params.backend, network: params.network });
   // The listener lives as long as the sandbox page, so its stop goes unused.
   listenForArchiveFailures(appWorker.container);
-  if (params.backend !== 'rpc-gateway') {
+  if (hasLightClient(params.backend)) {
     // The bridge lives as long as the sandbox page, so nothing disposes it.
     blockSource = createBitswapBridge({
       window,
       parent: window.parent,
-      isHostOrigin: createHostOriginRule(BASE_DOMAIN),
+      isHostOrigin,
     }).requestBlock;
   }
 }
 
-void runSandbox(
+const hostUrls = getHostUrls(window.location, { baseDomain: BASE_DOMAIN });
+
+runSandbox(
   { href: window.location.href, framed: window.self !== window.top },
   {
     configure,
     load: input =>
       loadProduct(input, {
-        showStatus: hostMessages.showStatus,
+        hostMessages,
         purge: () =>
           purgeSandboxOriginState({
             indexedDB: typeof indexedDB === 'undefined' ? null : indexedDB,
@@ -149,31 +140,33 @@ void runSandbox(
             document,
             pathname: window.location.pathname,
           }),
-        registerWorker: options => registerAppServiceWorker(appWorker, options),
-        isControlled: () => 'serviceWorker' in navigator && navigator.serviceWorker.controller !== null,
+        registerWorker: async options => {
+          await registerAppServiceWorker(appWorker, options);
+          return (appWorker.container?.controller ?? null) !== null;
+        },
         fetchArchive,
         blockSource,
         decrypt: decryptIfNeeded,
         storeArchive: files =>
           storeArchiveInServiceWorker({ container: appWorker.container, files, pagePath: window.location.pathname }),
         prepareHtml: injectCheckerIfEnabled,
-        report: hostMessages.reportDebug,
-        notifyLoaded: () => {
-          hostMessages.notifyLoadingDone({ outcome: 'loaded' });
-        },
         write: writeProductPage,
         measureSinceStart,
       }),
-    notifyFailed: step => {
-      hostMessages.notifyLoadingDone({ outcome: 'failed', failedStep: step });
+    hostMessages,
+    tab: {
+      openApp: () => {
+        window.location.assign(hostUrls.app);
+      },
+      openLanding: () => {
+        // A page off its app origin was framed by an unknown embedder, so it opens dot.li apart.
+        window.open(hostUrls.landing, '_blank', 'noopener');
+      },
     },
-    show: showFailure,
-    showRetrying: () => {
-      ui.showRetryScreen();
-    },
-    askRerender: hostMessages.askRerender,
+    ui,
+    waitForRecoverAccepted: () =>
+      waitForRecoverAccepted({ window, parent: window.parent, isHostOrigin, ms: SANDBOX_TIMEOUTS.RECOVER }),
     getGatewayHost: () => getEndpointHost(getActiveServicesConfig().bulletin.ipfsGateways.at(0)),
     baseDomain: BASE_DOMAIN,
-    recoverTimeoutMs: SANDBOX_TIMEOUTS.RECOVER,
   },
 );

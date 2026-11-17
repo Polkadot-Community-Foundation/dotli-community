@@ -48,6 +48,7 @@ const POLICIES = {
   // A smoldot panic rejects it through the frame's status, and the user can abandon it from "Change settings".
   'frame.warmup': definePolicy('warmup', { trailed: true, budgetMs: null }),
   'frame.telemetry': definePolicy('telemetry'),
+  'frame.pause': definePolicy('framePause', { timed: false }),
   'resolve.owner': definePolicy('resolveOwner', RESOLVE_STEP_OPTIONS),
   'resolve.executableManifest': definePolicy('resolveExecutableManifest', RESOLVE_STEP_OPTIONS),
   'resolve.rootManifest': definePolicy('resolveRootManifest', RESOLVE_STEP_OPTIONS),
@@ -57,7 +58,8 @@ const POLICIES = {
   'storage.authClear': definePolicy('authStorageClear', STORE_OPTIONS),
   'storage.authChanges': definePolicy('sharedAuthChanges', STORE_OPTIONS),
   'storage.modeRead': definePolicy('modeStorageRead', STORE_OPTIONS),
-  'storage.modeWrite': definePolicy('modeStorageWrite', STORE_OPTIONS),
+  // A settings reset waits on it before its reload, so a frame that does not answer must not hold the reload long.
+  'storage.modeWrite': definePolicy('modeStorageWrite', { ...STORE_OPTIONS, budgetMs: 5_000 }),
   'storage.modeClear': definePolicy('modeStorageClear', STORE_OPTIONS),
   'storage.authClearIf': definePolicy('authStorageClearIf', STORE_OPTIONS),
   // Boot waits on it, so a protocol frame that does not load or answer must not hold the page for the default budget.
@@ -74,7 +76,7 @@ const POLICIES = {
 export function getPolicy(method: AnyMethod): MethodPolicy {
   const address = protocolSchema.addressOf(method);
   const known = getPolicyAt(address.section, address.method);
-  if (known === undefined) {
+  if (known === null) {
     throw new Error('The method is not one of the protocol');
   }
   return known;
@@ -103,8 +105,8 @@ function isPath(path: string): path is Path {
   return Object.hasOwn(POLICIES, path);
 }
 
-/** The policy of the method at `section` and `method`, or undefined for a place the protocol lacks. */
-function getPolicyAt(section: string, method: string): MethodPolicy | undefined {
+/** The policy of the method at `section` and `method`, or null for a place the protocol lacks. */
+function getPolicyAt(section: string, method: string): MethodPolicy | null {
   const path = `${section}.${method}`;
-  return isPath(path) ? POLICIES[path] : undefined;
+  return isPath(path) ? POLICIES[path] : null;
 }

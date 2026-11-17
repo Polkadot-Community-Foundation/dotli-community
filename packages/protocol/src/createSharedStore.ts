@@ -4,14 +4,17 @@
 // The shared store in the protocol frame on `<BASE_DOMAIN>/p/`: auth, mode preferences and the local wallet,
 // one for every subdomain where the browser lets an embedded frame reach it, and one per top-level origin in Safari.
 
+import { atom, computed } from 'nanostores';
 import type { SiteId } from '@dotli/config';
-import { reportListener } from '@dotli/metrics';
+import { createReporter } from '@dotli/metrics';
 import { createListenerSet, realTimers, type Timers } from '@dotli/shared';
 import { createFeedKeeper } from './createFeedKeeper.js';
 import type { FrameRpc } from './createFrameRpc.js';
 import type { ProtocolFrame, ProtocolStatus } from './frameTypes.js';
 import { protocolSchema, type LocalWalletIdentity, type LocalWalletRead, type SharedAuthChange } from './schema.js';
 import { subscribe } from './subscribe.js';
+
+const report = createReporter({ flow: 'protocol' });
 
 export type SharedAuthListener = (change: SharedAuthChange) => void;
 
@@ -25,7 +28,7 @@ export type LocalWalletReadResult =
 export type SharedStoreStatus = 'connecting' | 'available' | 'unavailable';
 
 type Params = {
-  frame: Pick<ProtocolFrame, 'getStatus' | 'subscribeStatus' | 'getTransport'>;
+  frame: Pick<ProtocolFrame, 'status' | 'getTransport' | 'storeHeld'>;
   rpc: FrameRpc;
   /** What a reopen of the auth change feed waits on. */
   timers?: Timers;
@@ -60,21 +63,8 @@ const { storage, wallet: walletMethods } = protocolSchema.sections;
  */
 export function createSharedStore({ frame, rpc, timers = realTimers }: Params) {
   const sharedAuthListeners = createListenerSet<SharedAuthChange>({
-    onListenerError: reportListener('protocol', 'protocol.shared_auth'),
+    onListenerError: report.listener('protocol.shared_auth'),
   });
-  const statusListeners = createListenerSet<SharedStoreStatus>({
-    onListenerError: reportListener('protocol', 'protocol.shared_store_status'),
-  });
-  // Latched from each status the frame publishes, since a listener ahead of this store's own can move the frame on
-  // before this store reads it.
-  let settledOnce = hasSettled(frame.getStatus());
-
-  // Read from the frame's status on each call, so a frame status listener that runs before this store's own hears
-  // the store as it is.
-  function readStatus(): SharedStoreStatus {
-    return deriveSharedStoreStatus(frame.getStatus(), settledOnce);
-  }
-
   // The sibling tabs' auth changes, heard on the frame there is now while anyone listens. Asking for its transport
   // boots a frame that is down, as a listener needs one.
   const changes = createFeedKeeper({
@@ -96,24 +86,27 @@ export function createSharedStore({ frame, rpc, timers = realTimers }: Params) {
     timers,
   });
 
-  let announced = readStatus();
-  frame.subscribeStatus(next => {
-    settledOnce ||= hasSettled(next);
-    const store = readStatus();
-    if (store !== announced) {
-      announced = store;
-      statusListeners.emit(store);
+  // Latched at each delivery, across rounds, so a frame that settled once keeps the store unavailable while a later
+  // one boots. Its listener follows every delivery whether or not anyone reads the store, and it is an input of the
+  // status, since a `computed` recomputes only when an input changed.
+  const settled = atom<boolean>(hasSettled(frame.status.get()));
+  frame.status.listen(next => {
+    if (hasSettled(next)) {
+      settled.set(true);
     }
   });
+  // Recomputed on a read once an input changed, so a frame status listener that runs before this store's own reads
+  // the store as it is.
+  const status = computed([frame.status, settled, frame.storeHeld], deriveSharedStoreStatus);
 
   return {
-    /** Whether the shared store can answer. */
-    status: {
-      /** The store's status now, read from the frame's. Never throws. */
-      getStatus: readStatus,
-      /** Called on each change only. Does not start a frame. Returns the unsubscribe. */
-      subscribeStatus: (listener: (status: SharedStoreStatus) => void) => statusListeners.subscribe(listener),
-    },
+    /**
+     * Whether the shared store can answer. A listener hears each change only, with the status there is when its turn
+     * comes, so within one round of listeners it can hear the same status twice and miss one. A listener's throw is
+     * reported under `protocol.status`, and delivery goes on, when the frame's own change drains the round. A change
+     * made inside another store's listener round reaches that round's writer instead. Listening starts no frame.
+     */
+    status,
     /** The auth store, shared by the sites on the same root domain. Each call reaches the frame. */
     auth: {
       /**
@@ -271,8 +264,14 @@ function hasSettled(status: ProtocolStatus): boolean {
   }
 }
 
-/** The store answers once a frame listens. It stays `connecting` only until the first frame listens or fails. */
-function deriveSharedStoreStatus(status: ProtocolStatus, settledOnce: boolean): SharedStoreStatus {
+/**
+ * The store answers once a frame listens, and while a frame whose light client failed to start is held for it. It stays
+ * `connecting` only until the first frame listens or fails.
+ */
+function deriveSharedStoreStatus(status: ProtocolStatus, settled: boolean, held: boolean): SharedStoreStatus {
+  if (held) {
+    return 'available';
+  }
   switch (status) {
     case 'listening':
     case 'ready':
@@ -281,6 +280,6 @@ function deriveSharedStoreStatus(status: ProtocolStatus, settledOnce: boolean): 
       return 'unavailable';
     case 'idle':
     case 'booting':
-      return settledOnce ? 'unavailable' : 'connecting';
+      return settled ? 'unavailable' : 'connecting';
   }
 }

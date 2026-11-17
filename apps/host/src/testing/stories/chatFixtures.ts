@@ -7,13 +7,15 @@
 
 import { createEffect, createSignal, onCleanup, type Accessor } from 'solid-js';
 import type { ChatMessageContent, HostRendererActionSubscribeItem, ProductRendererRenderRequest } from '@parity/truapi';
-import { createSyncStore, isShallowEqual, type SyncStore } from '@dotli/shared';
-import { useStore } from '@dotli/ui';
-import { chatUnreadLabel } from '../../components/chat/unread.js';
-import type { ChatMessageRecord } from '../../runtime/chat/createChatStore.js';
-import type { ChatRenderSink } from '../../components/chat/chat.js';
-import type { ChatBot, ChatContacts, ChatConversation, ChatFeed, ChatRoom } from '../../components/chat/chat.js';
-import type { ChatButtonProps } from '../../components/chat/ChatButton.js';
+import { isShallowEqual } from '@dotli/shared';
+import { atom, type WritableAtom } from 'nanostores';
+import { useStore } from '@dotli/stores-solid';
+import { chatUnreadLabel } from '../../features/chat/unread.js';
+import type { ChatMessageRecord } from '../../features/chat/createChatStore.js';
+import { ChatReplyUndeliveredError } from '../../features/chat/chatReplyUndeliveredError.js';
+import type { ChatRenderSink } from '../../features/chat/chat.js';
+import type { ChatBot, ChatContacts, ChatConversation, ChatFeed, ChatRoom } from '../../features/chat/chat.js';
+import type { ChatButtonProps } from '../../features/chat/ChatButton.js';
 
 const PRODUCT = 'chatty.dot';
 
@@ -78,7 +80,7 @@ export type Published = {
 };
 
 export type ChatStage = {
-  state: SyncStore<StageState>;
+  state: WritableAtom<StageState>;
   update(patch: Partial<StageState>): void;
   rooms: ChatRoom[];
   bots: ChatBot[];
@@ -89,6 +91,8 @@ export type ChatStage = {
   messagesFail: boolean;
   /** While set, a reply is kept but cannot reach the product, with this error. */
   sendError: Error | null;
+  /** While set, a reply is not kept, and the send rejects with this error. */
+  refuseError: Error | null;
   published: Published[];
   actions: { roomId: string; messageId: string; actionId: string }[];
   rendererActions: HostRendererActionSubscribeItem[];
@@ -110,23 +114,19 @@ export type ChatStage = {
   button: ChatButtonProps;
   /** The panel element the dock handed over. */
   panelElement: () => HTMLElement | undefined;
+  /** Stops the views following the stage's state, for the story's cleanup. */
+  dispose: () => void;
 };
 
 /** A fresh chat for one story. */
 export function chatStage(initial: Partial<StageState> = {}): ChatStage {
-  const state = createSyncStore<StageState>({
-    name: 'story_chat_state',
-    initial: { ...INITIAL, ...initial },
-    equals: isShallowEqual,
-  });
-  const feed = createSyncStore<FeedState>({
-    name: 'story_chat_feed',
-    initial: { contacts: null, contactsFailed: false, messages: null, messagesFailed: false },
-    equals: isShallowEqual,
-  });
+  const state = atom<StageState>({ ...INITIAL, ...initial });
+  state.eq = isShallowEqual;
+  const feed = atom<FeedState>({ contacts: null, contactsFailed: false, messages: null, messagesFailed: false });
+  feed.eq = isShallowEqual;
   // What the views read, following each write as the page's stores reach them through `useStore`.
   const [current, setCurrent] = createSignal(state.get());
-  state.subscribe(() => setCurrent(state.get()));
+  const unlisten = state.listen(() => setCurrent(state.get()));
   // Strictly rising and close to now, so the list's recency order never ties and bubbles read "just now".
   let clock = 0;
   const stamp = (): number => (clock = Math.max(Date.now(), clock + 1));
@@ -190,7 +190,7 @@ export function chatStage(initial: Partial<StageState> = {}): ChatStage {
     contactsFailed: useStore(feed, s => s.contactsFailed),
     messages: useStore(feed, s => s.messages),
     messagesFailed: useStore(feed, s => s.messagesFailed),
-    onChange: listener => feed.subscribe(listener),
+    onChange: listener => feed.listen(listener),
     follow: (shown: Accessor<string | null>) => {
       createEffect(shown, room => {
         // Idempotent, as the page's store is.
@@ -235,9 +235,14 @@ export function chatStage(initial: Partial<StageState> = {}): ChatStage {
       update({ composerError: message });
     },
     send: (roomId, text) => {
+      if (stage.refuseError !== null) {
+        return Promise.reject(stage.refuseError);
+      }
       append(roomId, 'user', { tag: 'Text', value: { text } });
       stage.published.push({ roomId, text });
-      return stage.sendError === null ? Promise.resolve() : Promise.reject(stage.sendError);
+      return stage.sendError === null
+        ? Promise.resolve()
+        : Promise.reject(new ChatReplyUndeliveredError(roomId, stage.sendError));
     },
     actions: {
       renderCustomMessage: ({ request, sink }) => {
@@ -279,6 +284,7 @@ export function chatStage(initial: Partial<StageState> = {}): ChatStage {
     contactsFail: false,
     messagesFail: false,
     sendError: null,
+    refuseError: null,
     published: [],
     actions: [],
     rendererActions: [],
@@ -347,6 +353,7 @@ export function chatStage(initial: Partial<StageState> = {}): ChatStage {
       panel: () => panelElement,
     },
     panelElement: () => panelElement,
+    dispose: unlisten,
   };
   return stage;
 }

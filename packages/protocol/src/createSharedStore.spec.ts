@@ -1,12 +1,10 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, expect, it, onTestFinished } from 'vitest';
-import { spans as S } from '@dotli/metrics';
-import { bindRecordingSentry, recordCaptures } from '@dotli/metrics/testing';
-import { createStatusCell } from '@dotli/shared';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { atom, STORE_UNMOUNT_DELAY } from 'nanostores';
 import { createManualTimers, recordLog } from '@dotli/shared/testing';
-import { err, hostFailure, ok, type Sink } from '@dotli/transport';
+import { ok, type Sink } from '@dotli/transport';
 import type { ProtocolFrame, ProtocolStatus } from './frameTypes.js';
 import { createFrameRpc } from './createFrameRpc.js';
 import type { SharedAuthChange, SubscriptionEnd } from './schema.js';
@@ -30,24 +28,14 @@ function createRelayingFrame(sinks: Set<ChangeSink>): (serving: ProtocolTranspor
   };
 }
 
-/** A frame app that keeps the sink of every auth change subscription it was asked for, in order. */
-function createOpeningFrame(opened: ChangeSink[]): (serving: ProtocolTransport) => void {
-  return serving => {
-    serving.handleSubscription(storage.authChanges, (_start, _context, sink) => {
-      opened.push(sink);
-      return () => undefined;
-    });
-  };
-}
-
 describe('createSharedStore', () => {
   it('As a returning user, I see my shared store connecting until a first frame listens, then down from each loss until a frame listens again', () => {
     // Given
     const fake = createFakeFrame({ status: 'idle' });
     const store = createSharedStore({ frame: fake.frame, rpc: createFrameRpc({ frame: fake.frame }) });
     const statuses: SharedStoreStatus[] = [];
-    store.status.subscribeStatus(status => statuses.push(status));
-    const atStart = store.status.getStatus();
+    store.status.listen(status => statuses.push(status));
+    const atStart = store.status.get();
 
     // When: the first frame boots and listens, dies, is rebuilt, and is rebuilt again on purpose.
     for (const status of [
@@ -69,13 +57,32 @@ describe('createSharedStore', () => {
     expect(statuses).toEqual(['available', 'unavailable', 'available', 'unavailable', 'available']);
   });
 
+  it.each(['failed', 'booting'] as const)(
+    'As a returning user whose light client failed to start, I see my shared store available while the frame holds it, as the frame is %s',
+    at => {
+      // Given a store whose frame settled, and whose frame now holds the store
+      const fake = createFakeFrame({ status: 'listening' });
+      const store = createSharedStore({ frame: fake.frame, rpc: createFrameRpc({ frame: fake.frame }) });
+      fake.holdStore(true);
+      fake.setStatus(at);
+      const whileHeld = store.status.get();
+
+      // When the frame lets the store go
+      fake.holdStore(false);
+
+      // Then
+      expect(whileHeld).toBe('available');
+      expect(store.status.get()).toBe('unavailable');
+    },
+  );
+
   it('As a dotli integrator, I subscribe the frame status before the shared store is built and read the store available the moment the frame listens', () => {
     // Given a frame status listener registered before the shared store, which reads the store on each change
     const fake = createFakeFrame({ status: 'idle' });
     let store: ReturnType<typeof createSharedStore> | null = null;
     const read: (SharedStoreStatus | undefined)[] = [];
-    fake.frame.subscribeStatus(() => {
-      read.push(store?.status.getStatus());
+    fake.frame.status.listen(() => {
+      read.push(store?.status.get());
     });
     store = createSharedStore({ frame: fake.frame, rpc: createFrameRpc({ frame: fake.frame }) });
 
@@ -87,18 +94,16 @@ describe('createSharedStore', () => {
     expect(read).toEqual(['connecting', 'available']);
   });
 
-  it('As a returning user, I see my shared store stay down until the new frame listens when a frame status listener rebuilds the frame as it listens', () => {
+  it('As a returning user, I see my shared store read connecting until the new frame listens when a frame status listener rebuilds the frame as it listens, and hear only that it is available', () => {
     // Given a frame that publishes its status as the real one does, a listener first in line that rebuilds the frame
     // the first time it listens, and a shared store built after that listener
-    const cell = createStatusCell<ProtocolStatus>({
-      initial: 'idle',
-      onListenerError: error => {
-        throw error;
-      },
-    });
-    const frame: ProtocolFrame = { ...createFakeFrame().frame, getStatus: cell.get, subscribeStatus: cell.subscribe };
+    const cell = atom<ProtocolStatus>('idle');
+    const frame: ProtocolFrame = {
+      ...createFakeFrame().frame,
+      status: cell,
+    };
     let rebuilt = false;
-    cell.subscribe(next => {
+    cell.listen(next => {
       if (next === 'listening' && !rebuilt) {
         rebuilt = true;
         cell.set('idle');
@@ -107,21 +112,41 @@ describe('createSharedStore', () => {
     });
     const store = createSharedStore({ frame, rpc: createFrameRpc({ frame }) });
     const statuses: SharedStoreStatus[] = [];
-    store.status.subscribeStatus(status => statuses.push(status));
+    store.status.listen(status => statuses.push(status));
 
     // When the first frame listens and is rebuilt at once
     cell.set('booting');
     cell.set('listening');
 
-    // Then the store reads down while the new frame boots, not still connecting
-    expect(store.status.getStatus()).toBe('unavailable');
+    // Then the store never heard the first frame listen, so it reads connecting while the new frame boots
+    expect(store.status.get()).toBe('connecting');
 
     // When the new frame listens
     cell.set('listening');
 
-    // Then the store is available again
-    expect(store.status.getStatus()).toBe('available');
-    expect(statuses).toEqual(['unavailable', 'available']);
+    // Then the store is available, the one change its listener heard
+    expect(store.status.get()).toBe('available');
+    expect(statuses).toEqual(['available']);
+  });
+
+  it('As a dotli integrator, I read the shared store with nobody listening while its frame settles and boots again, and read it unavailable', () => {
+    // Given a store read once with nobody listening while its frame boots, left until its status unmounts
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const fake = createFakeFrame({ status: 'booting' });
+    const store = createSharedStore({ frame: fake.frame, rpc: createFrameRpc({ frame: fake.frame }) });
+    store.status.get();
+    // nanostores' unmount timer has no seam, and `cleanStores` would clear the cache this case pins.
+    vi.advanceTimersByTime(STORE_UNMOUNT_DELAY);
+
+    // When the frame listens and boots again, with nobody listening
+    fake.setStatus('listening');
+    fake.setStatus('booting');
+
+    // Then
+    expect(store.status.get()).toBe('unavailable');
   });
 
   it("As a returning user, I hear another tab's shared auth write, and my subscription waits only for a listening frame", async () => {
@@ -179,100 +204,6 @@ describe('createSharedStore', () => {
     expect(subscribedOnRebuilt).toBe(1);
     expect(changes).toEqual([{ tag: 'session', value: { siteId: 'dotli', key: 'k', value: null } }]);
     expect(sinks.size).toBe(0);
-  });
-
-  it('As a returning user, I see my shared auth subscription the frame ends while it stays up reopened after a wait that doubles, and each end reported and captured once', async () => {
-    // Given a subscription on a frame that stays up
-    const timers = createManualTimers();
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    const captured = recordCaptures({ onFinished: onTestFinished });
-    const errors = recordLog({ onFinished: onTestFinished, level: 'error' });
-    const opened: ChangeSink[] = [];
-    const fake = createFakeFrame({ serve: createOpeningFrame(opened), timers });
-    const store = createSharedStore({ frame: fake.frame, rpc: createFrameRpc({ frame: fake.frame, timers }), timers });
-    const changes: SharedAuthChange[] = [];
-    store.auth.subscribe(change => changes.push(change));
-    await timers.advance(0);
-
-    // When the frame ends it cleanly, and then ends the reopened one with an error
-    opened[0]?.interrupt(ok());
-    await timers.advance(999);
-    const openedBeforeFirstWait = opened.length;
-    await timers.advance(1);
-    const openedAfterFirstWait = opened.length;
-    opened[1]?.interrupt(err(hostFailure('TypeError: relay broke')));
-    await timers.advance(1_999);
-    const openedBeforeSecondWait = opened.length;
-    await timers.advance(1);
-    opened[2]?.send({ tag: 'session', value: { siteId: 'dotli', key: 'k', value: 'v' } });
-    await timers.advance(0);
-
-    // Then
-    expect([openedBeforeFirstWait, openedAfterFirstWait, openedBeforeSecondWait, opened.length]).toEqual([1, 2, 2, 3]);
-    expect(changes).toEqual([{ tag: 'session', value: { siteId: 'dotli', key: 'k', value: 'v' } }]);
-    expect(metrics.counted(S.PROTOCOL_FEED_END)).toEqual([
-      { outcome: 'error', feed: 'shared_auth', reason: 'ProtocolFeedEndedError' },
-      { outcome: 'error', feed: 'shared_auth', reason: 'TypeError' },
-    ]);
-    expect(captured).toEqual([{ flow: 'protocol', step: 'feed_end', tags: { feed: 'shared_auth' } }]);
-    expect(errors).toHaveLength(2);
-  });
-
-  it('As a returning user, I lose the frame under my shared auth subscription and it is neither reopened there nor reported', async () => {
-    // Given a subscription on a frame that is up
-    const timers = createManualTimers();
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    const opened: ChangeSink[] = [];
-    const fake = createFakeFrame({ serve: createOpeningFrame(opened), timers });
-    const store = createSharedStore({ frame: fake.frame, rpc: createFrameRpc({ frame: fake.frame, timers }), timers });
-    store.auth.subscribe(() => undefined);
-    await timers.advance(0);
-
-    // When the frame is lost
-    fake.lose(new Error('boom'));
-    await timers.advance(30_000);
-
-    // Then
-    expect(opened).toHaveLength(1);
-    expect(metrics.counted(S.PROTOCOL_FEED_END)).toEqual([]);
-  });
-
-  it('As a returning user, I lose a frame while my shared auth subscription asks for it and it is neither reported nor followed', async () => {
-    // Given a subscription on a frame that is dropped in the turn the subscription asks for it
-    const timers = createManualTimers();
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    const opened: ChangeSink[] = [];
-    const fake = createFakeFrame({ serve: createOpeningFrame(opened), timers });
-    const store = createSharedStore({ frame: fake.frame, rpc: createFrameRpc({ frame: fake.frame, timers }), timers });
-
-    // When
-    store.auth.subscribe(() => undefined);
-    fake.lose(new Error('dropped'));
-    await timers.advance(30_000);
-
-    // Then
-    expect(metrics.counted(S.PROTOCOL_FEED_END)).toEqual([]);
-    expect(timers.countPending()).toBe(0);
-  });
-
-  it('As a returning user, I leave while my ended shared auth subscription waits to be reopened, and it is not reopened', async () => {
-    // Given a subscription the frame ended
-    const timers = createManualTimers();
-    const opened: ChangeSink[] = [];
-    const fake = createFakeFrame({ serve: createOpeningFrame(opened), timers });
-    const store = createSharedStore({ frame: fake.frame, rpc: createFrameRpc({ frame: fake.frame, timers }), timers });
-    const unsubscribe = store.auth.subscribe(() => undefined);
-    await timers.advance(0);
-    opened[0]?.interrupt(ok());
-    await timers.advance(0);
-
-    // When
-    unsubscribe();
-    await timers.advance(30_000);
-
-    // Then
-    expect(opened).toHaveLength(1);
-    expect(timers.countPending()).toBe(0);
   });
 
   it.each([

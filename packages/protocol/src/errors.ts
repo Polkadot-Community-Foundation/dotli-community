@@ -14,7 +14,8 @@ import {
   type AnyMethod,
   type CallError,
 } from '@dotli/transport';
-import { toError } from '@dotli/shared';
+import { isApiStoppedError } from '@dotli/resolver';
+import { isChainHaltedRpcError, toError } from '@dotli/shared';
 import { getCallName, type CallName } from './methodPolicy.js';
 import type { DomainFailure, FrameFailure, RemoteFailure } from './schema.js';
 
@@ -90,6 +91,8 @@ export const PROTOCOL_ERRORS = {
   FRAME_RESET: 'Protocol frame state reset before ready signal',
   /** Nothing said how to build the frame, as on a page that never configures it. */
   FRAME_UNCONFIGURED: 'Protocol frame was never configured',
+  /** The frame did not answer the host's heartbeat in time, or its transport closed while it was asked. */
+  FRAME_UNRESPONSIVE: 'Protocol frame stopped answering',
 } as const;
 
 /** The error a transport closed with, under the protocol's own class when it is one of the transport's. */
@@ -182,14 +185,15 @@ export function toFrameStatusEnd(closing: Error): CallError<FrameFailure> {
 
 /**
  * How a resolver or chain error ends a call: typed for the two the host's error screen tells apart by name, and as the
- * handler's own failure for any other.
+ * handler's own failure for any other. A read its chain halted under crosses as a stopped chain, with its message.
  */
 export function toRemoteEnd(error: Error): CallError<RemoteFailure> {
+  if (isApiStoppedError(error) || isChainHaltedRpcError(error)) {
+    return domain({ tag: 'apiStopped', value: error.message });
+  }
   switch (error.name) {
     case 'NetworkSyncTimeoutError':
       return domain({ tag: 'syncTimeout', value: error.message });
-    case 'ApiStoppedError':
-      return domain({ tag: 'apiStopped', value: error.message });
     default:
       return hostFailure(error);
   }

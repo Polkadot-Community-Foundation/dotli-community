@@ -6,56 +6,40 @@
 import { decodeChainAnnotations, type ChainAnnotations } from './decodeChainAnnotations.js';
 import { formatChainLabel } from './formatChainLabel.js';
 import { formatChainOutcome } from './formatChainOutcome.js';
-import { formatHexHeadAndTail } from './formatHexHeadAndTail.js';
-import { formatIdHead } from './formatIdHead.js';
+import { formatChainValue } from './formatChainValue.js';
 import { formatPayloadSummary } from './formatPayloadSummary.js';
 import { getTagKind, type TagKind } from './getTagKind.js';
 import type { StoredTruapiEvent } from './storedEvent.js';
 
 export type TruapiRowData = {
-  direction: StoredTruapiEvent['direction'];
-  productId: string | undefined;
-  requestId: string;
   tagKind: TagKind;
   displayTag: string;
   summary: string;
-  pendingKey: string | null;
 };
 
-/** What a TrUAPI message's row shows, a chain message by its decoded label and keys. Never throws. */
-export function toTruapiRowData(event: StoredTruapiEvent, pendingKey: string | null): TruapiRowData {
+/** What a TrUAPI message's row shows, a chain message by its decoded label and keys. */
+export function toTruapiRowData(event: StoredTruapiEvent): TruapiRowData {
   const chain = decodeChainAnnotations(event.tag, event.payload);
   const displayTag = chain === null ? event.tag : formatChainLabel(chain);
   const summary = chain === null ? formatPayloadSummary(event.payload) : formatChainSummary(chain);
   return {
-    direction: event.direction,
-    productId: event.productId,
-    requestId: event.requestId,
     tagKind: getTagKind(event.tag),
     displayTag,
     summary,
-    pendingKey,
   };
 }
 
 function formatChainSummary(annotations: ChainAnnotations): string {
   const parts: string[] = [];
   if (annotations.operationId !== undefined) {
-    parts.push(`op ${formatRowValue(annotations.operationId)}`);
+    parts.push(`op ${formatChainValue(annotations.operationId)}`);
   }
   if (annotations.blockHash !== undefined) {
-    parts.push(`blk ${formatRowValue(annotations.blockHash)}`);
+    parts.push(`blk ${formatChainValue(annotations.blockHash)}`);
   }
   const outcome = formatChainOutcome(annotations);
   if (outcome !== undefined) {
     parts.push(outcome);
   }
   return parts.join(' · ');
-}
-
-function formatRowValue(value: string): string {
-  if (value.startsWith('0x') && value.length > 12) {
-    return formatHexHeadAndTail(value);
-  }
-  return formatIdHead(value);
 }

@@ -4,45 +4,30 @@
 import { describe, expect, it } from 'vitest';
 import { createDockStorage } from './createDockStorage.js';
 import { createMemoryStorage } from '@dotli/shared/testing';
-import { createBlockedStorage } from '../testing/createBlockedStorage.js';
 
 describe('createDockStorage()', () => {
-  it('As a dotli developer with a right dock stored, I mount the panel and it docks right', () => {
+  it('As a developer with a stored dock that no longer parses, I see the panel at the bottom', () => {
     // Given
-    const dockStorage = createDockStorage({
-      storage: createMemoryStorage({ entries: { 'truapi-debug:dock': 'right' } }),
-    });
+    const storage = createMemoryStorage({ entries: { 'truapi-debug:dock': 'left' } });
 
     // When
-    const dock = dockStorage.read();
+    const dock = createDockStorage({ storage }).get();
 
     // Then
-    expect(dock).toBe('right');
+    expect(dock).toBe('bottom');
   });
 
-  it('As a dotli developer, I pick a dock and it is stored for the next mount', () => {
+  it('As a dotli developer, I pick the right dock and it is stored for the next page load', () => {
     // Given
     const storage = createMemoryStorage();
     const dockStorage = createDockStorage({ storage });
 
     // When
-    dockStorage.write('bottom');
-    const dock = dockStorage.read();
+    dockStorage.set('right');
+    const nextLoad = createDockStorage({ storage }).get();
 
     // Then
-    expect(storage.getItem('truapi-debug:dock')).toBe('bottom');
-    expect(dock).toBe('bottom');
-  });
-
-  it('As a dotli developer whose storage is blocked, I pick the right dock and the panel docks at the bottom', () => {
-    // Given
-    const dockStorage = createDockStorage({ storage: createBlockedStorage() });
-
-    // When
-    dockStorage.write('right');
-    const dock = dockStorage.read();
-
-    // Then
-    expect(dock).toBe('bottom');
+    expect(storage.getItem('truapi-debug:dock')).toBe('right');
+    expect(nextLoad).toBe('right');
   });
 });

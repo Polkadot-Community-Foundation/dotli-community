@@ -4,23 +4,26 @@
 
 Start every non-trivial change (`docs/code/glossary.md`) with the `architecture` skill.
 
-- `architecture`: decides what the change is and where it goes, then runs the lifecycle from design to review.
-- `document-review`: refines a design or plan in `docs/_plans/` before the next step.
+- `architecture`: decides what the change is and where it goes, then builds it in slices the owner steers.
+- `document-review`: refines a design in `docs/_plans/` before the next step.
 - `reviewer`: audits a branch or PR against the `docs/claude/` checklists.
 
-Code and workflow corrections become repo rules, never agent memory (docs/code/rule-extraction.md § When to run).
+Code and workflow corrections go to the repo, never agent memory. Each one goes to the `decision-keeper` agent first
+(docs/code/rule-extraction.md § When to run).
 
 ## Project agent
 
 These rules bind the main session only. A subagent skips them.
 
-A non-trivial change runs in the `architect` agent (.claude/skills/architecture/SKILL.md § Who runs this skill). While
-`docs/_plans/project-agent.md` exists, read the agent ID from it and route each owner message:
+A non-trivial change runs in the `architect` agent (.claude/skills/architecture/SKILL.md § Who runs this skill). Each
+session tracks its agent in its own file, `docs/_plans/project-agent-<session id>.md`, where `<session id>` is
+`$CLAUDE_CODE_SESSION_ID`, so sessions running at once never share one. Another session's file is not this session's
+change. While this session's file exists, read the agent ID from it and route each owner message:
 
 - `p:` at the start sends the message to the agent and `m:` keeps it here. Strip the prefix.
 - A reply to the agent's open `QUESTION`, `APPROVAL` or `BLOCKED` goes to the agent.
-- Anything about that change goes to the agent: its design, plan, code, progress, a correction, a pause or a stop.
-- Everything else is handled here as usual, without reading the change's plan.
+- Anything about that change goes to the agent: its design, a slice, code, progress, a correction, a pause or a stop.
+- Everything else is handled here as usual, without reading the change's design.
 - When unsure, ask the owner once whether it is for the project or for here.
 
 Relay with `SendMessage` to the agent ID, as `OWNER: <the owner's words verbatim>`, plus the paths of any file the owner
@@ -30,15 +33,15 @@ even when the owner is away.
 From the agent, show `QUESTION`, `APPROVAL`, `BLOCKED` and `DONE` verbatim. Offer a `QUESTION` or `BLOCKED` with options
 through `AskUserQuestion` and relay the chosen label and any notes. Show a `STATUS` as one line. A finished turn of the
 agent only means it is waiting, unless its message is `DONE`. Never stop or replace the agent before `DONE`, not even at
-a gate, unless the owner stops the change. After `DONE`, or when the owner stops the change, delete
-`docs/_plans/project-agent.md`, except between the stages of a staged change.
+a gate, unless the owner stops the change. After `DONE`, or when the owner stops the change, delete this session's
+`project-agent-<session id>.md`, except between the stages of a staged change.
 
 A staged change (.claude/skills/architecture/SKILL.md § A staged change) runs one agent per stage, and
-`project-agent.md` also records the roadmap path and the current stage. After the roadmap's or a stage's `DONE`, show
-it, then start the next stage's agent without asking the owner, who approved the roadmap. Dispatch it as that skill's
-"Who runs this skill" does, with the owner's roadmap approval verbatim as `OWNER: <text>` plus
-`Stage: <roadmap path> § <stage>`, and update `project-agent.md`. Delete the file only after the last stage's `DONE`, or
-when the owner stops the change.
+`project-agent-<session id>.md` also records the roadmap path and the current stage. After the roadmap's or a stage's
+`DONE`, show it, then start the next stage's agent without asking the owner, who approved the roadmap. Dispatch it as
+that skill's "Who runs this skill" does, with the owner's roadmap approval verbatim as `OWNER: <text>` plus
+`Stage: <roadmap path> § <stage>`, and update `project-agent-<session id>.md`. Delete the file only after the last
+stage's `DONE`, or when the owner stops the change.
 
 ## Code navigation
 

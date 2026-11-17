@@ -16,8 +16,8 @@ NODE_MAJOR := 24
 
 # Networks for the on-box `build:prod`, which requires VITE_NETWORKS. The `summit` slot is dot.li, which serves the
 # devnet like dev-dot.li.
-VITE_NETWORKS_summit := devnet
-VITE_NETWORKS_devnet := devnet
+VITE_NETWORKS_summit := pcf-devnet
+VITE_NETWORKS_devnet := pcf-devnet
 
 # Icon variant for the host shell (apps/host/public/brand/<variant>); unset keeps the stock icons.
 VITE_BRAND_VARIANT_devnet := devnet
@@ -53,8 +53,8 @@ DEPLOY_PATH_dev-test      := /var/www/testnetli
 DEPLOY_PATH_summit        := /var/www/summitli
 DEPLOY_PATH_devnet        := /var/www/devdotli
 
-# One cert per env at /etc/letsencrypt/live/<base>/, matching the ssl_certificate paths. *.<base> covers host.<base>,
-# which serves the frame for one more release. The frame itself lives on <base>, so no new name needs a cert or DNS.
+# One cert per env at /etc/letsencrypt/live/<base>/, matching the ssl_certificate paths. The frame lives on <base>, so
+# it needs no name of its own in a cert or DNS.
 CERT_DOMAINS_polkadot     := dot.li *.dot.li *.app.dot.li
 CERT_DOMAINS_paseo        := paseo.li *.paseo.li *.app.paseo.li
 CERT_DOMAINS_dev-paseo    := paseoli.dev *.paseoli.dev *.app.paseoli.dev
@@ -216,7 +216,7 @@ deploy-nginx: _require-env
 	ssh $(REMOTE_TARGET) 'sudo install -d -m 0755 /etc/nginx/snippets && sudo rsync -av /tmp/dotli-nginx-snippets/ /etc/nginx/snippets/ && sudo cp /tmp/$(SITE).nginx /etc/nginx/sites-available/$(SITE) && sudo ln -sf /etc/nginx/sites-available/$(SITE) /etc/nginx/sites-enabled/$(SITE) && sudo nginx -t && sudo systemctl reload nginx'
 
 # Protocol first: a new shell waits for the iframe's `listening` signal, which an older iframe never sends. The protocol
-# folder is served under /p/ on the root domain and at the root of host.<base>, so the layout is unchanged.
+# folder is served under /p/ on the root domain.
 define _rsync_dist
 rsync -avz --delete --filter='P /assets/' apps/protocol/dist/ $(1):$(2)/protocol/
 rsync -avz --delete --filter='P /assets/' apps/sandbox/dist/  $(1):$(2)/app/

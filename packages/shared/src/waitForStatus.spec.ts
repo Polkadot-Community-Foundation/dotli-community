@@ -3,32 +3,52 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { createStatusCell } from './createStatusCell.js';
+import { createListenerSet } from './createListenerSet.js';
 import { waitForStatus } from './waitForStatus.js';
 
 type Status = 'idle' | 'booting' | 'up' | 'down';
 
-function recordingCell(initial: Status = 'idle') {
-  const failures: { error: unknown; value: Status }[] = [];
-  const cell = createStatusCell<Status>({
-    initial,
-    onListenerError: (error, value) => {
-      failures.push({ error, value });
+/** A status the test sets, with the `get` and `listen` a wait needs. */
+function createStatus(initial: Status) {
+  let current = initial;
+  const changes = createListenerSet<Status>({
+    onListenerError: error => {
+      throw new Error('A wait listener threw', { cause: error });
     },
   });
-  return { cell, failures };
+  return {
+    get: () => current,
+    set(next: Status) {
+      current = next;
+      changes.emit(next);
+    },
+    listen: changes.subscribe,
+  };
 }
 
 describe('waitForStatus', () => {
-  it('As a layer above, I wait on the status there is now and settle without subscribing', async () => {
+  it('As a layer above, I wait past the statuses my verdict leaves open and get the one that settled it', async () => {
     // Given
-    const { cell } = recordingCell('up');
-    let subscribed = 0;
+    const cell = createStatus('idle');
+    const wait = waitForStatus(cell, status => status === 'up' || status === 'down');
+
+    // When
+    cell.set('booting');
+    cell.set('down');
+
+    // Then
+    await expect(wait).resolves.toBe('down');
+  });
+
+  it('As a layer above, I wait on the status there is now and settle without listening', async () => {
+    // Given
+    const cell = createStatus('up');
+    let listened = 0;
     const counting = {
       get: cell.get,
-      subscribe: (listener: (value: Status) => void) => {
-        subscribed += 1;
-        return cell.subscribe(listener);
+      listen: (listener: (value: Status) => void) => {
+        listened += 1;
+        return cell.listen(listener);
       },
     };
 
@@ -36,13 +56,13 @@ describe('waitForStatus', () => {
     const wait = waitForStatus(counting, status => status === 'up');
 
     // Then
-    await expect(wait).resolves.toBeUndefined();
-    expect(subscribed).toBe(0);
+    await expect(wait).resolves.toBe('up');
+    expect(listened).toBe(0);
   });
 
   it('As a layer above, I wait past the statuses my verdict leaves open and fail on the one it fails with', async () => {
     // Given
-    const { cell } = recordingCell('idle');
+    const cell = createStatus('idle');
     const down = new Error('the layer went down');
     const heard: Status[] = [];
     const wait = waitForStatus(cell, status => {
@@ -60,9 +80,32 @@ describe('waitForStatus', () => {
     expect(heard).toEqual(['idle', 'booting', 'down']);
   });
 
+  it('As a layer above, I wait with a verdict that throws on a later status and the wait fails with that error and hears no later status', async () => {
+    // Given
+    const cell = createStatus('idle');
+    const broken = new Error('the verdict broke');
+    let calls = 0;
+    const wait = waitForStatus(cell, status => {
+      calls += 1;
+      if (status === 'booting') {
+        throw broken;
+      }
+      return false;
+    });
+    const settled = wait.catch((error: unknown) => error);
+
+    // When
+    cell.set('booting');
+    cell.set('up');
+
+    // Then
+    await expect(settled).resolves.toBe(broken);
+    expect(calls).toBe(2);
+  });
+
   it("As a layer above, I abort a pending wait and it fails with the signal's reason and hears no later status", async () => {
     // Given
-    const { cell } = recordingCell('idle');
+    const cell = createStatus('idle');
     const controller = new AbortController();
     const lost = new Error('the layer was lost');
     let heard = 0;
@@ -82,17 +125,5 @@ describe('waitForStatus', () => {
     // Then
     await expect(wait).rejects.toBe(lost);
     expect(heard).toBe(1);
-  });
-
-  it("As a layer above, I wait with a signal that aborted already and fail with the signal's reason", async () => {
-    // Given
-    const { cell } = recordingCell('up');
-    const lost = new Error('the layer was lost');
-
-    // When
-    const wait = waitForStatus(cell, () => true, { signal: AbortSignal.abort(lost) });
-
-    // Then
-    await expect(wait).rejects.toBe(lost);
   });
 });

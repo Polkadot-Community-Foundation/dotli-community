@@ -5,20 +5,24 @@
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi, type Mock } from 'vitest';
 import type { JsonRpcConnection } from '@polkadot-api/json-rpc-provider';
-import { getActiveServicesConfig, getActiveSupportedGenesisHashes } from '@dotli/config';
-import { bindLogSink, type LogLevel } from '@dotli/shared';
+import { getActiveServicesConfig } from '@dotli/config';
+import { bindLogSink, createDeferred, type LogLevel } from '@dotli/shared';
 import {
   createLightClient,
-  createLightClientDeps,
   type LightClient,
   type LightClientChange,
   type LightClientDeps,
+} from './createLightClient.js';
+import {
+  LightClientCapError,
+  withConnectionCapError,
   type LightClientEngine,
   type StartEngineParams,
-} from './createLightClient.js';
+} from './startTruapiProvider.js';
+import type { ChainSyncReporter } from './createChainSyncReporter.js';
 import type { SmoldotDb } from './createSmoldotDb.js';
-import type { ChainTransportHooks } from './transportHooks.js';
-import { bindRecordingSentry, recordCaptures } from '@dotli/metrics/testing';
+import type { ChainTransport, ChainTransportHooks } from './transportHooks.js';
+import { bindRecordingSentry, recordReports } from '@dotli/metrics/testing';
 
 const waiting = new Set<() => void>();
 
@@ -46,6 +50,8 @@ function waitUntil(met: () => boolean): Promise<void> {
 /** A truapi-provider connection whose response stream the test drives. */
 type FakeConnection = {
   send: (raw: string) => void;
+  /** Every frame the light client sent on this connection. */
+  sent: string[];
   close: () => void;
   nextResponse: () => Promise<string | undefined>;
   /** The read the light client awaits now, so a test can wait until it was handled. */
@@ -54,6 +60,8 @@ type FakeConnection = {
   end: () => void;
   /** Fail the next read, as a broken response stream would. */
   break: (error: Error) => void;
+  /** Deliver one response frame, as the node's answer would. */
+  respond: (raw: string) => void;
 };
 
 function createConnection(): FakeConnection {
@@ -69,7 +77,10 @@ function createConnection(): FakeConnection {
     queued.push(value);
   }
   const connection: FakeConnection = {
-    send: () => undefined,
+    send: raw => {
+      connection.sent.push(raw);
+    },
+    sent: [],
     close: () => {
       push(undefined);
     },
@@ -98,6 +109,9 @@ function createConnection(): FakeConnection {
     break: (error: Error) => {
       push(error);
     },
+    respond: raw => {
+      push(raw);
+    },
   };
   return connection;
 }
@@ -107,10 +121,20 @@ type FakeEngine = {
   start: Mock<(options: StartEngineParams) => Promise<LightClientEngine>>;
   connections: FakeConnection[];
   connect: (genesisHash: string) => Promise<FakeConnection>;
+  /** Reads the chain from the store the engine was handed, as the crate does for a chain it does not hold. */
+  loadDatabase: (genesisHash: string) => Promise<boolean>;
+  /** Holds the next start once it recorded its options, until the returned release runs. */
+  holdStart: () => () => void;
   options: StartEngineParams | null;
 };
 
 function createFakeEngine(): FakeEngine {
+  let held: Promise<undefined> | null = null;
+  const started: LightClientEngine = {
+    loadDatabase: genesisHash => fake.loadDatabase(genesisHash),
+    connect: genesisHash => fake.connect(genesisHash),
+    lifecycle: () => ({ next: () => Promise.resolve(undefined), close: () => undefined }),
+  };
   const fake: FakeEngine = {
     connections: [],
     connect: () => {
@@ -118,15 +142,30 @@ function createFakeEngine(): FakeEngine {
       fake.connections.push(connection);
       return Promise.resolve(connection);
     },
+    loadDatabase: async genesisHash => {
+      const store = fake.options?.store ?? null;
+      if (store === null) {
+        return false;
+      }
+      return (await store.load(genesisHash)) !== null;
+    },
+    holdStart: () => {
+      const gate = createDeferred<undefined>();
+      held = gate.promise;
+      return () => {
+        gate.resolve(undefined);
+      };
+    },
     options: null,
     start: vi.fn<(options: StartEngineParams) => Promise<LightClientEngine>>(options => {
       fake.options = options;
       notifyChanged();
-      return Promise.resolve({
-        loadDatabase: () => Promise.resolve(false),
-        connect: genesisHash => fake.connect(genesisHash),
-        lifecycle: () => ({ next: () => Promise.resolve(undefined), close: () => undefined }),
-      });
+      const gate = held;
+      held = null;
+      if (gate === null) {
+        return Promise.resolve(started);
+      }
+      return gate.then(() => started);
     }),
   };
   return fake;
@@ -169,6 +208,40 @@ function createMockHooks(): MockHooks {
   };
 }
 
+/** A sync reporter's attach that counts its calls and hands back a tap that intercepts nothing. */
+function createCountingAttach(): Mock<ChainSyncReporter['attachChainSync']> {
+  return vi.fn<ChainSyncReporter['attachChainSync']>(() => ({ intercept: () => false, stop: () => undefined }));
+}
+
+/** A sync tap as the test sees it: the send it was handed, every frame its connection let it intercept, and its stop. */
+type RecordedTap = {
+  send: (message: string) => void;
+  intercepted: unknown[];
+  stopped: boolean;
+};
+
+/** A sync reporter's attach that records each tap it attaches, whose intercept claims every frame. */
+function createRecordingAttach(): { attachChainSync: ChainSyncReporter['attachChainSync']; taps: RecordedTap[] } {
+  const taps: RecordedTap[] = [];
+  return {
+    taps,
+    attachChainSync: ({ send }) => {
+      const tap: RecordedTap = { send, intercepted: [], stopped: false };
+      taps.push(tap);
+      return {
+        intercept: parsed => {
+          tap.intercepted.push(parsed);
+          notifyChanged();
+          return true;
+        },
+        stop: () => {
+          tap.stopped = true;
+        },
+      };
+    },
+  };
+}
+
 function createDeps(engine: FakeEngine, extra: Partial<LightClientDeps> = {}): LightClientDeps {
   return { db: null, logLevel: 'off', gauge: null, start: engine.start, ...extra };
 }
@@ -197,11 +270,11 @@ describe('createLightClient', () => {
   });
 
   function open(chainHooks: MockHooks, genesisHash = people): JsonRpcConnection {
-    const provider = client.createChainProvider(genesisHash, chainHooks);
-    if (provider === null) {
-      throw new Error(`no provider for ${genesisHash}`);
+    const transport = client.createChainTransport(genesisHash, chainHooks);
+    if (transport === null) {
+      throw new Error(`no transport for ${genesisHash}`);
     }
-    return provider(() => undefined);
+    return transport.provider(() => undefined);
   }
 
   it('As a dotli integrator, I open a light-client connection and see it report connecting, then connected', async () => {
@@ -215,6 +288,67 @@ describe('createLightClient', () => {
     expect(chainHooks.onStatus).toHaveBeenCalledWith('connecting');
     await chainHooks.reported('connected');
     expect(chainHooks.onHalt).not.toHaveBeenCalled();
+  });
+
+  it('As a dotli integrator, I open two connections to one chain and only the first reports its sync', async () => {
+    // Given a light client whose sync reporter counts the taps it attaches
+    const attachChainSync = createCountingAttach();
+    client = createLightClient(createDeps(engine, { attachChainSync }));
+    const first = createMockHooks();
+    const second = createMockHooks();
+
+    // When two connections of one chain open and connect
+    open(first);
+    open(second);
+    await Promise.all([first.reported('connected'), second.reported('connected')]);
+
+    // Then only the first connection attached a sync tap
+    expect(attachChainSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("As a dotli integrator, I close the connection that reports a chain's sync and the chain's other open connection reports it, with no connection opened", async () => {
+    // Given two connections of one chain, the first reporting its sync
+    const { attachChainSync, taps } = createRecordingAttach();
+    client = createLightClient(createDeps(engine, { attachChainSync }));
+    const first = createMockHooks();
+    const second = createMockHooks();
+    const reporting = open(first);
+    open(second);
+    await Promise.all([first.reported('connected'), second.reported('connected')]);
+    const remaining = engine.connections[1];
+
+    // When the first closes, then the tap now attached sends and the second connection answers it
+    reporting.disconnect();
+    taps[1]?.send('peers request');
+    remaining?.respond('{"jsonrpc":"2.0","id":"peers","result":[]}');
+    await waitUntil(() => (taps[1]?.intercepted.length ?? 0) > 0);
+
+    // Then the second connection carries the new tap's request and its answer reaches that tap, with no third opened
+    expect(taps).toHaveLength(2);
+    expect(engine.connections).toHaveLength(2);
+    expect(remaining?.sent).toEqual(['peers request']);
+    expect(taps[1]?.intercepted).toEqual([{ jsonrpc: '2.0', id: 'peers', result: [] }]);
+  });
+
+  it("As a dotli integrator, I see the connection that reports a chain's sync end its stream and the chain's other open connection reports it, with no connection opened", async () => {
+    // Given two connections of one chain, the first reporting its sync
+    const { attachChainSync, taps } = createRecordingAttach();
+    client = createLightClient(createDeps(engine, { attachChainSync }));
+    const first = createMockHooks();
+    const second = createMockHooks();
+    open(first);
+    open(second);
+    await Promise.all([first.reported('connected'), second.reported('connected')]);
+
+    // When the first connection's stream ends, then the tap now attached sends
+    engine.connections[0]?.end();
+    await first.halted();
+    taps[1]?.send('peers request');
+
+    // Then the new tap sends on the second connection, with no third opened
+    expect(taps).toHaveLength(2);
+    expect(engine.connections).toHaveLength(2);
+    expect(engine.connections[1]?.sent).toEqual(['peers request']);
   });
 
   it('As a dotli integrator, I open two chains at once and they share one light client start', async () => {
@@ -232,24 +366,9 @@ describe('createLightClient', () => {
     expect(engine.start).toHaveBeenCalledTimes(1);
   });
 
-  it('As a dotli integrator, I see a light-client stream that ends on its own halt the transport', async () => {
-    // Given
-    const chainHooks = createMockHooks();
-    open(chainHooks);
-    await chainHooks.reported('connected');
-
-    // When
-    engine.connections[0]?.end();
-
-    // Then
-    await chainHooks.halted();
-    expect(chainHooks.onHalt).toHaveBeenCalledTimes(1);
-    expect(chainHooks.onStatus).toHaveBeenLastCalledWith('disconnected');
-  });
-
   it('As a dotli integrator, I see a halt listener that throws on the end of the stream called once and reported', async () => {
     // Given
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
     const chainHooks = createMockHooks();
     chainHooks.onHalt.mockImplementation(() => {
@@ -264,24 +383,176 @@ describe('createLightClient', () => {
     // Then
     await waitUntil(() => captured.length > 0);
     expect(chainHooks.onHalt).toHaveBeenCalledTimes(1);
-    expect(captured).toEqual([{ flow: 'protocol', step: 'listener', tags: { owner: 'light_client.halt' } }]);
+    expect(captured).toMatchObject([{ step: 'listener', tags: { owner: 'light_client.halt' } }]);
     expect(metrics.counted('listener.delivery')).toEqual([
       { outcome: 'error', reason: 'Error', owner: 'light_client.halt' },
     ]);
   });
 
-  it('As a dotli integrator, I close a light-client connection and it does not halt', async () => {
-    // Given
+  it('As a dotli integrator, I see a halt listener that throws when the connection cannot connect called once and reported', async () => {
+    // Given a chain that cannot connect and a halt listener that throws
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
+    engine.connect = () => Promise.reject(new Error('catalog has no such chain'));
     const chainHooks = createMockHooks();
-    const connection = open(chainHooks);
-    await chainHooks.reported('connected');
+    chainHooks.onHalt.mockImplementation(() => {
+      throw new Error('listener failed');
+    });
 
     // When
+    open(chainHooks);
+
+    // Then
+    await waitUntil(() => captured.length > 0);
+    expect(chainHooks.onHalt).toHaveBeenCalledTimes(1);
+    expect(captured).toMatchObject([{ step: 'listener', tags: { owner: 'light_client.halt' } }]);
+  });
+
+  it('As a dotli integrator, I disconnect while a response is on its way and it never reaches my listener', async () => {
+    // Given two connected connections of one chain, each with a listener that records its responses
+    client = createLightClient(createDeps(engine, { attachChainSync: createCountingAttach() }));
+    const onMessage = vi.fn<Parameters<ChainTransport['provider']>[0]>();
+    const otherOnMessage = vi.fn<Parameters<ChainTransport['provider']>[0]>(notifyChanged);
+    const chainHooks = createMockHooks();
+    const otherHooks = createMockHooks();
+    const connection = client.createChainTransport(people, chainHooks)?.provider(onMessage);
+    client.createChainTransport(people, otherHooks)?.provider(otherOnMessage);
+    await Promise.all([chainHooks.reported('connected'), otherHooks.reported('connected')]);
+
+    // When a response arrives in the same turn as the disconnect, then one arrives on the other connection, which the
+    // light client handles after the first
+    engine.connections[0]?.respond('{"jsonrpc":"2.0","id":1,"result":null}');
+    connection?.disconnect();
+    engine.connections[1]?.respond('{"jsonrpc":"2.0","id":2,"result":null}');
+    await waitUntil(() => otherOnMessage.mock.calls.length > 0);
+
+    // Then
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it('As a dotli integrator, I close a light-client connection and it does not halt', async () => {
+    // Given two connected connections of one chain
+    const chainHooks = createMockHooks();
+    const otherHooks = createMockHooks();
+    const connection = open(chainHooks);
+    open(otherHooks);
+    await Promise.all([chainHooks.reported('connected'), otherHooks.reported('connected')]);
+
+    // When the first closes, then the other's stream ends, which the light client handles after the close's
     connection.disconnect();
-    await engine.connections[0]?.lastRead;
+    engine.connections[1]?.end();
+    await otherHooks.halted();
 
     // Then
     expect(chainHooks.onHalt).not.toHaveBeenCalled();
+  });
+
+  it('As a dotli integrator, I see a status listener that throws on connected halt my chain with its error', async () => {
+    // Given a light client that records its sync taps, and a chain whose status listener throws on connected
+    const { attachChainSync, taps } = createRecordingAttach();
+    client = createLightClient(createDeps(engine, { attachChainSync }));
+    const failure = new Error('status listener failed');
+    const chainHooks = createMockHooks();
+    chainHooks.onStatus.mockImplementation(status => {
+      notifyChanged();
+      if (status === 'connected') {
+        throw failure;
+      }
+    });
+
+    // When
+    open(chainHooks);
+    await chainHooks.halted();
+
+    // Then the chain halted with that error after a warning, and its sync tap stopped
+    expect(chainHooks.onHalt).toHaveBeenCalledTimes(1);
+    expect(chainHooks.onHalt).toHaveBeenCalledWith(failure);
+    expect(logs.some(line => line.level === 'warn')).toBe(true);
+    expect(taps.map(tap => tap.stopped)).toEqual([true]);
+  });
+
+  it('As a dotli integrator, I close a connection while it connects and the connection the light client then yields is closed, with nothing delivered and no halt', async () => {
+    // Given a chain whose connect is held, a listener, and the connection the connect will yield, a response waiting on it
+    const held = createDeferred<FakeConnection>();
+    let connects = 0;
+    engine.connect = () => {
+      connects += 1;
+      notifyChanged();
+      return held.promise;
+    };
+    const yielded = createConnection();
+    yielded.respond('{"jsonrpc":"2.0","id":1,"result":null}');
+    let closes = 0;
+    const close = yielded.close;
+    yielded.close = () => {
+      closes += 1;
+      close();
+      notifyChanged();
+    };
+    const onMessage = vi.fn<Parameters<ChainTransport['provider']>[0]>();
+    const chainHooks = createMockHooks();
+    const connection = client.createChainTransport(people, chainHooks)?.provider(onMessage);
+    await waitUntil(() => connects === 1);
+
+    // When the consumer leaves, then the connect yields its connection
+    connection?.disconnect();
+    held.resolve(yielded);
+
+    // Then
+    await waitUntil(() => closes === 1);
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(chainHooks.onHalt).not.toHaveBeenCalled();
+  });
+
+  it('As a dotli user on a light client, I close a connection while it connects and a connect failure after that still turns the light client fatal', async () => {
+    // Given a chain whose connect is held
+    const held = createDeferred<FakeConnection>();
+    let connects = 0;
+    engine.connect = () => {
+      connects += 1;
+      notifyChanged();
+      return held.promise;
+    };
+    const chainHooks = createMockHooks();
+    const connection = open(chainHooks);
+    await waitUntil(() => connects === 1);
+
+    // When the consumer leaves, then the connect fails
+    connection.disconnect();
+    held.reject(new Error('catalog has no such chain'));
+
+    // Then
+    await waitUntil(() => client.status().fatal !== null);
+    expect(client.status().fatal).toBe(`chain ${people} connection failed: catalog has no such chain`);
+    expect(chainHooks.onHalt).not.toHaveBeenCalled();
+  });
+
+  it('As a dotli integrator, I see a listener that throws on a response halt my chain with its error', async () => {
+    // Given a chain connected on a connection whose close is counted, and a listener that throws
+    const fake = createConnection();
+    let closes = 0;
+    const close = fake.close;
+    fake.close = () => {
+      closes += 1;
+      close();
+      notifyChanged();
+    };
+    engine.connect = () => Promise.resolve(fake);
+    const failure = new Error('listener failed');
+    const chainHooks = createMockHooks();
+    const connection = client.createChainTransport(people, chainHooks)?.provider(() => {
+      throw failure;
+    });
+    await chainHooks.reported('connected');
+
+    // When a response arrives, then the consumer leaves the halted chain
+    fake.respond('{"jsonrpc":"2.0","id":1,"result":null}');
+    await chainHooks.halted();
+    connection?.disconnect();
+
+    // Then
+    await waitUntil(() => closes === 1);
+    expect(chainHooks.onHalt).toHaveBeenCalledTimes(1);
+    expect(chainHooks.onHalt).toHaveBeenCalledWith(failure);
   });
 
   it('As a dotli integrator, I see a light-client connection that cannot connect halt with the cause', async () => {
@@ -357,25 +628,134 @@ describe('createLightClient', () => {
     expect(client.status().fatal).toBe(message);
   });
 
-  it('As a dotli user on a light client, I open a chain after a failed start and the light client starts again', async () => {
-    // Given
+  it('As a dotli user on a light client, I open a chain after a connect failure turned a running engine fatal and it halts without connecting', async () => {
+    // Given an engine that is running and refuses the next connection
+    let connects = 0;
+    engine.connect = () => {
+      connects += 1;
+      return Promise.reject(new Error('catalog has no such chain'));
+    };
+    const failed = createMockHooks();
+    open(failed);
+    await failed.halted();
+    const later = createMockHooks();
+
+    // When
+    open(later, services.assethub.genesis);
+    await later.halted();
+
+    // Then
+    expect(connects).toBe(1);
+    expect(later.onHalt).toHaveBeenCalledTimes(1);
+  });
+
+  it("As a dotli integrator, I open a connection past the light client's cap and only that chain halts", async () => {
+    // Given an engine that refuses the people chain at its cap and opens any other chain
+    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
+    const cap = new LightClientCapError(people, new Error('the light client already holds 32 connections'));
+    const connect = engine.connect;
+    engine.connect = genesisHash => (genesisHash === people ? Promise.reject(cap) : connect(genesisHash));
+    const refused = createMockHooks();
+    const other = createMockHooks();
+
+    // When a connection of the people chain opens, and then one of another chain
+    open(refused);
+    await refused.halted();
+    open(other, services.assethub.genesis);
+    await other.reported('connected');
+
+    // Then only the people chain halted, the cap is counted, and the other chain opened
+    expect(refused.onHalt).toHaveBeenCalledWith(cap);
+    expect(other.onHalt).not.toHaveBeenCalled();
+    expect(client.status().fatal).toBeNull();
+    expect(metrics.counted('smoldot.connection_cap')).toEqual([{ outcome: 'error', reason: 'cap' }]);
+  });
+
+  it('As a dotli user on a light client, I open a chain after the light client turned fatal and it halts without starting the engine again', async () => {
+    // Given a failed start, which turns the light client fatal
     engine.start.mockRejectedValueOnce(new Error('wasm fetch failed'));
     const failed = createMockHooks();
-
-    // When
     open(failed);
-
-    // Then
     await failed.halted();
-    expect(failed.onHalt).toHaveBeenCalledTimes(1);
+    const later = createMockHooks();
 
     // When
-    const retried = createMockHooks();
-    open(retried);
+    open(later, services.assethub.genesis);
+    await later.halted();
 
     // Then
-    await retried.reported('connected');
-    expect(engine.start).toHaveBeenCalledTimes(2);
+    expect(engine.start).toHaveBeenCalledTimes(1);
+    expect(later.onHalt).toHaveBeenCalledTimes(1);
+    expect(client.status().fatal).toBe(`chain ${people} connection failed: wasm fetch failed`);
+  });
+
+  it('As a dotli integrator, I open a chain on a light client that turned fatal and it halts only after my open returned', async () => {
+    // Given a failed start, which turns the light client fatal
+    engine.start.mockRejectedValueOnce(new Error('wasm fetch failed'));
+    const failed = createMockHooks();
+    open(failed);
+    await failed.halted();
+    const later = createMockHooks();
+
+    // When
+    open(later, services.assethub.genesis);
+    const haltsAtReturn = later.onHalt.mock.calls.length;
+
+    // Then
+    expect(haltsAtReturn).toBe(0);
+    await later.halted();
+    expect(later.onHalt).toHaveBeenCalledTimes(1);
+  });
+
+  it("As a dotli user on a light client, I open a chain whose stored database is still loading when another chain's connect failure turns the light client fatal, and it still connects", async () => {
+    // Given an engine that cannot connect the people chain, and whose read of the asset hub's database is held
+    const assethub = services.assethub.genesis;
+    const connect = engine.connect;
+    engine.connect = genesisHash =>
+      genesisHash === people ? Promise.reject(new Error('catalog has no such chain')) : connect(genesisHash);
+    const load = createDeferred<boolean>();
+    let loads = 0;
+    engine.loadDatabase = genesisHash => {
+      if (genesisHash !== assethub) {
+        return Promise.resolve(false);
+      }
+      loads += 1;
+      notifyChanged();
+      return load.promise;
+    };
+    const first = createMockHooks();
+    const second = createMockHooks();
+
+    // When both chains open, the people chain fails while the asset hub's database loads, and then the load ends
+    open(first);
+    open(second, assethub);
+    await waitUntil(() => loads === 1);
+    await first.halted();
+    load.resolve(false);
+
+    // Then
+    await second.reported('connected');
+    expect(client.status().fatal).not.toBeNull();
+  });
+
+  it('As a dotli user on a light client, I see two chains queued behind a failed start halt and the engine start once', async () => {
+    // Given a start that fails once, when the test rejects it
+    const gate = createDeferred<LightClientEngine>();
+    engine.start.mockReturnValueOnce(gate.promise);
+    const first = createMockHooks();
+    const second = createMockHooks();
+
+    // When two chains open before the start fails
+    open(first);
+    open(second, services.assethub.genesis);
+    gate.reject(new Error('wasm fetch failed'));
+    await first.halted();
+    await second.halted();
+
+    // Then
+    expect(engine.start).toHaveBeenCalledTimes(1);
+    expect(first.onHalt).toHaveBeenCalledTimes(1);
+    expect(second.onHalt).toHaveBeenCalledTimes(1);
   });
 
   it('As a dotli user on a light client, I see a failed start mark the light client fatal exactly once', async () => {
@@ -397,30 +777,6 @@ describe('createLightClient', () => {
     const message = `chain ${people} connection failed: wasm fetch failed`;
     expect(changes).toEqual([{ kind: 'fatal', message }]);
     expect(client.status().fatal).toBe(message);
-  });
-
-  it('As a dotli integrator, I see a light client listener that throws on the fatal change reported while the next one still hears it', async () => {
-    // Given a start that fails, a listener that throws and one after it
-    const captured = recordCaptures({ onFinished: onTestFinished });
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    client.subscribe(() => {
-      throw new TypeError('listener broke');
-    });
-    const changes: LightClientChange[] = [];
-    client.subscribe(change => changes.push(change));
-    engine.start.mockRejectedValue(new Error('wasm fetch failed'));
-    const first = createMockHooks();
-
-    // When
-    open(first);
-
-    // Then
-    await first.halted();
-    expect(changes).toEqual([{ kind: 'fatal', message: `chain ${people} connection failed: wasm fetch failed` }]);
-    expect(captured).toEqual([{ flow: 'protocol', step: 'listener', tags: { owner: 'light_client' } }]);
-    expect(metrics.counted('listener.delivery')).toEqual([
-      { outcome: 'error', reason: 'TypeError', owner: 'light_client' },
-    ]);
   });
 
   describe('stored databases', () => {
@@ -460,13 +816,234 @@ describe('createLightClient', () => {
       expect([...client.status().db]).toEqual([['bulletin', 'unavailable']]);
     });
 
-    it('As the protocol frame on a browser without IndexedDB, I start the engine with no store', async () => {
+    it('As the protocol frame, I open a chain while the light client starts and its stored database is read before the start ends, once', async () => {
+      // Given a start held open and a store that holds the relay
+      const release = engine.holdStart();
+      const load = vi.fn<SmoldotDb['load']>(() => Promise.resolve(BLOB));
+      client = createLightClient(createDeps(engine, { db: createStore(load) }));
+      const chainHooks = createMockHooks();
+
+      // When the relay opens
+      open(chainHooks, relay);
+
+      // Then its database is read while the engine still starts
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(load).toHaveBeenCalledWith(relay);
+
+      // When the start ends and the relay connects
+      release();
+      await chainHooks.reported('connected');
+
+      // Then the engine took that read as a hit, with no second read
+      expect(load).toHaveBeenCalledTimes(1);
+      expect([...client.status().db]).toEqual([['relay', 'hit']]);
+    });
+
+    it('As the protocol frame, I open the relay and a parachain while the light client starts and the engine reading the relay for the parachain leaves one read and one change per chain', async () => {
+      // Given a start held open, a store that holds both chains, and an engine that reads the relay first for a parachain
+      // and a chain it already holds not again
+      const release = engine.holdStart();
+      const load = vi.fn<SmoldotDb['load']>(() => Promise.resolve(BLOB));
+      client = createLightClient(createDeps(engine, { db: createStore(load) }));
+      const changes: LightClientChange[] = [];
+      client.subscribe(change => changes.push(change));
+      const assethub = services.assethub.genesis;
+      const held = new Set<string>();
+      async function read(genesisHash: string): Promise<boolean> {
+        const store = engine.options?.store ?? null;
+        if (store === null || held.has(genesisHash)) {
+          return held.has(genesisHash);
+        }
+        held.add(genesisHash);
+        return (await store.load(genesisHash)) !== null;
+      }
+      engine.loadDatabase = async genesisHash => {
+        if (genesisHash === assethub) {
+          await read(relay);
+        }
+        return read(genesisHash);
+      };
+      const relayHooks = createMockHooks();
+      const assethubHooks = createMockHooks();
+
+      // When both open, the start ends and both connect
+      open(relayHooks, relay);
+      open(assethubHooks, assethub);
+      release();
+      await Promise.all([relayHooks.reported('connected'), assethubHooks.reported('connected')]);
+
+      // Then each chain was read once and each has one change
+      expect(load).toHaveBeenCalledTimes(2);
+      expect(load).toHaveBeenCalledWith(relay);
+      expect(load).toHaveBeenCalledWith(assethub);
+      expect(changes).toEqual([
+        { kind: 'db', chain: 'relay', outcome: 'hit' },
+        { kind: 'db', chain: 'assethub', outcome: 'hit' },
+      ]);
+    });
+
+    it('As the protocol frame, I open one chain twice while the light client starts and its stored database is read once before the start ends', () => {
+      // Given a start held open and a store that holds the relay
+      engine.holdStart();
+      const load = vi.fn<SmoldotDb['load']>(() => Promise.resolve(BLOB));
+      client = createLightClient(createDeps(engine, { db: createStore(load) }));
+
       // When
-      open(createMockHooks());
+      open(createMockHooks(), relay);
+      open(createMockHooks(), relay);
 
       // Then
-      await waitUntil(() => engine.options !== null);
-      expect(engine.options?.store).toBeNull();
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+
+    it('As the protocol frame, I close a chain while the light client starts and it never connects, and opening it again reads its stored database again', async () => {
+      // Given a start held open, a store that holds every chain, an engine that records each chain it connects, and the
+      // relay and the asset hub opened
+      const release = engine.holdStart();
+      const load = vi.fn<SmoldotDb['load']>(() => Promise.resolve(BLOB));
+      client = createLightClient(createDeps(engine, { db: createStore(load) }));
+      const assethub = services.assethub.genesis;
+      const connected: string[] = [];
+      const connect = engine.connect;
+      engine.connect = genesisHash => {
+        connected.push(genesisHash);
+        return connect(genesisHash);
+      };
+      const closed = open(createMockHooks(), relay);
+      const other = createMockHooks();
+      open(other, assethub);
+
+      // When the relay closes before the start ends, and opens again once the asset hub connected
+      closed.disconnect();
+      release();
+      await other.reported('connected');
+      const reopened = createMockHooks();
+      open(reopened, relay);
+      await reopened.reported('connected');
+
+      // Then the closed relay never connected, and its second open read the store again
+      expect(connected).toEqual([assethub, relay]);
+      expect(load.mock.calls.filter(([genesisHash]) => genesisHash === relay)).toHaveLength(2);
+    });
+
+    it('As the protocol frame, I reopen a chain the engine already holds and its stored database is not read again', async () => {
+      // Given the relay connected once, and an engine that now holds its database and reads nothing for it
+      const load = vi.fn<SmoldotDb['load']>(() => Promise.resolve(BLOB));
+      client = createLightClient(createDeps(engine, { db: createStore(load) }));
+      const first = createMockHooks();
+      open(first, relay);
+      await first.reported('connected');
+      engine.loadDatabase = () => Promise.resolve(true);
+      const second = createMockHooks();
+
+      // When
+      open(second, relay);
+      await second.reported('connected');
+
+      // Then
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+
+    it('As the protocol frame, I open a chain while the light client starts and a store that cannot answer leaves it cold and unavailable', async () => {
+      // Given a start held open, a store that fails and the relay opened
+      const release = engine.holdStart();
+      const outage = new Error('IndexedDB blocked');
+      const load = vi.fn<SmoldotDb['load']>(() => Promise.reject(outage));
+      client = createLightClient(createDeps(engine, { db: createStore(load) }));
+      const chainHooks = createMockHooks();
+      open(chainHooks, relay);
+
+      // When
+      release();
+      await chainHooks.reported('connected');
+
+      // Then
+      expect(chainHooks.onHalt).not.toHaveBeenCalled();
+      expect([...client.status().db]).toEqual([['relay', 'unavailable']]);
+      const warnings = logs.filter(
+        line =>
+          line.level === 'warn' && line.message.startsWith(`[dot.li provider] warm start unavailable for ${relay}`),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]?.args?.[1]).toBe(outage);
+    });
+
+    it('As the protocol frame, I close a chain while its stored database loads and a store that cannot answer is still warned about, with no connect and no halt', async () => {
+      // Given an engine whose read of the relay's database is held and that records each chain it connects, and the
+      // relay opened and reading
+      const outage = new Error('IndexedDB blocked');
+      const load = createDeferred<boolean>();
+      let loads = 0;
+      engine.loadDatabase = () => {
+        loads += 1;
+        notifyChanged();
+        return load.promise;
+      };
+      const connected: string[] = [];
+      const connect = engine.connect;
+      engine.connect = genesisHash => {
+        connected.push(genesisHash);
+        return connect(genesisHash);
+      };
+      const chainHooks = createMockHooks();
+      const closed = open(chainHooks, relay);
+      await waitUntil(() => loads === 1);
+
+      // When the relay closes, and then the read fails
+      closed.disconnect();
+      load.reject(outage);
+
+      // Then
+      function warnings(): LogLine[] {
+        return logs.filter(
+          line =>
+            line.level === 'warn' && line.message.startsWith(`[dot.li provider] warm start unavailable for ${relay}`),
+        );
+      }
+      await waitUntil(() => warnings().length > 0);
+      expect(warnings()).toHaveLength(1);
+      expect(warnings()[0]?.args?.[1]).toBe(outage);
+      expect(connected).toEqual([]);
+      expect(chainHooks.onHalt).not.toHaveBeenCalled();
+    });
+
+    it('As the protocol frame, I open a chain after a failed start and its stored database is not read again', async () => {
+      // Given a failed start of the relay, with a store that holds it
+      engine.start.mockRejectedValueOnce(new Error('wasm fetch failed'));
+      const load = vi.fn<SmoldotDb['load']>(() => Promise.resolve(BLOB));
+      client = createLightClient(createDeps(engine, { db: createStore(load) }));
+      const changes: LightClientChange[] = [];
+      client.subscribe(change => changes.push(change));
+      const failed = createMockHooks();
+      open(failed, relay);
+      await failed.halted();
+      const reopened = createMockHooks();
+
+      // When
+      open(reopened, relay);
+      await reopened.halted();
+
+      // Then
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(changes).toEqual([{ kind: 'fatal', message: `chain ${relay} connection failed: wasm fetch failed` }]);
+    });
+
+    it('As the protocol frame, I open a chain while the light client fails to start and a store that cannot answer leaves no unhandled failure', async () => {
+      // Given a start that fails and a store that fails, read through a plain function since a mock marks the
+      // rejections it returns handled
+      engine.start.mockRejectedValueOnce(new Error('wasm fetch failed'));
+      client = createLightClient(
+        createDeps(engine, { db: createStore(() => Promise.reject(new Error('IndexedDB blocked'))) }),
+      );
+      const chainHooks = createMockHooks();
+
+      // When
+      open(chainHooks, relay);
+      await chainHooks.halted();
+
+      // Then the chain halts as before, and the guard is that Vitest fails the run on an unhandled rejection
+      expect([...client.status().db]).toEqual([]);
+      expect(client.status().fatal).toBe(`chain ${relay} connection failed: wasm fetch failed`);
     });
   });
 
@@ -530,56 +1107,6 @@ describe('createLightClient', () => {
   });
 });
 
-describe('createLightClientDeps', () => {
-  function createSession(entries: Record<string, string>): Pick<Storage, 'getItem'> {
-    return { getItem: key => entries[key] ?? null };
-  }
-
-  it.each<{
-    role: string;
-    session: Parameters<typeof createLightClientDeps>[0];
-    local: boolean;
-    level: LightClientDeps['logLevel'];
-  }>([
-    { role: 'a developer on localhost', session: null, local: true, level: 'info' },
-    { role: 'a visitor in production', session: null, local: false, level: 'off' },
-    {
-      role: 'a tester who sets debug in my session',
-      session: createSession({ 'dotli:truapi-provider-log': 'debug' }),
-      local: false,
-      level: 'debug',
-    },
-  ])('As $role, I see the light client log at level $level', ({ session, local, level }) => {
-    // When
-    const { logLevel } = createLightClientDeps(session, local);
-
-    // Then
-    expect(logLevel).toBe(level);
-  });
-
-  it('As a tester, I set a heartbeat interval in my session and it slows the heartbeat, and a bad one is ignored', () => {
-    // When
-    const slowed = createLightClientDeps(createSession({ 'dotli:smoldot-heartbeat-ms': '3600000' }), false);
-    const bad = createLightClientDeps(createSession({ 'dotli:smoldot-heartbeat-ms': 'soon' }), false);
-
-    // Then
-    expect(slowed.heartbeatMs).toBe(3_600_000);
-    expect(bad.heartbeatMs).toBeUndefined();
-  });
-
-  it('As a dotli operator on a build with metrics, I see my gauge report the running light client', () => {
-    // Given
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    const { gauge } = createLightClientDeps(null, false);
-
-    // When
-    gauge?.(1);
-
-    // Then
-    expect(metrics.gauges).toEqual([{ name: 'dotli.smoldot.active', value: 1, unit: 'none', attributes: undefined }]);
-  });
-});
-
 describe('isChainSupported', () => {
   // Support is decided before anything starts, so this light client never needs an engine.
   const lightClient = createLightClient({
@@ -589,19 +1116,46 @@ describe('isChainSupported', () => {
     start: () => Promise.reject(new Error('no engine in this test')),
   });
 
-  it('As a product, I find every chain the host runtime can expose supported', () => {
-    // When
-    const unsupported = [...getActiveSupportedGenesisHashes()].filter(hash => !lightClient.isChainSupported(hash));
-
-    // Then
-    expect(unsupported).toEqual([]);
-  });
-
   it('As a product, I find a genesis hash of another network unsupported', () => {
     // When
     const supported = lightClient.isChainSupported('0xdeadbeef');
 
     // Then
     expect(supported).toBe(false);
+  });
+});
+
+describe('withConnectionCapError', () => {
+  function createEngineRejecting(error: Error): LightClientEngine {
+    return {
+      loadDatabase: () => Promise.resolve(false),
+      connect: () => Promise.reject(error),
+      lifecycle: () => ({ next: () => Promise.resolve(undefined), close: () => undefined }),
+    };
+  }
+
+  it("As a dotli integrator, I see the wasm's connection cap text become a typed cap error that keeps the original", async () => {
+    // Given an engine whose connect rejects with the wasm's cap text
+    const original = new Error('the light client already holds 32 connections');
+    const engine = withConnectionCapError(createEngineRejecting(original));
+
+    // When a chain connects
+    const rejection = await engine.connect('0xaa').catch((error: unknown) => error);
+
+    // Then the rejection is a cap error caused by the original
+    expect(rejection).toBeInstanceOf(LightClientCapError);
+    expect((rejection as LightClientCapError).cause).toBe(original);
+  });
+
+  it('As a dotli integrator, I see any other connect failure pass through unchanged', async () => {
+    // Given an engine whose connect rejects for another reason
+    const original = new Error('catalog has no such chain');
+    const engine = withConnectionCapError(createEngineRejecting(original));
+
+    // When a chain connects
+    const rejection = await engine.connect('0xaa').catch((error: unknown) => error);
+
+    // Then the same error comes back
+    expect(rejection).toBe(original);
   });
 });

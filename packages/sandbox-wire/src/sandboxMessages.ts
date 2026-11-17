@@ -5,13 +5,27 @@
 // for a while after a deploy, so these shapes are the wire format: a change may add an optional field or a new type,
 // never rename or retype one. Any frame or extension can post to a window, so each side parses what it receives.
 
+/** How the sandbox's load of the product's content ended. */
+export type SandboxLoadOutcome = 'loaded' | 'failed';
+
+/** Whether the sandbox loaded the product's content. Never throws. */
+export function isLoadedOutcome(outcome: SandboxLoadOutcome): boolean {
+  switch (outcome) {
+    case 'loaded':
+      return true;
+    case 'failed':
+      return false;
+  }
+}
+
 /** Progress text for the host's loading screen, or the end of the sandbox's use of it. */
 export type LoadingStatusMessage = {
   type: 'dotli:loading-status';
   message?: string;
   /** Without an `outcome` it only clears the screen for a prompt the sandbox shows before its content loads. */
   done?: true;
-  outcome?: 'loaded' | 'failed';
+  outcome?: SandboxLoadOutcome;
+  /** The step a failed load stopped at, as a short snake_case token. Read only beside a `failed` outcome. */
   failedStep?: string;
 };
 
@@ -34,12 +48,23 @@ export type SandboxRecoverMessage = {
   type: 'dotli:sandbox-recover';
 };
 
+/** The host accepted a sandbox's recover ask and will render that frame again. */
+export type SandboxRecoverAcceptedMessage = {
+  type: 'dotli:sandbox-recover-accepted';
+};
+
+/** The sandbox asks the host to move its page: to the landing, or reload it. */
+export type SandboxNavigateMessage = {
+  type: 'dotli:sandbox-navigate';
+  to: 'landing' | 'reload';
+};
+
 export type BitswapGetMessage = {
   type: 'dotli:bitswap-get';
   id: string;
   cid: string;
-  /** The sandbox document's own id, which its abort repeats. Missing from a sandbox released before it. */
-  frame?: string;
+  /** The sandbox document's own id, which its abort repeats. */
+  frame: string;
 };
 
 /** The sandbox frame is going away, so the host stops these fetches. */
@@ -47,7 +72,7 @@ export type BitswapAbortMessage = {
   type: 'dotli:bitswap-abort';
   ids: string[];
   /** As on the gets. The host reads an abort sent on `pagehide` once its frame is gone, so it has no source. */
-  frame?: string;
+  frame: string;
 };
 
 export type BitswapResultMessage =
@@ -69,7 +94,12 @@ export type BitswapResultMessage =
     };
 
 export type SandboxToHostMessage =
-  LoadingStatusMessage | SandboxDebugEventMessage | SandboxRecoverMessage | BitswapGetMessage | BitswapAbortMessage;
+  | LoadingStatusMessage
+  | SandboxDebugEventMessage
+  | SandboxRecoverMessage
+  | SandboxNavigateMessage
+  | BitswapGetMessage
+  | BitswapAbortMessage;
 
 export type HostToSandboxMessage = BitswapResultMessage;
 
@@ -92,6 +122,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+// The host tags its Sentry reports with a failed step from another origin, so anything but a short snake_case token is
+// dropped.
+const FAILED_STEP_RE = /^[a-z][a-z0-9_]{0,39}$/;
+
 function parseLoadingStatus(data: Record<string, unknown>): LoadingStatusMessage {
   const { message, done, outcome, failedStep } = data;
   return {
@@ -99,7 +133,9 @@ function parseLoadingStatus(data: Record<string, unknown>): LoadingStatusMessage
     ...(typeof message === 'string' ? { message } : {}),
     ...(done === true ? { done } : {}),
     ...(outcome === 'loaded' || outcome === 'failed' ? { outcome } : {}),
-    ...(typeof failedStep === 'string' ? { failedStep } : {}),
+    ...(outcome === 'failed' && typeof failedStep === 'string' && FAILED_STEP_RE.test(failedStep)
+      ? { failedStep }
+      : {}),
   };
 }
 
@@ -127,16 +163,20 @@ export function parseSandboxToHostMessage(data: unknown): SandboxToHostMessage |
       return parseDebugEvent(record);
     case 'dotli:sandbox-recover':
       return { type: 'dotli:sandbox-recover' };
+    case 'dotli:sandbox-navigate': {
+      const { to } = record;
+      return to === 'landing' || to === 'reload' ? { type: 'dotli:sandbox-navigate', to } : null;
+    }
     case 'dotli:bitswap-get': {
       const { id, cid, frame } = record;
-      return isNonEmptyString(id) && isNonEmptyString(cid)
-        ? { type: 'dotli:bitswap-get', id, cid, ...(isNonEmptyString(frame) ? { frame } : {}) }
+      return isNonEmptyString(id) && isNonEmptyString(cid) && isNonEmptyString(frame)
+        ? { type: 'dotli:bitswap-get', id, cid, frame }
         : null;
     }
     case 'dotli:bitswap-abort': {
       const { ids, frame } = record;
-      return Array.isArray(ids) && ids.every(id => typeof id === 'string')
-        ? { type: 'dotli:bitswap-abort', ids, ...(isNonEmptyString(frame) ? { frame } : {}) }
+      return Array.isArray(ids) && ids.every(id => typeof id === 'string') && isNonEmptyString(frame)
+        ? { type: 'dotli:bitswap-abort', ids, frame }
         : null;
     }
     default:
@@ -150,11 +190,15 @@ export function parseApiViolationMessage(data: unknown): ApiViolationMessage | n
   if (record?.['type'] !== 'DOTLI_API_VIOLATION') {
     return null;
   }
+  const api = record['api'];
+  if (!isNonEmptyString(api)) {
+    return null;
+  }
   const details = asRecord(record['details']);
   const timestamp = record['timestamp'];
   return {
     type: 'DOTLI_API_VIOLATION',
-    api: String(record['api']),
+    api,
     ...(details !== null ? { details } : {}),
     ...(typeof timestamp === 'number' ? { timestamp } : {}),
   };
@@ -181,6 +225,13 @@ export function parseHostToSandboxMessage(data: unknown): HostToSandboxMessage |
     ...(typeof errorName === 'string' ? { errorName } : {}),
     ...(typeof code === 'number' ? { code } : {}),
   };
+}
+
+/** The host's acceptance of a recover ask, or null for anything else. The source and origin checks are the caller's. */
+export function parseRecoverAcceptedMessage(data: unknown): SandboxRecoverAcceptedMessage | null {
+  return asRecord(data)?.['type'] === 'dotli:sandbox-recover-accepted'
+    ? { type: 'dotli:sandbox-recover-accepted' }
+    : null;
 }
 
 /** To any origin, since the sandbox cannot tell which host origin framed it and nothing it sends is secret. */

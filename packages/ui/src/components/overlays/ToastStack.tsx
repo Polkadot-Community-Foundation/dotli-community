@@ -3,9 +3,8 @@
 
 import { createEffect, createMemo, For, onSettled, Show, untrack } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { toasts } from '../../page/state/createToasts.js';
-import { useStore } from '../useStore.js';
-import { CloseIcon } from '../icons/CloseIcon.js';
+import { EMPTY_TOASTS, toasts } from '../../page/state/createToasts.js';
+import { useStore } from '@dotli/stores-solid';
 import { ToastCard } from './ToastCard.js';
 import { getPileDepths, isScrollingToNewest, getVisibleToasts } from './toastPile.js';
 import s from './ToastStack.module.css';
@@ -15,8 +14,8 @@ import s from './ToastStack.module.css';
  * starts the countdowns.
  */
 export function ToastStack(): JSX.Element {
-  const items = useStore(toasts.store, state => state.items);
-  const expanded = useStore(toasts.store, state => state.expanded);
+  const items = useStore(toasts.store, state => state.items, { initial: EMPTY_TOASTS });
+  const expanded = useStore(toasts.store, state => state.expanded, { initial: EMPTY_TOASTS });
   let root: HTMLDivElement | undefined;
   let cards: HTMLDivElement | undefined;
 
@@ -112,19 +111,23 @@ export function ToastStack(): JSX.Element {
             )}
           </For>
         </div>
+        {/* Each card is read as it comes, so the count is for the eye only. */}
+        <span class={s['count']} data-testid="notif-count" aria-hidden="true" hidden={expanded() || !many()}>
+          {active().length}
+        </span>
+        {/* Over the expanded list only. A collapsed pile closes its toasts one at a time, through the front card. */}
         <button
           type="button"
           class={s['closeAll']}
           data-testid="notif-close-all"
-          aria-label="Dismiss all"
-          hidden={!many()}
+          hidden={!expanded() || !many()}
           onClick={event => {
             event.stopPropagation();
             toasts.dismissAll();
             toasts.setExpanded(false);
           }}
         >
-          <CloseIcon class={s['closeAllIcon']} />
+          Clear all
         </button>
       </div>
     </Show>

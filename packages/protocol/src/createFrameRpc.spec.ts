@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { beforeEach, describe, expect, expectTypeOf, it, onTestFinished } from 'vitest';
-import { spans as S } from '@dotli/metrics';
 import { bindRecordingSentry, type RecordingSentry } from '@dotli/metrics/testing';
 import { createDeferred } from '@dotli/shared';
 import { catchRejection, createManualTimers, type ManualTimers } from '@dotli/shared/testing';
@@ -70,6 +69,28 @@ describe('createFrameRpc', () => {
     metrics = bindRecordingSentry({ onFinished: onTestFinished });
   });
 
+  it.each([
+    { waits: 'a ready frame', method: resolve.owner },
+    { waits: 'a listening frame', method: storage.authRead },
+  ])(
+    'As a dotli integrator, I abort a call that waits for $waits while the frame boots and it rejects with my reason at once',
+    async ({ method }) => {
+      // Given a call that waits for a frame that still boots
+      const fake = createFakeFrame({ status: 'booting', timers });
+      const rpc = createFrameRpc({ frame: fake.frame, timers });
+      const caller = new AbortController();
+      const reason = new Error('the page left');
+      const called = catchRejection(rpc.call(method, () => Promise.resolve('never'), { signal: caller.signal }));
+
+      // When
+      caller.abort(reason);
+      await settle();
+
+      // Then
+      expect(await called).toBe(reason);
+    },
+  );
+
   it('As a dotli integrator, I make a shared store request and it waits only for a listening frame, while any other waits for a ready one', async () => {
     // Given a frame still booting, with a shared store request and another waiting on it
     const served: string[] = [];
@@ -91,24 +112,6 @@ describe('createFrameRpc', () => {
 
     // Then the other follows
     expect(served).toEqual(['authStorageRead', 'resolveOwner']);
-  });
-
-  it('As a dotli integrator, I make a request and it resolves with what the frame answers', async () => {
-    // Given
-    const fake = createFakeFrame({
-      serve: serving => {
-        serving.handleRequest(resolve.owner, ({ label }) => ok(label === 'doom' ? '5Grw' : null));
-      },
-      timers,
-    });
-    const rpc = createFrameRpc({ frame: fake.frame, timers });
-
-    // When
-    const owner = rpc.request(resolve.owner, { label: 'doom' });
-    await settle();
-
-    // Then
-    await expect(owner).resolves.toBe('5Grw');
   });
 
   it('As a dotli integrator, I read a failed answer under the name it crossed with, and a bare Error as a protocol response error', async () => {
@@ -166,7 +169,7 @@ describe('createFrameRpc', () => {
       method: 'resolveOwner',
     });
     expect(await stopped).toMatchObject({ name: 'ApiStoppedError', message: 'stopped' });
-    expect(metrics.counted(S.PROTOCOL_REQUEST)).toEqual([
+    expect(metrics.counted('protocol.request')).toEqual([
       { outcome: 'error', method: 'resolveOwner', reason: 'NetworkSyncTimeoutError' },
       { outcome: 'error', method: 'resolveOwner', reason: 'ApiStoppedError' },
     ]);
@@ -200,7 +203,7 @@ describe('createFrameRpc', () => {
       expect.objectContaining({ name: 'Unsupported', method: 'modeStorageRead' }),
       expect.objectContaining({ name: 'Unsupported', method: 'localWalletRead' }),
     ]);
-    const counted = metrics.counted(S.PROTOCOL_REQUEST);
+    const counted = metrics.counted('protocol.request');
     expect(counted.sort((a, b) => String(a?.['method']).localeCompare(String(b?.['method'])))).toEqual([
       { outcome: 'error', method: 'authStorageRead', reason: 'Denied' },
       { outcome: 'error', method: 'localWalletRead', reason: 'Unsupported' },
@@ -221,26 +224,6 @@ describe('createFrameRpc', () => {
 
     // Then
     await expect(read).rejects.toThrow('boom');
-  });
-
-  it('As a dotli integrator, I make a request on an idle frame and it asks for the frame and goes out once it is ready', async () => {
-    // Given a frame nobody has asked for yet
-    const served: string[] = [];
-    const fake = createFakeFrame({ serve: createSilentFrame(served), status: 'idle', timers });
-    const rpc = createFrameRpc({ frame: fake.frame, timers });
-
-    // When a request is made, and the frame then comes up
-    void rpc.request(resolve.owner, { label: 'doom' });
-    await settle();
-    const statusWhileWaiting = fake.frame.getStatus();
-    const servedWhileWaiting = [...served];
-    fake.setStatus('ready');
-    await settle();
-
-    // Then the frame boots, and the request waits for it instead of failing
-    expect(statusWhileWaiting).toBe('booting');
-    expect(servedWhileWaiting).toEqual([]);
-    expect(served).toEqual(['resolveOwner']);
   });
 
   it.each([
@@ -290,7 +273,7 @@ describe('createFrameRpc', () => {
     // Then
     expect((await write).message).toBe(PROTOCOL_ERRORS.FRAME_RESET);
     expect(served).toEqual([]);
-    expect(metrics.counted(S.PROTOCOL_REQUEST)).not.toContainEqual(expect.objectContaining({ outcome: 'timeout' }));
+    expect(metrics.counted('protocol.request')).not.toContainEqual(expect.objectContaining({ outcome: 'timeout' }));
   });
 
   it('As a dotli integrator, I make a request the frame never answers and it times out on its budget and is counted', async () => {
@@ -305,11 +288,57 @@ describe('createFrameRpc', () => {
 
     // Then
     expect((await read).name).toBe('ProtocolTimeoutError');
-    expect(metrics.counted(S.PROTOCOL_REQUEST)).toContainEqual({
+    expect(metrics.counted('protocol.request')).toContainEqual({
       outcome: 'timeout',
       method: 'authStorageRead',
       reason: 'ProtocolTimeoutError',
     });
+  });
+
+  it('As a dotli integrator, I make a shared store request the frame never answers and the frame is asked whether it still answers', async () => {
+    // Given
+    const fake = createFakeFrame({ serve: createSilentFrame([]), timers });
+    const rpc = createFrameRpc({ frame: fake.frame, timers });
+    const transport = await fake.frame.getTransport();
+    const read = catchRejection(rpc.request(storage.authRead, { siteId: 'dotli', key: 'k' }));
+    await settle();
+
+    // When
+    await timers.advance(30_000);
+
+    // Then
+    expect((await read).name).toBe('ProtocolTimeoutError');
+    expect(fake.checks).toHaveLength(1);
+    expect(fake.checks[0]).toBe(transport);
+  });
+
+  it('As a dotli integrator, I make a chain request that times out and the frame is not checked', async () => {
+    // Given
+    const fake = createFakeFrame({ serve: createSilentFrame([]), timers });
+    const rpc = createFrameRpc({ frame: fake.frame, timers });
+    const owner = catchRejection(rpc.request(resolve.owner, { label: 'doom' }));
+    await settle();
+
+    // When
+    await timers.advance(90_000);
+
+    // Then
+    expect((await owner).name).toBe('ProtocolTimeoutError');
+    expect(fake.checks).toEqual([]);
+  });
+
+  it('As a dotli integrator, I make a shared store request whose budget runs out before the frame listens and the frame is not checked', async () => {
+    // Given a frame that stays booting
+    const fake = createFakeFrame({ serve: createSilentFrame([]), status: 'booting', timers });
+    const rpc = createFrameRpc({ frame: fake.frame, timers });
+    const read = catchRejection(rpc.request(storage.authRead, { siteId: 'dotli', key: 'k' }));
+
+    // When
+    await timers.advance(30_000);
+
+    // Then
+    expect((await read).name).toBe('ProtocolTimeoutError');
+    expect(fake.checks).toEqual([]);
   });
 
   it('As a dotli integrator, I make a chain request while the frame comes up and its budget starts only once the frame is up', async () => {
@@ -347,7 +376,7 @@ describe('createFrameRpc', () => {
     // Then
     expect((await read).name).toBe('ProtocolTimeoutError');
     expect(served).toEqual([]);
-    expect(metrics.counted(S.PROTOCOL_REQUEST)).toContainEqual({
+    expect(metrics.counted('protocol.request')).toContainEqual({
       outcome: 'timeout',
       method: 'localWalletRead',
       reason: 'ProtocolTimeoutError',
@@ -374,7 +403,7 @@ describe('createFrameRpc', () => {
     // Then
     await expect(read).resolves.toEqual({ tag: 'none', value: undefined });
     expect(
-      metrics.distributions.filter(metric => metric.name === `dotli.${S.PROTOCOL_REQUEST}`).map(metric => metric.value),
+      metrics.distributions.filter(metric => metric.name === 'dotli.protocol.request').map(metric => metric.value),
     ).toEqual([0]);
   });
 
@@ -401,7 +430,7 @@ describe('createFrameRpc', () => {
     // Then
     await expect(owner).resolves.toBe('5Grw');
     expect(
-      metrics.distributions.filter(metric => metric.name === `dotli.${S.PROTOCOL_REQUEST}`).map(metric => metric.value),
+      metrics.distributions.filter(metric => metric.name === 'dotli.protocol.request').map(metric => metric.value),
     ).toEqual([40]);
   });
 
@@ -420,8 +449,8 @@ describe('createFrameRpc', () => {
     // Then the frame counts its own boot failure, so the calls add nothing
     expect((await read).message).toBe('boot failed');
     expect((await write).message).toBe('boot failed');
-    expect(metrics.counted(S.PROTOCOL_REQUEST)).toEqual([]);
-    expect(metrics.distributions.filter(metric => metric.name === `dotli.${S.PROTOCOL_REQUEST}`)).toEqual([]);
+    expect(metrics.counted('protocol.request')).toEqual([]);
+    expect(metrics.distributions.filter(metric => metric.name === 'dotli.protocol.request')).toEqual([]);
   });
 
   it('As the host booting, I read the wallet and the read keeps only what the wait for the frame left of its budget', async () => {

@@ -11,25 +11,28 @@ what happens when one breaks. This covers the work in #311 and #313 (issue
   takes a lease, and gives it back when done.
 - There are three pools, one per place that talks to chains: the **host
   page**, the **protocol iframe**, and the **SharedWorker**.
-- Every chain user on the host page leases from the **host pool**, except
-  bitswap. The host page runs **no light client**: on the smoldot backends the
+- Every chain user on the host page leases from the **host pool**, bitswap
+  included. The host page runs **no light client**: on the smoldot backends the
   host pool reaches each chain over one remote connection to the protocol
   iframe, whose light client serves it. On `rpc-gateway` the host page holds
-  the only sockets: one per chain, in the host pool (bitswap aside, see
-  Known limits).
+  the only sockets: one per chain, in the host pool.
 - A pool closes a chain a while after its last lease is returned: 60 s in the
   host pool and for an RPC socket, never for a smoldot chain in the iframe or
   the SharedWorker (re-syncing a light-client chain is expensive).
 - When a chain **halts** (dies for good), the pool first answers everything
-  that was still waiting on it, then tells each lease holder. The next lease
-  builds the chain again. Holders reconnect on their own (a product's
-  requests through a backoff per chain), and a name resolution the halt cut
-  off is retried once on the rebuilt chain.
+  that was still waiting on it, then tells each lease holder. A **local
+  lease**, which is every holder in the pool's own context, heals: it takes
+  the rebuilt chain when its next send finds the chain's gate open, or when
+  the gate next opens, whichever comes first. One gate per chain and one for
+  the frame hold every lease's rebuilds back. A holder keeps only its own
+  retry, such as a name resolution the halt cut off, which is retried once on
+  the rebuilt chain, and a bitswap fetch, which retries within its budget.
 - When the **light client itself** cannot work any more, that is a **fatal**.
-  The host tears the protocol iframe down, every remote connection is told
-  `'frame'`, and nothing redials by itself, except a product's own requests,
-  which may boot a new frame at most once per backoff window (1 s, doubling
-  to 30 s, back to 1 s only for a frame that stayed up more than 30 s).
+  The host tears the protocol iframe down and every remote connection is told
+  `'frame'`. A remote connection never redials. A local lease on the host
+  pool redials when the frame gate opens, which boots a new frame at most once
+  per backoff window (1 s, doubling to 30 s, back to 1 s only for a frame that
+  stayed up more than 30 s).
 
 ## Where chains are used
 
@@ -64,9 +67,9 @@ flowchart LR
   RpcResolve -- "lease (Asset Hub)" --> HostPool
   HostPool -.->|"watch, follow, no lease"| Panel
   Probe -- lease --> HostPool
+  Bitswap -- lease --> HostPool
   HostPool -- "rpc-gateway: own socket" --> Nodes
   HostPool -- "smoldot: one remote<br/>connection per chain" --> Client
-  Bitswap --> Client
   Client -- postMessage --> Engine
   Engine -- "lease per connection" --> IframePool
   Resolver -- lease --> IframePool
@@ -79,8 +82,9 @@ flowchart LR
 In simple terms:
 
 - **The host page** has its own pool. Products' chain calls (through the
-  TrUAPI core), name resolution in `rpc-gateway` and the settings probe all
-  lease from it, so the host page holds one connection per chain.
+  TrUAPI core), name resolution in `rpc-gateway`, the settings probe and
+  bitswap all lease from it, so the host page holds one pool entry per chain.
+  The entry's lanes may open more than one connection to it.
 - **The network panel** leases nothing. `ChainPool.watch` reports each
   chain's leases, status, follow and best-block numbers. A chain someone holds
   is followed for the panel, so its blocks keep coming when its holder does
@@ -90,9 +94,9 @@ In simple terms:
   connection per chain to the **protocol iframe** over `postMessage`
   (`createFrameChainTransport`, through `chains.createProvider`), which
   becomes one lease in the iframe's pool, next to the resolver's.
-- **Bitswap** keeps its own remote connection to the iframe: `@dotli/bitswap`
-  cannot import the host pool. On the smoldot backends that lands on the same
-  chain in the iframe's pool, so no chain is duplicated.
+- **Bitswap** leases Bulletin from the host pool while a fetch runs and
+  releases it after the last one. The pool then closes Bulletin after its
+  destroy delay.
 - **The protocol iframe** has a pool in `smoldot-direct` (light client in the
   iframe) and `rpc-gateway` (WebSockets). In `smoldot-shared-worker` it only
   relays to the **SharedWorker**, whose pool serves every tab.
@@ -100,8 +104,8 @@ In simple terms:
   engine scope. The iframe opens one scope for its tab. In
   `smoldot-shared-worker` the worker opens one per port, which is one tab's
   iframe, with no worker-wide cap: its pool shares the chains between tabs.
-  Through the host pool a tab holds at most one connection per chain, plus
-  bitswap's.
+  Through the host pool a tab holds one pool entry per chain, whose lanes may
+  open more than one connection.
 
 Which transport a pool builds depends on the backend:
 
@@ -124,29 +128,44 @@ wakes, and its next message makes the worker serve its port again.
 
 ```mermaid
 flowchart TB
-  L1["lease: local:0<br/>(e.g. resolver)"] --> B
-  L2["lease: remote:origin id<br/>(e.g. an app's connection)"] --> B
-  L3["lease: remote:origin id"] --> B
+  L1["lease: local:0<br/>(e.g. resolver)"] --> R
+  L2["lease: remote:origin id<br/>(e.g. an app's connection)"] --> R
+  L3["lease: remote:origin id"] --> R
   subgraph Entry["One entry per chain (genesis hash)"]
-    B["Chain broker<br/>rewrites ids and tokens,<br/>shares chainHead follows"]
-    G["Watch guard<br/>ends transaction watches<br/>with 'dropped' on disconnect"]
-    T["Transport<br/>(RPC socket or smoldot chain)"]
-    B --> G --> T
+    R["Lane router (one per lease)<br/>picks a lane for each request and follow"]
+    subgraph Lane0["Lane 0"]
+      B0["Chain broker<br/>rewrites ids and tokens"] --> G0["Watch guard<br/>ends transaction watches<br/>with 'dropped' on disconnect"] --> T0["Transport<br/>(RPC socket or smoldot chain)"]
+    end
+    subgraph LaneN["Lane 1, 2, ... (when follows overflow)"]
+      BN["Chain broker"] --> GN["Watch guard"] --> TN["Transport"]
+    end
+    R --> B0
+    R --> BN
   end
-  T -- "status: connecting / connected / disconnected" --> P["Pool status"]
-  T -- "halt" --> P
+  Lane0 -- "status: connecting / connected / disconnected, halt" --> P["Pool status<br/>(the lanes combine each lane's status)"]
+  LaneN -- "status, halt" --> P
 ```
 
-- **Entry**: one per chain, built on the first lease. It holds the transport,
-  a watch guard and a broker.
+- **Entry**: one per chain, built on the first lease. It holds the chain's
+  lanes.
 - **Broker** (`createChainBroker`): many sessions share one transport. It rewrites
   every request id and subscription token so sessions cannot see or answer
-  each other's traffic, and shares one `chainHead_v1_follow` between them.
-- **Lease**: a broker session. Local leases are named `local:N`; remote ones
-  `remote:<origin> <connectionId>`, so ids from different sites never collide
-  and one site cannot reach another's connection.
+  each other's traffic. Each session's `chainHead_v1_follow` is its own
+  upstream follow.
+- **Lanes**: a lane is one connection with its own broker, watch guard and
+  transport. A chain's node limits its follows: 4 per RPC socket, 2 per
+  light-client connection, and none for the frame link. Each consumer has a
+  home lane for every request that names no follow. A follow goes to a lane
+  with room under the limit, and an overflow follow opens a new lane. The
+  follow's later calls go to the same lane. Lane 0 lasts as long as the
+  chain, and every extra lane closes once it is empty.
+- **Lease**: a consumer of the chain's lanes, with a home session on one lane
+  and a session on another lane for each follow that overflows there. Local
+  leases are named `local:N` and remote ones `remote:<origin> <connectionId>`, so
+  ids from different sites never collide and one site cannot reach another's
+  connection.
 - **Refcount**: the pool counts leases. When the last one is returned, the
-  destroy delay starts; a new lease cancels it.
+  destroy delay starts. A new lease cancels it.
 - **Watch guard**: transaction watches cannot be safely replayed, so on a
   disconnect the guard ends each answered watch with `dropped`.
 - **Watch** (`ChainPool.watch`): reports each chain's leases, status, follow
@@ -154,27 +173,26 @@ flowchart TB
   past its destroy delay. A new watcher first hears every chain held now.
 - **Watch follow**: while the pool is watched, each held chain carries one
   extra broker session, `watch:N`, that follows with the runtime, as
-  polkadot-api does, so a product's follow shares it upstream. It is not a
-  lease. It numbers each best block from its `chainHead_v1_header`, unpins a
-  block once finalization passes it, follows again after a `stop`, and is
-  closed when the last lease is returned, before the watchers hear the chain
-  has no consumers. The frame and SharedWorker pools are never watched, so
-  they send nothing extra. With `VITE_APP_DEBUG`, the pool logs every lease, release,
+  polkadot-api does. It is not a lease. It numbers each best block from its
+  `chainHead_v1_header`, unpins a block once finalization passes it, follows
+  again after a `stop`, and is closed when the last lease is returned, before
+  the watchers hear the chain has no consumers. The frame and SharedWorker
+  pools are never watched, so they send nothing extra. With `VITE_APP_DEBUG`, the pool logs every lease, release,
   open and close under `[dot.li chain-pool]`, naming each lease's holder
   (`truapi-core`, `resolver`, `host`, `sync-observer`, `remote:<id>`).
 
 ## The RPC transport
 
-An RPC chain socket (`packages/chains/src/createCoreRpcChainProvider.ts`) is a stack:
+An RPC chain socket (`createCoreRpcChainTransport` in
+`packages/chains/src/createCoreRpcChainTransport.ts`) is a stack:
 
 ```mermaid
 flowchart TB
   R["withSubscriptionReplay<br/>re-sends subscriptions after a reconnect,<br/>keeps the consumer's subscription id"]
   W["ws-middleware<br/>rpc_methods probe, legacy RPC fallback,<br/>numeric ids, chainHead fixes"]
   C["withOwnMessages<br/>hands ws-middleware a copy of each request"]
-  P["Pause controller<br/>pause closes the socket, resume reopens it"]
   S["getWsProvider<br/>heartbeat 120 s, endpoint rotation,<br/>closes the socket it abandons"]
-  R --> W --> C --> P --> S
+  R --> W --> C --> S
 ```
 
 - The **heartbeat** treats a socket that says nothing for 120 s as dead and
@@ -184,18 +202,82 @@ flowchart TB
 - `getConnectedRpcEndpoint(genesisHash)` tells the diagnostics popover which
   node a chain's socket is on.
 
-The smoldot transport (`createChainProvider` in
+The smoldot transport (`createChainTransport` in
 `packages/chains/src/createLightClient.ts`) is one chain on the light client, in the
 protocol iframe or the SharedWorker only. It does not reconnect underneath its
-users: when its stream ends, it halts.
+users: when its stream ends, it halts, and the pool's healing lease builds it
+again.
 
 The host pool's transport on the smoldot backends (`createFrameChainTransport`
-in `apps/host/src/runtime/hostCallbacks/createFrameChainTransport.ts`) wraps one remote
+in `apps/host/src/features/chains/createFrameChainTransport.ts`) wraps one remote
 connection. It reports `connecting`, then `connected` as soon as the
 connection exists: the remote provider has no finer signal, and queues sends
 until the iframe accepts the connection. When the remote connection halts, it
 reports `disconnected`, then halts with a `ChainHaltError` that carries the
 reason, `'chain'` or `'frame'`.
+
+## Pausing a hidden page
+
+A hidden page has no use for its network. `createNetworkPause`
+(`apps/host/src/features/network/createNetworkPause.ts`) follows the document's
+visibility. It waits a grace of 60 s after the page hides, then pauses. A
+return to the page resumes at once. A wake from a sleep, which it finds by a
+late tick, resumes nothing, since a visible page was never paused. It only
+starts the network monitor's judgement over. A hold keeps the page awake: a
+page load and a product's request to Polkadot App each take one, and the pause
+waits for the last release.
+
+```mermaid
+flowchart TB
+  subgraph Host["Host page"]
+    V["document visibility"] --> NP["createNetworkPause"]
+    H["page load, a product's request to Polkadot App"] -->|"hold"| NP
+    NP -->|"pause, resume"| HP["host chain pool"]
+    NP -->|"frame.pause"| F
+  end
+  subgraph Frame["Protocol iframe"]
+    F["servePoolControl or the worker relay"]
+    F -->|"smoldot-direct, rpc-gateway"| FP["iframe chain pool"]
+  end
+  subgraph Worker["SharedWorker"]
+    W["servePoolControl: paused per tab"] -->|"every tab paused"| WP["worker chain pool"]
+  end
+  F -->|"smoldot-shared-worker"| W
+```
+
+What a pause closes depends on the transport:
+
+- **RPC socket**: the socket closes, and a resume opens it again. The
+  subscription replay layer subscribes again under the consumer's ids.
+- **Light client chain**: the chain is removed from the light client, and a
+  resume adds it again and syncs it again. Only the iframe's pool in
+  `smoldot-direct` and the worker's pool hold one.
+- **Remote connection to the frame**: the host pool's connection on the
+  smoldot backends closes. The frame keeps its leases and its light client.
+
+Leases stay through a pause. Nobody is told the chain halted, and holders keep
+their sessions. What the pause ends, such as a stop, a failed `chainHead`
+call or a release, is answered before the pause returns. The rest, such as an
+unanswered follow, is sent again on resume and answered then. A chain built
+while paused starts closed. A resume opens again each chain a lease holds, and
+a chain that only waits out its destroy delay stays closed until a lease takes
+it.
+
+The host reaches the frame with `frame.pause` through one remote pool control
+(`createRemotePoolControl`), which the protocol client's `chains` entity
+carries, so the host pauses it like its own pool. One server
+(`servePoolControl`) answers it on a pool control, in the frame on its own
+pool and in the worker on each port's vote. In `smoldot-direct` and
+`rpc-gateway` the frame pauses its own pool. In `smoldot-shared-worker` it
+relays the pause to the worker, which keeps one flag per tab and pauses its
+pool only while every tab is paused. A tab that closes drops its flag.
+
+On the product page, the network monitor starts each chain's judgement over on
+each return to the page, so a chain that was quiet while paused is not read as
+stalled. The watched chains in
+`smoldot-direct` and the SharedWorker are held by `observeChains` on healing leases, which take
+their chain again behind the gate once any halt drops them, including one from
+a chain that fails to reopen at a resume.
 
 ## What happens when…
 
@@ -220,14 +302,14 @@ sequenceDiagram
 ```
 
 Nothing is halted: the lease stays, and the app keeps its subscription id. The
-store sends its matching statements again after a resubscribe; consumers
+store sends its matching statements again after a resubscribe, and consumers
 dedupe them.
 
 ### …one smoldot chain dies (a halt)
 
 ```mermaid
 sequenceDiagram
-  participant Use as Bitswap / host pool
+  participant Use as Host pool
   participant Cli as Protocol client
   participant Ctx as Iframe / worker
   participant Pool as Pool
@@ -237,7 +319,7 @@ sequenceDiagram
   Ctx->>Cli: chain-message (those answers)
   Ctx->>Cli: chain-halt
   Cli->>Use: onHalt('chain')
-  Use->>Cli: connect again (host pool: on its next lease)
+  Use->>Cli: connect again (the host pool's lease heals when its gate opens)
   Cli->>Ctx: chainConnect
   Ctx->>Pool: new lease, entry rebuilt
 ```
@@ -246,19 +328,22 @@ sequenceDiagram
 - `data: 'dotli:chain-halted'` lets a client tell "the chain halted, try again"
   from a real error. Bitswap retries such a request within the same content
   fetch.
+- Bitswap's lease is a local lease on the host pool: it heals behind the
+  chain's gate, and bitswap keeps only the retry of its own fetch.
 - The network panel reads the chain as "not in use" after the halt, until its
   consumer leases it again.
-- The resolver's papi clients drop themselves when their follow gets `stop`;
-  their next read takes a fresh lease. A resolution running at that moment is
+- The resolver's papi clients drop themselves when their follow gets `stop`.
+  Their next read takes a fresh lease. A resolution running at that moment is
   retried once on it (see below).
 - On the smoldot backends the host pool's remote connection hears
   `onHalt('chain')`, and the host pool halts that chain the same way. Each
-  TrUAPI core connection delivers its answers and stays open; its next request
-  takes a new lease, which rebuilds the chain (a papi client in the product
-  re-follows on the `stop`, and lands there), through that chain's gate (see
-  [chains follow the protocol status](#a-product-keeps-retrying-after-a-halt-chains-follow-the-protocol-status)).
-  The settings probe client hears `'chain'` (`getHostChainProvider` reads the
-  reason with `getHaltReason`).
+  TrUAPI core connection delivers its answers and stays open. Its lease heals:
+  it takes the rebuilt chain on its next request or when the chain's gate
+  opens, whichever comes first (a papi client in the product re-follows on the
+  `stop`, and lands there). See
+  [the healing lease](#a-product-keeps-retrying-after-a-halt-the-healing-lease-and-its-gates).
+  The settings probe and the block bar read through a healing lease of the
+  same pool, so they heal behind the same gate.
 
 ### …a chain halts while a page is loading
 
@@ -286,19 +371,19 @@ sequenceDiagram
   `smoldot-shared-worker`) run them.
 - A halt reaches a read in one of three shapes, and each one is retried:
   - the pool's answer to a request in flight, `Chain transport halted` with
-    `data: 'dotli:chain-halted'`;
+    `data: 'dotli:chain-halted'`
   - `ApiStoppedError` (`chainHead follow stopped`): the follow stopped before
-    its first block;
+    its first block
   - papi's `DisjointError` (`ChainHead disjointed`): the same `stop` cut off an
     operation already running.
 - The retry gets what is left of the request's sync budget, not a new one.
 - **Once only.** If the retry halts too, the error reaches the host. Its error
   page shows the network-dropped copy: `chain-halted` for the first two
-  shapes, which needs only a reload; the existing `chainhead-disjointed` for
+  shapes, which needs only a reload, and the existing `chainhead-disjointed` for
   the third, which also purges the light client's caches.
 - A light client that keeps dying does not loop: its next connect fails, and
   that is a fatal. Nor does a single chain that halts again each time it is
-  rebuilt: products rebuild it only through its chain gate.
+  rebuilt: a lease rebuilds it only through its chain gate.
 - `rpc-gateway` resolution needs no retry. Its RPC socket never halts: it
   reconnects and replays.
 
@@ -314,14 +399,15 @@ sequenceDiagram
   Ctx->>Cli: fatal
   Cli->>Cli: reject pending requests, remove the iframe
   Cli->>Use: onHalt('frame') for every remote connection
-  Note over Use: nobody redials on their own,<br/>a product's requests only once the frame is back
+  Note over Use: remote connections never redial,<br/>a local lease redials when the frame gate opens
   Cli->>Cli: shared store unavailable, rebuild the iframe after a growing wait until one listens
   Cli->>Use: protocol status booting, listening, ready
 ```
 
 - A fatal is only raised when the light client **cannot connect a chain**. A
   crashed light client shows up that way: every chain halts, consumers
-  reconnect, and the first reconnect fails.
+  reconnect, and the first reconnect fails. A connect past truapi-provider's
+  connection cap halts only its chain and is not fatal.
 - In the SharedWorker a fatal **ends the worker**: it tells every port why,
   then closes. A tab that connects before the close lands gets the same error.
   A closing SharedWorker is never matched by name, so the next connect, from a
@@ -333,45 +419,41 @@ sequenceDiagram
   the same. The wait is there because a rebuild listens before its light
   client starts, so a light client that keeps failing would otherwise rebuild
   back to back. In either mode the rebuilt iframe starts a new light client.
-- After `'frame'` the codebase never redials a connection on its own, though
-  the client does rebuild the iframe: bitswap fails the fetch in progress. A
-  product's requests are demand, but its papi client re-follows every 250 ms,
-  so the host pool takes a new lease for them only while the protocol status
-  is not `failed` (below). The frame's rebuild waits are the only backoff.
+- After `'frame'` a remote connection never redials, though the client does
+  rebuild the iframe. A local lease on the host pool redials when its gate
+  opens: while the protocol status is `failed` the pool's frame gate holds it
+  back, and otherwise the chain's gate does (below). Bitswap retries the fetch
+  in progress within its budget.
 - The host pool's remote connections hear `'frame'` too. Each halts its chain
   with `ChainHaltError('frame')`. TrUAPI core connections deliver what was
-  queued and stay open. A product's next request on one takes a new lease
-  once the frame is back (below).
+  queued and stay open. Their leases heal once the frame gate allows it
+  (below).
 - A connection that never reaches a frame halts with `'frame'` too: the frame
   did not come up in time, its iframe failed to load, or it refused the
-  `chainConnect` (for example at its connection limit). So bitswap drops that
-  connection and dials again on the next fetch.
+  `chainConnect` (for example at its connection limit). So the host pool
+  halts that chain, and its lease heals behind the gate.
 - A papi client re-follows on the `stop` that comes before `chain-halt`. The
   frame refuses that send, because it has already forgotten the connection.
   Such late failures, and those of sends still unacknowledged when a fatal
   arrives, are dropped quietly: the consumer has already heard `onHalt`.
 
-### …a product keeps retrying after a halt (chains follow the protocol status)
+### …a product keeps retrying after a halt (the healing lease and its gates)
 
 A product's papi client re-follows every 250 ms, and after a halt each
-re-follow is a new lease on the host pool. After `'frame'` that lease needs a
-protocol frame. After `'chain'` it rebuilds the chain, which on the smoldot
-backends adds it to the light client again and syncs it again.
+re-follow reaches a local lease on the host pool. After `'frame'` a rebuild
+needs a protocol frame. After `'chain'` it rebuilds the chain, which on the
+smoldot backends adds it to the light client again and syncs it again. Every
+local lease of the host pool heals the same way (the core connections, bitswap,
+the settings probe and the block bar), behind two kinds of gate:
 
-After `'frame'` the host pool has no gate of its own: chains follow the
-protocol status, and the frame owns the backoff. While the status is `failed`
-a request is answered at once. The first request once the frame's own rebuild
-boots, listens or is ready takes a new lease, which waits for the frame and
-fails at once if that boot fails.
+- **The chain gate**, one per genesis hash, shared by every lease on that chain,
+  so concurrent leases dial once per window.
+- **The frame gate**, one per pool. A lease whose halt was `'frame'` waits on
+  it while the protocol status is `failed`, and on the chain gate otherwise.
+  A frame that fails every boot is dialled once per gate window, beside the
+  frame's own rebuild backoff.
 
-A connect the frame refuses while the status is `ready` (for example at its
-connection limit) halts the connection with `'frame'`, and the status stays
-`ready`. So the next request takes a new lease at once, with no backoff.
-
-After `'chain'` a TrUAPI core connection takes its lease only through a chain
-gate per genesis hash (`apps/host/src/runtime/hostCallbacks/createRedialGate.ts`). A gate
-is shared by every core connection to that chain, so concurrent connections
-dial once per window:
+A gate (`packages/chains/src/createRedialGate.ts`) works like this:
 
 - After the first halt, or once it starts over, it goes at once.
 - Each dial through it shuts it again and doubles the delay, from 1 s up to
@@ -381,20 +463,29 @@ dial once per window:
 - Only uptime starts it over: a halt more than 30 s after the last dial
   through the gate. Once the backoff has grown, dials come at most about once
   per 31 s, whatever the chain does.
-- A lease passes without dialing when the chain is in the host pool again
-  (another connection rebuilt it).
-- A re-lease that finds no transport keeps the connection behind the gate.
+- A lease passes without dialing when the chain is in the pool again (another
+  lease rebuilt it).
+- A take that fails, or finds no transport, keeps the lease behind the gate,
+  even when the chain is up.
 
-A request the host pool refuses, or one no lease can be taken for, is answered
-at once with `Chain transport halted` (`data: 'dotli:chain-halted'`), so
-nothing hangs.
+A lease takes the chain again when its next send finds the gate open, or when
+the gate next opens, whichever comes first, so a lease that sends nothing, such
+as an idle core connection or a watched chain, gets its chain back too. While
+the gate is shut a request is answered at once with `Chain transport halted`
+(`data: 'dotli:chain-halted'`) and a notification is dropped, so nothing
+hangs. Each take is counted as `chain_pool.heal` with its outcome, whoever
+holds the lease.
+
+A connect the frame refuses while the status is `ready` (for example at its
+connection limit) halts the connection with `'frame'`, and the status stays
+`ready`. So the lease waits on the chain gate, not the frame gate.
 
 ## Halt reasons at a glance
 
 | Reason | Comes from | What it means | What consumers do |
 | --- | --- | --- | --- |
-| `'chain'` | `chain-halt` envelope | That chain died; the pool rebuilds it on the next lease | Reconnect (bitswap at once, a product's requests through the host pool's chain gate) |
-| `'frame'` | `fatal` / `init-failed` envelope, or a `chainConnect` that never succeeded | The protocol iframe or light client is gone, or never came up for this connection | Wait for user demand, never redial on your own. A product's requests are demand, and take a new lease while the protocol status is not `failed` |
+| `'chain'` | `chain-halt` envelope | That chain died. The pool rebuilds it when a lease takes it again | A local lease heals behind the chain's gate. A remote connection ends |
+| `'frame'` | `fatal` / `init-failed` envelope, or a `chainConnect` that never succeeded | The protocol iframe or light client is gone, or never came up for this connection | A local lease heals behind the frame gate while the protocol status is `failed`, and behind the chain gate otherwise. A remote connection ends |
 
 Through the host pool the reason travels as a `ChainHaltError`
 (`packages/chains/src/chainHaltError.ts`), and `getHaltReason` reads it back.
@@ -408,39 +499,39 @@ Any other transport halt, such as a socket's, reads as `'chain'`.
 | Broker | `packages/chains/src/createChainBroker.ts` |
 | Watch guard | `packages/chains/src/createWatchGuard.ts` |
 | Halted-chain marker | `packages/shared/src/chainHaltedErrorData.ts` |
-| Halted-chain error, `ChainHaltError`, `getHaltReason` | `packages/chains/src/createChainHaltedError.ts`, `packages/chains/src/chainHaltError.ts`, `packages/chains/src/getHaltReason.ts` |
-| Protocol client (remote connections, halt reasons) | `packages/protocol/src/client.ts` |
-| RPC transport | `packages/chains/src/createCoreRpcChainProvider.ts` |
+| Halted-chain error, `ChainHaltError`, `getHaltReason` | `packages/chains/src/createChainHaltedError.ts`, `packages/chains/src/chainHaltError.ts` |
+| Protocol client (remote connections, halt reasons) | `packages/protocol/src/createProtocolClient.ts` |
+| RPC transport | `packages/chains/src/createCoreRpcChainTransport.ts` |
+| Healing lease, the pool's redial and its gate | `packages/chains/src/createHealingLease.ts`, `packages/chains/src/createChainRedial.ts`, `packages/chains/src/createRedialGate.ts` |
 | smoldot transport | `packages/chains/src/createLightClient.ts` |
 | Name resolution on every backend, halt retry (`createDotnsResolver`) | `packages/resolver/src/createDotnsResolver.ts` |
-| Host error page classification | `apps/host/src/describeError.ts` |
-| Host pool, TrUAPI chain connections, `getHostChainProvider` | `apps/host/src/runtime/hostCallbacks/createHostChainPool.ts`, `apps/host/src/runtime/hostCallbacks/createChainConnect.ts`, `apps/host/src/runtime/hostCallbacks/getHostChainProvider.ts` |
-| Host pool's transport on the smoldot backends | `apps/host/src/runtime/hostCallbacks/createFrameChainTransport.ts` |
-| Host pool's chain gates | `apps/host/src/runtime/hostCallbacks/createRedialGate.ts` |
-| Settings probe | `apps/host/src/runtime/diagnostics.ts` (`queryFinalizedBlock`) |
-| Network panel | `apps/host/src/state/networkMonitorState.ts`, `ChainPool.watch` in `packages/chains/src/createChainPool.ts`, `packages/chains/src/decodeHeaderNumber.ts` |
-| Bitswap | `packages/bitswap/src/createBitswapClient.ts`, `packages/bitswap/src/createSandboxBlockRelay.ts` |
-| Protocol engine, a scope per tab | `apps/protocol/src/createEngine.ts` |
-| Watched chains | `apps/protocol/src/observeChains.ts` (`observeChains`) |
-| SharedWorker ports and heartbeat | `apps/protocol/src/createWorkerLifecycle.ts` |
+| Host error page classification | `apps/host/src/features/productLoad/failure/describeError.ts` |
+| Host pool, TrUAPI chain connections, `getHostChainProvider` | `apps/host/src/features/chains/createHostChainPool.ts`, `apps/host/src/features/productRuntime/callbacks/createChainConnect.ts`, `apps/host/src/features/chains/getHostChainProvider.ts` |
+| Host pool's transport on the smoldot backends | `apps/host/src/features/chains/createFrameChainTransport.ts` |
+| Settings probe | `apps/host/src/features/debugPanel/createFinalizedBlockQuery.ts` (`createFinalizedBlockQuery`) |
+| Network panel | `apps/host/src/features/network/networkMonitorState.ts`, `ChainPool.watch` in `packages/chains/src/createChainPool.ts`, `packages/chains/src/decodeHeaderNumber.ts` |
+| Bitswap | `packages/bitswap/src/createBitswapClient.ts`, `apps/host/src/features/chains/createHostBitswapClient.ts`, `packages/bitswap/src/createSandboxBlockRelay.ts` |
+| Protocol engine, a scope per tab | `apps/protocol/src/engine/createEngine.ts` |
+| Watched chains (healing leases) | `apps/protocol/src/lightClient/observeChains.ts` (`observeChains`) |
+| SharedWorker ports and heartbeat | `apps/protocol/src/sharedWorker/createWorkerLifecycle.ts` |
+| Pausable transport | `packages/chains/src/createPausableTransport.ts` |
+| The page's network pause | `apps/host/src/features/network/createNetworkPause.ts` |
+| The host's remote pool control (`frame.pause` sender) | `packages/protocol/src/createRemotePoolControl.ts` |
+| The `frame.pause` server, in the frame and the worker | `apps/protocol/src/engine/servePoolControl.ts` |
 
 ## Known limits
 
+- A bitswap release whose close throws is reported as `content.bitswap_release`
+  and leaves Bulletin counted as held in the host pool until the page closes.
 - `@parity/truapi-host` ignores the end of a chain connection's response
   stream, so the host never ends one on a halt: a core connection outlives its
-  lease, and its next request takes a new one. Only `close()` ends it.
-- The watched chains in `smoldot-direct` do not take a new lease after a halt;
-  the loading bar loses that chain's progress until something else opens it.
-- In `rpc-gateway`, bitswap (the product icon, the debug panel's archive) still
-  asks the iframe's rpc mode for Bulletin, which opens a socket of its own.
+  lease, which heals behind the gate. Only `close()` ends it.
 - After a halt on the smoldot backends, a product's statement subscriptions
   and transaction broadcasts stop silently: the broker has no terminal event
   to send them, while the same connection keeps serving new requests on its
-  new lease. The core does not know to subscribe again.
+  healed lease. The core does not know to subscribe again.
 - A live frame that refuses every connection (for example at its connection
-  limit) gets one `chainConnect` per product retry: its status stays `ready`,
-  so nothing backs those retries off.
+  limit) keeps its status `ready`, so the frame gate never holds those
+  retries. Only the chain gate spaces them, from 1 s up to 30 s.
 - After a halt the network panel reads the chain as "not in use" until its
-  consumer's next request leases it again.
-- Storage can read "not in use" while bitswap fetches from Bulletin, since
-  bitswap bypasses the host pool.
+  consumer's lease takes the chain again behind the gate.

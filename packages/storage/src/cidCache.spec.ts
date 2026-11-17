@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { beforeEach, describe, expect, it, onTestFinished } from 'vitest';
-import { spans as S } from '@dotli/metrics';
 import { bindRecordingSentry } from '@dotli/metrics/testing';
 import { type CidCache, createCidCache } from './cidCache.js';
 import { abortAtCommit } from './testing/abortAtCommit.js';
@@ -19,7 +18,8 @@ beforeEach(() => {
 
 const PASEO = 'paseo-next-v2';
 
-const NO_MANIFESTS = { root: null, app: null };
+const NO_MANIFESTS = { root: null, app: null, owner: null };
+const OWNER = `0x${'ab'.repeat(20)}`;
 const ROOT = '{"$v":1,"displayName":"DOOM","description":"","icon":{"cid":"bafk","format":"png"}}';
 const APP = '{"$v":1,"kind":"app","appVersion":[0,1,9]}';
 
@@ -64,26 +64,24 @@ describe('CID IndexedDB round-trip', () => {
     expect(cached).toEqual({ cid: 'bafy123', manifests: NO_MANIFESTS });
   });
 
-  it('As the resolver, I cache a CID with its manifests and read both back', async () => {
-    // Given
-    await cache.set({ label: 'doom', network: PASEO, cid: 'bafy-doom', manifests: { root: ROOT, app: APP } });
-
-    // When
-    const cached = await cache.get('doom', PASEO);
-
-    // Then
-    expect(cached).toEqual({ cid: 'bafy-doom', manifests: { root: ROOT, app: APP } });
-  });
-
   it.each([
     {
       entry: 'an entry cached before manifests were kept',
       store: () => putRawEntry({ label: 'doom', cid: 'bafy-doom', timestamp: Date.now() }),
     },
     {
+      entry: 'an entry cached without its owner',
+      store: () => cache.set({ label: 'doom', network: PASEO, cid: 'bafy-doom', manifests: { root: ROOT, app: APP } }),
+    },
+    {
       entry: 'an entry cached on another network',
       store: () =>
-        cache.set({ label: 'doom', network: 'previewnet', cid: 'bafy-doom', manifests: { root: ROOT, app: APP } }),
+        cache.set({
+          label: 'doom',
+          network: 'previewnet',
+          cid: 'bafy-doom',
+          manifests: { root: ROOT, app: APP, owner: OWNER },
+        }),
     },
     {
       entry: 'a label never cached',
@@ -149,10 +147,10 @@ describe('cid-cache failure reporting', () => {
 
     // Then the read is a miss, counted as a failed read, and its latency is still recorded
     expect(cached).toBeNull();
-    expect(sentry.counted(S.CACHE_STORAGE)).toEqual([
+    expect(sentry.counted('cache.storage')).toEqual([
       { outcome: 'error', reason: 'InvalidStateError', surface: 'cid_cache', step: 'read' },
     ]);
-    expect(sentry.distributions.map(distribution => distribution.name)).toEqual([`dotli.${S.CACHE_READ_LATENCY}`]);
+    expect(sentry.distributions.map(distribution => distribution.name)).toEqual(['dotli.cache.read_latency']);
   });
 
   it('As a caller that reloads after a clear, I am told when the CID cache clear failed after it reported itself', async () => {
@@ -204,7 +202,7 @@ describe('cid-cache writes and the commit', () => {
     await refusing.set({ label: 'myapp', network: PASEO, cid: 'bafy123', manifests: NO_MANIFESTS });
 
     // Then
-    expect(sentry.counted(S.CACHE_STORAGE)).toEqual([
+    expect(sentry.counted('cache.storage')).toEqual([
       expect.objectContaining({ outcome: 'error', surface: 'cid_cache', step: 'write' }),
     ]);
     expect(await refusing.get('myapp', PASEO)).toBeNull();
@@ -246,7 +244,7 @@ describe('cid-cache writes and the commit', () => {
 
     // Then the evict is counted as failed, resolves false, and the label still reads its old CID
     expect(worked).toBe(false);
-    expect(sentry.counted(S.CACHE_STORAGE)).toEqual([
+    expect(sentry.counted('cache.storage')).toEqual([
       expect.objectContaining({ outcome: 'error', surface: 'cid_cache', step: 'evict' }),
     ]);
     expect(await flaky.get('myapp', PASEO)).toEqual({ cid: 'bafy-stale', manifests: NO_MANIFESTS });

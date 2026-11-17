@@ -2,15 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
-  getOwnerMethod,
   RELEASE_METHODS,
   TOKEN_METHODS,
   type JsonRpcRequest,
   type RequestOwner,
+  type Session,
 } from './brokerMessages.js';
-
-/** The broker's requests in flight upstream, each with the one owner its answer goes to. */
-export type PendingRequests = ReturnType<typeof createPendingRequests>;
 
 type Params = {
   /** Posts a message upstream. */
@@ -56,20 +53,17 @@ export function createPendingRequests({ sendUpstream }: Params) {
 
   function isReleasing(upstreamToken: string): boolean {
     return [...pending.values()].some(
-      owner =>
-        owner.kind !== 'follow' &&
-        owner.upstreamToken === upstreamToken &&
-        (owner.kind === 'release' || RELEASE_METHODS.has(owner.method)),
+      owner => owner.upstreamToken === upstreamToken && (owner.kind === 'release' || RELEASE_METHODS.has(owner.method)),
     );
   }
 
   function hasSubscriptionRequest(): boolean {
-    return [...pending.values()].some(owner => owner.kind === 'follow' || TOKEN_METHODS.has(getOwnerMethod(owner)));
+    return [...pending.values()].some(owner => TOKEN_METHODS.has(owner.method));
   }
 
-  function orphanSession(sessionId: string): void {
+  function orphanSession(session: Session): void {
     for (const [requestId, owner] of pending) {
-      if (owner.kind === 'session' && owner.sessionId === sessionId) {
+      if (owner.kind === 'session' && owner.session === session) {
         pending.set(requestId, { kind: 'orphan', method: owner.method, upstreamToken: owner.upstreamToken });
       }
     }
@@ -94,7 +88,7 @@ export function createPendingRequests({ sendUpstream }: Params) {
     isReleasing,
     /** Whether a request in flight may open a subscription, whose events can come before its answer. */
     hasSubscriptionRequest,
-    /** Hands each request of session `sessionId` to an orphan owner, as the session has gone. */
+    /** Hands each request of `session` to an orphan owner, as the session has gone. */
     orphanSession,
     /** Forgets every request in flight. Their broker ids are never reused. */
     clear,

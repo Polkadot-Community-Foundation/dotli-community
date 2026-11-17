@@ -2,17 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it } from 'vitest';
-import { getDefaultBackend, parseBackend } from './backend.js';
-
-describe('getDefaultBackend', () => {
-  it('As a new visitor, I start on the per-tab light client', () => {
-    // When
-    const backend = getDefaultBackend();
-
-    // Then
-    expect(backend).toBe('smoldot-direct');
-  });
-});
+import { parseBackend } from './backend.js';
 
 describe('parseBackend', () => {
   it.each(['smoldot-direct', 'smoldot-shared-worker', 'rpc-gateway'])(

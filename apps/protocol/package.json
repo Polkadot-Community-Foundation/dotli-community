@@ -2,11 +2,11 @@
   "name": "@dotli/protocol-app",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.12.0",
+  "version": "0.14.0",
   "type": "module",
   "sideEffects": [
     "./src/main.ts",
-    "./src/protocolSharedWorker.ts"
+    "./src/sharedWorker/protocolSharedWorker.ts"
   ],
   "scripts": {
     "build": "vite build",
@@ -20,7 +20,7 @@
     "@config/eslint": "*",
     "@config/typescript": "*",
     "@config/vite": "*",
-    "@polkadot-api/json-rpc-provider": "^0.2.0"
+    "@polkadot-api/json-rpc-provider": "0.2.0"
   },
   "dependencies": {
     "@dotli/chains": "*",

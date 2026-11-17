@@ -11,6 +11,8 @@ import { createDebugBus } from '@dotli/truapi-debug/testing';
 import { fakeDebugPanelHost } from '../../host.fake.js';
 import type { KeyedSignals } from '../../createKeyedSignals.js';
 import { setupTruapiDebugPanel } from '../../truapiDebugPanel.js';
+import { dockStorage } from '../../model/createDockStorage.js';
+import { sectionStorage } from '../../model/createSectionStorage.js';
 import { NARROW_QUERY, PANEL_ID } from '../../Panel.js';
 import type { PanelEffects } from '../../panelEffects.js';
 import { panelWork, type PanelWork } from '../../panelWork.js';
@@ -94,8 +96,7 @@ export function getDebugPanel(): DebugPanelStory {
  */
 export function setUpDebugPanel(context: { parameters: { debugPanel?: DebugPanelParameters } }): () => void {
   const options = context.parameters.debugPanel ?? {};
-  localStorage.removeItem('truapi-debug:section');
-  localStorage.removeItem('truapi-debug:dock');
+  resetStoredChoices();
   const story = createDebugPanelStory();
   current = story;
   if (options.mount !== false) {
@@ -104,9 +105,16 @@ export function setUpDebugPanel(context: { parameters: { debugPanel?: DebugPanel
   return () => {
     story.disposeMounts();
     current = undefined;
-    localStorage.removeItem('truapi-debug:section');
-    localStorage.removeItem('truapi-debug:dock');
+    resetStoredChoices();
   };
+}
+
+/** Puts the panel's dock and tab back to their defaults, which removes their keys. */
+function resetStoredChoices(): void {
+  // Resets the panel's own two choices alone, not every store a story's host fakes hold. The page atoms outlive a
+  // story, so clearing the keys alone would carry a choice over.
+  dockStorage.set('bottom');
+  sectionStorage.set('truapi');
 }
 
 /** The mounted panel. Throws when it is not mounted. */
@@ -152,7 +160,7 @@ export function getRowByTag(tag: string): HTMLElement {
   return row;
 }
 
-/** The header's event counts as shown. Throws when the panel is not mounted. */
+/** The view bar's event counts as shown. Throws when the panel is not mounted. */
 export function readCounts(): string {
   return getPart('td-counts').textContent;
 }
@@ -212,7 +220,7 @@ export function seedMixedTraffic({ advance = () => undefined }: { advance?: (ms:
     layer: 'boot',
     event: 'started',
     flowId: 'flow-boot-1',
-    payload: { chainBackend: 'smoldot', mode: 'direct', contentBackend: 'helia' },
+    payload: { chainBackend: 'smoldot-direct', skipCidCache: false, skipArchiveCache: false },
   });
 }
 
@@ -383,7 +391,7 @@ function createDebugPanelStory() {
   }
 
   function emitSystem({ payload = {}, ...step }: SystemParams): void {
-    // A story also sends payloads older hosts sent, such as boot's `mode`, which the event union does not name.
+    // A story sends only the payload fields it shows, which the event union does not allow without the cast.
     const params = { ...step, payload, timestamp: Date.now() } as BuildSystemEventParams;
     bus.emit(buildSystemEvent(params));
   }
@@ -437,7 +445,7 @@ function seedFilterTraffic(): void {
   emitTruapi({ tag: 'alpha_response', requestId: 'a1', productId: 'b.dot', direction: 'incoming' });
   emitTruapi({ tag: 'beta_request', requestId: 'b1', productId: 'a.dot', direction: 'incoming' });
   emitTruapi({ tag: 'gamma_request', requestId: 'c1', productId: null, direction: 'outgoing' });
-  emitSystem({ layer: 'boot', event: 'started', flowId: 'flow-1', payload: { chainBackend: 'smoldot' } });
+  emitSystem({ layer: 'boot', event: 'started', flowId: 'flow-1', payload: { chainBackend: 'smoldot-direct' } });
 }
 
 function dispatchPointer(target: Element, { type, x = 0, y = 0 }: PointerParams): void {

@@ -1,12 +1,12 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { SiteScreen } from '../runtime/siteSignIn/createSiteRound.js';
+import type { SiteScreen } from '../features/siteSignIn/createSiteRound.js';
 
 /** A round a test drives to its consent and through the window flow. */
 type ConsentingRound = {
   /** Resolves once the round shows `view`. Never rejects. */
-  waitForView: (view: SiteScreen['view']) => Promise<void>;
+  waitForView: (view: SiteScreen['view']) => Promise<SiteScreen>;
   flow: {
     /** Goes on from the consent view. Never rejects. */
     consent: () => Promise<void>;

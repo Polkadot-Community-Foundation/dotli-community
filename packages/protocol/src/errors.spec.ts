@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { TransportUnsupportedProtocolVersionError, denied, domain, hostFailure } from '@dotli/transport';
+import { CHAIN_HALTED_ERROR_DATA } from '@dotli/shared';
 import {
   ProtocolFatalError,
   ProtocolInitFailedError,
@@ -19,28 +20,6 @@ import { protocolSchema } from './schema.js';
 const { frame, resolve, wallet } = protocolSchema.sections;
 
 describe('getFailure', () => {
-  it("As a frame that waits on another, I read its frame status end as the protocol's error classes", () => {
-    // When
-    const ends = [
-      getFailure(frame.status, domain({ tag: 'fatal', value: 'wasm trap' })),
-      getFailure(frame.status, domain({ tag: 'initFailed', value: 'chainHead follow stopped' })),
-      getFailure(frame.status, domain({ tag: 'released', value: 'The worker let go of this tab' })),
-      getFailure(frame.status, domain({ tag: 'versionMismatch', value: 'The peer speaks version 9' })),
-    ];
-
-    // Then
-    expect(ends[0]).toBeInstanceOf(ProtocolFatalError);
-    expect(ends[1]).toBeInstanceOf(ProtocolInitFailedError);
-    expect(ends[2]).toBeInstanceOf(ProtocolPortReleasedError);
-    expect(ends[3]).toBeInstanceOf(ProtocolVersionMismatchError);
-    expect(ends.map(error => error.message)).toEqual([
-      'wasm trap',
-      'chainHead follow stopped',
-      'The worker let go of this tab',
-      'The peer speaks version 9',
-    ]);
-  });
-
   it('As a frame that relays another, I read its failures under the names they crossed with and its call name', () => {
     // When
     const failures = [
@@ -105,7 +84,7 @@ describe('fromTransportError', () => {
 });
 
 describe('toRemoteEnd', () => {
-  it("As a frame, I type the resolver failures the host's error screen tells apart by name, and end any other as my own", () => {
+  it("As a frame, I type the resolver failures the host's error screen tells apart, a halted read as a stopped chain, and end any other as my own", () => {
     // Given
     function createNamedError(name: string, message: string): Error {
       return Object.assign(new Error(message), { name });
@@ -115,6 +94,10 @@ describe('toRemoteEnd', () => {
     const failures = [
       toRemoteEnd(createNamedError('NetworkSyncTimeoutError', 'Asset Hub did not sync')),
       toRemoteEnd(createNamedError('ApiStoppedError', 'The light client stopped')),
+      toRemoteEnd(
+        Object.assign(new Error('Chain transport halted'), { name: 'RpcError', data: CHAIN_HALTED_ERROR_DATA }),
+      ),
+      toRemoteEnd(Object.assign(new Error('Too many requests'), { name: 'RpcError', data: 'other' })),
       toRemoteEnd(new TypeError('bad label')),
     ];
 
@@ -122,6 +105,8 @@ describe('toRemoteEnd', () => {
     expect(failures).toEqual([
       domain({ tag: 'syncTimeout', value: 'Asset Hub did not sync' }),
       domain({ tag: 'apiStopped', value: 'The light client stopped' }),
+      domain({ tag: 'apiStopped', value: 'Chain transport halted' }),
+      hostFailure('RpcError: Too many requests'),
       hostFailure('TypeError: bad label'),
     ]);
   });

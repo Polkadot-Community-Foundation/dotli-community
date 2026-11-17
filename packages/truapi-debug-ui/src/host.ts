@@ -4,7 +4,7 @@
 // What the debug panel reads of the host page and asks of it, so the panel imports none of the page's stores or
 // layers.
 
-import type { ReadableStore } from '@dotli/shared';
+import type { ReadableAtom } from 'nanostores';
 import type { ArchiveFiles } from '@dotli/content';
 
 /** The product on show. Only a dotNS product has a CID. */
@@ -41,14 +41,23 @@ export type PackageVersion = {
   version: string;
 };
 
+/** The page as the tab read it. The product travels with the rows, so a report never pairs two products. */
+export type DiagnosticsSnapshot = {
+  rows: readonly DiagnosticsRow[];
+  /** The label of the product the rows describe, or null with none loaded. */
+  productLabel: string | null;
+  lightClientVersion: string;
+  /** The `polkadot-api` packages, the unscoped one among them. */
+  polkadotApi: readonly PackageVersion[];
+  parityTruapi: readonly PackageVersion[];
+};
+
 /** What the Diagnostics tab shows and shares. */
 export type DiagnosticsSource = {
-  /** The page rows, read each time the tab opens. */
-  rows: () => DiagnosticsRow[];
-  lightClientVersion: () => string;
-  packages: () => { polkadotApi: PackageVersion[]; parityTruapi: PackageVersion[] };
-  /** The shared report of `rows`. */
-  report: (rows: readonly DiagnosticsRow[]) => Promise<string>;
+  /** The page now, read each time the tab opens. */
+  snapshot: () => DiagnosticsSnapshot;
+  /** The shared report of `snapshot`. */
+  report: (snapshot: DiagnosticsSnapshot) => Promise<string>;
   /** Opens the pre-filled issue in a new tab. */
   openIssue: (url: string) => void;
 };
@@ -70,10 +79,10 @@ export type ArchiveLoader = (cid: string) => Promise<ArchiveFiles>;
 
 export type DebugPanelHost = {
   /** The Archive tab reads the files of the product on show. */
-  product: ReadableStore<HostProduct>;
+  product: ReadableAtom<HostProduct>;
   /** The Wallet tab shows the local wallet's account from it. */
-  auth: ReadableStore<HostAuth>;
-  walletMode: ReadableStore<HostWalletMode>;
+  auth: ReadableAtom<HostAuth>;
+  walletMode: ReadableAtom<HostWalletMode>;
   walletSwitch: WalletSwitch;
   diagnostics: DiagnosticsSource;
   archive: ArchiveLoader;

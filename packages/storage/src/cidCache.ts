@@ -2,21 +2,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Label to CID cache, so a repeat visit renders at once while smoldot revalidates.
-// Manifest records ride along as raw text, so a hit is validated by today's validator without a chain read.
+// Manifest records ride along as raw text, so a hit is validated by today's validator without a chain read. The
+// product's dotNS owner rides along too, so a repeat visit reads nothing.
 
 import type { Network } from '@dotli/config';
 import { createCacheReporter } from './createCacheReporter.js';
 import { pageIdb, type DotliIdb } from './db.js';
+import { CID_STORE as STORE } from './schema.js';
 import { unsafe_readStoredRecord } from './unsafe_readStoredRecord.js';
 import { waitForIdbRequest, runIdbTransaction } from '@dotli/shared';
-import { m, spans as S } from '@dotli/metrics';
+import { m } from '@dotli/metrics';
 
-const STORE = 'cids';
+const CACHE_READ_LATENCY = 'cache.read_latency';
+
+const CACHE_WRITE_LATENCY = 'cache.write_latency';
 
 /** Raw record text as read from dotNS, `null` when the record is unset. */
 export type CachedManifests = {
   root: string | null;
   app: string | null;
+  /**
+   * The product's dotNS owner address, `null` for a name with none. Absent when the owner was not read, so the entry
+   * reads as a miss.
+   */
+  owner?: string | null;
 };
 
 type CidEntry = {
@@ -24,9 +33,8 @@ type CidEntry = {
   /** Absent on older entries, which read as a miss. The same name can differ per network. */
   network?: Network;
   cid: string;
-  /** Absent on older entries, which read as a miss. */
+  /** Absent on older entries, which read as a miss, as does one whose manifests have no owner field. */
   manifests?: CachedManifests;
-  timestamp: number;
 };
 
 export type CachedCid = {
@@ -56,91 +64,66 @@ const reportFailure: (action: CacheAction, error: unknown) => void = createCache
 
 /** The label to CID cache over `idb`, the page's own by default. */
 export function createCidCache({ idb = pageIdb }: Params = {}) {
-  /** Resolves `null` on a miss, and rejects when the storage fails. */
-  async function readCachedCid(label: string, network: Network): Promise<CachedCid | null> {
-    const stop = m.timer(S.CACHE_READ_LATENCY);
+  async function get(label: string, network: Network): Promise<CachedCid | null> {
+    const stop = m.timer(CACHE_READ_LATENCY);
     try {
       const db = await idb.connect();
       const entry = unsafe_readStoredRecord<CidEntry | undefined>(
         await waitForIdbRequest(db.transaction(STORE, 'readonly').objectStore(STORE).get(label)),
       );
-      return entry?.manifests === undefined || entry.network !== network
+      return entry?.manifests?.owner === undefined || entry.network !== network
         ? null
         : { cid: entry.cid, manifests: entry.manifests };
+    } catch (error) {
+      reportFailure('read', error);
+      return null;
     } finally {
       stop();
     }
   }
 
-  async function get(label: string, network: Network): Promise<CachedCid | null> {
+  /** Resolves whether the change committed. A failure is reported here. */
+  async function write(
+    action: Exclude<CacheAction, 'read'>,
+    change: (store: IDBObjectStore) => void,
+  ): Promise<boolean> {
+    const stop = m.timer(CACHE_WRITE_LATENCY);
     try {
-      return await readCachedCid(label, network);
+      const db = await idb.connect();
+      await runIdbTransaction({
+        db,
+        stores: STORE,
+        mode: 'readwrite',
+        body: transaction => {
+          change(transaction.objectStore(STORE));
+        },
+      });
+      return true;
     } catch (error) {
-      reportFailure('read', error);
-      return null;
+      reportFailure(action, error);
+      return false;
+    } finally {
+      stop();
     }
   }
 
   async function set({ label, network, cid, manifests }: SetParams): Promise<void> {
-    const stop = m.timer(S.CACHE_WRITE_LATENCY);
-    const entry: CidEntry = { label, network, cid, manifests, timestamp: Date.now() };
-    try {
-      const db = await idb.connect();
-      await runIdbTransaction({
-        db,
-        stores: STORE,
-        mode: 'readwrite',
-        body: transaction => {
-          transaction.objectStore(STORE).put(entry);
-        },
-      });
-      stop();
-    } catch (error) {
-      stop();
-      reportFailure('write', error);
-    }
+    const entry: CidEntry = { label, network, cid, manifests };
+    await write('write', store => {
+      store.put(entry);
+    });
   }
 
-  async function clear(): Promise<boolean> {
-    const stop = m.timer(S.CACHE_WRITE_LATENCY);
-    try {
-      const db = await idb.connect();
-      await runIdbTransaction({
-        db,
-        stores: STORE,
-        mode: 'readwrite',
-        body: transaction => {
-          transaction.objectStore(STORE).clear();
-        },
-      });
-      stop();
-      return true;
-    } catch (error) {
-      stop();
-      reportFailure('clear', error);
-      return false;
-    }
+  function clear(): Promise<boolean> {
+    return write('clear', store => {
+      store.clear();
+    });
   }
 
-  async function evict(label: string): Promise<boolean> {
-    const stop = m.timer(S.CACHE_WRITE_LATENCY);
-    try {
-      const db = await idb.connect();
-      await runIdbTransaction({
-        db,
-        stores: STORE,
-        mode: 'readwrite',
-        body: transaction => {
-          transaction.objectStore(STORE).delete(label);
-        },
-      });
-      stop();
-      return true;
-    } catch (error) {
-      stop();
-      reportFailure('evict', error);
-      return false;
-    }
+  function evict(label: string): Promise<boolean> {
+    return write('evict', store => {
+      store.delete(label);
+    });
   }
 
   return {

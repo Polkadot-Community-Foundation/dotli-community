@@ -5,7 +5,6 @@ import { recordLog } from '@dotli/shared/testing';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { DotnsContracts } from '@dotli/config';
 import type { Api } from './createRawApi.js';
-import { PartialStorageReadError } from './partialStorageReadError.js';
 import { readRootManifest } from './readRootManifest.js';
 
 // A manifest read takes only the TLD, the ContentResolver and the text records slot, so the cast skips the rest.
@@ -15,14 +14,26 @@ const DOTNS = {
   STORAGE_SLOTS: { TEXT_RECORDS: 3 },
 } as unknown as DotnsContracts;
 
-const DOTNS_WITHOUT_TEXT_RECORDS: DotnsContracts = { ...DOTNS, STORAGE_SLOTS: { REGISTRY_RECORDS: 0, CONTENTHASH: 0 } };
+const DOTNS_WITHOUT_TEXT_RECORDS: DotnsContracts = {
+  ...DOTNS,
+  STORAGE_SLOTS: {
+    REGISTRY_RECORDS: 0,
+    CONTENTHASH: 0,
+    REGISTRY_PROTOCOL_REGISTRY: 1,
+    PROTOCOL_REGISTRY_ADDRESSES: 0,
+    REGISTRAR_OWNERS: `0x${'00'.repeat(32)}`,
+    STORE_FACTORY_LABEL_STORES: 5,
+    LABEL_STORE_LABELS: 2,
+    LABEL_STORE_LABEL_LIST: 3,
+  },
+};
 
 const ROOT = JSON.stringify({ $v: 1, displayName: 'DOOM', description: 'Doom', icon: { cid: 'bafk', format: 'png' } });
 /**
  * A contract whose text record holds `text`, served slot by slot in the order a read asks: the length slot, then each
- * 32-byte chunk. A chunk index in `missing` reads as unset, as a node that lost it would answer.
+ * 32-byte chunk.
  */
-function createRecordApi(text: string, missing: readonly number[] = []): Api {
+function createRecordApi(text: string): Api {
   const bytes = new TextEncoder().encode(text);
   // A Solidity `bytes` value of 32 bytes or more keeps `length * 2 + 1` in its own slot.
   const header = new Uint8Array(32);
@@ -32,7 +43,7 @@ function createRecordApi(text: string, missing: readonly number[] = []): Api {
     word >>= 8n;
   }
   const chunks = Array.from({ length: Math.ceil(bytes.length / 32) }, (_, chunk) =>
-    missing.includes(chunk) ? null : Uint8Array.from({ length: 32 }, (_, offset) => bytes[chunk * 32 + offset] ?? 0),
+    Uint8Array.from({ length: 32 }, (_, offset) => bytes[chunk * 32 + offset] ?? 0),
   );
   const slots: (Uint8Array | null)[] = [header, ...chunks];
   const api: Partial<Api> = {
@@ -75,6 +86,8 @@ function createRecordingApi(): { api: Api; calls: string[] } {
       calls.push('readSlot');
       return Promise.resolve(null);
     },
+    resolveTrieIds: () => Promise.resolve(new Map()),
+    readSlots: (_contract, keys) => Promise.resolve(keys.map(() => null)),
     onStop: () => {
       calls.push('onStop');
       return () => undefined;
@@ -113,17 +126,6 @@ describe('readRootManifest', () => {
 
     // Then
     await expect(result).rejects.toBe(failure);
-  });
-
-  it('As a dotli maintainer, I read a manifest that stops partway and the read fails as a partial read, not a wrong manifest', async () => {
-    // Given a record whose second chunk the node no longer has
-    recordLog({ onFinished: onTestFinished });
-
-    // When
-    const result = readRootManifest({ api: createRecordApi(ROOT, [1]), dotns: DOTNS, label: 'doom' });
-
-    // Then
-    await expect(result).rejects.toBeInstanceOf(PartialStorageReadError);
   });
 
   it('As a dotli user on a network with no text records, I read a manifest and get unsupported without a storage read or a log line', async () => {

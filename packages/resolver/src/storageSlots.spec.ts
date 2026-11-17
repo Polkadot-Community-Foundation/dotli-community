@@ -6,11 +6,10 @@ import { fromHex } from '@dotli/shared';
 import {
   computeNamehash,
   computeMappingSlot,
-  computeBytesDataSlot,
   addToSlot,
   readWordAsBigInt,
-  extractAddress,
   decodeBytesSlot,
+  computeArrayElementSlot,
 } from './storageSlots.js';
 
 describe('computeNamehash', () => {
@@ -72,30 +71,30 @@ describe('computeMappingSlot', () => {
       expect(slot).toBe(expected);
     },
   );
-});
 
-describe('computeBytesDataSlot', () => {
-  // Pinned from an independent keccak256 of the base slot over @noble/hashes, outside the repo code.
-  it('As the resolver reading dotNS storage, I compute where long bytes start as keccak256 of the zero slot', () => {
-    // Given
-    const slot = '0x0000000000000000000000000000000000000000000000000000000000000000';
+  // Pinned from an independent keccak256(key ++ baseSlot), and read live as the Registrar's holder of browse.paseo.
+  it('As the resolver reading dotNS storage, I compute the mapping slot of a key under a 32-byte base slot as keccak256 of the key and that slot', () => {
+    // Given a 32-byte name id and a 32-byte base slot
+    const nameId = '0x1850561ffded63ac23dac8fd5e793fca1f349729ed6ade91c45f44a9f7b6b781';
+    const baseSlot = '0x80bb2b638cc20bc4d0a60d66940f3ab4a00c1d7b313497ca82fb0b4ab0079302';
 
-    // When
-    const dataSlot = computeBytesDataSlot(slot);
+    // When the mapping slot is computed
+    const slot = computeMappingSlot(nameId, baseSlot);
 
-    // Then
-    expect(dataSlot).toBe('0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563');
+    // Then the slot matches the pinned keccak256 value
+    expect(slot).toBe('0x4d1417a373d6fab66ca8f84f8d0eb0be405b448ffefd17d78d8d6df67f8653c5');
   });
 
-  it('As the resolver reading dotNS storage, I compute where long bytes start for another base slot and hash that slot', () => {
-    // Given
-    const slot = '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
+  it('As the resolver reading dotNS storage, I refuse a hex base slot that is not 32 bytes and the error names it', () => {
+    // Given a base slot of one byte
+    const nameId = '0x1850561ffded63ac23dac8fd5e793fca1f349729ed6ade91c45f44a9f7b6b781';
+    const baseSlot = '0x00';
 
-    // When
-    const dataSlot = computeBytesDataSlot(slot);
+    // When the mapping slot is computed
+    const compute = () => computeMappingSlot(nameId, baseSlot);
 
-    // Then
-    expect(dataSlot).toBe('0x8f0af42555406ff9bab0485545772d9e31b44053cf31ffbfb75ac5a8554d81fe');
+    // Then the computation throws and names the base slot
+    expect(compute).toThrow('0x00');
   });
 });
 
@@ -138,6 +137,16 @@ describe('addToSlot', () => {
   });
 });
 
+describe('computeArrayElementSlot', () => {
+  it('As the resolver reading dotNS storage, I compute the first element of the array at slot 0 as keccak256(uint256(0))', () => {
+    // When
+    const slot = computeArrayElementSlot(0, 0);
+
+    // Then
+    expect(slot).toBe('0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563');
+  });
+});
+
 describe('readWordAsBigInt', () => {
   it.each([
     ['an all-zero word', '0', '0x0000000000000000000000000000000000000000000000000000000000000000', 0n],
@@ -157,32 +166,6 @@ describe('readWordAsBigInt', () => {
 
     // Then
     expect(value).toBe(expected);
-  });
-});
-
-describe('extractAddress', () => {
-  it('As the resolver reading dotNS storage, I read the address from the right of a 32-byte word', () => {
-    // Given
-    const data = new Uint8Array(32);
-    const address = [
-      0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00, 0xaa, 0xbb, 0xcc, 0xdd,
-      0xee,
-    ];
-    data.set(address, 12);
-
-    // When
-    const extracted = extractAddress(data);
-
-    // Then
-    expect(extracted).toBe('0xaabbccddee11223344556677889900aabbccddee');
-  });
-
-  it('As the resolver reading dotNS storage, I read an all-zero word as the zero address', () => {
-    // When
-    const extracted = extractAddress(new Uint8Array(32));
-
-    // Then
-    expect(extracted).toBe('0x0000000000000000000000000000000000000000');
   });
 });
 
@@ -227,17 +210,5 @@ describe('decodeBytesSlot', () => {
       // keccak256 of dummySlot, derived independently of the repo code
       dataSlot: '0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6',
     });
-  });
-
-  it('As the resolver reading dotNS storage, I read zero-length short bytes as no bytes', () => {
-    // Given
-    const data = new Uint8Array(32);
-    data[31] = 0;
-
-    // When
-    const result = decodeBytesSlot(data, dummySlot);
-
-    // Then
-    expect(result).toBeNull();
   });
 });

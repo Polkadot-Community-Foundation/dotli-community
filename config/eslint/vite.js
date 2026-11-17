@@ -8,6 +8,10 @@ import turboPlugin from 'eslint-plugin-turbo';
 import tseslint from 'typescript-eslint';
 import { defineConfig } from 'eslint/config';
 
+import { featureTestFiles, storyFiles, testOnlyFiles } from './testFiles.js';
+
+export { featureBoundaries } from './featureBoundaries.js';
+
 // eslint-plugin-solid types its rules against the ESLint 8 rule API, which
 // ESLint 10's `Plugin` type rejects. The rules themselves run under ESLint 10.
 const solidPlugin = /** @type {import("eslint").ESLint.Plugin} */ (/** @type {unknown} */ (solid));
@@ -30,19 +34,8 @@ const testOnlyModuleImport = {
 // What shipped code may not import.
 const shippedImportPatterns = [tsExtensionImport, testingEntryImport, testOnlyModuleImport];
 
-// Unit specs, the fake of one module beside it, and shared fixtures. Globs match from each package's own config.
-const testOnlyFiles = [
-  '**/src/**/*.spec.ts',
-  '**/src/**/*.spec.tsx',
-  '**/src/**/*.fake.ts',
-  '**/src/testing/**/*.ts',
-  '**/src/testing/**/*.tsx',
-];
-
 // Shared fixtures that drive a page, which functional tests run under happy-dom and story plays in a real browser.
 const domTestingFiles = ['**/src/testing/**/*.dom.ts', '**/src/testing/**/*.dom.tsx'];
-
-const storyFiles = ['**/src/**/*.stories.tsx'];
 
 // Story fixtures and frames. Only stories import them, and they run in the browser with them.
 const storyFixtureFiles = ['**/src/testing/stories/**/*.ts', '**/src/testing/stories/**/*.tsx'];
@@ -56,7 +49,7 @@ const storyTestOnlyModuleImport = {
 const storyImportPatterns = [tsExtensionImport, storyTestOnlyModuleImport];
 
 const noDomMessage =
-  'Unit specs run under Node with no DOM. Test a component with a story play, or DOM wiring with a functional test in tests/.';
+  "Unit specs run under Node with no DOM. Test a component with a story play, or DOM wiring with a functional test in tests/ or in a feature's __tests__ folder.";
 
 const domToolingImports = {
   patterns: [
@@ -105,7 +98,7 @@ export const restrictedSyntax = [
     // A genuinely safe swallow takes an eslint-disable with a one-line reason, so it gets reviewed.
     selector: 'CatchClause > BlockStatement[body.length=0]',
     message:
-      'Silent catch {} is forbidden. Either rethrow with `{ cause: err }`, or call captureException + log.error and emit an outcome metric.',
+      "Silent catch {} is forbidden. Either rethrow with `{ cause: err }`, or report it through the feature's reporter (`report.defect` or `report.expected`).",
   },
   {
     selector:
@@ -118,6 +111,36 @@ export const restrictedSyntax = [
       'ExportNamedDeclaration > VariableDeclaration > VariableDeclarator[id.name=/_(FAILURE|TIMEOUT|RETRY|RETRIES)$/]',
     message:
       'Parallel _FAILURE / _TIMEOUT / _RETRY metric constants are forbidden. Use one name + `{ outcome, reason }`.',
+  },
+  {
+    selector: "CallExpression[callee.property.name='forEach']",
+    message: 'Loop with `for...of`, which supports `break`, `continue`, `return` and `await`.',
+  },
+  {
+    selector: 'ForInStatement',
+    message: 'Loop with `for...of` over `Object.keys` or `Object.entries`. `for...in` walks prototype keys.',
+  },
+  {
+    selector: 'TSEnumDeclaration',
+    message: 'Model a closed set as a string literal union.',
+  },
+  {
+    selector: 'ExportAllDeclaration',
+    message: 'List every public name. The barrel is the package API, readable in one place.',
+  },
+  {
+    selector:
+      ':matches(Program, ExportNamedDeclaration) > VariableDeclaration > VariableDeclarator[init.type=/^(ArrowFunctionExpression|FunctionExpression)$/]:not([id.typeAnnotation])',
+    message:
+      'A top-level function is a `function` declaration, so the file reads top-down. An arrow typed by its variable, such as a handler of a declared type, may stay.',
+  },
+  {
+    selector: "TSIndexedAccessType[objectType.type='TSTypeQuery'][indexType.type='TSNumberKeyword']",
+    message: 'Write the union first and type the list by it. Never derive a union from an `as const` list.',
+  },
+  {
+    selector: ':function > ObjectPattern.params[properties.length=1] > RestElement',
+    message: 'Destructure the params you read, or take the object whole. Copying it with `{ ...params }` hides both.',
   },
 ];
 
@@ -162,8 +185,13 @@ export const config = defineConfig([
       '@typescript-eslint/prefer-nullish-coalescing': 'error',
       '@typescript-eslint/prefer-optional-chain': 'error',
       '@typescript-eslint/no-non-null-assertion': 'error',
-      '@typescript-eslint/no-confusing-void-expression': 'error',
+      '@typescript-eslint/no-confusing-void-expression': 'off',
       '@typescript-eslint/consistent-type-definitions': ['error', 'type'],
+      '@typescript-eslint/consistent-type-exports': 'error',
+      'max-params': 'off',
+      '@typescript-eslint/max-params': ['error', { max: 3 }],
+      // `modified` counts a whole `switch` as one branch, so a mapping over a union is not split to please the count.
+      complexity: ['error', { max: 12, variant: 'modified' }],
       'no-console': 'error',
       eqeqeq: ['error', 'always'],
       'no-var': 'error',
@@ -182,8 +210,9 @@ export const config = defineConfig([
   },
   {
     // Shipped code never reaches test-only modules. The recorder replaces the bound Sentry, so shipped code that
-    // reached it would drop every metric.
+    // reached it would drop every metric. An app's functional and end-to-end tests in `__tests__` never ship.
     files: ['**/src/**/*.ts', '**/src/**/*.tsx'],
+    ignores: featureTestFiles,
     rules: {
       'no-restricted-imports': [
         'error',
@@ -191,6 +220,14 @@ export const config = defineConfig([
           patterns: shippedImportPatterns,
         },
       ],
+    },
+  },
+  {
+    // Named exports only. Stories, and the entries a tool loads by its default export, turn this off.
+    files: ['**/src/**/*.ts', '**/src/**/*.tsx'],
+    ignores: storyFiles,
+    rules: {
+      'no-restricted-exports': ['error', { restrictDefaultExports: { direct: true, named: true, defaultFrom: true } }],
     },
   },
   {
@@ -215,24 +252,24 @@ export const config = defineConfig([
     },
   },
   {
-    files: ['tests/**/*.ts'],
+    // Test doubles and best-effort Playwright steps are deliberate no-ops. A test's helpers and table rows take their
+    // inputs positionally.
+    files: ['tests/**/*.ts', 'tests/**/*.tsx', ...featureTestFiles],
     rules: {
       'no-console': 'off',
-    },
-  },
-  {
-    // Test doubles and best-effort Playwright steps are deliberate no-ops.
-    files: ['tests/**/*.ts', 'tests/**/*.tsx'],
-    rules: {
       '@typescript-eslint/no-empty-function': 'off',
+      '@typescript-eslint/max-params': 'off',
     },
   },
   {
     // Test-only files in src get the test relaxations, may import `./testing` entries, and refuse DOM tooling.
     files: testOnlyFiles,
+    // A functional or end-to-end spec in `__tests__` is no unit spec, though it ends in `.spec.ts`.
+    ignores: featureTestFiles,
     rules: {
       'no-console': 'off',
       '@typescript-eslint/no-empty-function': 'off',
+      '@typescript-eslint/max-params': 'off',
       'no-restricted-imports': ['error', domToolingImports],
       'no-restricted-globals': ['error', ...domGlobals.map(name => ({ name, message: noDomMessage }))],
       // `globalThis.document` reaches the same globals past the rule above.
@@ -317,20 +354,19 @@ export function onlyAllowedScopes(allowed, message) {
  * @param {string[]} [within]
  */
 export function importBans(bans, within) {
-  const directLoads = ['**/vite.config.ts'];
   /** @param {string[]} globs */
   const scoped = globs => (within === undefined ? globs : globs.flatMap(glob => within.map(zone => [glob, zone])));
   return defineConfig([
     {
       files: scoped(['**/*.ts', '**/*.tsx', '**/*.js']),
-      ignores: directLoads,
+      // Node loads a Vite config directly, so it imports `.ts` files.
+      ignores: ['**/vite.config.ts'],
       rules: {
         'no-restricted-imports': ['error', { patterns: [tsExtensionImport, ...bans] }],
       },
     },
     {
       files: scoped(['**/src/**/*.ts', '**/src/**/*.tsx']),
-      ignores: directLoads,
       rules: {
         'no-restricted-imports': ['error', { patterns: [...shippedImportPatterns, ...bans] }],
       },

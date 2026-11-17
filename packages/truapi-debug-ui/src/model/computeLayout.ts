@@ -1,28 +1,27 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Rails are chainHead follow subscriptions, ticks their lifecycle events, boxes everything else.
-// An operation's `follow_N` id names the Nth follow-start per (product, genesis), and its box
-// ends at the follow event carrying its operationId.
+// Rails are chainHead follow subscriptions, ticks their lifecycle events, boxes everything else. An operation's box
+// ends at the follow event carrying its operationId, and links to the rail of the subscription that event came on.
 
 import { isClosingTag, isRequestTag, isResponseTag, stripTagSuffix } from './callTag.js';
 import { CHAIN_FOLLOW_RECEIVE_TAG, CHAIN_FOLLOW_START_TAG } from './chainFollowTags.js';
 import type { GlobalYPositions } from './computeGlobalYPositions.js';
-import { decodeChainAnnotations, type ChainAnnotations } from './decodeChainAnnotations.js';
+import { decodeChainAnnotations, isOperationStarter, type ChainAnnotations } from './decodeChainAnnotations.js';
 import { formatChainDisplay } from './formatChainDisplay.js';
 import { formatChainLabel } from './formatChainLabel.js';
 import { formatChainOutcome } from './formatChainOutcome.js';
+import { formatChainValue } from './formatChainValue.js';
 import { formatCount } from './formatCount.js';
 import { getCorrelationKey } from './getCorrelationKey.js';
 import { getEventLabel } from './getEventLabel.js';
 import { getHashColor } from './getHashColor.js';
-import { getSystemEventKey, type SystemEventKey } from './getSystemEventKey.js';
 import { getRidColor } from './getRidColor.js';
+import { findSystemEventFacts } from './systemEventFacts.js';
 import type { EventSeq, StoredEvent, StoredSystemEvent, StoredTruapiEvent } from './storedEvent.js';
 import { ROW_HEIGHT } from './timelineGeometry.js';
 
 export type SegmentEntry = {
-  kind: 'segment';
   seqAnchor: EventSeq;
   memberSeqs: EventSeq[];
   topY: number;
@@ -37,9 +36,7 @@ export type SegmentEntry = {
 };
 
 export type RailEntry = {
-  kind: 'rail';
   seqAnchor: EventSeq;
-  memberSeqs: EventSeq[];
   topY: number;
   bottomY: number;
   railIndex: number;
@@ -49,123 +46,68 @@ export type RailEntry = {
 };
 
 export type TickEntry = {
-  kind: 'tick';
   seq: EventSeq;
   y: number;
   color: string;
   variant: string;
-  /** Null when the rail was evicted. */
-  linkedRailIndex: number | null;
 };
-
-export type TimelineEntry = SegmentEntry | RailEntry | TickEntry;
 
 export type Layout = {
-  entries: TimelineEntry[];
+  rails: RailEntry[];
+  /** Boxes, each in its lane. */
+  segments: SegmentEntry[];
+  ticks: TickEntry[];
   laneCount: number;
-  railCount: number;
-  totalHeight: number;
-  seqToEntryIndex: Map<EventSeq, number>;
 };
 
-type WorkingSegment = {
-  seqAnchor: EventSeq;
-  memberSeqs: EventSeq[];
-  topY: number;
-  bottomY: number;
-  color: string;
-  label: string;
-  detail?: string | undefined;
-  pending: boolean;
-  linkedRailIndex?: number | undefined;
-  startAt: number;
-  endAt: number | null;
+/** A segment before it is placed in a lane. */
+type WorkingSegment = Omit<SegmentEntry, 'lane'>;
+
+/** One call's or one flow's events, in order. Never empty. */
+type Group<Event> = [Event, ...Event[]];
+
+/** An event a follow subscription delivered, with its ChainHeadEvent variant. */
+type FollowReceive = {
+  event: StoredTruapiEvent;
+  variant: string;
+  /** The operation the event reports on, if any. */
+  operationId: string | undefined;
 };
 
-type BuildSegmentParams = {
-  /** One TrUAPI call's events. */
-  group: StoredTruapiEvent[];
-  seqToY: Map<EventSeq, number>;
-  /** Where a pending segment ends. */
-  nowY: number;
-  /** The terminal follow event of each chain operation, by operation id. */
-  terminalByOperationId: Map<string, StoredTruapiEvent>;
-  followKeyToRails: Map<string, RailEntry[]>;
-};
-
-type BuildSystemSegmentParams = {
-  /** One host flow's events. */
-  group: StoredSystemEvent[];
-  seqToY: Map<EventSeq, number>;
-  /** Where a segment whose last row has no Y ends. */
-  nowY: number;
-};
-
-type GetBottomYParams = {
-  seqToY: Map<EventSeq, number>;
-  /** The seq of the segment's last row, or `undefined` while it has none. */
-  endSeq: EventSeq | undefined;
-  /** Where an open segment ends. */
-  nowY: number;
+/** What the chain follows tell an operation's box. */
+type Follows = {
+  /** The terminal follow event of each chain operation, by its operation key. */
+  terminals: Map<string, FollowReceive>;
+  /** Each rail by the call key of its follow-start. */
+  railByCall: Map<string, RailEntry>;
+  /** The rails of each (product, genesis) pair, in follow-start order. */
+  railsByFollowKey: Map<string, RailEntry[]>;
 };
 
 type DescribeOperationBoxParams = {
-  requestChain: ChainAnnotations | null;
-  responseChain: ChainAnnotations | null | undefined;
+  requestChain: ChainAnnotations;
+  /** Null until the response arrives. */
+  responseChain: ChainAnnotations | null;
   /** The operation's terminal follow event, once seen. */
-  terminal: StoredTruapiEvent | undefined;
+  terminal: FollowReceive | null;
 };
 
-type LinkRailParams = {
-  requestEvent: StoredTruapiEvent;
+type BuildOperationSegmentParams = {
+  call: Group<StoredTruapiEvent>;
+  /** The request's annotations, of an operation-starting kind. */
   chain: ChainAnnotations;
-  followKeyToRails: Map<string, RailEntry[]>;
+  positions: GlobalYPositions;
+  follows: Follows;
 };
 
-type BuildRailsParams = {
-  events: readonly StoredEvent[];
-  /** The events by correlation key. */
-  groups: Map<string, StoredEvent[]>;
-  seqToY: Map<EventSeq, number>;
-  /** Where a rail with no `Stop` yet ends. */
-  nowY: number;
+type FindOperationRailParams = {
+  /** The operation's request. */
+  first: StoredTruapiEvent;
+  chain: ChainAnnotations;
+  /** The operation's terminal follow event, once seen. */
+  terminal: FollowReceive | null;
+  follows: Follows;
 };
-
-type BuildRailsResult = {
-  /** One rail per follow-start, in event order. */
-  rails: RailEntry[];
-  /** Each rail by the request id of its follow-start. */
-  railByRequestId: Map<string, RailEntry>;
-  /** The rails of each (product, genesis) pair, in follow-start order. */
-  followKeyToRails: Map<string, RailEntry[]>;
-};
-
-type BuildSegmentsAndTicksParams = Omit<BuildSegmentParams, 'group'> & {
-  /** The events by correlation key. */
-  groups: Map<string, StoredEvent[]>;
-  /** Each rail by the request id of its follow-start. */
-  railByRequestId: Map<string, RailEntry>;
-};
-
-type BuildSegmentsAndTicksResult = {
-  /** The segments, not yet placed in lanes. */
-  segments: WorkingSegment[];
-  ticks: TickEntry[];
-};
-
-type PackLanesResult = {
-  /** The segments in placement order, each with its lane. */
-  segments: SegmentEntry[];
-  laneCount: number;
-};
-
-const LIFECYCLE_VARIANTS: ReadonlySet<string> = new Set([
-  'Initialized',
-  'NewBlock',
-  'BestBlockChanged',
-  'Finalized',
-  'Stop',
-]);
 
 const OPERATION_TERMINAL_VARIANTS: ReadonlySet<string> = new Set([
   'OperationBodyDone',
@@ -175,8 +117,9 @@ const OPERATION_TERMINAL_VARIANTS: ReadonlySet<string> = new Set([
   'OperationInaccessible',
 ]);
 
-// The panel's palette, resolved by the browser where the timeline draws, so a palette change reaches the chart.
-const LIFECYCLE_COLORS: Record<string, string> = {
+// The follow lifecycle events drawn as ticks, in the panel's palette. The browser resolves it where the timeline
+// draws, so a palette change reaches the chart.
+const LIFECYCLE_COLORS: Partial<Record<string, string>> = {
   Initialized: 'var(--td-focus)',
   NewBlock: 'var(--td-blue)',
   BestBlockChanged: 'var(--td-amber)',
@@ -184,206 +127,150 @@ const LIFECYCLE_COLORS: Record<string, string> = {
   Stop: 'var(--td-health-bad)',
 };
 
-const SYSTEM_TERMINATOR_EVENTS: ReadonlySet<SystemEventKey> = new Set([
-  'boot:ready',
-  'boot:landing_page_shown',
-  'bridge:first_outbound',
-  'render:iframe_ready',
-  'sandbox:document_written',
-  'main:monitor_stopped',
-]);
-
-const SYSTEM_TERMINATOR_SUFFIXES: readonly string[] = [
-  'failed',
-  'completed',
-  'terminated',
-  'peer_action_processed',
-  'peer_action_failed',
-  'host_action_response_received',
-  'host_action_failed',
-  'resolve_completed',
-  'resolve_failed',
-];
-
 /**
- * The rails, boxes and ticks of `events` on the rows `positions` gives, with lanes packed leftmost first. Throws only for
- * an empty group, which the grouping never makes.
+ * The rails, boxes and ticks of `events` on the rows `positions` gives, with lanes packed leftmost first. `events` is
+ * in seq order, as a store lists them.
  */
 export function computeLayout(events: readonly StoredEvent[], positions: GlobalYPositions): Layout {
-  const { seqToY, totalHeight } = positions;
-  const nowY = totalHeight;
-  const groups = groupByCorrelationKey(events);
-  const { rails, railByRequestId, followKeyToRails } = buildRails({ events, groups, seqToY, nowY });
-  const terminalByOperationId = indexOperationTerminals(events);
-  const { segments, ticks } = buildSegmentsAndTicks({
-    groups,
-    railByRequestId,
-    seqToY,
-    nowY,
-    terminalByOperationId,
-    followKeyToRails,
-  });
-  const lanes = packLanes(segments, nowY);
-  const entries: TimelineEntry[] = [...rails, ...lanes.segments, ...ticks];
+  const truapiEvents = events.filter(event => event.kind === 'truapi');
+  const calls = groupBy(truapiEvents, getCorrelationKey);
+  const flows = groupBy(
+    events.filter(event => event.kind === 'system'),
+    event => event.flowId,
+  );
+  const receives = truapiEvents.map(readFollowReceive).filter(receive => receive !== null);
+  const { rails, railByCall, railsByFollowKey } = buildRails(calls, receives, positions);
+  const follows: Follows = { terminals: findTerminals(receives), railByCall, railsByFollowKey };
+
+  const segments: WorkingSegment[] = [];
+  for (const [call, group] of calls) {
+    // A follow subscription is its rail and ticks.
+    if (railByCall.has(call)) {
+      continue;
+    }
+    const segment = buildSegment(group, positions, follows);
+    if (segment !== null) {
+      segments.push(segment);
+    }
+  }
+  for (const flow of flows.values()) {
+    segments.push(buildSystemSegment(flow, positions));
+  }
 
   return {
-    entries,
-    laneCount: lanes.laneCount,
-    railCount: rails.length,
-    totalHeight,
-    seqToEntryIndex: indexEntries(entries),
+    rails,
+    ticks: buildTicks(receives, railByCall, positions),
+    ...packLanes(segments, positions.totalHeight),
   };
 }
 
-function groupByCorrelationKey(events: readonly StoredEvent[]): Map<string, StoredEvent[]> {
-  const groups = new Map<string, StoredEvent[]>();
-  for (const event of events) {
-    const key = getCorrelationKey(event);
+/** The follow event `event` delivers, with its ChainHeadEvent variant, or null for any other event. */
+function readFollowReceive(event: StoredTruapiEvent): FollowReceive | null {
+  if (event.tag !== CHAIN_FOLLOW_RECEIVE_TAG) {
+    return null;
+  }
+  const chain = decodeChainAnnotations(event.tag, event.payload);
+  if (chain?.chainEventTag === undefined) {
+    return null;
+  }
+  return { event, variant: chain.chainEventTag, operationId: chain.operationId };
+}
+
+/** The terminal follow event of each chain operation in `receives`, by its operation key. */
+function findTerminals(receives: readonly FollowReceive[]): Map<string, FollowReceive> {
+  const terminals = new Map<string, FollowReceive>();
+  for (const receive of receives) {
+    if (receive.operationId === undefined || !OPERATION_TERMINAL_VARIANTS.has(receive.variant)) {
+      continue;
+    }
+    const operation = getOperationKey(receive.event.productId, receive.operationId);
+    // The first terminal seen for an operation wins.
+    if (!terminals.has(operation)) {
+      terminals.set(operation, receive);
+    }
+  }
+  return terminals;
+}
+
+/** The rail of each follow subscription in `calls`, with the rail indexes `Follows` keeps. */
+function buildRails(
+  calls: ReadonlyMap<string, Group<StoredTruapiEvent>>,
+  receives: readonly FollowReceive[],
+  positions: GlobalYPositions,
+) {
+  const receivesByCall = groupBy(receives, receive => getCorrelationKey(receive.event));
+  const rails: RailEntry[] = [];
+  const railByCall = new Map<string, RailEntry>();
+  const railsByFollowKey = new Map<string, RailEntry[]>();
+  for (const [call, [start]] of calls) {
+    if (start.tag !== CHAIN_FOLLOW_START_TAG) {
+      continue;
+    }
+    const genesisHash = decodeChainAnnotations(start.tag, start.payload)?.genesisHash;
+    const followKey = getFollowKey(start.productId, genesisHash);
+    const siblings = railsByFollowKey.get(followKey) ?? [];
+    const delivered = receivesByCall.get(call) ?? [];
+    const stop = delivered.find(receive => receive.variant === 'Stop');
+    const rail: RailEntry = {
+      seqAnchor: start.seq,
+      topY: getTopY(positions, start.seq),
+      bottomY: getBottomY(positions, stop?.event.seq),
+      railIndex: rails.length,
+      color: getHashColor(genesisHash ?? '', { lightness: 74, chroma: 0.12 }),
+      label: formatRailLabel(genesisHash, siblings.length),
+      pending: stop === undefined,
+    };
+    rails.push(rail);
+    railByCall.set(call, rail);
+    siblings.push(rail);
+    railsByFollowKey.set(followKey, siblings);
+  }
+  return { rails, railByCall, railsByFollowKey };
+}
+
+/** A tick for each lifecycle event a follow subscription with a rail delivered. */
+function buildTicks(
+  receives: readonly FollowReceive[],
+  railByCall: Follows['railByCall'],
+  positions: GlobalYPositions,
+): TickEntry[] {
+  const ticks: TickEntry[] = [];
+  for (const { event, variant } of receives) {
+    const color = LIFECYCLE_COLORS[variant];
+    // A subscription whose follow-start was evicted has no rail to draw on.
+    if (color === undefined || !railByCall.has(getCorrelationKey(event))) {
+      continue;
+    }
+    ticks.push({
+      seq: event.seq,
+      y: getTopY(positions, event.seq) + ROW_HEIGHT / 2,
+      color,
+      variant,
+    });
+  }
+  return ticks;
+}
+
+/** `items` grouped by `getKey`, the groups in order of first appearance and each in input order. */
+function groupBy<Item>(items: readonly Item[], getKey: (item: Item) => string): Map<string, Group<Item>> {
+  const groups = new Map<string, Group<Item>>();
+  for (const item of items) {
+    const key = getKey(item);
     const group = groups.get(key);
-    if (group !== undefined) {
-      group.push(event);
+    if (group === undefined) {
+      groups.set(key, [item]);
     } else {
-      groups.set(key, [event]);
+      group.push(item);
     }
   }
   return groups;
 }
 
-function buildRails({ events, groups, seqToY, nowY }: BuildRailsParams): BuildRailsResult {
-  const followKeyToRails = new Map<string, RailEntry[]>();
-  const rails: RailEntry[] = [];
-  const railByRequestId = new Map<string, RailEntry>();
-  let nextRailIndex = 0;
-
-  for (const event of events) {
-    if (event.kind !== 'truapi') {
-      continue;
-    }
-    if (event.tag !== CHAIN_FOLLOW_START_TAG) {
-      continue;
-    }
-    const chain = decodeChainAnnotations(event.tag, event.payload);
-    const key = getFollowKey(event.productId, chain?.genesisHash);
-    const existing = followKeyToRails.get(key) ?? [];
-
-    const group = groups.get(event.requestId) ?? [];
-    const stop = group.find(member => {
-      if (member.kind !== 'truapi') {
-        return false;
-      }
-      if (member.tag !== CHAIN_FOLLOW_RECEIVE_TAG) {
-        return false;
-      }
-      const memberChain = decodeChainAnnotations(member.tag, member.payload);
-      return memberChain?.chainEventTag === 'Stop';
-    });
-
-    const ordinal = existing.length;
-    const rail: RailEntry = {
-      kind: 'rail',
-      seqAnchor: event.seq,
-      memberSeqs: [event.seq, ...(stop === undefined ? [] : [stop.seq])],
-      topY: seqToY.get(event.seq) ?? 0,
-      bottomY: getBottomY({ seqToY, endSeq: stop?.seq, nowY }),
-      railIndex: nextRailIndex++,
-      color: getHashColor(chain?.genesisHash ?? '', { saturation: 60, lightness: 55 }),
-      label: formatRailLabel(chain?.genesisHash, ordinal),
-      pending: stop === undefined,
-    };
-    rails.push(rail);
-    railByRequestId.set(event.requestId, rail);
-    existing.push(rail);
-    followKeyToRails.set(key, existing);
-  }
-  return { rails, railByRequestId, followKeyToRails };
-}
-
-/** The terminal follow event of each chain operation, by operation id. The first one seen wins. */
-function indexOperationTerminals(events: readonly StoredEvent[]): Map<string, StoredTruapiEvent> {
-  const terminalByOperationId = new Map<string, StoredTruapiEvent>();
-  for (const event of events) {
-    if (event.kind !== 'truapi') {
-      continue;
-    }
-    if (event.tag !== CHAIN_FOLLOW_RECEIVE_TAG) {
-      continue;
-    }
-    const chain = decodeChainAnnotations(event.tag, event.payload);
-    if (
-      chain?.operationId === undefined ||
-      chain.chainEventTag === undefined ||
-      !OPERATION_TERMINAL_VARIANTS.has(chain.chainEventTag)
-    ) {
-      continue;
-    }
-    if (terminalByOperationId.has(chain.operationId)) {
-      continue;
-    }
-    terminalByOperationId.set(chain.operationId, event);
-  }
-  return terminalByOperationId;
-}
-
-/** A follow subscription's group gives the ticks on its rail, and every other group gives at most one segment. */
-function buildSegmentsAndTicks({
-  groups,
-  railByRequestId,
-  seqToY,
-  nowY,
-  terminalByOperationId,
-  followKeyToRails,
-}: BuildSegmentsAndTicksParams): BuildSegmentsAndTicksResult {
-  const segments: WorkingSegment[] = [];
-  const ticks: TickEntry[] = [];
-  for (const [correlationKey, group] of groups) {
-    const rail = railByRequestId.get(correlationKey);
-    if (rail !== undefined) {
-      for (const event of group) {
-        if (event.kind !== 'truapi') {
-          continue;
-        }
-        if (event.tag !== CHAIN_FOLLOW_RECEIVE_TAG) {
-          continue;
-        }
-        const chain = decodeChainAnnotations(event.tag, event.payload);
-        if (chain?.chainEventTag === undefined || !LIFECYCLE_VARIANTS.has(chain.chainEventTag)) {
-          continue;
-        }
-        ticks.push({
-          kind: 'tick',
-          seq: event.seq,
-          y: (seqToY.get(event.seq) ?? 0) + ROW_HEIGHT / 2,
-          color: LIFECYCLE_COLORS[chain.chainEventTag] ?? 'var(--td-fg-dim)',
-          variant: chain.chainEventTag,
-          linkedRailIndex: rail.railIndex,
-        });
-      }
-      continue;
-    }
-
-    if (group[0]?.kind === 'system') {
-      const systemGroup = group.filter((e): e is StoredSystemEvent => e.kind === 'system');
-      segments.push(buildSystemSegment({ group: systemGroup, seqToY, nowY }));
-      continue;
-    }
-
-    const truapiGroup = group.filter((e): e is StoredTruapiEvent => e.kind === 'truapi');
-    if (truapiGroup.length === 0) {
-      continue;
-    }
-    const segment = buildSegment({ group: truapiGroup, seqToY, nowY, terminalByOperationId, followKeyToRails });
-    if (segment !== null) {
-      segments.push(segment);
-    }
-  }
-  return { segments, ticks };
-}
-
 /**
  * Puts each segment in the leftmost lane free at its top, taking segments by top Y and then by seq so the lanes come
- * out the same on every run. Returns the placed segments and the number of lanes used. Never throws.
+ * out the same on every run. Returns the placed segments and the number of lanes used.
  */
-function packLanes(segments: readonly WorkingSegment[], nowY: number): PackLanesResult {
+function packLanes(segments: readonly WorkingSegment[], nowY: number) {
   const ordered = [...segments].sort((a, b) => a.topY - b.topY || a.seqAnchor - b.seqAnchor);
   const laneOccupiedUntil: number[] = [];
   const placed: SegmentEntry[] = [];
@@ -395,154 +282,80 @@ function packLanes(segments: readonly WorkingSegment[], nowY: number): PackLanes
     }
     // A pending segment has no end yet, so it holds its lane to the bottom of the chart.
     laneOccupiedUntil[lane] = segment.pending ? nowY : segment.bottomY;
-
-    placed.push({
-      kind: 'segment',
-      seqAnchor: segment.seqAnchor,
-      memberSeqs: segment.memberSeqs,
-      topY: segment.topY,
-      bottomY: segment.bottomY,
-      lane,
-      color: segment.color,
-      label: segment.label,
-      detail: segment.detail,
-      pending: segment.pending,
-      linkedRailIndex: segment.linkedRailIndex,
-    });
+    placed.push({ ...segment, lane });
   }
   return { segments: placed, laneCount: laneOccupiedUntil.length };
 }
 
-function indexEntries(entries: readonly TimelineEntry[]): Map<EventSeq, number> {
-  const seqToEntryIndex = new Map<EventSeq, number>();
-  for (const [index, entry] of entries.entries()) {
-    if (entry.kind === 'tick') {
-      seqToEntryIndex.set(entry.seq, index);
-      continue;
-    }
-    for (const seq of entry.memberSeqs) {
-      seqToEntryIndex.set(seq, index);
-    }
-  }
-  return seqToEntryIndex;
-}
-
-function buildSegment({
-  group,
-  seqToY,
-  nowY,
-  terminalByOperationId,
-  followKeyToRails,
-}: BuildSegmentParams): WorkingSegment | null {
-  const sorted = sortBySeq(group);
-  const first = sorted[0];
-  if (first === undefined) {
-    return null;
-  }
-
-  // Subscriptions have no bounded response time to draw. chainHead.follow is a rail instead.
-  const hasRequest = sorted.some(e => isRequestTag(e.tag));
-  if (!hasRequest) {
+/** A TrUAPI call's box, or null for a call with no request, such as a subscription, which has no response time. */
+function buildSegment(
+  call: Group<StoredTruapiEvent>,
+  positions: GlobalYPositions,
+  follows: Follows,
+): WorkingSegment | null {
+  const [first] = call;
+  if (!call.some(e => isRequestTag(e.tag))) {
     return null;
   }
 
   const chain = decodeChainAnnotations(first.tag, first.payload);
-  const isOperationStarter =
-    chain?.kind === 'head-body-request' ||
-    chain?.kind === 'head-storage-request' ||
-    chain?.kind === 'head-call-request';
-
-  // The response only carries the operationId. The operation ends at its terminal follow event.
-  if (isOperationStarter) {
-    const response = sorted.find(e => e.seq !== first.seq && isResponseTag(e.tag));
-    const responseChain = response === undefined ? undefined : decodeChainAnnotations(response.tag, response.payload);
-    const operationId = responseChain?.operationId;
-
-    const linkedRailIndex = linkRail({ requestEvent: first, chain, followKeyToRails });
-
-    const terminal = operationId !== undefined ? terminalByOperationId.get(operationId) : undefined;
-    const memberSeqs: EventSeq[] = [first.seq];
-    if (response !== undefined) {
-      memberSeqs.push(response.seq);
-    }
-    if (terminal !== undefined) {
-      memberSeqs.push(terminal.seq);
-    }
-
-    const endSeq = terminal?.seq ?? response?.seq;
-    const pending = terminal === undefined && (response === undefined || responseChain?.outcome === 'started');
-
-    return {
-      seqAnchor: first.seq,
-      memberSeqs,
-      topY: seqToY.get(first.seq) ?? 0,
-      bottomY: getBottomY({ seqToY, endSeq, nowY }),
-      color: getRidColor(first.requestId),
-      label: formatChainLabel(chain),
-      detail: describeOperationBox({ requestChain: chain, responseChain, terminal }),
-      pending,
-      linkedRailIndex,
-      startAt: first.receivedAt,
-      endAt: terminal?.receivedAt ?? response?.receivedAt ?? null,
-    };
+  if (chain !== null && isOperationStarter(chain.kind)) {
+    return buildOperationSegment({ call, chain, positions, follows });
   }
 
   // Matched by suffix because terminators travel in both directions.
-  const hasTerminator = sorted.some(e => isClosingTag(e.tag));
-  const last = sorted.at(-1) ?? first;
-  const label = chain === null ? formatTagLabel(first.tag) : formatChainLabel(chain);
-
+  const hasTerminator = call.some(e => isClosingTag(e.tag));
+  const last = call.at(-1) ?? first;
   return {
     seqAnchor: first.seq,
-    memberSeqs: sorted.map(e => e.seq),
-    topY: seqToY.get(first.seq) ?? 0,
-    bottomY: getBottomY({ seqToY, endSeq: last.seq, nowY }),
+    memberSeqs: call.map(e => e.seq),
+    topY: getTopY(positions, first.seq),
+    bottomY: getBottomY(positions, last.seq),
     color: getRidColor(first.requestId),
-    label,
+    label: chain === null ? formatTagLabel(first.tag) : formatChainLabel(chain),
     detail: chain?.blockHash !== undefined ? formatBlockDetail(chain.blockHash) : undefined,
     pending: !hasTerminator,
-    startAt: first.receivedAt,
-    endAt: hasTerminator ? last.receivedAt : null,
+  };
+}
+
+/** A chain operation's box. The response only carries the operationId. The operation ends at its terminal event. */
+function buildOperationSegment({ call, chain, positions, follows }: BuildOperationSegmentParams): WorkingSegment {
+  const [first] = call;
+  const response = call.find(e => isResponseTag(e.tag));
+  const responseChain = response === undefined ? null : decodeChainAnnotations(response.tag, response.payload);
+  const operationId = responseChain?.operationId;
+  const terminal =
+    operationId === undefined ? null : (follows.terminals.get(getOperationKey(first.productId, operationId)) ?? null);
+  const responseSeq = response?.seq;
+  const terminalSeq = terminal?.event.seq;
+  return {
+    seqAnchor: first.seq,
+    memberSeqs: [first.seq, responseSeq, terminalSeq].filter(seq => seq !== undefined),
+    topY: getTopY(positions, first.seq),
+    bottomY: getBottomY(positions, terminalSeq ?? responseSeq),
+    color: getRidColor(first.requestId),
+    label: formatChainLabel(chain),
+    detail: describeOperationBox({ requestChain: chain, responseChain, terminal }),
+    pending: terminal === null && (response === undefined || responseChain?.outcome === 'started'),
+    linkedRailIndex: findOperationRail({ first, chain, terminal, follows })?.railIndex,
   };
 }
 
 /** A single-event flow becomes a one-row pill, so a point-in-time event still holds a lane at its Y. */
-function buildSystemSegment({ group, seqToY, nowY }: BuildSystemSegmentParams): WorkingSegment {
-  const sorted = sortBySeq(group);
-  const first = sorted[0];
-  if (first === undefined) {
-    throw new Error('Empty system flow group in the timeline layout');
-  }
-  const last = sorted.at(-1) ?? first;
-  const pending = sorted.length > 1 && !sorted.some(e => isSystemFlowTerminator(e));
-  const label = getEventLabel(first).replace(/_/g, '.');
+function buildSystemSegment(flow: Group<StoredSystemEvent>, positions: GlobalYPositions): WorkingSegment {
+  const [first] = flow;
+  const last = flow.at(-1) ?? first;
   return {
     seqAnchor: first.seq,
-    memberSeqs: sorted.map(e => e.seq),
-    topY: seqToY.get(first.seq) ?? 0,
-    bottomY: getBottomY({ seqToY, endSeq: last.seq, nowY }),
-    color: getHashColor(first.flowId, { saturation: 60, lightness: 62 }),
-    label,
-    detail: describeSystemSegment(first, sorted),
-    pending,
-    startAt: first.receivedAt,
-    endAt: pending ? null : last.receivedAt,
+    memberSeqs: flow.map(e => e.seq),
+    topY: getTopY(positions, first.seq),
+    bottomY: getBottomY(positions, last.seq),
+    color: getHashColor(first.flowId, { lightness: 86, chroma: 0.11 }),
+    label: toWrappingLabel(getEventLabel(first)),
+    detail: flow.length === 1 ? undefined : `${first.layer}·${formatCount(flow.length, 'step')}`,
+    // A sandbox of another release can send a name the union lacks, which ends no flow.
+    pending: flow.length > 1 && !flow.some(e => findSystemEventFacts(e)?.endsFlow === true),
   };
-}
-
-function describeSystemSegment(first: StoredSystemEvent, all: StoredSystemEvent[]): string | undefined {
-  if (all.length === 1) {
-    return undefined;
-  }
-  return `${first.layer}·${formatCount(all.length, 'step')}`;
-}
-
-function isSystemFlowTerminator(event: StoredSystemEvent): boolean {
-  const eventName = event.event;
-  if (SYSTEM_TERMINATOR_EVENTS.has(getSystemEventKey(event))) {
-    return true;
-  }
-  return SYSTEM_TERMINATOR_SUFFIXES.some(suffix => eventName === suffix || eventName.endsWith(`_${suffix}`));
 }
 
 function describeOperationBox({
@@ -551,50 +364,45 @@ function describeOperationBox({
   terminal,
 }: DescribeOperationBoxParams): string | undefined {
   const parts: string[] = [];
-  if (requestChain?.blockHash !== undefined) {
+  if (responseChain?.operationId !== undefined) {
+    parts.push(`op ${formatChainValue(responseChain.operationId)}`);
+  }
+  if (requestChain.blockHash !== undefined) {
     parts.push(formatBlockDetail(requestChain.blockHash));
   }
-  const response = describeOperationResponse(responseChain);
-  if (response !== undefined) {
-    parts.push(response);
-  }
-  if (terminal !== undefined) {
-    const terminalChain = decodeChainAnnotations(terminal.tag, terminal.payload);
-    if (terminalChain?.chainEventTag !== undefined) {
-      parts.push(`then ${terminalChain.chainEventTag}`);
+  if (responseChain !== null && responseChain.operationId === undefined) {
+    const outcome = formatChainOutcome(responseChain);
+    if (outcome !== undefined) {
+      parts.push(outcome);
     }
+  }
+  if (terminal !== null) {
+    parts.push(`then ${terminal.variant}`);
   }
   return parts.length === 0 ? undefined : parts.join(' · ');
 }
 
-function describeOperationResponse(responseChain: ChainAnnotations | null | undefined): string | undefined {
-  if (responseChain?.operationId !== undefined) {
-    return `op ${formatHexHead(responseChain.operationId)}`;
+/**
+ * The rail an operation runs on. A finished operation names it through its terminal's subscription. A pending one has
+ * only its `follow_N` id, the Nth follow-start of its (product, genesis) pair, read against the rails still kept, so it
+ * falls back to the pair's last rail.
+ */
+function findOperationRail({ first, chain, terminal, follows }: FindOperationRailParams): RailEntry | null {
+  if (terminal !== null) {
+    // An evicted follow-start leaves no rail, and no other rail is this one.
+    return follows.railByCall.get(getCorrelationKey(terminal.event)) ?? null;
   }
-  if (responseChain === null || responseChain === undefined) {
-    return undefined;
+  const match = /^follow_(\d+)$/.exec(chain.followSubscriptionId ?? '');
+  const rails = follows.railsByFollowKey.get(getFollowKey(first.productId, chain.genesisHash));
+  if (match === null || rails === undefined) {
+    return null;
   }
-  return formatChainOutcome(responseChain);
+  return rails[Number(match[1])] ?? rails.at(-1) ?? null;
 }
 
-function linkRail({ requestEvent, chain, followKeyToRails }: LinkRailParams): number | undefined {
-  const syntheticId = chain.followSubscriptionId;
-  if (syntheticId === undefined) {
-    return undefined;
-  }
-  const key = getFollowKey(requestEvent.productId, chain.genesisHash);
-  const rails = followKeyToRails.get(key);
-  if (rails === undefined || rails.length === 0) {
-    return undefined;
-  }
-  const match = /^follow_(\d+)$/.exec(syntheticId);
-  if (match === null) {
-    return undefined;
-  }
-  const ordinal = Number(match[1]);
-  // The follow-start may have been evicted, so fall back to the last rail for this pair.
-  const rail = rails[ordinal] ?? rails.at(-1);
-  return rail?.railIndex;
+/** An operation id is the node's, so two products' operations can share one. */
+function getOperationKey(productId: string | undefined, operationId: string): string {
+  return `${productId ?? '__anon'}|${operationId}`;
 }
 
 function getFollowKey(productId: string | undefined, genesisHash: string | undefined): string {
@@ -606,32 +414,29 @@ function formatRailLabel(genesisHash: string | undefined, ordinal: number): stri
   return ordinal === 0 ? prefix : `${prefix} #${String(ordinal)}`;
 }
 
-/** The bottom of the row of `endSeq`, or `nowY` while the segment is open. Never throws. */
-function getBottomY({ seqToY, endSeq, nowY }: GetBottomYParams): number {
-  if (endSeq === undefined) {
-    return nowY;
-  }
-  return (seqToY.get(endSeq) ?? nowY) + ROW_HEIGHT;
+/** The top of the row of `seq`, or the chart's top for a seq with no row. */
+function getTopY({ seqToY }: GlobalYPositions, seq: EventSeq): number {
+  return seqToY.get(seq) ?? 0;
 }
 
-function sortBySeq<Event extends StoredEvent>(events: readonly Event[]): Event[] {
-  return [...events].sort((a, b) => a.seq - b.seq);
+/** The bottom of the row of `endSeq`, or the chart's end while the box or rail is open. */
+function getBottomY({ seqToY, totalHeight }: GlobalYPositions, endSeq: EventSeq | undefined): number {
+  if (endSeq === undefined) {
+    return totalHeight;
+  }
+  return (seqToY.get(endSeq) ?? totalHeight) + ROW_HEIGHT;
 }
 
 function formatBlockDetail(blockHash: string): string {
-  return `blk ${formatHexHead(blockHash)}`;
-}
-
-function formatHexHead(hex: string): string {
-  if (hex.length > 8) {
-    return `${hex.slice(0, 6)}…`;
-  }
-  return hex;
+  return `blk ${formatChainValue(blockHash)}`;
 }
 
 function formatTagLabel(tag: string): string {
   // The side prefix goes first, so a tag that is only a prefix and a suffix keeps its suffix word.
-  const name = stripTagSuffix(tag.replace(/^(remote_|host_)/, ''));
-  // Dots let the narrow box label wrap across lines.
+  return toWrappingLabel(stripTagSuffix(tag.replace(/^(remote_|host_)/, '')));
+}
+
+/** `name` with dots for its underscores, so a narrow box label can wrap across lines. */
+function toWrappingLabel(name: string): string {
   return name.replace(/_/g, '.');
 }

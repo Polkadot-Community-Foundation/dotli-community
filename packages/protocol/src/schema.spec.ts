@@ -212,6 +212,7 @@ const cases: Cases = {
       ],
       interrupts: [ok()],
     }),
+    pause: createRequestCase(frame.pause, { request: { paused: true }, responses: [ok()] }),
   },
   resolve: {
     owner: createRequestCase(resolve.owner, {
@@ -483,24 +484,6 @@ describe('protocolSchema', () => {
       [2, 1, 0],
       [2, 1, 3, 4, 0x78],
     ]);
-  });
-
-  it('As the protocol, I decode a value whose payload sits after a header in the message', async () => {
-    // Given a recorded owner request, whose label sits after the header in its buffer
-    const { opener, accepter, delivered } = createProtocolRig();
-    accepter.handleRequest(resolve.owner, ({ label }) => ok(`owner of ${label}`));
-    opener.connect();
-
-    // When
-    const answer = await opener.request(resolve.owner, { label: 'app' });
-
-    // Then
-    expect(answer).toEqual(ok('owner of app'));
-    const recorded = delivered.flatMap(data => recordMessage(protocolSchema, data) ?? []);
-    const request = readMessages({ schema: protocolSchema, method: resolve.owner, recorded }).find(
-      message => message.tag === 'request',
-    );
-    expect(request?.value).toEqual({ label: 'app' });
   });
 
   it('As the protocol, I refuse an invalid telemetry event', async () => {

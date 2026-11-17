@@ -1,0 +1,85 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+.row {
+  display: flex;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+.row[data-author='user'] {
+  justify-content: flex-end;
+}
+/* Bubbles of one run sit close, so a run ends with its own space. */
+.row[data-run-end] {
+  margin-bottom: var(--sp-1);
+}
+
+.bubble {
+  box-sizing: border-box;
+  max-width: 85%;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: 12px;
+  background: var(--fill);
+  color: var(--text-strong);
+  font-size: var(--fs-body);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.row[data-author='user'] .bubble {
+  background: var(--chat-bg-own);
+}
+
+.bubble[data-look='event'] {
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  font-style: italic;
+}
+
+.bubble[data-look='custom'] {
+  width: 85%;
+}
+
+.meta {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+.time {
+  display: block;
+  box-sizing: border-box;
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-label);
+  font-style: normal;
+  cursor: default;
+}
+.row[data-author='user'] .time {
+  text-align: right;
+}
+/* An event reads as one line beside the conversation. */
+.bubble[data-look='event'] .time {
+  display: inline;
+  margin: 0 0 0 var(--sp-1_5);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  box-sizing: border-box;
+  margin: var(--sp-2) 0 0;
+  padding: 0;
+}
+.actions:first-child {
+  margin-top: var(--sp-hair);
+}
+.actions[data-layout='grid'] {
+  flex-direction: row;
+  flex-wrap: wrap;
+}

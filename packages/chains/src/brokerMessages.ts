@@ -1,14 +1,14 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The JSON-RPC messages the broker routes, the state records it keeps per session and follow, and the pure reads and
-// builders over them.
+// The JSON-RPC messages the broker routes, the state records it keeps per session and subscription, and the pure reads
+// and builders over them.
 
 import { isRecord } from '@dotli/shared';
-import type { FollowSnapshot } from './createFollowSnapshot.js';
 import {
   CHAIN_HEAD_FOLLOW,
   CHAIN_HEAD_FOLLOW_EVENT,
+  CHAIN_HEAD_UNFOLLOW,
   STATEMENT_SUBSCRIBE,
   STATEMENT_UNSUBSCRIBE,
   SUBMIT_AND_WATCH,
@@ -20,7 +20,7 @@ import {
 } from './jsonRpcMethods.js';
 import { readStrings } from './readStrings.js';
 
-export type JsonRpcId = string | number | null;
+type JsonRpcId = string | number | null;
 
 export type JsonRpcRequest = {
   jsonrpc?: string;
@@ -47,20 +47,20 @@ export type SubscriptionMessage = {
 
 /**
  * Who the answer to an upstream request goes to. Each request the broker sends upstream with an id has exactly one
- * owner (a session, a shared follow, a session that left or a release the broker sent itself), so an answer is never
- * routed by guessing what its id holds.
+ * owner (a session, a session that left or a release the broker sent itself), so an answer is never routed by guessing
+ * what its id holds.
  */
 export type RequestOwner =
   /**
-   * A session's own request, answered under the session's id for it. A release it sends as the last owner carries
-   * `upstreamToken`, since the node may still send events it queued for that subscription.
+   * A session's own request, answered to the session under its own id. A session that leaves hands it to an orphan
+   * owner. A release it sends as the last owner carries `upstreamToken`, since the node may still send events it queued
+   * for that subscription.
    */
-  | { kind: 'session'; sessionId: string; clientId: JsonRpcId; method: string; upstreamToken?: string | undefined }
-  /** The upstream follow a shared follow waits on, answered to every session waiting on it. */
-  | { kind: 'follow'; follow: SharedFollow }
+  | { kind: 'session'; session: Session; clientId: JsonRpcId; method: string; upstreamToken?: string | undefined }
   /**
-   * A request whose session left before the answer. A subscription the answer opens is released at once. A release
-   * keeps its `upstreamToken` for the events the node may still send for it.
+   * A request whose session left before the answer, or a follow a session sent without an id. A subscription the
+   * answer opens is released at once. A release keeps its `upstreamToken` for
+   * the events the node may still send for it.
    */
   | { kind: 'orphan'; method: string; upstreamToken?: string | undefined }
   /**
@@ -70,23 +70,10 @@ export type RequestOwner =
   | { kind: 'release'; method: string; upstreamToken: string };
 
 export type OwnedToken = {
-  sessionId: string;
+  session: Session;
   localToken: string;
   upstreamToken: string;
   releaseMethod: string;
-};
-
-export type SharedFollow = {
-  key: string;
-  upstreamToken: string | null;
-  localTokens: Set<string>;
-  pendingLocals: {
-    sessionId: string;
-    requestId: JsonRpcId;
-    localToken: string;
-  }[];
-  /** What the follow told its sessions so far, and who still pins each of its blocks. */
-  snapshot: FollowSnapshot;
 };
 
 export type WireMode = 'string' | 'object';
@@ -95,29 +82,9 @@ export type Session = {
   id: string;
   /** Hears each message for the session, encoded for its wire mode. */
   onMessage: (message: unknown) => void;
-  ownedTokens: Set<string>;
-  connected: boolean;
   wireMode: WireMode;
   /** Told once when the chain's transport halts for good. */
   onHalt: ((error?: unknown) => void) | null;
-};
-
-/** A local token a session holds, for adding it to the session's set or dropping it. */
-export type SessionTokenParams = {
-  /** The session that holds the token. A session that has gone is left alone. */
-  sessionId: string;
-  /** The local token, as the session sees it. */
-  token: string;
-};
-
-/** A release the broker sends itself, for something no session holds anymore. */
-export type SendReleaseParams = {
-  /** The release method, such as an unfollow, an unpin or a stop. */
-  method: string;
-  /** The upstream subscription it releases. */
-  upstreamToken: string;
-  /** What the request carries after the token. */
-  params?: unknown[];
 };
 
 export type BrokerConnection = {
@@ -128,6 +95,7 @@ export type BrokerConnection = {
 };
 
 export const TOKEN_METHODS = new Map<string, string>([
+  [CHAIN_HEAD_FOLLOW, CHAIN_HEAD_UNFOLLOW],
   [TRANSACTION_BROADCAST, TRANSACTION_STOP],
   [SUBMIT_AND_WATCH, UNWATCH],
   [STATEMENT_SUBSCRIBE, STATEMENT_UNSUBSCRIBE],
@@ -171,11 +139,6 @@ export function buildJsonRpcResult(id: JsonRpcId, result: unknown): Record<strin
   return { jsonrpc: '2.0', id, result };
 }
 
-/** `chainHead_v1_unpin` takes its hash arg as a string or an array. */
-export function normalizeUnpinHashes(param: unknown): string[] {
-  return typeof param === 'string' ? [param] : readStrings(param);
-}
-
 export function cloneWithRewrittenFirstParam(request: JsonRpcRequest, rewrittenToken: string): JsonRpcRequest {
   const params: unknown[] = Array.isArray(request.params) ? request.params.slice() : [];
   params[0] = rewrittenToken;
@@ -212,14 +175,32 @@ export function getEventType(result: unknown): string {
   return typeof result['event'] === 'string' ? result['event'] : 'unknown';
 }
 
-export function getOwnerMethod(owner: RequestOwner): string {
-  switch (owner.kind) {
-    case 'follow':
-      return CHAIN_HEAD_FOLLOW;
-    case 'session':
-    case 'orphan':
-    case 'release':
-      return owner.method;
+/**
+ * A raw `newBlock` or `initialized` follow event for the debug log, tagged with `sessionTag`, or null for any other
+ * message.
+ */
+export function describeFollowEvent(message: SubscriptionMessage, sessionTag: string): string | null {
+  const result = message.params?.result;
+  if (!isRecord(result)) {
+    return null;
+  }
+  const rawSubscription = message.params?.subscription;
+  const token = typeof rawSubscription === 'string' ? rawSubscription.slice(0, 12) : '?';
+  switch (result['event']) {
+    case 'newBlock':
+      return `raw newBlock [${sessionTag}] hash=${String(result['blockHash']).slice(0, 18)}… parent=${String(result['parentBlockHash']).slice(0, 18)}… token=${token}…`;
+    case 'initialized': {
+      const hashes = result['finalizedBlockHashes'];
+      const hashList = Array.isArray(hashes)
+        ? readStrings(hashes)
+            .map(hash => hash.slice(0, 18) + '…')
+            .join(', ')
+        : '?';
+      return `raw initialized [${sessionTag}] blocks=[${hashList}] token=${token}…`;
+    }
+    default:
+      // Only the events that move the follow's blocks are worth a raw line.
+      return null;
   }
 }
 

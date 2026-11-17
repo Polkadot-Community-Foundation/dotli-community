@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { beforeEach, describe, expect, it, onTestFinished } from 'vitest';
-import { spans as S } from '@dotli/metrics';
-import { bindRecordingSentry, recordCaptures } from '@dotli/metrics/testing';
+import { bindRecordingSentry, recordReports } from '@dotli/metrics/testing';
 import type { ChainDetail, ChainSyncEvent } from '@dotli/chains';
 import { createManualTimers, type ManualTimers } from '@dotli/shared/testing';
 import { ok, type Sink } from '@dotli/transport';
@@ -71,7 +70,7 @@ describe('createFrameTelemetry', () => {
   it('As the network panel, I see a telemetry feed the frame ends while it stays up reopened after a wait, reported, and heard again', async () => {
     // Given
     const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const fake = createFakeFrame({ serve: createReportingFrame(sinks), timers });
     const telemetry = createFrameTelemetry({ frame: fake.frame, timers });
     const totals: number[] = [];
@@ -90,10 +89,10 @@ describe('createFrameTelemetry', () => {
     // Then
     expect([openedBeforeWait, sinks.length]).toEqual([1, 2]);
     expect(totals).toEqual([100, 150]);
-    expect(metrics.counted(S.PROTOCOL_FEED_END)).toEqual([
+    expect(metrics.counted('protocol.feed_end')).toEqual([
       { outcome: 'error', feed: 'telemetry', reason: 'ProtocolFeedEndedError' },
     ]);
-    expect(captured).toEqual([{ flow: 'protocol', step: 'feed_end', tags: { feed: 'telemetry' } }]);
+    expect(captured).toMatchObject([{ step: 'feed_end', tags: { feed: 'telemetry' } }]);
   });
 
   it('As the network panel, I see an event past the telemetry limits end the feed, which is reported as malformed and reopened', async () => {
@@ -112,41 +111,9 @@ describe('createFrameTelemetry', () => {
     // Then
     expect(syncs).toEqual([]);
     expect(sinks).toHaveLength(2);
-    expect(metrics.counted(S.PROTOCOL_FEED_END)).toEqual([
+    expect(metrics.counted('protocol.feed_end')).toEqual([
       { outcome: 'error', feed: 'telemetry', reason: 'MalformedFrame' },
     ]);
-  });
-
-  it('As the network panel, I lose a frame under its telemetry feed and the feed is neither reopened there nor reported', async () => {
-    // Given
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    const fake = createFakeFrame({ serve: createReportingFrame(sinks), timers });
-    createFrameTelemetry({ frame: fake.frame, timers });
-    await settle();
-
-    // When
-    fake.lose(new Error('boom'));
-    await timers.advance(30_000);
-
-    // Then
-    expect(sinks).toHaveLength(1);
-    expect(metrics.counted(S.PROTOCOL_FEED_END)).toEqual([]);
-  });
-
-  it('As the network panel, I lose a frame while its telemetry is asked for and it is neither reported nor heard again', async () => {
-    // Given a frame that boots and is dropped in the same turn, before its transport is handed over
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    const fake = createFakeFrame({ serve: createReportingFrame(sinks), status: 'idle', timers });
-    createFrameTelemetry({ frame: fake.frame, timers });
-
-    // When
-    fake.setStatus('booting');
-    fake.lose(new Error('dropped'));
-    await timers.advance(30_000);
-
-    // Then
-    expect(metrics.counted(S.PROTOCOL_FEED_END)).toEqual([]);
-    expect(timers.countPending()).toBe(0);
   });
 
   it('As the network panel, I hear chain sync and chain detail as the frame reports them', async () => {
@@ -185,30 +152,5 @@ describe('createFrameTelemetry', () => {
     // Then
     expect(beforeRebuild).toEqual(['hit', 'unknown']);
     expect(telemetry.getSmoldotDbOutcome('relay')).toBe('unknown');
-  });
-
-  it('As the network panel, I see a net bytes listener that throws reported while the next one still hears the total', async () => {
-    // Given
-    const captured = recordCaptures({ onFinished: onTestFinished });
-    const metrics = bindRecordingSentry({ onFinished: onTestFinished });
-    const fake = createFakeFrame({ serve: createReportingFrame(sinks), timers });
-    const telemetry = createFrameTelemetry({ frame: fake.frame, timers });
-    telemetry.subscribeNetBytes(() => {
-      throw new TypeError('panel broke');
-    });
-    const totals: number[] = [];
-    telemetry.subscribeNetBytes(event => totals.push(event.received));
-    await settle();
-
-    // When
-    report({ tag: 'netBytes', value: 100 });
-    await settle();
-
-    // Then
-    expect(totals).toEqual([100]);
-    expect(captured).toEqual([{ flow: 'protocol', step: 'listener', tags: { owner: 'protocol.net_bytes' } }]);
-    expect(metrics.counted('listener.delivery')).toEqual([
-      { outcome: 'error', reason: 'TypeError', owner: 'protocol.net_bytes' },
-    ]);
   });
 });

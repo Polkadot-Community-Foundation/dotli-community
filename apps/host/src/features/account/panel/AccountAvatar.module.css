@@ -1,0 +1,69 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+.avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--chrome-avatar);
+  box-shadow: var(--chrome-shadow-raised);
+  color: var(--chrome-text);
+  font-weight: var(--fw-semibold);
+}
+.avatar[data-size='bar'],
+.avatar[data-size='sm'] {
+  width: 28px;
+  height: 28px;
+  font-size: var(--fs-caption);
+}
+.avatar[data-size='lg'] {
+  width: 40px;
+  height: 40px;
+  font-size: 16px;
+}
+/* The person glyph shown until a name is known. */
+.avatar[data-size='bar'] .glyph,
+.avatar[data-size='sm'] .glyph {
+  width: 14px;
+  height: 14px;
+}
+.avatar[data-size='lg'] .glyph {
+  width: 16px;
+  height: 16px;
+}
+/* Inset, so a bar's tight padding and the phone-sized circle never clip it. */
+.avatar[data-wallet='local'] {
+  box-shadow:
+    inset 0 0 0 2px var(--chrome-warn),
+    var(--chrome-shadow-raised);
+}
+
+@media (max-width: 560px) {
+  .avatar[data-size='bar'] {
+    width: var(--h-control);
+    height: var(--h-control);
+    font-size: var(--fs-title);
+  }
+  .avatar[data-size='sm'] {
+    width: 32px;
+    height: 32px;
+  }
+  .avatar[data-size='lg'] {
+    width: var(--h-row-lg);
+    height: var(--h-row-lg);
+    font-size: var(--fs-h2);
+  }
+  .avatar[data-size='bar'] .glyph {
+    width: 20px;
+    height: 20px;
+  }
+  .avatar[data-size='sm'] .glyph {
+    width: 16px;
+    height: 16px;
+  }
+  .avatar[data-size='lg'] .glyph {
+    width: 24px;
+    height: 24px;
+  }
+}

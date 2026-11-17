@@ -25,7 +25,7 @@ certificates.
 
 ### Local machine
 
-- `make`, `ssh`, `rsync`, and Node 26 with npm 12+.
+- `make`, `ssh`, `rsync`, and Node 26.3+ with npm 11.16+.
 - SSH agent loaded with the key the remote accepts (`ssh-add`).
 - This repo checked out and on the branch/commit you want to deploy.
 
@@ -65,8 +65,8 @@ deploys do not use these: the GitHub Actions path reads `DEPLOY_HOST` / `DEPLOY_
    `--keep-until-expiring --expand` makes re-runs cheap.
 5. `provision-renewal`: enables `certbot.timer` for auto-renewal.
 6. `deploy`: ensures Node 24+ on the remote (`provision-node`), rsyncs the repo to `$(REMOTE_BUILD_PATH)` on the box,
-   runs `npm ci && npm run build:prod` **on the remote** (the box is sized for the build; `VITE_NETWORKS` is injected
-   per-env via `VITE_NETWORKS_<env>`), then installs the three `dist/` outputs into the env's web root.
+   runs `npm ci && npm run build:prod` **on the remote** (the box is sized for the build, and `VITE_NETWORKS` is
+   injected per-env via `VITE_NETWORKS_<env>`), then installs the three `dist/` outputs into the env's web root.
 7. `deploy-nginx`: renders `nginx/nginx.conf.template` for the env (envsubst) and installs it plus `nginx/snippets/`
    into `/etc/nginx/`, runs `nginx -t`, and reloads nginx. Preview the result with `make render-nginx ENV=<env>`.
 
@@ -84,7 +84,7 @@ On success the last line is `Provisioning complete for ENV=<env>.` and the site 
 
 ## Re-runs and follow-ups
 
-- `make provision` is idempotent; re-run it to pick up nginx config or build changes.
+- `make provision` is idempotent. Re-run it to pick up nginx config or build changes.
 - For code-only redeployments (no infra changes), `make deploy ENV=<env>` is enough.
 - For nginx-only updates, `make deploy-nginx ENV=<env>`, or run the **Deploy nginx** workflow from the Actions tab: pick
   the environment and it runs the same target against that environment's box, behind that environment's protection
@@ -113,9 +113,7 @@ builds are rsynced separately, so check each origin to cover all of them:
 | `https://x.app.<base>/host_version.json` | app      |
 
 The protocol build is served under `/p/` on `<base>`, from the same folder as before, so the rsync layout is unchanged.
-`host.<base>` serves that folder too for one more release, so a shell that a service worker cached from the previous
-release still finds its frame. After that release remove its server block (and `host` becomes an ordinary product
-label).
+`host.<base>` no longer serves it, so `host` is an ordinary product label.
 
 ## dot.li and dev-dot.li (`ENV=summit`, `ENV=devnet`)
 

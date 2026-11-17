@@ -1,0 +1,136 @@
+// Copyright 2026 Parity Technologies (UK) Ltd.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Visibility gates the render subscription, not just painting: each open render is live work for the
+// product, so only rows in view hold one.
+
+import { createSignal, onCleanup, onSettled, Show, untrack } from 'solid-js';
+import type { JSX } from '@solidjs/web';
+import type { HexString, RenderContext, RendererNode } from '@parity/truapi';
+import { toHex } from '@dotli/shared';
+import { Spinner } from '@dotli/ui';
+import { CustomNode } from './CustomNode.js';
+import type { ChatMessageActions } from './chat.js';
+import { visibilityWatcher, type WatchVisibility } from './visibility.js';
+import s from './CustomMessage.module.css';
+
+const LOADING = 'Loading…';
+
+export type CustomMessageProps = {
+  chat: Pick<ChatMessageActions, 'renderCustomMessage' | 'triggerRendererAction'>;
+  /** Without one, the browser's IntersectionObserver. */
+  watchVisibility?: WatchVisibility | undefined;
+  productId: string;
+  roomId: string;
+  messageId: string;
+  messageType: string;
+  /** Stored product-defined payload, hex-encoded. */
+  payload: HexString;
+};
+
+export function CustomMessage(props: CustomMessageProps): JSX.Element {
+  // A message's identity never changes for its row, so read it once.
+  const mount = untrack(() => ({ ...props }));
+  const [tree, setTree] = createSignal<RendererNode>();
+  const [placeholder, setPlaceholder] = createSignal<string | undefined>(LOADING);
+  // Under the tree, which stays usable after a tap that did not reach the app.
+  const [actionFailed, setActionFailed] = createSignal(false);
+  let root: HTMLDivElement | undefined;
+
+  // The same context names the body on the render request and on every
+  // action fired inside it, so the product can pair the two.
+  const context: RenderContext = {
+    tag: 'ChatMessage',
+    value: {
+      roomId: mount.roomId,
+      messageId: mount.messageId,
+      messageType: mount.messageType,
+    },
+  };
+
+  const onAction = (actionId: string, payload?: Uint8Array): void => {
+    setActionFailed(false);
+    mount.chat
+      .triggerRendererAction(mount.productId, {
+        context,
+        actionId,
+        payload: payload === undefined ? '0x' : toHex(payload),
+      })
+      .catch(() => {
+        setActionFailed(true);
+      });
+  };
+
+  let stopRender: (() => void) | null = null;
+
+  const startRender = (): void => {
+    if (stopRender !== null) {
+      return;
+    }
+    stopRender = mount.chat.renderCustomMessage({
+      productId: mount.productId,
+      request: { context, payload: mount.payload },
+      sink: {
+        onUpdate: node => {
+          setPlaceholder(undefined);
+          setTree(node);
+        },
+        // A failed render may have delivered a partial tree, which must not stand as final.
+        onError: () => {
+          setPlaceholder('This message can’t be shown right now.');
+        },
+      },
+    });
+  };
+
+  const stop = (): void => {
+    if (stopRender !== null) {
+      stopRender();
+      stopRender = null;
+    }
+  };
+
+  onSettled(() => {
+    if (root === undefined) {
+      return undefined;
+    }
+    const watch = mount.watchVisibility ?? visibilityWatcher(IntersectionObserver);
+    return watch(root, visible => {
+      if (visible) {
+        startRender();
+      } else {
+        stop();
+      }
+    });
+  });
+  onCleanup(stop);
+
+  return (
+    <div
+      class={s['root']}
+      data-testid="chat-custom-root"
+      ref={el => {
+        root = el;
+      }}
+    >
+      <Show
+        when={placeholder()}
+        fallback={<Show when={tree()}>{node => <CustomNode node={node()} onAction={onAction} />}</Show>}
+      >
+        {text => (
+          <span class={s['placeholder']} data-testid="chat-custom-placeholder">
+            <Show when={text() === LOADING}>
+              <Spinner class={s['spinner']} />
+            </Show>
+            {text()}
+          </span>
+        )}
+      </Show>
+      <Show when={actionFailed()}>
+        <span class={s['error']} role="alert" data-testid="chat-custom-error">
+          The app could not be reached. Try again.
+        </span>
+      </Show>
+    </div>
+  );
+}

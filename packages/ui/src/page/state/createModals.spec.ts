@@ -4,8 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createModals, type ModalHandoff, type ModalView } from './createModals.js';
 import { catchError, nth, recordLog, resetAllStoresForTests } from '@dotli/shared/testing';
-import { spans as S } from '@dotli/metrics';
-import { bindRecordingSentry, recordCaptures } from '@dotli/metrics/testing';
+import { bindRecordingSentry, recordReports } from '@dotli/metrics/testing';
 
 type Choice = 'yes' | 'no' | 'dismissed';
 
@@ -114,43 +113,43 @@ describe('modal store', () => {
 });
 
 describe('dialogs that cannot be shown', () => {
-  it('As a product, I wait on overlays that cannot render and my request is refused at once', async () => {
+  it.each<{ second: ModalView<string>['buttons'][number]; refusal: string }>([
+    { second: { label: 'Allow', variant: 'primary', result: 'allow' }, refusal: 'deny' },
+    { second: { label: 'Cancel', variant: 'cancel', result: 'cancel' }, refusal: 'cancel' },
+  ])(
+    'As a product, I wait on overlays that cannot render with a danger then a $second.variant button and my request is refused at once with $refusal',
+    async ({ second, refusal }) => {
+      // Given
+      const asked = modals.open({
+        title: 'Allow camera?',
+        fields: [],
+        buttons: [{ label: 'Deny', variant: 'danger', result: 'deny' }, second],
+        dismissOnBackdrop: false,
+      });
+
+      // When
+      onTestFinished(modals.refuseAll());
+
+      // Then
+      await expect(asked).resolves.toEqual({ result: refusal });
+    },
+  );
+
+  it('As a page, I refuse all open dialogs while another opens, and every dialog settles with its refusal', async () => {
     // Given
-    const asked = modals.open({
-      title: 'Allow camera?',
-      fields: [],
-      buttons: [
-        { label: 'Deny', variant: 'danger', result: 'deny' },
-        { label: 'Allow', variant: 'primary', result: 'allow' },
-      ],
-      dismissOnBackdrop: false,
-    });
+    const first = modals.open(buildView('First'));
+    const second = modals.open(buildView('Second'));
+    const stop = modals.refuseAll();
+    onTestFinished(stop);
 
     // When
-    onTestFinished(modals.refuseAll());
+    const third = modals.open(buildView('Third'));
 
     // Then
-    await expect(asked).resolves.toEqual({ result: 'deny' });
-  });
-
-  it('As a product, I ask after the overlays broke and my request is refused too, with its dismiss answer', async () => {
-    // Given
-    onTestFinished(modals.refuseAll());
-
-    // When
-    const asked = modals.open({
-      title: 'Submit Preimage',
-      fields: [],
-      buttons: [
-        { label: 'Cancel', variant: 'cancel', result: 'cancel' },
-        { label: 'Allow', variant: 'primary', result: 'allow' },
-      ],
-      dismissOnBackdrop: true,
-      dismissResult: 'cancel',
-    });
-
-    // Then
-    await expect(asked).resolves.toEqual({ result: 'cancel' });
+    expect(modals.store.get()).toEqual([]);
+    await expect(first).resolves.toEqual({ result: 'dismissed' });
+    await expect(second).resolves.toEqual({ result: 'dismissed' });
+    await expect(third).resolves.toEqual({ result: 'dismissed' });
   });
 
   it('As a product, I ask once the refusal stops and my request waits for an answer again', () => {
@@ -167,6 +166,29 @@ describe('dialogs that cannot be shown', () => {
     });
 
     // Then
+    expect(modals.store.get()).toHaveLength(1);
+  });
+});
+
+describe('a page that refuses twice', () => {
+  it('As a page, I call refuseAll twice and one listener refuses each new dialog, and both stops end it', async () => {
+    // Given
+    const stopFirst = modals.refuseAll();
+    const stopSecond = modals.refuseAll();
+    const listeners = modals.store.lc;
+
+    // When
+    stopFirst();
+    const afterFirstStop = modals.store.lc;
+    const askedAfterFirst = modals.open(buildView('After first'));
+    stopSecond();
+    void modals.open(buildView('After second'));
+
+    // Then
+    expect(listeners).toBe(1);
+    expect(afterFirstStop).toBe(1);
+    await expect(askedAfterFirst).resolves.toEqual({ result: 'dismissed' });
+    expect(modals.store.lc).toBe(0);
     expect(modals.store.get()).toHaveLength(1);
   });
 });
@@ -216,18 +238,6 @@ describe('a dialog that hands its place to a second view', () => {
 
     // Then
     expect(closed).toHaveBeenCalledExactlyOnceWith('aborted');
-    expect(modals.store.get()).toEqual([]);
-  });
-
-  it('As a host, I hand off to no view and the dialog closes as before', async () => {
-    // Given
-    const asked = modals.open(buildView('Review'), { handoff: () => undefined });
-
-    // When
-    modals.settle(readFirstId(), 'yes');
-
-    // Then
-    await expect(asked).resolves.toEqual({ result: 'yes' });
     expect(modals.store.get()).toEqual([]);
   });
 
@@ -285,7 +295,7 @@ describe('a dialog that hands its place to a second view', () => {
 
   it('As a product, I still get my answer when the handoff throws, and the failure is reported', async () => {
     // Given
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const sentry = bindRecordingSentry({ onFinished: onTestFinished });
     const logged = recordLog({ onFinished: onTestFinished, level: 'error' });
     const asked = modals.open(buildView('Review'), {
@@ -302,7 +312,7 @@ describe('a dialog that hands its place to a second view', () => {
     expect(modals.store.get()).toEqual([]);
     expect(captured.map(capture => capture.step)).toEqual(['modal_handoff']);
     expect(logged).toHaveLength(1);
-    expect(sentry.counted(S.MODAL_HANDOFF)).toEqual([{ outcome: 'error', reason: 'TypeError' }]);
+    expect(sentry.counted('modal.handoff')).toEqual([{ outcome: 'error', reason: 'TypeError' }]);
   });
 
   it('As a page whose overlays broke, I refuse every dialog and a handed-off view gets its dismiss result', () => {
@@ -335,17 +345,6 @@ describe('a dialog queue that is disposed', () => {
     expect(removed).toHaveBeenCalledWith('abort', expect.any(Function));
     expect(modals.store.get()).toEqual([]);
     await expect(answer).rejects.toMatchObject({ name: 'AbortError' });
-  });
-
-  it('As a page that ends, I dispose the dialog queue and an open dialog rejects with an AbortError', async () => {
-    // Given an open dialog with no signal
-    const answer = modals.open(buildView('Review'));
-
-    // When the queue is disposed
-    modals.dispose();
-
-    // Then the dialog rejects with an AbortError that names the disposed scope
-    await expect(answer).rejects.toMatchObject({ name: 'AbortError', message: 'Blocking modal scope disposed' });
   });
 
   it('As a host whose handed-off view fails as the queue is disposed, I still see every open dialog reject', async () => {

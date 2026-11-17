@@ -20,23 +20,23 @@ to the protocol iframe.
 
 | Origin | Purpose | Triggered by |
 |---|---|---|
-| Protocol iframe (`localhost/p/`, production `paseo.li/p/`) | Domain resolution (Asset Hub query to CID), chain RPC brokering, bitswap content fetching | `apps/protocol/src/main.ts` (direct/shared-worker submodes) and `apps/protocol/src/protocolSharedWorker.ts` |
-| Host shell (user's destination domain, e.g. `foo.dot`) | Rust-core chain access for auth, product requests, and Bulletin submission, over the protocol iframe when Light Client is selected | `apps/host/src/runtime/hostCallbacks/createChainConnect.ts` |
+| Protocol iframe (`localhost/p/`, production `paseo.li/p/`) | Domain resolution (Asset Hub query to CID), chain RPC brokering, bitswap content fetching | `apps/protocol/src/main.ts` (direct/shared-worker submodes) and `apps/protocol/src/sharedWorker/protocolSharedWorker.ts` |
+| Host shell (user's destination domain, e.g. `foo.dot`) | Rust-core chain access for auth, product requests, and Bulletin submission, over the protocol iframe when Light Client is selected | `apps/host/src/features/productRuntime/callbacks/createChainConnect.ts` |
 
 Both protocol submodes build their light client with `createLightClient` from
 `packages/chains/src/createLightClient.ts`. RPC Gateway mode routes Rust-core
-requests to configured WebSocket endpoints (`createCoreRpcChainProvider`) and
+requests to configured WebSocket endpoints (`createCoreRpcChainTransport`) and
 starts no light client.
 
 ## The light client
 
 `createLightClient` in `packages/chains/src/createLightClient.ts` builds one light client per context over the smoldot that `@parity/truapi-provider` embeds. `createLightClientDeps` gives it its stored chain databases, its log level and its live gauge.
 
-- The engine (`startTruapiProvider`) starts on the first chain the light client opens. Every first open waits on that one start, and a failed start is tried again by the next open.
-- In the SharedWorker (`apps/protocol/src/protocolSharedWorker.ts`) smoldot runs on the worker thread, where the `Worker` constructor is unavailable. In direct mode (`initDirectMode` in `apps/protocol/src/main.ts`) it runs in the iframe.
-- `startLightClientService` in `apps/protocol/src/startLightClientService.ts` opens the chain pool on the light client, watches the relay and Bulletin, and builds the name resolver. Both submodes start it, the SharedWorker through `startProtocolWorker`.
+- The engine (`startTruapiProvider`) starts on the first chain the light client opens. Every first open waits on that one start. A failed start turns the light client fatal, and a chain opened after it halts without starting the engine.
+- In the SharedWorker (`apps/protocol/src/sharedWorker/protocolSharedWorker.ts`) smoldot runs on the worker thread, where the `Worker` constructor is unavailable. In direct mode (`initDirectMode` in `apps/protocol/src/main.ts`) it runs in the iframe.
+- `startLightClientService` in `apps/protocol/src/lightClient/startLightClientService.ts` opens the chain pool on the light client, watches the relay and Bulletin, and builds the name resolver. Both submodes start it, the SharedWorker through `startProtocolWorker`.
 
-Its members are `createChainProvider`, `isChainSupported`, `status` and `subscribe`.
+Its members are `createChainTransport`, `isChainSupported`, `status` and `subscribe`.
 
 ## Chains
 
@@ -51,7 +51,7 @@ The light client adds a chain from its genesis hash alone, through truapi-provid
 
 `BUILTIN_NETWORK_SERVICES` lives in `packages/config/src/networkServices.ts`, and `getChainRoleForGenesis` maps a genesis hash back to its role.
 
-There is exactly one Asset Hub chain in the chain pool `startLightClientService` opens, shared by the resolver and every dApp session through the pool's `ChainBroker`. The broker opens a single follow that is never removed mid-read. The resolver reads through a local broker session (`requireBrokerLocalProvider` over the pool's `getLocalProvider`), and dApp connections attach as remote sessions on the same follow. This replaced the earlier resolver/product chain split. In that split the resolver's chain was released once the CID was cached, so the first dApp connection releasing that follow mid-read produced the `ChainHead disjointed` load failure.
+There is exactly one Asset Hub chain in the chain pool `startLightClientService` opens, used by the resolver and every dApp session through the pool. The resolver and each dApp session hold follows of their own on the pool's Asset Hub lanes, so one session leaving never ends another's follow. The resolver reads through a local broker session (`requireBrokerLocalProvider` over the pool's `getLocalProvider`), and dApp connections attach as remote sessions. This replaced the earlier resolver/product chain split. In that split the resolver's chain was released once the CID was cached, so the first dApp connection releasing that follow mid-read produced the `ChainHead disjointed` load failure.
 
 `getActiveSupportedGenesisHashes()` contains the active network's relay, Asset
 Hub, Bulletin, and People chains. `isChainSupported` in
@@ -61,13 +61,13 @@ Hub, Bulletin, and People chains. `isChainSupported` in
 
 The protocol iframe reads a `?mode=` URL parameter in `init()` (`apps/protocol/src/main.ts`), maps it to a backend with `getBackendOfFrameMode`, and dispatches in `startMode`.
 
-- `?mode=shared-worker` opens a `SharedWorker` (`apps/protocol/src/protocolSharedWorker.ts`). Smoldot runs in the worker thread.
+- `?mode=shared-worker` opens a `SharedWorker` (`apps/protocol/src/sharedWorker/protocolSharedWorker.ts`). Smoldot runs in the worker thread.
 - `?mode=direct` runs `initDirectMode()`, which dynamic-imports the light client (`loadProvider`), the resolver and the light client service, and runs smoldot in the iframe.
 - `?mode=rpc` runs `initRpcMode()`. No smoldot. Chain calls go to a trusted WSS JSON-RPC endpoint.
 
 The host configures the frame with the backend at boot, and the frame names it in its URL as `mode`.
 
-In direct mode the frame disposes its light client service and its engine once its page is hidden for good, on `pagehide` through `disposeOnPageHide` (`apps/protocol/src/disposeOnPageHide.ts`). In rpc mode it disposes its engine the same way. In shared-worker mode it closes its link to the worker the same way (`connectSharedWorker`), and the worker lets go of that tab's port while its light client stays up for the other tabs. A page kept in the back-forward cache keeps them.
+In direct mode the frame disposes its light client service and its engine once its page is hidden for good, on `pagehide` through `disposeOnPageHide` (`apps/protocol/src/frame/disposeOnPageHide.ts`). In rpc mode it disposes its engine the same way. In shared-worker mode it closes its link to the worker the same way (`connectSharedWorker`), and the worker lets go of that tab's port while its light client stays up for the other tabs. A page kept in the back-forward cache keeps them.
 
 ## Talking to a chain
 
@@ -101,7 +101,7 @@ Pre-cutover host-side smoldot may have left an IndexedDB chain DB at the user's 
 
 ## Failure modes
 
-- **Light client fatal.** A failed engine start, or a chain that fails before it connects, marks the light client fatal (`markFatal`). `subscribe` hears it as a `fatal` change, and `status()` keeps it, since it never clears. In direct mode the frame fails its boot with a `ProtocolFatalError`. In the SharedWorker `startProtocolWorker` ends every port's status with one. The host client rejects every pending request with it. Recovery requires a new frame.
+- **Light client fatal.** A failed engine start, or a chain that fails before it connects, marks the light client fatal (`markFatal`). `subscribe` hears it as a `fatal` change, and `status()` keeps it, since it never clears. A chain opened after the fatal halts without starting the engine again. In direct mode the frame fails its boot with a `ProtocolFatalError`. In the SharedWorker `startProtocolWorker` ends every port's status with one. The host client rejects every pending request with it. Recovery requires a new frame. A connect past truapi-provider's connection cap halts only its chain and is not fatal.
 - **CPU long-task warnings.** Smoldot's WASM warns when a single Rust `poll()` blocks the thread for at least 150ms (smoldot upstream `wasm-node/rust/src/platform.rs:167`). Format: `` The task named `add-chain-N` has occupied the CPU for an unreasonable amount of time (Xms). `` The `N` suffix comes from the spawned task name. How the counter is scoped (per-client vs. process-global) has not been verified, so do not infer correlations from `N` alone.
 - **Chain halts.** smoldot never reconnects underneath its consumers. A chain whose read fails after it connected, or whose stream ends unasked, halts: its provider reports `disconnected` and then the halt through `ChainTransportHooks`.
 
@@ -111,7 +111,7 @@ These exports are owner-only and must not be imported outside `apps/protocol/`,
 except for the host resolver described below:
 
 - `@dotli/chains`: `createLightClient`, `createLightClientDeps`, and `loadProvider`, which loads them lazily.
-- `@dotli/resolver`: `createDotnsResolver`, which the iframe and the SharedWorker build on the broker's local sessions through `startLightClientService`. The host builds one on its own chain pool for rpc-gateway (`loadRpcResolver` in `apps/host/src/main.ts`).
+- `@dotli/resolver`: `createDotnsResolver`, which the iframe and the SharedWorker build on the broker's local sessions through `startLightClientService`. The host builds one on its own chain pool for rpc-gateway (`loadRpcResolver` in `apps/host/src/shell/main.ts`).
 
 ## Adding a new chain
 
@@ -124,8 +124,8 @@ Steps to make a parachain reachable through the protocol iframe on the Light Cli
 
 Step 3 makes a chain reachable from both the protocol broker and the host
 callback. Skip it and `getProtocolClient().chains.createProvider` returns
-`null`. The host's `chain.connect` callback refuses the chain first, with
-`Unsupported smoldot chain`, and a frame that is asked anyway refuses it with
+`null`. The host's `chain.connect` callback then rejects the chain with
+`Chain provider unavailable`, and a frame that is asked anyway refuses it with
 `Unsupported chain`.
 
 RPC Gateway serves a chain only if it has `rpcs` endpoints and is listed in
@@ -134,4 +134,4 @@ RPC Gateway serves a chain only if it has `rpcs` endpoints and is listed in
 
 ## Related
 
-- [Resolution design](resolution-design.md). Cold-start latency distribution and the shared Asset Hub follow via the broker.
+- [Resolution design](resolution-design.md). Cold-start latency distribution.
