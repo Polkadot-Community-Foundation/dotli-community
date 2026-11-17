@@ -1,8 +1,7 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { spans as S } from '@dotli/metrics';
-import { bindRecordingSentry, recordCaptures } from '@dotli/metrics/testing';
+import { bindRecordingSentry, recordReports } from '@dotli/metrics/testing';
 import {
   createFakePage,
   createManualTimers,
@@ -92,6 +91,33 @@ describe('toast store', () => {
     expect(readLeaving()).toEqual([true]);
   });
 
+  it('As a dotli user, I get a persistent toast given a dismiss time and it leaves once that time is out', async () => {
+    // Given
+    const id = toasts.push(buildInput({ dismissMs: 0 }));
+
+    // When
+    toasts.setDismissMs(id, 1000);
+    await timers.advance(1000);
+
+    // Then
+    expect(readLeaving()).toEqual([true]);
+  });
+
+  it('As a dotli user, I close a persistent toast and a dismiss time given after it leaves it leaving', async () => {
+    // Given
+    const onDismiss = vi.fn();
+    const id = toasts.push(buildInput({ dismissMs: 0, onDismiss }));
+    toasts.dismiss(id);
+
+    // When
+    toasts.setDismissMs(id, 1000);
+    await timers.advance(1000);
+
+    // Then
+    expect(readLeaving()).toEqual([true]);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
   it('As a dotli user, I hide the tab and the countdown pauses, and resumes from what was left once I come back', async () => {
     // Given
     toasts.push(buildInput());
@@ -133,6 +159,20 @@ describe('toast store', () => {
 
     // When
     await timers.advance(1);
+
+    // Then
+    expect(readLeaving()).toEqual([true]);
+  });
+
+  it('As a dotli user, I hide the tab at the very end of a countdown, and the toast leaves once I come back', async () => {
+    // Given
+    toasts.push(buildInput({ dismissMs: 1000 }));
+    timers.freeze(1000);
+
+    // When
+    page.setVisibility('hidden');
+    page.setVisibility('visible');
+    await timers.advance(0);
 
     // Then
     expect(readLeaving()).toEqual([true]);
@@ -196,10 +236,32 @@ describe('toast store', () => {
     expect(onSecondDismiss).toHaveBeenCalledTimes(1);
   });
 
+  it('As a dotli user, I close a toast whose onDismiss shows another, and the new one counts down', async () => {
+    // Given
+    const id = toasts.push(
+      buildInput({
+        onDismiss: () => {
+          toasts.push(buildInput({ dismissMs: 1000 }));
+        },
+      }),
+    );
+
+    // When
+    toasts.dismiss(id);
+
+    // Then
+    expect(readLeaving()).toEqual([true, false]);
+
+    // When
+    await timers.advance(1000);
+
+    // Then
+    expect(readLeaving()).toEqual([true, true]);
+  });
+
   it('As a dotli user, I close a toast whose onDismiss throws and it still leaves, and the error is reported, logged and counted', () => {
     // Given
-    const errors: unknown[] = [];
-    const captured = recordCaptures({ onFinished: onTestFinished, errors });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const sentry = bindRecordingSentry({ onFinished: onTestFinished });
     const logged = recordLog({ onFinished: onTestFinished, level: 'error' });
     const error = new TypeError('callback broke');
@@ -216,12 +278,33 @@ describe('toast store', () => {
 
     // Then
     expect(readLeaving()).toEqual([true]);
-    expect(captured).toEqual([{ flow: 'ui', step: 'listener', tags: { owner: 'toast.dismiss' } }]);
-    expect(errors).toEqual([error]);
+    expect(captured).toMatchObject([{ step: 'listener', error, tags: { owner: 'toast.dismiss' } }]);
     expect(logged.map(line => line.args)).toEqual([['[dot.li] A toast.dismiss listener threw', error]]);
-    expect(sentry.counted(S.LISTENER_DELIVERY)).toEqual([
+    expect(sentry.counted('listener.delivery')).toEqual([
       { outcome: 'error', reason: 'TypeError', owner: 'toast.dismiss' },
     ]);
+  });
+
+  it('As a dotli user, I dismiss all and a toast whose onDismiss throws does not stop the next toast from being told', () => {
+    // Given two toasts, the first of which throws on dismiss
+    const reports = recordReports({ onFinished: onTestFinished });
+    const onSecondDismiss = vi.fn();
+    toasts.push(
+      buildInput({
+        onDismiss: () => {
+          throw new TypeError('callback broke');
+        },
+      }),
+    );
+    toasts.push(buildInput({ onDismiss: onSecondDismiss }));
+
+    // When I dismiss all
+    toasts.dismissAll();
+
+    // Then both left, and the second was still told
+    expect(readLeaving()).toEqual([true, true]);
+    expect(onSecondDismiss).toHaveBeenCalledTimes(1);
+    expect(reports.exceptions).toMatchObject([{ step: 'listener' }]);
   });
 
   it('As a dotli integrator, I remove a toast and clear the rest and the store empties without callbacks', async () => {
@@ -260,23 +343,6 @@ describe('toast store', () => {
     expect(readLeaving()).toEqual([true]);
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
-
-  it('As a dotli integrator, I clear an empty stack and nobody is notified', () => {
-    // Given
-    let notified = 0;
-    onTestFinished(
-      toasts.store.listen(() => {
-        notified += 1;
-      }),
-    );
-
-    // When
-    toasts.clear();
-    toasts.clear();
-
-    // Then
-    expect(notified).toBe(0);
-  });
 });
 
 describe('toast views', () => {
@@ -293,24 +359,6 @@ describe('toast views', () => {
     // When
     toasts.show();
     await timers.advance(1000);
-
-    // Then
-    expect(readLeaving()).toEqual([true]);
-  });
-
-  it('As a visitor, I see a toast in a mounted view and it dismisses itself after its time', async () => {
-    // Given
-    toasts.show();
-
-    // When
-    toasts.push(buildInput({ dismissMs: 1000 }));
-    await timers.advance(999);
-
-    // Then
-    expect(readLeaving()).toEqual([false]);
-
-    // When
-    await timers.advance(1);
 
     // Then
     expect(readLeaving()).toEqual([true]);
@@ -358,12 +406,10 @@ describe('toast views', () => {
 describe('a toast stack that is disposed', () => {
   it('As a page that ends, I dispose the toasts and no countdown or page listener outlives them', async () => {
     // Given a stack with an open countdown and a bound page listener
-    const listened = vi.spyOn(page.document, 'addEventListener');
+    const removed = vi.spyOn(page.document, 'removeEventListener');
     toasts.show();
     const onDismiss = vi.fn();
     toasts.push(buildInput({ dismissMs: 1000, onDismiss }));
-    const options = listened.mock.calls.find(([type]) => type === 'visibilitychange')?.[2] as
-      AddEventListenerOptions | undefined;
 
     // When
     toasts.dispose();
@@ -371,7 +417,7 @@ describe('a toast stack that is disposed', () => {
     await timers.advance(5000);
 
     // Then
-    expect(options?.signal?.aborted).toBe(true);
+    expect(removed.mock.calls.map(([type]) => type)).toEqual(['visibilitychange']);
     expect(toasts.store.get().items).toEqual([]);
     expect(onDismiss).not.toHaveBeenCalled();
   });

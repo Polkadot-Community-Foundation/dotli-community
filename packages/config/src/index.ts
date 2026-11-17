@@ -14,7 +14,15 @@ export {
 } from './activeNetwork.js';
 export { setSettings, subscribeSettings } from './activeSettings.js';
 export type { Backend } from './backend.js';
-export { BACKEND_KEY, BACKEND_LABELS, getBackend, isVerifiedSession, parseBackend } from './backend.js';
+export {
+  BACKEND_FACTS,
+  BACKEND_KEY,
+  getBackend,
+  hasLightClient,
+  hasSharedWorker,
+  isVerifiedSession,
+  parseBackend,
+} from './backend.js';
 export type { SiteId } from './baseDomain.js';
 export { BASE_DOMAIN, LOCAL_ROOT, SITE_ID, isLocalhost } from './baseDomain.js';
 export type { CacheSettings } from './cacheSettings.js';
@@ -35,6 +43,8 @@ export type { Network } from './networkNames.js';
 export { NETWORK_KEY, NETWORK_NAMES, isValidNetwork } from './networkNames.js';
 export { NETWORK_NAME_TO_SERVICES_CONFIG } from './networkServices.js';
 export type { ResolvedSettings, Settings, SettingsSources, SharedSettings } from './resolveSettings.js';
+export type { BundledStack } from './loadStack.js';
+export { loadStack } from './loadStack.js';
 export { resolveSettings } from './resolveSettings.js';
 export { getSettings, setActiveNetwork } from './settings.js';
 export { TIMEOUTS } from './timeouts.js';

@@ -2,8 +2,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { withActiveTld } from '@dotli/config';
+import type { DotliDebugEvent } from '@dotli/truapi-debug';
+import { formatLatency } from './formatLatency.js';
 import { getSystemEventKey } from './getSystemEventKey.js';
 import type { StoredSystemEvent } from './storedEvent.js';
+
+type MonitorStopReason = Extract<DotliDebugEvent, { layer: 'main'; event: 'monitor_stopped' }>['payload']['reason'];
+
+// Built from a table of every reason the event names, so a new reason fails the check until it has its words.
+const MONITOR_STOP_REASONS = new Map<unknown, string>(
+  Object.entries({
+    bridge_ready: 'bridge traffic established',
+    max_duration: 'max duration reached',
+  } satisfies Record<MonitorStopReason, string>),
+);
 
 /** One sentence on a host event, read from its layer, name and payload. Never throws. */
 export function summariseSystemEvent(event: StoredSystemEvent): string {
@@ -12,30 +24,25 @@ export function summariseSystemEvent(event: StoredSystemEvent): string {
   const key = getSystemEventKey(event);
   switch (key) {
     case 'boot:started':
-      return `Host boot started (mode: ${formatValue(payload['mode'])}, chain: ${formatValue(payload['chainBackend'])}, content: ${formatValue(payload['contentBackend'])}).`;
+      return `Host boot started (chain: ${formatValue(payload['chainBackend'])}).`;
     case 'boot:protocol_warmup_started':
       return `Warming protocol iframe (${formatValue(payload['subMode'])}).`;
     case 'boot:topbar_ready':
       return 'Top bar initialised.';
-    case 'boot:url_parsed': {
-      const label = typeof payload['label'] === 'string' ? payload['label'] : null;
-      const localhostHost = typeof payload['localhostHost'] === 'string' ? payload['localhostHost'] : null;
-      if (localhostHost !== null) {
-        return `URL parsed: localhost proxy to ${localhostHost}.`;
+    case 'boot:url_parsed':
+      if (typeof payload['localhostHost'] === 'string') {
+        return `URL parsed: localhost proxy to ${payload['localhostHost']}.`;
       }
-      if (label !== null) {
-        return `URL parsed: label=${label}.`;
+      if (typeof payload['label'] === 'string') {
+        return `URL parsed: label=${payload['label']}.`;
       }
       return 'URL parsed: landing page (no subdomain).';
-    }
     case 'boot:cid_cache_checked':
       return payload['hit'] === true
         ? `CID cache hit for ${formatValue(payload['label'])}: ${formatValue(payload['cid'])}.`
         : `CID cache miss for ${formatValue(payload['label'])}.`;
     case 'boot:block_cache':
       return `Host block cache: ${formatValue(payload['hits'])} blocks from cache, ${formatValue(payload['misses'])} from the network.`;
-    case 'boot:landing_page_shown':
-      return 'Landing page rendered (no subdomain to resolve).';
     case 'boot:ready':
       return `Boot complete via ${formatValue(payload['path'])} path in ${formatMilliseconds(payload['totalMs'])}.`;
     case 'boot:failed':
@@ -45,8 +52,6 @@ export function summariseSystemEvent(event: StoredSystemEvent): string {
       return `Resolving ${withActiveTld(formatValue(payload['label']))} via ${formatValue(payload['source'])}.`;
     case 'resolve:phase':
       return `Phase ${formatValue(payload['phase'])}.`;
-    case 'resolve:storage_read':
-      return `Read dotns contenthash slot (${formatValue(payload['bytes'])} bytes in ${formatMilliseconds(payload['durationMs'])}).`;
     case 'resolve:completed':
       return payload['cid'] === null
         ? `No content set for ${withActiveTld(formatValue(payload['label']))}.`
@@ -85,45 +90,22 @@ export function summariseSystemEvent(event: StoredSystemEvent): string {
     case 'chain:bytes':
       return `Light client has received ${formatValue(payload['received'])} bytes so far.`;
     case 'chain:dbcache':
+      return `${formatValue(payload['chain'])} cache ${formatValue(payload['dbCache'])}.`;
     case 'chain:peers':
-      return key;
+      return `${formatValue(payload['chain'])} has ${formatValue(payload['peers'])} peers.`;
 
     case 'main:stall_detected':
       return `Main thread blocked for ${formatMilliseconds(payload['durationMs'])}.`;
     case 'main:heartbeat':
       return `Main thread alive (uptime ${formatValue(payload['uptimeSec'])}s).`;
     case 'main:monitor_stopped':
-      return payload['reason'] === 'bridge_ready'
-        ? 'Main-thread monitor stopped (bridge traffic established).'
-        : 'Main-thread monitor stopped (max duration reached).';
+      return `Main-thread monitor stopped (${MONITOR_STOP_REASONS.get(payload['reason']) ?? formatValue(payload['reason'])}).`;
 
-    case 'sandbox:started':
-      return `Sandbox iframe started (cid=${formatValue(payload['cid'])}, backend=${formatValue(payload['contentBackend'])}).`;
-    case 'sandbox:sw_register_begin':
-      return `Registering service worker${payload['waitForFreshController'] === true ? ' (waiting for fresh controller)' : ''}.`;
-    case 'sandbox:sw_ready':
-      return `Service worker ready in ${formatMilliseconds(payload['durationMs'])}.`;
-    case 'sandbox:fetch_begin':
-      return `Fetching archive via ${formatValue(payload['contentBackend'])}.`;
-    case 'sandbox:helia_ready':
-      return `Helia P2P ready in ${formatMilliseconds(payload['durationMs'])}.`;
-    case 'sandbox:status':
-      return `Sandbox status: ${formatValue(payload['message'])}`;
-    case 'sandbox:fetch_complete':
-      return `Archive fetched (${formatValue(payload['kind'])}) in ${formatMilliseconds(payload['durationMs'])}.`;
-    case 'sandbox:decrypt_started':
-      return 'Prompting for decryption password.';
-    case 'sandbox:decrypt_complete':
-      return 'Archive decrypted.';
-    case 'sandbox:archive_stored':
-      return `Archive staged in SW (${formatValue(payload['fileCount'])} files, ${formatMilliseconds(payload['durationMs'])}).`;
     case 'sandbox:document_written':
       return `Sandbox ready in ${formatMilliseconds(payload['totalMs'])}: dApp HTML written, product transport will start here.`;
-    case 'sandbox:failed':
-      return `Sandbox failed: ${formatValue(payload['reason'])}.`;
 
     default:
-      // A sandbox release out of step with the host can send an event outside the union, which still shows its key.
+      // Events cross a page boundary untyped, so one outside the union still shows its key.
       return key satisfies never;
   }
 }
@@ -139,11 +121,5 @@ function formatValue(value: unknown): string {
 }
 
 function formatMilliseconds(duration: unknown): string {
-  if (typeof duration !== 'number' || !Number.isFinite(duration)) {
-    return '?';
-  }
-  if (duration < 1000) {
-    return `${String(Math.round(duration))}ms`;
-  }
-  return `${(duration / 1000).toFixed(2)}s`;
+  return typeof duration === 'number' && Number.isFinite(duration) ? formatLatency(duration) : '?';
 }

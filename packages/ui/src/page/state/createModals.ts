@@ -5,10 +5,18 @@
 // here, outside Solid.
 
 import { createSharedRun, registerStoreStateReset, toAbortError, registerAtomReset } from '@dotli/shared';
-import { reportDefect, spans as S } from '@dotli/metrics';
+import { createReporter, defineCount } from '@dotli/metrics';
 import { atom, type ReadableAtom } from 'nanostores';
 import type { Component } from 'solid-js';
 import type { IconProps } from '../../components/icons/iconProps.js';
+
+const report = createReporter({ flow: 'ui' });
+
+/**
+ * A view an answered dialog was to hand its place to that could not be built, so the dialog closed instead. Tagged
+ * `outcome` (error) and `reason` (the error's name).
+ */
+const modalHandoffMetric = defineCount<'error'>('modal.handoff');
 
 /**
  * `danger` rejects the request and is drawn destructive. `cancel` backs out of a prompt that is not a
@@ -142,7 +150,7 @@ export function createModals() {
     open,
     /**
      * Answers the dialog `id` with `result` and, for one with an input, `value`. A dialog already settled is ignored.
-     * A `handoff` that throws is reported and the dialog closes as without one. Never throws.
+     * A `handoff` that throws is reported and the dialog closes as without one.
      */
     settle,
     /**
@@ -152,9 +160,9 @@ export function createModals() {
      */
     refuseAll,
     /**
-     * Rejects every open dialog with an AbortError, then tells each handed-off view `aborted`. Never throws, as
-     * `closed` must not. A `closed` that throws anyway propagates after every open dialog has rejected, and the views
-     * after it are not told. Safe to repeat. The queue works as a fresh one afterwards.
+     * Rejects every open dialog with an AbortError, then tells each handed-off view `aborted`. A `closed` must not
+     * throw. One that throws anyway propagates after every open dialog has rejected, and the views after it are not
+     * told. Safe to repeat. The queue works as a fresh one afterwards.
      */
     dispose,
   };
@@ -202,11 +210,10 @@ export function createModals() {
       next = callHandoff(entry, outcome);
     } catch (error) {
       // The answer still reaches the caller, and the dialog closes as without a handoff.
-      reportDefect(error, {
-        flow: 'ui',
+      report.defect(error, {
         step: 'modal_handoff',
         tags: { kind: 'modal_handoff_error' },
-        metric: S.MODAL_HANDOFF,
+        metric: modalHandoffMetric,
         message: '[dot.li modal] handoff failed, closing the dialog:',
       });
     }
@@ -327,10 +334,13 @@ function abandonDropped(entry: Pending): void {
   }
 }
 
-/** A dialog's refusal: its dismiss result, else its cancel or reject button's. */
+/** A dialog's refusal: its dismiss result, else its cancel button's, else its danger button's. */
 function findRefusal(view: ModalView<string>): string | undefined {
   return (
     view.dismissResult ??
-    view.buttons.find(button => button.variant === 'cancel' || button.variant === 'danger')?.result
+    (
+      view.buttons.find(button => button.variant === 'cancel') ??
+      view.buttons.find(button => button.variant === 'danger')
+    )?.result
   );
 }

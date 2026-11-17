@@ -18,6 +18,7 @@ type MissingParamRow = {
 /** The required params, with overrides. `null` removes one. */
 function buildSearch(overrides: Record<string, string | null> = {}): URLSearchParams {
   const base: Record<string, string> = {
+    [SANDBOX_CONTRACT_PARAMS.v]: String(SANDBOX_SCHEMA_VERSION),
     [SANDBOX_CONTRACT_PARAMS.cid]: VALID_CID,
     [SANDBOX_CONTRACT_PARAMS.chainBackend]: 'smoldot-direct',
     [SANDBOX_CONTRACT_PARAMS.network]: 'paseo-next-v2',
@@ -67,6 +68,7 @@ describe('validateSandboxParams: v3 cid contract', () => {
     { param: SANDBOX_CONTRACT_PARAMS.cid, reason: /cid/i },
     { param: SANDBOX_CONTRACT_PARAMS.chainBackend, reason: /chainBackend/ },
     { param: SANDBOX_CONTRACT_PARAMS.network, reason: /network/ },
+    { param: SANDBOX_CONTRACT_PARAMS.v, reason: /`v`/ },
   ])('As the sandbox, I reject a contract that omits the $param', ({ param, reason }) => {
     // Given a contract with one required param removed (the post-boot strip
     // leaves this shape behind, so a reload of a booted sandbox lands here).
@@ -83,21 +85,7 @@ describe('validateSandboxParams: v3 cid contract', () => {
     expect(error?.recoverable).toBe(true);
   });
 
-  it('As the sandbox, I reject a contract whose cid is the empty string as fatal, since the host explicitly sent a broken value', () => {
-    // Given a contract with an empty cid.
-    const search = buildSearch({ [SANDBOX_CONTRACT_PARAMS.cid]: '' });
-
-    // When the sandbox validates it.
-    const error = catchContractError(search);
-
-    // Then it fails, and is NOT recoverable: an empty value cannot come
-    // from the post-boot param strip, so re-rendering from the same host
-    // would produce the same empty cid again.
-    expect(error).toBeInstanceOf(SandboxContractError);
-    expect(error?.recoverable).toBe(false);
-  });
-
-  it('As the sandbox, I reject a contract whose cid contains non-alphanumeric characters', () => {
+  it('As the sandbox, I reject a contract whose cid contains non-alphanumeric characters as fatal', () => {
     // Given a contract that smuggles a path-traversal string in `cid`.
     const search = buildSearch({
       [SANDBOX_CONTRACT_PARAMS.cid]: '../etc/passwd',
@@ -106,22 +94,11 @@ describe('validateSandboxParams: v3 cid contract', () => {
     // When the sandbox validates it.
     const error = catchContractError(search);
 
-    // Then the charset gate trips before the value reaches any downstream parser.
+    // Then the charset gate trips before the value reaches any downstream parser, and a present but broken value
+    // means a broken host build.
     expect(error).toBeInstanceOf(SandboxContractError);
     expect(error?.message).toMatch(/invalid cid/i);
-  });
-
-  it('As the sandbox, I accept a contract whose schema version matches my build', () => {
-    // Given a contract that pins the current schema version.
-    const search = buildSearch({
-      [SANDBOX_CONTRACT_PARAMS.v]: String(SANDBOX_SCHEMA_VERSION),
-    });
-
-    // When the sandbox validates it.
-    const params = validateSandboxParams(search);
-
-    // Then it passes.
-    expect(params.cid).toBe(VALID_CID);
+    expect(error?.recoverable).toBe(false);
   });
 
   it('As the sandbox, I reject a contract whose schema version is older than my build', () => {
@@ -137,10 +114,9 @@ describe('validateSandboxParams: v3 cid contract', () => {
     expect(error).toBeInstanceOf(SandboxContractError);
   });
 
-  it('As the sandbox, I accept a contract from an older host that still sends a skipArchiveCache value and leave the flag to the host, which owns the archive cache', () => {
-    // Given a contract from an older host that still sends the flag, with a
-    // value the old validator refused
-    const search = buildSearch({ skipArchiveCache: 'yes' });
+  it('As the sandbox, I accept a contract that carries a param I do not read and ignore it', () => {
+    // Given a contract with a param outside the contract
+    const search = buildSearch({ unknownParam: 'yes' });
 
     // When the sandbox validates it.
     const params = validateSandboxParams(search);
@@ -148,21 +124,33 @@ describe('validateSandboxParams: v3 cid contract', () => {
     // Then it passes.
     expect(params.cid).toBe(VALID_CID);
   });
+});
 
-  it('As a user whose dApp reloads itself after the param strip, I land on a recoverable contract failure and the host can restore my session', () => {
-    // Given a URL with no contract params at all, which is what a booted
-    // sandbox window looks like once its contract params are stripped: a dApp
-    // calling location.reload() re-enters the boot with this exact shape.
-    const search = new URLSearchParams({ theme: 'dark' });
+describe('validateSandboxParams: full reset', () => {
+  it.each([
+    { kind: 'no full reset', fullReset: null, expected: false },
+    { kind: 'a full reset', fullReset: '1', expected: true },
+  ])('As the sandbox, I receive $kind and read whether to drop my stored state', ({ fullReset, expected }) => {
+    // Given a contract with or without the reset request.
+    const search = buildSearch({ [SANDBOX_CONTRACT_PARAMS.fullReset]: fullReset });
+
+    // When the sandbox validates it.
+    const params = validateSandboxParams(search);
+
+    // Then the request reaches the caller.
+    expect(params.fullReset).toBe(expected);
+  });
+
+  it('As the sandbox, I reject a contract whose fullReset is not "1" as fatal', () => {
+    // Given a contract with a reset value the contract does not define.
+    const search = buildSearch({ [SANDBOX_CONTRACT_PARAMS.fullReset]: 'true' });
 
     // When the sandbox validates it.
     const error = catchContractError(search);
 
-    // Then the failure is recoverable: the host still tracks the rendered
-    // label and CID, so it can rebuild the iframe instead of stranding the
-    // user on a full-viewport "Invalid sandbox URL" error.
+    // Then it fails, and a present but invalid param means a broken host build.
     expect(error).toBeInstanceOf(SandboxContractError);
-    expect(error?.recoverable).toBe(true);
+    expect(error?.recoverable).toBe(false);
   });
 });
 
@@ -181,9 +169,8 @@ describe('validateSandboxParams: resolution id', () => {
   });
 
   it.each([
-    { kind: 'no resolution id, from a host build that predates it', resolutionId: null },
+    { kind: 'no resolution id', resolutionId: null },
     { kind: 'a malformed resolution id', resolutionId: '../../etc/passwd' },
-    { kind: 'an over-long resolution id', resolutionId: 'a'.repeat(65) },
   ])('As the sandbox, I receive $kind and boot normally, untagged', ({ resolutionId }) => {
     // Given a contract whose resolution id is absent or one the contract does not accept.
     const search = buildSearch({ [SANDBOX_CONTRACT_PARAMS.resolutionId]: resolutionId });

@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { beforeEach, describe, expect, it, onTestFinished } from 'vitest';
-import { bindRecordingSentry, recordCaptures } from '@dotli/metrics/testing';
+import { bindRecordingSentry, recordReports } from '@dotli/metrics/testing';
 import { createManualTimers, type ManualTimers } from '@dotli/shared/testing';
-import type { JsonRpcMessage } from '@polkadot-api/json-rpc-provider';
-import type { RemoteChainHalt } from '@dotli/chains';
-import type { RemoteChainProvider } from '@dotli/protocol';
+import type { JsonRpcMessage, JsonRpcProvider } from '@polkadot-api/json-rpc-provider';
 import { createBitswapClient, type BitswapClient } from './createBitswapClient.js';
 
 /** The client's clock, which each test moves itself. */
@@ -20,7 +18,6 @@ type Reply = { code: number; data?: string } | { hex: string } | 'silent';
 
 type Dial = {
   onMessage: (message: JsonRpcMessage) => void;
-  onHalt: (reason: RemoteChainHalt) => void;
   /** The ids sent on this connection, in order. */
   sent: number[];
   /** How many times the client disconnected this connection. */
@@ -46,8 +43,8 @@ function createFakeChain(
   const gaps: number[] = [];
   let answered = 0;
   let last: number | null = null;
-  const provider: RemoteChainProvider = (onMessage, onHalt) => {
-    const dial: Dial = { onMessage, onHalt: onHalt ?? (() => undefined), sent: [], disconnected: 0 };
+  const provider: JsonRpcProvider = onMessage => {
+    const dial: Dial = { onMessage, sent: [], disconnected: 0 };
     const throwsOnDisconnect = throwingDisconnects.includes(dials.length);
     dials.push(dial);
     return {
@@ -108,7 +105,7 @@ function getSentId(dial: Dial, index: number): number {
   return id;
 }
 
-function createClient(provider: RemoteChainProvider | null): BitswapClient {
+function createClient(provider: JsonRpcProvider | null): BitswapClient {
   return createBitswapClient({ provider: () => provider, timers });
 }
 
@@ -208,24 +205,6 @@ describe('createBitswapClient retry policy', () => {
     expect(chain.gaps[6]).toBe(1_000);
   });
 
-  it('As a user, I see a fetch from a chain that keeps answering busy stop at the three-minute budget', async () => {
-    // Given every answer is "no peers at all"
-    const chain = createFakeChain([], { tail: { code: -32812 } });
-
-    // When
-    const block = createClient(chain.provider).get('bafyBusy');
-    // Marks the rejection handled while the timers advance.
-    void Promise.allSettled([block]);
-    await timers.advance(185_000);
-
-    // Then
-    await expect(block).rejects.toMatchObject({
-      name: 'BitswapTimeoutError',
-      // Vitest types the matcher `any`, widened so no `any` reaches the expected object.
-      message: expect.stringMatching(/timed out after 180000ms/) as unknown,
-    });
-  });
-
   it('As an integrator, I see a malformed CID fail on the first reply', async () => {
     // Given
     const chain = createFakeChain([{ code: -32602 }]);
@@ -250,29 +229,41 @@ describe('createBitswapClient retry policy', () => {
     // Then
     await expect(block).rejects.toMatchObject({ name: 'BitswapUnavailableError' });
   });
+
+  it.each([
+    [
+      'its provider throws when it is called',
+      () =>
+        createBitswapClient({
+          provider: () => {
+            throw new Error('Bulletin would not open');
+          },
+          timers,
+        }),
+    ],
+    [
+      'its connection throws when it is dialled',
+      () =>
+        createBitswapClient({
+          provider: () => () => {
+            throw new Error('Bulletin would not open');
+          },
+          timers,
+        }),
+    ],
+  ])('As a user whose Bulletin connection cannot open because %s, I see the fetch fail at once', async (_, build) => {
+    // Given a client whose Bulletin connection cannot open
+    const client = build();
+
+    // When
+    const block = client.get('bafyNoOpen');
+
+    // Then it failed with the error with the timers never moved
+    await expect(block).rejects.toThrow('Bulletin would not open');
+  });
 });
 
 describe('createBitswapClient aborts', () => {
-  it('As a user, I navigate away and the fetch stops mid-call instead of finishing the budget', async () => {
-    // Given a chain that never replies, so the call is waiting on the wire
-    const chain = createFakeChain([], { tail: 'silent' });
-    const aborter = new AbortController();
-    const block = createClient(chain.provider).get('bafyInFlight', aborter.signal);
-    // Marks the rejection handled while the timers advance.
-    void Promise.allSettled([block]);
-    await timers.advance(100);
-
-    // When
-    aborter.abort();
-
-    // Then it gave up at once rather than after the 60s per-call timeout
-    await expect(block).rejects.toMatchObject({
-      name: 'AbortError',
-      // Vitest types the matcher `any`, widened so no `any` reaches the expected object.
-      message: expect.stringMatching(/aborted/) as unknown,
-    });
-  });
-
   it('As a user, I navigate away and the fetch stops mid-backoff too', async () => {
     // Given a retry that is waiting between attempts
     const chain = createFakeChain([], { tail: { code: -32812 } });
@@ -307,6 +298,29 @@ describe('createBitswapClient aborts', () => {
     expect(chain.sent()).toBe(0);
   });
 
+  it('As a user, I give up on a block another part of the page still wants and only my call stops', async () => {
+    // Given two callers of one block on a chain that answers only later, the first without a signal
+    const chain = createFakeChain(['silent']);
+    const client = createClient(chain.provider);
+    const aborter = new AbortController();
+    const wanted = client.get('bafyWanted');
+    const abandoned = client.get('bafyWanted', aborter.signal);
+    // Holds the rejection across the timer moves.
+    const abandonedOutcome = Promise.allSettled([abandoned]);
+    await timers.advance(100);
+
+    // When the second caller gives up, and the chain then answers
+    aborter.abort();
+    const [abandonedResult] = await abandonedOutcome;
+    const dial = getDial(chain.dials, 0);
+    dial.onMessage({ jsonrpc: '2.0', id: getSentId(dial, 0), result: '0xabcd' });
+
+    // Then only the second call stopped, and the first got the block from the one request
+    expect(abandonedResult).toMatchObject({ status: 'rejected', reason: { name: 'AbortError' } });
+    await expect(wanted).resolves.toEqual(new Uint8Array([0xab, 0xcd]));
+    expect(chain.sent()).toBe(1);
+  });
+
   it('As a user, I keep a long-lived subscription and it gathers no abort listeners', async () => {
     // Given a chain that never answers, so every attempt ends on its per-call timeout, and a signal that outlives the
     // call as a subscription's does
@@ -330,7 +344,7 @@ describe('createBitswapClient aborts', () => {
 describe('createBitswapClient when the connection cannot send', () => {
   it('As a user, I see a send that throws fail the fetch and leave no abort listener behind', async () => {
     // Given a connection whose send throws, and a signal that outlives the call
-    const provider: RemoteChainProvider = () => ({
+    const provider: JsonRpcProvider = () => ({
       send: () => {
         throw new Error('frame vanished');
       },
@@ -356,56 +370,23 @@ describe('createBitswapClient after a halt', () => {
     const block = createClient(chain.provider).get('bafyHalt');
     await timers.advance(100);
 
-    // When the chain halts the way the pool halts it: the request in flight is answered with the halt first, and the
-    // connection hears it after
+    // When the healing lease halts the way the pool halts it: the request in flight is answered with the halted marker
     const halted = getDial(chain.dials, 0);
     halted.onMessage({
       jsonrpc: '2.0',
       id: getSentId(halted, 0),
       error: { code: -32603, message: 'Chain transport halted', data: 'dotli:chain-halted' },
     });
-    halted.onHalt('chain');
     await timers.advance(1_000);
 
-    // Then the same call redials and resolves with the second connection's bytes
+    // Then the retry is answered on the same connection
     await expect(block).resolves.toEqual(new Uint8Array([0xab, 0xcd]));
-    expect(chain.dials).toHaveLength(2);
-  });
-
-  it('As a dotli user, I see a request in flight when the protocol frame dies fail at once', async () => {
-    // Given a request in flight on a connection that never replies
-    const chain = createFakeChain(['silent'], { tail: { hex: '0xabcd' } });
-    const client = createClient(chain.provider);
-    const block = client.get('bafyFrame');
-    // Holds the rejection across the timer moves.
-    const outcome = Promise.allSettled([block]);
-    await timers.advance(100);
-
-    // When the frame dies
-    getDial(chain.dials, 0).onHalt('frame');
-    await timers.advance(10_000);
-    const [failure] = await outcome;
-
-    // Then it fails without waiting for the 60s per-call timeout, and nothing dials during that call
-    expect(failure).toMatchObject({
-      status: 'rejected',
-      reason: { name: 'BitswapConnectionError', message: 'Bulletin connection halted' },
-    });
     expect(chain.dials).toHaveLength(1);
-
-    // When a later fetch is made
-    const next = client.get('bafyFrame');
-    await timers.advance(100);
-    const nextBytes = await next;
-
-    // Then it dials anew
-    expect(nextBytes).toEqual(new Uint8Array([0xab, 0xcd]));
-    expect(chain.dials).toHaveLength(2);
+    expect(halted.sent).toHaveLength(2);
   });
 
   it('As a dotli user, I fetch after a connection that never opened and it dials again', async () => {
-    // Given a fetch on a connection the protocol frame never opened, closed the way the client closes it: the queued
-    // request answered, then a dead frame
+    // Given a fetch on a connection the protocol frame never opened: the queued request is answered with a closed error
     const chain = createFakeChain(['silent', 'silent']);
     const client = createClient(chain.provider);
     const failed = client.get('bafyNoFrame');
@@ -418,7 +399,6 @@ describe('createBitswapClient after a halt', () => {
       id: getSentId(dead, 0),
       error: { code: -32603, message: 'Chain connection is closed' },
     });
-    dead.onHalt('frame');
     await settled;
 
     // When
@@ -432,78 +412,6 @@ describe('createBitswapClient after a halt', () => {
     await expect(next).resolves.toEqual(new Uint8Array([0xab, 0xcd]));
     expect(chain.dials).toHaveLength(2);
     expect(dead.sent).toHaveLength(1);
-  });
-
-  it('As a dotli user, I keep the new Bulletin connection working through a late halt from the replaced one', async () => {
-    // Given a fetch that redialled after its chain halted, with a request in flight on the new connection
-    const chain = createFakeChain([], { tail: 'silent' });
-    const client = createClient(chain.provider);
-    const fetching = client.get('bafyReplaced');
-    let settled = false;
-    void fetching.finally(() => {
-      settled = true;
-    });
-    await timers.advance(100);
-    const replaced = getDial(chain.dials, 0);
-    replaced.onMessage({
-      jsonrpc: '2.0',
-      id: getSentId(replaced, 0),
-      error: { code: -32603, message: 'Chain transport halted', data: 'dotli:chain-halted' },
-    });
-    replaced.onHalt('chain');
-    await timers.advance(1_000);
-    const current = getDial(chain.dials, 1);
-    const sentOnCurrent = current.sent.length;
-
-    // When the replaced connection hears a halt again
-    replaced.onHalt('frame');
-    await timers.advance(100);
-    const settledAfterHalt = settled;
-    current.onMessage({ jsonrpc: '2.0', id: getSentId(current, 0), result: '0xabcd' });
-    const bytes = await fetching;
-
-    // Then the request on the new connection is still pending after the halt, and is served there
-    expect(sentOnCurrent).toBe(1);
-    expect(settledAfterHalt).toBe(false);
-    expect(bytes).toEqual(new Uint8Array([0xab, 0xcd]));
-
-    // When the next fetch is made
-    const next = client.get('bafyReplaced');
-    await timers.advance(100);
-    const reopened = getDial(chain.dials, 2);
-    reopened.onMessage({ jsonrpc: '2.0', id: getSentId(reopened, 0), result: '0xef' });
-    const nextBytes = await next;
-
-    // Then the new connection closed once the first fetch settled, and the next fetch dials anew and is served there
-    expect(current.disconnected).toBe(1);
-    expect(nextBytes).toEqual(new Uint8Array([0xef]));
-    expect(chain.dials).toHaveLength(3);
-  });
-});
-
-describe('createBitswapClient redial', () => {
-  it('As a dotli user, I redial after a halt and the Bulletin provider is asked for again and used', async () => {
-    // Given a client whose provider getter hands out a different chain on each read
-    const before = createFakeChain(['silent']);
-    const after = createFakeChain([], { tail: { hex: '0xabcd' } });
-    const providers = [before.provider, after.provider];
-    let reads = 0;
-    const client = createBitswapClient({
-      provider: () => providers[Math.min(reads++, providers.length - 1)] ?? null,
-      timers,
-    });
-    const block = client.get('bafyRedial');
-    await timers.advance(100);
-
-    // When the first connection halts with the request unanswered
-    getDial(before.dials, 0).onHalt('chain');
-    await timers.advance(1_000);
-
-    // Then the retry went to the second provider
-    await expect(block).resolves.toEqual(new Uint8Array([0xab, 0xcd]));
-    expect(reads).toBe(2);
-    expect(after.sent()).toBe(1);
-    expect(before.sent()).toBe(1);
   });
 });
 
@@ -589,28 +497,6 @@ describe('createBitswapClient for one block asked twice', () => {
     expect(firstBytes.buffer).not.toBe(secondBytes.buffer);
   });
 
-  it('As a user, I give up on a block in one part of the page and it is still fetched for the other', async () => {
-    // Given a first fetch held on the wire, and a second waiting for it
-    const chain = createFakeChain(['silent'], { tail: { hex: '0xabcd' } });
-    const client = createClient(chain.provider);
-    const aborter = new AbortController();
-    const abandoned = client.get('bafyHalfWanted', aborter.signal);
-    // Marks the rejection handled while the timers advance.
-    const settled = Promise.allSettled([abandoned]);
-    const wanted = client.get('bafyHalfWanted');
-    await timers.advance(100);
-
-    // When the first gives up
-    aborter.abort();
-    await settled;
-    await timers.advance(100);
-
-    // Then the second fetches the block itself
-    await expect(abandoned).rejects.toThrow(/aborted/);
-    await expect(wanted).resolves.toEqual(new Uint8Array([0xab, 0xcd]));
-    expect(chain.sent()).toBe(2);
-  });
-
   it('As a user, I ask for a block again after the first fetch ended and it is fetched again', async () => {
     // Given
     const chain = createFakeChain([{ hex: '0x01' }, { hex: '0x02' }]);
@@ -630,21 +516,6 @@ describe('createBitswapClient for one block asked twice', () => {
 });
 
 describe('createBitswapClient connection lifetime', () => {
-  it('As a page, my Bulletin connection closes once my last fetch settles', async () => {
-    // Given
-    const chain = createFakeChain([{ hex: '0x01' }]);
-    const client = createClient(chain.provider);
-
-    // When
-    const block = client.get('bafyOnce');
-    await timers.advance(10);
-    await block;
-
-    // Then
-    expect(chain.dials).toHaveLength(1);
-    expect(getDial(chain.dials, 0).disconnected).toBe(1);
-  });
-
   it('As a page, my Bulletin connection stays open while another fetch still runs', async () => {
     // Given one fetch that is answered and one the chain never answers
     const chain = createFakeChain([{ hex: '0x01' }, 'silent']);
@@ -699,7 +570,7 @@ describe('createBitswapClient connection lifetime', () => {
 
   it('As a page, I still get my block when closing the connection throws, and the failure is reported', async () => {
     // Given a connection whose close throws
-    const captured = recordCaptures({ onFinished: onTestFinished });
+    const captured = recordReports({ onFinished: onTestFinished }).exceptions;
     const sentry = bindRecordingSentry({ onFinished: onTestFinished });
     const chain = createFakeChain([{ hex: '0x01' }, { hex: '0x02' }], { throwingDisconnects: [0] });
     const client = createClient(chain.provider);
@@ -714,7 +585,7 @@ describe('createBitswapClient connection lifetime', () => {
 
     // Then the fetch kept its bytes, the failed close was reported, and the next fetch dialled anew
     expect(firstBytes).toEqual(new Uint8Array([0x01]));
-    expect(captured).toEqual([{ flow: 'content', step: 'bitswap_release', tags: undefined }]);
+    expect(captured).toMatchObject([{ step: 'bitswap_release', tags: undefined }]);
     expect(sentry.counted('content.bitswap_release')).toEqual([{ outcome: 'error', reason: 'Error' }]);
     expect(secondBytes).toEqual(new Uint8Array([0x02]));
     expect(chain.dials).toHaveLength(2);

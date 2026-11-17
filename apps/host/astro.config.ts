@@ -43,7 +43,7 @@ export default defineConfig({
     // Builds the worker that retires the shell's precaching worker from earlier releases, and emits the web manifest.
     astroPwa({
       strategies: 'injectManifest',
-      srcDir: 'src',
+      srcDir: 'src/shell',
       filename: 'host-sw.ts',
       injectRegister: false,
       manifest: {

@@ -3,16 +3,18 @@
 
 import { createContext, untrack, useContext, type Accessor } from 'solid-js';
 import type { JSX } from '@solidjs/web';
+import { createSheetPreload } from './AnchoredContent.js';
 import { createAnchored, type Anchored } from './createAnchored.js';
 import { createTriggerWiring } from './createTriggerWiring.js';
 import { SurfaceSlot } from './SurfaceSlot.js';
 import type { CloseReason } from './closeReason.js';
-import { DropdownMenuSurface, SheetChoice } from './DropdownMenuSurface.js';
+import { DropdownMenuSurface } from './DropdownMenuSurface.js';
+import { SheetChoice } from './sheetChoice.js';
 import type { Placement } from './FloatingLayer.js';
 import s from './DropdownMenu.module.css';
 
 export type MenuState = Anchored & {
-  /** The opening came from a key, so it lands on the first item. */
+  /** The last opening came from a key, so it lands on the first item. Set on every opening. */
   keyboard: { value: boolean };
 };
 
@@ -59,6 +61,7 @@ function DropdownMenuRoot(props: {
       }
     },
   });
+  createSheetPreload();
   return (
     <MenuContext value={state}>
       <SurfaceSlot state={state}>
@@ -119,6 +122,7 @@ export function useDropdownMenu(): { open: Accessor<boolean>; setOpen: (open: bo
   return {
     open: state.open,
     setOpen(next) {
+      state.keyboard.value = false;
       state.setOpen(next);
     },
   };

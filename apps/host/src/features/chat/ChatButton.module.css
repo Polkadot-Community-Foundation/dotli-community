@@ -1,0 +1,21 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* Across the button's top-right rim, clear of the glyph. */
+.unread {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-full);
+  background: var(--inverse-bg);
+  box-shadow: 0 0 0 var(--sp-hair) var(--chrome-solid);
+  color: var(--inverse-fg);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
+  line-height: 16px;
+  text-align: center;
+}

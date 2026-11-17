@@ -93,6 +93,8 @@ General:
   bundler drops the dead branch.
 - A cleanup never deletes a working capability, such as a pause, a retry or a cache, only because nothing calls it yet.
   Ask the owner first. The delete's commit or PR names the capability and why it goes.
+- A reset, dispose or clear stays even when nothing calls it. It ends what the unit holds, so it is never a cleanup's to
+  delete.
 
 Packages:
 
@@ -101,12 +103,15 @@ Packages:
 
 TypeScript:
 
-- Never swallow errors. Rethrow with `{ cause }`, or `captureException` + `log.error` + an outcome metric. A context
-  with no logger or Sentry, such as a service worker, posts the failure to its pages, which report it, and calls
-  `console.error` with a one-line reason.
+- Never swallow errors. Rethrow with `{ cause }`, or report it as a defect through the feature's reporter
+  (`report.defect`), which captures it, logs it and counts its outcome. A context with no logger or Sentry, such as a
+  service worker, posts the failure to its pages, which report it, and calls `console.error` with a one-line reason.
 - One metric name per event, with `{ outcome, reason }`. No `_FAILURE` / `_TIMEOUT` constants.
+- A feature reports through its own reporter, `createReporter({ flow })` from `@dotli/metrics`, and declares its metrics
+  beside its code, a count with its outcome set through `defineCount`. `@dotli/metrics` lists only the metric names more
+  than one package reads.
 - `log.warn` only for real failures. Progress breadcrumbs use `log.event`.
-- An expected failure, one the environment causes, is reported with `reportExpected`, so it is always counted. Never a
+- An expected failure, one the environment causes, is reported with `report.expected`, so it is always counted. Never a
   breadcrumb alone.
 - A guarantee such as never rejecting belongs to the object the page builds, not to a free-standing wrapper every caller
   must remember.
@@ -141,18 +146,28 @@ UI:
 Comments and docs:
 
 - Comments say why or what constraint applies. Never restate the code.
-- JSDoc starts with one sentence. Files may open with a short purpose block.
-- No em-dashes, semicolons or Unicode arrows in prose. No decorative separators. No spec citations in comments.
-- Say "network" or "remote", not "on-chain".
-- Every interface method's JSDoc states its contract, such as whether and with what it rejects.
+- JSDoc starts with one sentence. Files may open with a short purpose block. No spec citations in comments.
+- A method that throws or rejects says when and with what in its JSDoc. Not throwing is the default and is never
+  written. A guarantee a caller relies on that the signature does not show, such as an order or an idempotency, is
+  written too.
 - Comments never claim a relation to other code, which can change without touching the comment. When two values must
   stay in sync, share a token, variable or import, or write nothing.
+
+Markdown docs only:
+
+- No em-dashes, semicolons or Unicode arrows in prose. No decorative separators.
+- Say "network" or "remote", not "on-chain".
 - Say "imports no Solid", never "Solid-free".
+- `npm run lint:root` checks the three rules above, apart from decorative separators.
+- No tail enumeration: a sentence never ends in a list of three or more items, with or without a colon. Split it into
+  short sentences, or end the lead-in with a colon and put the items in a bullet list.
 - Examples in docs and rules are general shapes a reader can map onto their own case ("a component's CSS module", "a
   multi-step modal"), never a specific file, component or past incident.
 - Every package has a `README.md` in its root: its responsibility, basic design and public API (each `exports` entry),
   or entry points for an app. It explains the package at a high level and names no files and no other packages. Diagrams
   are mermaid, not ASCII. A change to any of these updates the README in the same commit.
+- A library README's sections run in this order: Overview, Responsibilities, Public API, Design. A consumer reads the
+  public API before the design.
 
 Tests:
 
@@ -172,9 +187,14 @@ Tests:
 - Select by `data-testid` or ARIA role. Never by class.
 - Never test CSS (stylesheets, computed styles, class names).
 - Wait on signals, never sleep.
+- A spec asserts the step it expects reported, and the error or tags only when its case is about them. It never asserts
+  a report's flow and never matches a whole capture context. `recordReports` from `@dotli/metrics/testing` records
+  reports for this.
 - Pass fakes through parameters. Don't mock modules, and avoid overriding globals. Shape the code so tests drive it
   through its interface.
 - An optional parameter with a production default that only tests pass is fine.
+- A change that removes behaviour deletes the tests, story steps and comments about it. It adds none that check or say
+  the behaviour is gone.
 
 Git:
 

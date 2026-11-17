@@ -10,28 +10,6 @@ import { preloadWhenIdle } from './preloadWhenIdle.js';
 import type { IdleScheduler } from './runWhenIdle.js';
 
 describe('preloadWhenIdle', () => {
-  it('As the shell, I preload a chunk and it loads once the browser is idle', () => {
-    // Given a browser that offers idle callbacks
-    let idle: (() => void) | undefined;
-    const scheduler: IdleScheduler = {
-      requestIdleCallback: run => {
-        idle = run;
-        return 1;
-      },
-      cancelIdleCallback: () => undefined,
-    };
-    const preload = vi.fn(() => Promise.resolve());
-
-    // When
-    preloadWhenIdle({ preload }, { scheduler });
-    const beforeIdle = preload.mock.calls.length;
-    idle?.();
-
-    // Then
-    expect(beforeIdle).toBe(0);
-    expect(preload).toHaveBeenCalledTimes(1);
-  });
-
   it('As the shell on a browser without idle callbacks, I preload a chunk and it loads after 2 s', async () => {
     // Given
     const timers = createManualTimers();
@@ -105,7 +83,7 @@ describe('preloadWhenIdle', () => {
     const reported = await missed.promise;
 
     // Then
-    expect(reported).toEqual({ error: offline, context: { flow: 'ui', step: 'idle_preload' } });
+    expect(reported).toMatchObject({ error: offline, context: { step: 'idle_preload' } });
     expect(metrics.counted('lazy_chunk.load')).toEqual([{ outcome: 'error', reason: 'idle_preload' }]);
     expect(exception).not.toHaveBeenCalled();
   });

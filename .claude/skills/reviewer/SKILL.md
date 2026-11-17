@@ -4,8 +4,8 @@ description: >-
   Use to audit a branch diff or PR against dotli's architecture and code rules, after implementing a change, before
   merging, or when asked to review a PR or branch. It cites the `docs/claude/` checklists with blocking, major and minor
   severity, and complements the built-in /code-review, which hunts general bugs. It recovers the change's intent (the
-  design frame and the plan scope) from `docs/_plans/` or the PR, then diffs intent against implementation, including
-  blast radius and added complexity, not just scope.
+  design frame, the owner's goal and the design's scope) from `docs/_plans/` or the PR, then diffs intent against
+  implementation, including blast radius and added complexity, not just scope.
 ---
 
 # Reviewer
@@ -18,8 +18,9 @@ This is the rule-aware reviewer. It cites `docs/claude/architecture-checklist.md
 the primary source of truth. It complements the built-in `/code-review`, which hunts general bugs. Run both: this one
 enforces dotli's layering and conventions.
 
-Severity orders the work, and every finding is fixed in this branch, minor included. There is no "minor, user decides"
-and no finding parked as a follow-up (.claude/skills/architecture/SKILL.md § Reviewing and fixing).
+Severity orders the work, and every finding is fixed in this branch, minor included, unless a minor one is closed with a
+reason that holds. There is no "minor, user decides" and no finding parked as a follow-up
+(.claude/skills/architecture/SKILL.md § Step 6: Review and fix).
 
 ## Procedure
 
@@ -27,9 +28,10 @@ and no finding parked as a follow-up (.claude/skills/architecture/SKILL.md § Re
    - A PR number is given: `gh pr diff <N>` plus `gh pr view <N> --json files,title,body` for context.
    - Otherwise: `git diff main...HEAD` and `git log main..HEAD --oneline`.
    - A scoped re-review: the brief gives a commit range, the findings the fix answers, and whether the fix was a minor
-     sweep. The diff is `git diff <range>`. Check that each finding is fixed and audit the diff. After a fix of blocking
-     or major findings, also read every file that uses a symbol the fix changed, found with LSP `findReferences`. Skip
-     step 5b.
+     sweep. The diff is `git diff <range>`. Check that each finding is fixed and audit the diff. Raise no finding the
+     review file already holds, whether fixed, dropped by verification, closed with a reason or accepted by the owner.
+     After a fix of blocking or major findings, also read every file that uses a symbol the fix changed, found with LSP
+     `findReferences`. Skip step 5b.
 
 **Cost of a run.** The time of a run is model turns. Read the diff once. Open a file beyond the diff only to settle a
 finding. Check named paths and exports in a few batched commands, never one lookup per name. Answer a symbol question
@@ -37,21 +39,21 @@ finding. Check named paths and exports in a few batched commands, never one look
 send independent LSP calls in one turn. Grep only plain text, config and non-TypeScript files, or after an LSP call
 fails, and name that failure in the report.
 
-2. **Recover the intent, the frame first, then the scope.** Two different yardsticks, and the plan gives you only the
-   second.
+2. **Recover the intent: the frame and the goal first, then the scope.** Three different yardsticks.
    - **The frame** (docs/code/glossary.md § Change size): the change in one sentence in the vocabulary of one package or
-     app. Read it from `docs/_plans/<topic>-design.md` if one exists, else the plan's problem statement, else the PR
-     title and body, else the branch name. Write it down before opening the diff. It is the yardstick for step 5's
-     radius check, and the only one that survives a plan that grew.
-   - **The scope**: from `docs/_plans/<topic>-plan.md`, the files in scope, `must_not_touch`, `out_of_scope` and the
-     public surfaces used.
-   - Both exist? Note any place where the plan already departs from the design. An implementation faithful to a drifted
-     plan passes every scope check while building something the owner never approved (the `architecture` skill, plan
-     review criterion 7). That is a **major** finding against the plan, not the code.
+     app. Read it from `docs/_plans/<topic>-design.md` if one exists, else the PR title and body, else the branch name.
+     Write it down before opening the diff. It is the yardstick for step 5's radius check, and the only one that
+     survives a design whose file list grew.
+   - **The goal**: the end state the owner asked for, from the design's goal (the `architecture` skill, step 1), or the
+     roadmap's share for a stage. With no design, take it from the PR body. Write it down beside the frame, with any cut
+     the owner made.
+   - **The scope**: from the design, the files it expects to change and what it puts out of scope. The design grows in
+     place as slices find more, and the owner approved each slice, so its file list is a record, not a contract.
 
 3. **Load the checklists, the primary citation source.**
    - `docs/claude/architecture-checklist.md` when the diff touches placement or layering, adds or moves files, or
-     touches a package `src/index.ts` or `package.json` `exports`, a `src/lazy.ts`, or an `eslint.config.js`.
+     touches a package `src/index.ts` or `package.json` `exports`, a `lazy.ts` or an `import()`, or an
+     `eslint.config.js`.
    - `docs/claude/code-checklist.md` when the diff touches a component and its CSS module and story, a spec or
      functional test, or any other rule-bearing source file.
    - Load **both** when unsure. The checklists are severity-tagged and ready to quote. The owner docs behind them
@@ -62,21 +64,20 @@ fails, and name that failure in the report.
    label a row cites, `docs/code/placement.md` for where code and files go, `docs/code/style.md` for how code is shaped,
    `docs/code/glossary.md` for a threshold such as a peer file or a layer.
 
-5. **Diff intent against implementation.** Two passes. The second runs whether or not a plan exists.
+5. **Diff intent against implementation.** Three passes. The second and the third run whether or not a design exists.
 
-   **5a. Against the plan's scope** (only when a plan exists):
-   - Files in `must_not_touch` touched: **blocking**.
-   - `out_of_scope` items implemented anyway: **major** scope creep.
-   - Files in the diff that are neither in the plan's scope nor a peer file (docs/code/glossary.md § Scope): **major**,
-     "out of plan scope, approved?".
-   - Peer-file edits as (docs/code/glossary.md § Scope) lists them: do not flag.
+   **5a. Against the design's scope** (only when a design exists):
+   - Items the design puts out of scope implemented anyway: **major** scope creep.
+   - Files in the diff that are neither in the design's file list nor a peer file (docs/code/glossary.md § Scope): no
+     finding on their own, since the owner approved each slice. They count toward the radius in 5b.
 
    **5b. Against the frame, radius and braid** (docs/abstract/simple-vs-easy.md § For Claude). Scope checks alone cannot
-   catch a change that grew, because the plan is the thing that grew. The frame is the fixed point. A diff can respect
-   every `must_not_touch` and still be an 87-file artifact from a one-package sentence.
+   catch a change that grew, because the design's file list grows with it. The frame is the fixed point. A diff can
+   match its design and still be an 87-file artifact from a one-package sentence.
    - **Measure the radius**: `git diff --name-only main...HEAD` gives the file count and the distinct layers (packages,
-     apps and `config/*` packages). Compare against the frame from step 2, not the plan. A contradiction is the
-     **minor** radius row in (docs/claude/architecture-checklist.md § Complexity), with a concrete staging proposal.
+     apps and `config/*` packages). Compare against the frame from step 2, not the design's file list. A contradiction
+     is the **minor** radius row in (docs/claude/architecture-checklist.md § Complexity), with a concrete staging
+     proposal.
    - **Judge the braid** against the **major** rows (docs/claude/architecture-checklist.md § Complexity): does the diff
      add a flag or branch to a shared path, thread a value through callers that only forward it, or widen a shared type?
      Cite the matching row. Apply each row's stated test. A parameter that callers genuinely read is not a finding.
@@ -84,10 +85,16 @@ fails, and name that failure in the report.
      defect the author introduced. Say which it is. Blaming an author for braid they inherited is a false positive, and
      it teaches the next author to hide the count.
 
+   **5c. Against the goal.** Check each item of the goal in the code as it stands, not in the diff, and mark it met or
+   not met. An unmet item that no owner's cut covers is **blocking**: the change does not do what was asked, however
+   clean its diff is.
+
 6. **Walk the diff file by file.** For each violation, quote `file:line`, state the rule in one line, cite the checklist
    and section in the plain form (docs/claude/code-checklist.md § Tests), suggest a concrete fix in one or two
    sentences, and tag the severity. Number the findings by severity, B1, B2 for blocking, M1 for major and m1 for minor,
-   so a fix brief can name them.
+   so a fix brief can name them. A defect that recurs is one finding that lists every place it occurs, so one fix covers
+   them all. A blocking or major finding quotes the lines that show it, never a guess from a name, since a verifier
+   checks it against the code before anyone fixes it.
 
 7. **Group findings by theme**, one theme per checklist section: Layering, Placement, Package surfaces, Lazy loading and
    Complexity from the architecture checklist, and Code shape, Errors and logging, Metrics, Async and lifecycle, UI and
@@ -100,11 +107,13 @@ fails, and name that failure in the report.
 
 10. **Write the review to `docs/_reviews/<topic>-review.md`**, using the output shape below.
 
-- `<topic>` matches the plan it audits when one exists: `docs/_plans/<topic>-plan.md` pairs with
+- `<topic>` matches the design it audits when one exists: `docs/_plans/<topic>-design.md` pairs with
   `docs/_reviews/<topic>-review.md`, so a later reader can line up intent against findings.
-- No plan? Derive `<topic>` from the PR (`pr-<N>`) or the branch name without its `feat/` or `fix/` prefix. Overwrite an
-  existing file for the same topic. The latest review supersedes it.
+- No design? Derive `<topic>` from the PR (`pr-<N>`) or the branch name without its `feat/` or `fix/` prefix. Overwrite
+  an existing file for the same topic. The latest review supersedes it.
 - A scoped re-review appends a `### Re-review <n>` section to the existing file instead of overwriting it.
+- A verifier, a fixer closing a minor finding and the controller's closing `### Outcome` also write to this file. A
+  review run never edits what they wrote.
 - After writing, print a one-line pointer and the verdict to the console, such as
   `Review written to docs/_reviews/<topic>-review.md, 1 blocking, 4 major`. Don't restate the full body in chat.
 
@@ -116,6 +125,7 @@ fails, and name that failure in the report.
 - Style preferences no doc states.
 - Speculation about future maintenance without a cited rule.
 - Anything you can't tie to a quoted checklist row or doc section.
+- A finding the review file already holds, in any state.
 
 ## Output shape
 
@@ -126,13 +136,14 @@ The body written to `docs/_reviews/<topic>-review.md`:
 
 ### Intent
 - Frame: "resolve dotNS names against the network's TLD" (docs/_plans/dotns-network-tld-design.md)
+- Goal: "every dotNS read uses the active network's TLD". Met.
 - Radius: 87 files, 6 layers, contradicts a one-package frame. See Complexity.
-(The frame line is always present. Derive it from the PR or branch when no design doc exists.)
+(The frame and goal lines are always present. Derive them from the PR or branch when no design doc exists.)
 
-### Plan against implementation
-- Touched must_not_touch: packages/resolver/...
-- Scope respected otherwise.
-(Skip entirely if no plan exists.)
+### Design scope against implementation
+- Out of scope, implemented anyway: none.
+- Files beyond the design's list: 2, counted in the radius.
+(Skip entirely if no design exists.)
 
 ### Layering (N blocking, M major)
 - **B1 blocking** packages/resolver/src/<module>.ts:42, trusts a gateway's answer without proof (docs/claude/architecture-checklist.md § Layering)

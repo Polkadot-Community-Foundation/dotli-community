@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { Plugin } from 'vite';
 import type { LocalServing } from './createLocalServing.ts';
 import { getRequestHostname } from './getRequestHostname.ts';
-import { isProtocolPath, isSessionPath } from './siteRoutes.ts';
+import { isSessionPath } from './siteRoutes.ts';
 
 /** The pages the bare host answers with other than the shell, by their Astro routes. */
 export type FallbackPages = {
@@ -47,7 +47,7 @@ type Params = {
  * malformed escape with 404. Never throws. `astro dev` answers unknown paths with 404, which breaks product deep links
  * and `/__preview`. `serving` tells the bare host from the others.
  */
-export function spaFallback(pages: FallbackPages, serving: LocalServing): Plugin {
+export function spaFallback(pages: FallbackPages, serving: Pick<LocalServing, 'getRoute'>): Plugin {
   return {
     name: 'dotli-spa-fallback',
     apply: 'serve',
@@ -89,16 +89,14 @@ export function spaFallback(pages: FallbackPages, serving: LocalServing): Plugin
  * page. A malformed escape names no file, so it is a 404.
  */
 export function getFallbackAction({ request, pages, isPublicFile, getRoute }: Params): FallbackAction {
-  const isPageLoad =
-    (request.method === 'GET' || request.method === 'HEAD') && (request.accept ?? '').includes('text/html');
-  if (!isPageLoad) {
+  if (!isPageLoad(request)) {
     return { kind: 'pass' };
   }
   const [path = '/', query] = (request.url ?? '/').split('?');
   const appendQuery = (page: string): string => (query === undefined ? page : `${page}?${query}`);
   const route = getRoute(request.hostname, path);
   // A protocol frame load is not this server's page to answer.
-  if (isProtocolPath(path) && route.site === 'protocol') {
+  if (route.site === 'protocol') {
     return { kind: 'pass' };
   }
   if (path === '/') {
@@ -115,4 +113,9 @@ export function getFallbackAction({ request, pages, isPublicFile, getRoute }: Pa
     return { kind: 'rewrite', url: appendQuery(pages.session) };
   }
   return isPublicFile(decoded) ? { kind: 'pass' } : { kind: 'rewrite', url: appendQuery('/') };
+}
+
+/** Whether a request loads a page: a GET or HEAD that accepts HTML. */
+function isPageLoad({ method, accept }: PageRequest): boolean {
+  return (method === 'GET' || method === 'HEAD') && (accept ?? '').includes('text/html');
 }

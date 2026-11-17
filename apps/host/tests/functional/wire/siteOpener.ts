@@ -8,8 +8,8 @@
 // other route signs in with neither.
 
 import { isValidNetwork, NETWORK_NAME_TO_SERVICES_CONFIG } from '@dotli/config/networks';
-import { PROTOCOL_VERSION } from '../../../src/runtime/sessionHandoff/sessionMessages.js';
-import { createRequestUrl } from '../../../src/runtime/sessionHandoff/sessionRoute.js';
+import { PROTOCOL_VERSION } from '../../../src/kit/sessionMessages.js';
+import { createRequestUrl } from '../../../src/kit/sessionRoute.js';
 
 const query = new URLSearchParams(location.search);
 const net = query.get('net') ?? '';
@@ -49,7 +49,7 @@ window.addEventListener('message', event => {
 });
 
 button.addEventListener('click', () => {
-  // A sign-in names no account. `account=none` leaves the account out of a transaction, as a site that forgot it would.
+  // A sign-in names no account.
   const params =
     route === 'sign'
       ? {
@@ -58,9 +58,7 @@ button.addEventListener('click', () => {
           round,
           chain: NETWORK_NAME_TO_SERVICES_CONFIG[net].assethub.genesis,
           call,
-          ...(query.get('account') === 'none'
-            ? {}
-            : { account: `myapp.${NETWORK_NAME_TO_SERVICES_CONFIG[net].dotns.TLD}/0` }),
+          account: `myapp.${NETWORK_NAME_TO_SERVICES_CONFIG[net].dotns.TLD}/0`,
         }
       : { v: PROTOCOL_VERSION, net, round };
   opened = window.open(createRequestUrl({ origin: windowOrigin, route, params }), '_blank');

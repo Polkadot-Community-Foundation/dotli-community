@@ -1,0 +1,170 @@
+/* Copyright 2026 Parity Technologies (UK) Ltd. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+.panel {
+  display: none;
+  position: fixed;
+  bottom: var(--content-bottom);
+  left: 0;
+  right: 0;
+  z-index: 900;
+  box-sizing: border-box;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface);
+  color-scheme: dark;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.panel[data-visible] {
+  display: block;
+}
+
+/* A grip in the middle says the edge drags. It is centred on the panel's top edge, clear of the header's text, with a
+   hit area taller than the grip. */
+.resizeHandle {
+  position: absolute;
+  top: 0;
+  transform: translateY(-50%);
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 10px;
+  cursor: ns-resize;
+}
+.resizeHandle::before {
+  content: '';
+  width: 32px;
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--chrome-idle);
+  transition: background var(--dur-fast);
+}
+
+.resizeHandle:hover::before,
+.resizeHandle:active::before {
+  background: var(--border-focus);
+}
+
+.panel[data-collapsed] .resizeHandle {
+  display: none;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  box-sizing: border-box;
+  height: 32px;
+  padding: var(--sp-1_5) var(--sp-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-full);
+  background: var(--chrome-danger-fill-strong);
+  color: var(--chrome-err-text);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
+}
+
+.label {
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+}
+
+/* Positioned, so it sits over the handle's hit area and takes its own presses. */
+.toggle {
+  position: relative;
+  margin: 0 0 0 auto;
+  padding: var(--sp-hair) var(--sp-1_5);
+  border: none;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.toggle:hover {
+  color: var(--text-strong);
+}
+
+.toggle:focus-visible {
+  outline: var(--chrome-focus-ring);
+}
+
+/* Inset, as the panel clips anything past its edge. */
+.log:focus-visible {
+  outline: var(--chrome-focus-ring);
+  outline-offset: -2px;
+}
+
+.chevron {
+  display: block;
+}
+
+/* Folded, the chevron points up, to the way the panel opens. */
+.panel[data-collapsed] .chevron {
+  transform: rotate(180deg);
+}
+
+/* A row scrolled half under the header fades out over the top padding, so no cut glyphs show at the edge. */
+.log {
+  box-sizing: border-box;
+  max-height: 160px;
+  padding: var(--sp-1) var(--sp-3) var(--sp-2);
+  overflow-y: auto;
+  /* A row scrolled into view clears the edge, not half under it. */
+  scroll-padding-block: var(--sp-1) var(--sp-2);
+  mask-image: linear-gradient(to bottom, transparent, #000 var(--sp-1));
+}
+
+.panel[data-collapsed] .log {
+  display: none;
+}
+
+.entry {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-hair) 0;
+}
+
+.time {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.api {
+  flex-shrink: 0;
+  color: var(--text-strong);
+  font-weight: var(--fw-semibold);
+}
+
+.details {
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A phone has no room for one line per violation, so the details wrap rather than cut. */
+@media (max-width: 560px) {
+  .details {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}
