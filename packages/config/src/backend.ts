@@ -4,7 +4,6 @@
 // smoldot-direct runs smoldot in the protocol iframe, smoldot-shared-worker in a SharedWorker that tabs share.
 // rpc-gateway uses a trusted JSON-RPC node and an IPFS gateway, with no smoldot.
 
-import { activeNetworkSupportsLightClient } from './activeNetwork.js';
 import { activeSettings } from './activeSettings.js';
 
 export type Backend = 'smoldot-direct' | 'smoldot-shared-worker' | 'rpc-gateway';
@@ -49,16 +48,12 @@ export function parseBackend(raw: string | null): Backend | null {
 
 /** This context's backend, or the default before boot sets the settings. */
 export function getBackend(): Backend {
-  // The stored choice is kept, so it applies again on a network that supports the light client.
-  if (!activeNetworkSupportsLightClient()) {
-    return 'rpc-gateway';
-  }
   return activeSettings()?.backend ?? getDefaultBackend();
 }
 
 /** The backend a visitor starts on. */
 export function getDefaultBackend(): Backend {
-  return activeNetworkSupportsLightClient() ? 'smoldot-direct' : 'rpc-gateway';
+  return 'smoldot-direct';
 }
 
 /** Verified means smoldot end to end. rpc-gateway trusts operators for chain access and content. */

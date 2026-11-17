@@ -29,7 +29,6 @@ const SETTINGS: SettingsState = {
   network: 'previewnet',
   enabledNetworks: ['previewnet'],
   sharedWorkerAvailable: false,
-  lightClientAvailable: true,
   verified: false,
 };
 

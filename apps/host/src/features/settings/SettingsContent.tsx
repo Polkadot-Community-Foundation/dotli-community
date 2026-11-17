@@ -132,7 +132,6 @@ function SettingsPanel(props: SettingsContentProps & { saved: SavedSettings }): 
           <TransportChoices
             value={backend()}
             sharedWorkerAvailable={saved.sharedWorkerAvailable}
-            lightClientAvailable={saved.lightClientAvailable}
             onChoose={setBackend}
           />
         </Show>
