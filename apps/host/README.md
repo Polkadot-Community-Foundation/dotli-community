@@ -25,8 +25,9 @@ product by `.dot` name inside a sandbox iframe. See the root [README](../../READ
 - **TrUAPI host side:** the page core and the host callbacks.
 - **Session:** sign-in and sign-out with Polkadot App or a local wallet. It also owns the signed-in flag and the wallet
   mode.
-- **Name suggestions:** the landing page keeps a dotNS name list and suggests the names that publish an app under its
-  input. The landing page's settings can clear the list and reload.
+- **Name suggestions:** the landing page keeps a dotNS name list. Under its input it suggests the recently visited
+  names, each with a way to forget it, then the names that publish an app. The landing page's settings can clear the
+  list and reload.
 - **Stores:**
   - auth
   - product
@@ -50,15 +51,16 @@ The source is grouped by what it is for:
 
 The features:
 
-| Group             | Features                                                            |
-| ----------------- | ------------------------------------------------------------------- |
-| Opening a product | landing, product load, product identity, topbar, page               |
-| Signing in        | account, sign-in window, site sign-in                               |
-| Around a product  | signing, permissions, network, settings, chat, notifications, debug |
+| Group             | Features                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| Opening a product | landing, product load, product identity, topbar, page                               |
+| Signing in        | account, sign-in window, site sign-in                                               |
+| Around a product  | signing, permissions, network, settings, chat, notifications, debug, product worker |
 
 - **Product runtime:** the TrUAPI side whole. It holds the core connection and the host callbacks. The runtime bridge
   sits there too.
-- **Chains:** the page's chain pool and the reads every flow shares, below product runtime.
+- **Chains:** the page's chain pool and the reads every flow shares, below product runtime. It holds the page's one
+  archive reader, which the product worker and the debug panel read through.
 - **Debug panel:** the panel's view of the page, above product runtime, loaded only in debug mode.
 
 No feature imports another in a cycle, so each sits above the features it reads.
@@ -181,9 +183,14 @@ request in session storage, so a reload answers the same round.
 ### Permissions
 
 - One permissions store over the core's permission store. The product frame, the prompts and the menu share it.
-- The panel shows four presets on a slider, with every permission under Advanced. The preset is derived, never stored.
+- The panel shows three presets on a slider, with every permission under Advanced. The preset is derived, never stored.
 - Every change goes through one retrying write. The frame reloads only when its `allow` attribute changes.
 - Each permission's facts are one table in the runtime.
+- One list names the permissions dot.li does not support, such as NFC, whose browser API cannot run in a frame. The
+  panel, the presets and the frame leave them out, and a product's request for one is denied with no dialog.
+- A device the browser asks for itself, such as the camera, is left to the browser's own prompt. Its directive is in the
+  frame unless the user blocks it in the panel, and a product's request for it is allowed once with no dialog. The panel
+  says when the browser itself blocks it.
 - The browser is asked for a permission the host serves itself, notifications, inside the click that grants it, from the
   permission dialog or the menu.
 - A grant the browser denies shows a dialog to restrict it or retry, right after a grant in the permission dialog and
@@ -206,20 +213,47 @@ request in session storage, so a reload answers the same round.
 - **Refused wire version:** the protocol frame refusing the page's version shows the reload screen. The product frame
   then halts until the user reloads.
 - The product card's author is read and cached with the manifests.
-- Whether a product declares chat comes from its worker manifest and is cached per label.
+- The product's worker executable is its worker manifest with the CID of its `worker` subname, read once per label in a
+  page and cached per label. The load starts the read beside the CID, so the worker finds it done.
+- The product frame connects every product as an App as soon as the core is leased. Only the product worker serves chat.
+
+### Product worker
+
+- A product page runs its product's worker in a QuickJS VM, in a Web Worker of its own, on a `Worker`-kind connection to
+  the page core.
+- The core's ledger alone starts and stops it. The page takes one reference on it at the product's first done, and the
+  core counts the rest.
+- A run that fails, or finds no worker, is not tried again until the demand turns wanted again.
+- When the core goes down, the run goes with it, and the reference and the demand are taken again on the replacement.
+- A run whose worker declares chat serves the page's chat on its own connection until the run ends. Chat images come
+  from the archive the run read, or as single Bulletin blocks checked against their CID.
+- The topbar shows the chat button once the product's worker registers chat and the product has a room, to a logged-in
+  user.
+- The worker's console output goes to the debug log, never to the always-on channels.
+
+### Archives
+
+- Every archive the host reads itself goes through the page's archive reader. A product load's blocks go through the
+  sandbox's block relay instead.
+- On a light client the reader takes each block from the block cache, else over bitswap, and hashes every one, since
+  these blocks bypass the relay's checks. On the gateway backend it reads through the gateway.
+- Overlapping reads of one archive share one read. Its files are kept for the page's life. A failed read keeps nothing,
+  so the next read tries again.
+- Skipping the archive cache in the settings bypasses the block cache, not the files the page keeps.
 
 ### Network
 
 - The network monitor opens no chain. The bridge and the load progress report to it.
-- A hidden page pauses its network after a grace, through `createNetworkPause`, unless a load or a phone request holds
-  it awake.
+- A hidden page pauses its network after a grace, through `createNetworkPause`, unless something holds it awake. A load
+  holds it, and so does a phone request. A product worker's open operation holds it too, until the operation ends or its
+  core is gone.
 - Recently visited names live in the store every subdomain shares, with a per-origin mirror.
 
 ### Loading and failures
 
-- The bridge, chat store, panel bodies, product card, debug panel, local wallet, host runtime, chain client and QR
-  encoder load on demand, each in its own chunk. The chat panel counts unread messages from once the chat store loads.
-  CI startup size budgets guard what each page loads first.
+- The bridge, chat store, panel bodies, product card, debug panel, local wallet, host runtime, chain client, QR encoder
+  and product worker load on demand, each in its own chunk. The chat panel counts unread messages, and learns whether
+  the product has a room, from once the chat store loads. CI startup size budgets guard what each page loads first.
 - A shared lazy module loads once. A failed load is forgotten, so the next caller retries without a page reload.
 - Islands that must stand in for themselves wrap their trees in an error boundary. An island whose code never ran offers
   a reload.
@@ -279,5 +313,6 @@ sequenceDiagram
 | `test:functional`, `test:e2e`, `test:e2e:local`, `test:perf*` | Playwright suites.                     |
 
 - **Trap:** a functional run needs the root `build:test` build, as CI does. It turns metrics on and sets a Sentry DSN.
-  Without it, Sentry sends nothing and the light client gauge never reaches the preview server.
+  Without it, Sentry sends nothing and the light client gauge never reaches the preview server. The root
+  `test:functional` builds it, then runs the suite.
 - Component stories run in the one Storybook at the repo root.

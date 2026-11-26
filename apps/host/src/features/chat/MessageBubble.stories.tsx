@@ -1,143 +1,113 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { For } from 'solid-js';
+import type { JSX } from '@solidjs/web';
 import type { Meta, StoryObj } from 'storybook-solidjs-vite';
 import { expect, fn, within } from 'storybook/test';
+import { onChatSurface } from '../../testing/stories/chatFrames.js';
 import type { ChatMessageRecord } from './createChatStore.js';
 import { MessageBubble } from './MessageBubble.js';
 
 const NOW = 1_700_000_000_000;
 
-function record(content: unknown, author: 'product' | 'user' = 'product'): ChatMessageRecord {
-  return {
-    seq: 1,
-    productId: 'app.dot',
-    roomId: 'main',
-    messageId: 'm1',
-    author,
-    content,
-    timestamp: NOW - 5 * 60_000,
-  };
-}
-
-/** The page's custom body, standing in for the product's live render. */
-function customBody() {
-  return <div data-testid="chat-custom-root">poll</div>;
-}
-
 const meta = {
   title: 'Entities/Chat/MessageBubble',
   component: MessageBubble,
-  parameters: {
-    chrome: true,
-  },
+  parameters: { chrome: true },
   args: {
-    record: record({ tag: 'Text', value: { text: 'hello <b>there</b>' } }),
-    now: NOW,
-    endsRun: true,
+    record: record({ tag: 'Text', value: { text: 'Your order #4821 is confirmed.' } }),
     onAction: fn(),
-    custom: customBody,
+    custom: StandInBody,
   },
+  decorators: [onChatSurface],
 } satisfies Meta<typeof MessageBubble>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** As a reader, I see a product message as text, and the exact time on hover. */
-export const TextWithRelativeTime: Story = {
-  play: async ({ canvas, step }) => {
-    const row = canvas.getByTestId('chat-msg');
-    const bubble = within(row).getByTestId('chat-msg-bubble');
-    await step('Then the message is the product’s and its markup reads as text', async () => {
-      await expect(row).toHaveAttribute('data-author', 'product');
-      await expect(bubble.querySelector('b')).toBeNull();
-      await expect(bubble).toHaveTextContent('hello <b>there</b>');
-    });
-    await step('Then it shows the exact time on hover', async () => {
-      const time = within(bubble).getByTestId('chat-msg-time');
-      await expect(time.title).not.toBe('');
-    });
-  },
+/** As a reader, I see a product's message on the left, with its time inside the bubble. */
+export const Default: Story = {};
+
+/** As a reader, I see my own message on the right, light on the dark panel. */
+export const Own: Story = {
+  args: { record: { ...meta.args.record, author: 'user' } },
 };
 
-/** As a reader, I see my own message marked as mine. */
-export const OwnMessage: Story = {
-  args: { record: record({ tag: 'Text', value: { text: 'me' } }, 'user') },
-};
-
-/** As a reader, I see no time on a message its author followed up within the minute. */
-export const InsideARun: Story = {
-  args: { endsRun: false },
-  play: async ({ canvas, step }) => {
-    await step('Then the bubble shows its text without a time', async () => {
-      await expect(canvas.getByTestId('chat-msg-bubble')).toHaveTextContent('hello <b>there</b>');
-      await expect(canvas.queryByTestId('chat-msg-time')).toBeNull();
-    });
-  },
-};
-
-const RICH_KINDS = [
-  { name: 'rich', content: { tag: 'RichText', value: { text: 'pics', media: [{}, {}] } } },
-  { name: 'reaction', content: { tag: 'Reaction', value: { emoji: '👍' } } },
-  { name: 'removed', content: { tag: 'ReactionRemoved', value: { emoji: '👍' } } },
-  { name: 'file', content: { tag: 'File', value: { fileName: 'a.pdf' } } },
-  { name: 'unknown', content: { tag: 'Hologram', value: {} } },
-];
-
-/** As a reader, I read rich text, reactions, files and unknown kinds each as their own line. */
-export const RichKindsReadAsToday: Story = {
-  render: args => (
-    <For each={RICH_KINDS}>
-      {kind => (
-        <div data-testid={`kind-${kind.name}`}>
-          <MessageBubble {...args} record={record(kind.content)} />
-        </div>
-      )}
-    </For>
-  ),
-  play: async ({ canvas, step }) => {
-    const bubbleOf = (name: string): HTMLElement =>
-      within(canvas.getByTestId(`kind-${name}`)).getByTestId('chat-msg-bubble');
-    await step('Then rich text shows its text and counts its attachments', async () => {
-      await expect(bubbleOf('rich')).toHaveTextContent('pics');
-      await expect(within(bubbleOf('rich')).getByTestId('chat-msg-meta').textContent).toBe('2 attachments');
-    });
-    await step('Then reactions read as what was done', async () => {
-      await expect(bubbleOf('reaction')).toHaveTextContent('reacted 👍');
-      await expect(bubbleOf('removed')).toHaveTextContent('removed reaction 👍');
-    });
-    await step('Then a file shows its name over its kind', async () => {
-      await expect(bubbleOf('file')).toHaveTextContent('a.pdf');
-      await expect(within(bubbleOf('file')).getByTestId('chat-msg-meta').textContent).toBe('File');
-    });
-    await step('Then an unknown kind reads as unsupported', async () => {
-      await expect(bubbleOf('unknown')).toHaveTextContent('Unsupported message');
-    });
-  },
-};
-
-/** As a reader, I see an actions message's buttons in a grid. */
-export const ActionButtons: Story = {
+/** As a reader, I see a long unbroken word wrap inside the bubble. */
+export const LongText: Story = {
   args: {
     record: record({
-      tag: 'Actions',
-      value: {
-        text: 'Choose',
-        layout: 'Grid',
-        actions: [
-          { actionId: 'yes', title: 'Yes' },
-          { actionId: 'no', title: 'No' },
-        ],
-      },
+      tag: 'Text',
+      value: { text: 'https://market.dot/orders/4821/receipt/route-from-kitchen-to-door-with-every-stop-on-the-way' },
     }),
   },
 };
 
-/** As a reader, I see a custom message as the page's custom body beside its time. */
-export const CustomBodyBeforeTimestamp: Story = {
-  tags: ['!autodocs'],
+/** As a reader, I see rich text with a line that counts its attachments. */
+export const RichTextAttachments: Story = {
   args: {
-    record: record({ tag: 'Custom', value: { messageType: 'poll', payload: '0x01' } }),
+    record: record({ tag: 'RichText', value: { text: 'Here is the receipt and the route.', media: [{}, {}] } }),
   },
 };
+
+/** As a reader, I see a file by its name over its kind. */
+export const File: Story = {
+  args: { record: record({ tag: 'File', value: { fileName: 'receipt-4821.pdf' } }) },
+};
+
+/** As a reader, I see an actions message's buttons stacked in a column. */
+export const ActionsColumn: Story = {
+  args: { record: actions('Column', ['Great', 'Something was missing', 'Talk to support']) },
+};
+
+/** As a reader, I see an actions message's buttons in a grid. */
+export const ActionsGrid = {
+  args: { record: actions('Grid', ['Water', 'Lemonade', 'Cola', 'No, thanks']) },
+} satisfies Story;
+
+/** As a reader, I see a custom message as the page's custom body in a card, its time on a line below it. */
+export const Custom = {
+  args: { record: record({ tag: 'Custom', value: { messageType: 'delivery-time', payload: '0x01' } }) },
+} satisfies Story;
+
+/** As a reader, I see a reaction as a quiet event with its time, never a bubble. */
+export const Reaction: Story = {
+  args: { record: record({ tag: 'Reaction', value: { emoji: '👍' } }) },
+};
+
+/** As a reader, I see markup in a product's message as plain text. */
+export const MarkupStaysText: Story = {
+  args: { record: record({ tag: 'Text', value: { text: '<img src=x onerror=alert(1)>' } }) },
+  play: async ({ canvas, mount, step }) => {
+    await step('When a message that holds markup renders', async () => {
+      await mount();
+    });
+    await step('Then the bubble holds no element the markup names', async () => {
+      await expect(within(canvas.getByTestId('chat-msg-bubble')).queryByRole('img')).toBeNull();
+    });
+  },
+};
+
+/** The page's custom body, standing in for the product's live render. */
+function StandInBody(): JSX.Element {
+  return <div>The app's own content</div>;
+}
+
+function record(content: unknown): ChatMessageRecord {
+  return {
+    seq: 1,
+    productId: 'market.dot',
+    roomId: 'orders',
+    messageId: 'm1',
+    author: 'product',
+    content,
+    timestamp: NOW - 5 * 60_000,
+  };
+}
+
+function actions(layout: 'Column' | 'Grid', titles: string[]): ChatMessageRecord {
+  return record({
+    tag: 'Actions',
+    value: { text: 'How was your last order?', layout, actions: titles.map(title => ({ actionId: title, title })) },
+  });
+}

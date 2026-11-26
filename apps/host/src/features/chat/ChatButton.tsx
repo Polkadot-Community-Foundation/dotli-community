@@ -1,46 +1,44 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createEffect, useContext, type Accessor } from 'solid-js';
+import { onSettled, useContext, type Accessor } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { ChatIcon } from '@dotli/ui/icons';
-import { ActionItem, ActionsContext, Chip, IconButton, isFocusLostOrInside, focusTrigger } from '@dotli/ui';
+import { ActionItem, ActionsContext, Chip, IconButton } from '@dotli/ui';
 import { TOPBAR_PRIORITY } from '../page/index.js';
+import { CHAT_PANEL_ID } from './chatPanelId.js';
 import s from './ChatButton.module.css';
 
 export type ChatButtonProps = {
   /** Chat is available to this session in this product. */
   visible: Accessor<boolean>;
-  /** The docked chat panel is open. */
+  /** The chat panel is open. */
   open: Accessor<boolean>;
   /** The unread count as shown, undefined while there is none to show (the panel is open or nothing is unread). */
   unread: Accessor<string | undefined>;
   onToggle: () => void;
-  /** The chat panel, which hands focus back here when it closes with focus inside. */
-  panel: () => HTMLElement | undefined;
+  /** Takes what finds the control the panel returns focus to, and returns the hand back. */
+  handOver?: ((trigger: () => HTMLElement | undefined) => () => void) | undefined;
   /** Where focus goes back to while the button is not on show, such as the More button of a bar it collapsed into. */
   fallbackFocus?: (() => HTMLElement | undefined) | undefined;
 };
 
 /**
- * The topbar's button for the docked chat panel.
- * The unread count shows only while the panel is closed, since the room rows carry their own. When the panel
- * closes with focus inside it, focus returns here, or to `fallbackFocus` while this button is not on show.
+ * The topbar's button for the chat panel.
+ * The unread count shows only while the panel is closed, since the room rows carry their own. It hands itself over as
+ * where the panel returns focus, or `fallbackFocus` while this button is not on show.
  */
 export function ChatButton(props: ChatButtonProps): JSX.Element {
   let button: HTMLButtonElement | undefined;
 
-  createEffect(
-    () => props.open(),
-    (isOpen, wasOpen) => {
-      if (isOpen || wasOpen !== true) {
-        return;
-      }
-      if (isFocusLostOrInside(props.panel())) {
-        focusTrigger(button, props.fallbackFocus?.());
-      }
-    },
-  );
+  // A bar that collapsed the button keeps it laid out but hidden, so it could not take focus. Safari 17.4 knows only
+  // the older name of the option.
+  function findTrigger(): HTMLElement | undefined {
+    return button?.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true }) === false
+      ? props.fallbackFocus?.()
+      : button;
+  }
+  onSettled(() => props.handOver?.(findTrigger));
 
   return (
     <IconButton
@@ -54,7 +52,7 @@ export function ChatButton(props: ChatButtonProps): JSX.Element {
       title="Chat"
       aria-label={props.unread() === undefined ? 'Chat' : `Chat, ${String(props.unread())} unread`}
       aria-expanded={props.open() ? 'true' : 'false'}
-      aria-controls="chat-panel"
+      aria-controls={CHAT_PANEL_ID}
       hidden={!props.visible()}
     >
       <ChatIcon />

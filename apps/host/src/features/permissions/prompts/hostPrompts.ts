@@ -21,10 +21,17 @@ type AskPermissionParams = {
   permission: EnforceablePermissionName;
   /** Ends the ask. */
   signal: AbortSignal;
-  /** Whether the user may grant it for this execution only. */
-  allowOnce: boolean;
   /** Runs inside the click that grants it, so it may ask the browser for what needs a user gesture. */
-  onApprove?: (() => void) | undefined;
+  onApprove: () => void;
+};
+
+type AskHostAccessParams = {
+  /** The product that asks. */
+  label: string;
+  /** The host its fetch would reach, as the URL names it. */
+  host: string;
+  /** Ends the ask. */
+  signal: AbortSignal;
 };
 
 type AskBrowserBlockParams = {
@@ -52,6 +59,8 @@ type ConfirmReviewParams<R extends string> = {
 export type HostPrompts = {
   /** Resolves the user's decision on `label`'s ask for `permission`. */
   askPermission: (params: AskPermissionParams) => Promise<GrantAnswer>;
+  /** Resolves the user's decision on `label` fetching from `host`. */
+  askHostAccess: (params: AskHostAccessParams) => Promise<GrantAnswer>;
   /** Resolves the user's answer to their browser blocking `label`'s grant of `permission`. */
   askBrowserBlock: (params: AskBrowserBlockParams) => Promise<BrowserBlockAnswer>;
   /** Resolves the result of the button the user chose. */
@@ -60,7 +69,7 @@ export type HostPrompts = {
   notify: ShowNotification;
 };
 
-/** True when the user allowed it, for this execution or for good. Never throws. */
+/** True when the user allowed it, for this execution or for good. */
 export function isGranted(answer: GrantAnswer): boolean {
   switch (answer) {
     case 'granted':
@@ -72,7 +81,7 @@ export function isGranted(answer: GrantAnswer): boolean {
   }
 }
 
-/** True when the user asked to try the browser again. Never throws. */
+/** True when the user asked to try the browser again. */
 export function isRetry(answer: BrowserBlockAnswer): boolean {
   switch (answer) {
     case 'retry':
@@ -83,7 +92,7 @@ export function isRetry(answer: BrowserBlockAnswer): boolean {
   }
 }
 
-/** True when the user closed the prompt without answering. Never throws. */
+/** True when the user closed the prompt without answering. */
 export function isDismissed(answer: GrantAnswer): boolean {
   return answer === 'dismissed';
 }
@@ -106,7 +115,7 @@ export function toPermissionDecision(answer: GrantAnswer): PermissionDecision {
   }
 }
 
-/** The status the host records for `answer`, null when it records none. Never throws. */
+/** The status the host records for `answer`, null when it records none. */
 export function getLastingStatus(answer: GrantAnswer): Exclude<PermissionStatus, 'ask'> | null {
   switch (answer) {
     case 'granted':

@@ -4,6 +4,8 @@
 .card {
   /* The board's 8 px step on the narrower card. */
   --pile-step: 7px;
+  /* One row on a shared centre line. The text stacks in its own column, so a control taller than the title never
+     spreads the title from the body. */
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -67,12 +69,12 @@
   height: 20px;
 }
 
+/* The line heights' own leading spaces the title from the body. */
 .text {
   display: flex;
   flex: 1;
   flex-direction: column;
-  /* Room for the link's focus ring below the title. */
-  gap: var(--sp-1);
+  align-items: flex-start;
   box-sizing: border-box;
   min-width: 0;
   margin: 0;
@@ -95,6 +97,7 @@
 }
 
 .body {
+  max-width: 100%;
   margin: 0;
   color: var(--chrome-text-muted);
   font-size: var(--fs-small);
@@ -102,7 +105,6 @@
 }
 /* Underlined at rest so it reads as a link. Its hover and focus ring hug the text, not the card's width. */
 a.body {
-  align-self: flex-start;
   border-radius: var(--r-hair);
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -110,14 +112,19 @@ a.body {
 a.body:hover {
   color: var(--chrome-text);
 }
+/* On its line box, whose leading already clears the text, so the ring stays off the title. */
 a.body:focus-visible {
   outline: var(--chrome-focus-ring);
-  outline-offset: 2px;
+  outline-offset: 0;
 }
 
 .action,
 .close {
   flex: none;
+}
+/* The action's ring, so the two read as one set of controls. */
+.close {
+  box-shadow: inset 0 0 0 1px var(--chrome-ring);
 }
 
 /* While cards pile up, only the front card keeps its close button. */

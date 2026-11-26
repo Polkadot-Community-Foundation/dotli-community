@@ -1,6 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/* eslint-disable no-restricted-properties -- Predates the story contract: its plays still assert copy. */
+
 import { createSignal, flush } from 'solid-js';
 import type { Meta, StoryObj } from 'storybook-solidjs-vite';
 import { expect, fn, waitFor, within } from 'storybook/test';
@@ -54,12 +56,8 @@ const loadPhrase = fn<() => Promise<PhraseScreenModule>>(loadPhraseScreen);
 
 const SPINNER: PairingView = { kind: 'spinner' };
 
-/** What a sign-in view carries before anything happened: no page named, no failure and no pairing under way. */
-const SIGN_IN_START: Pick<SignInScreen, 'pageHost' | 'failure' | 'pairing'> = {
-  pageHost: null,
-  failure: null,
-  pairing: SPINNER,
-};
+/** What a sign-in view carries before anything happened: no page named and no failure. */
+const SIGN_IN_START: Pick<SignInScreen, 'pageHost' | 'failure'> = { pageHost: null, failure: null };
 
 /** The pairing a story moves step by step, for a window that renders it. */
 const [livePairing, setLivePairing] = createSignal<PairingView>(SPINNER);
@@ -284,7 +282,7 @@ export const ContinuePhoneNotTold: Story = {
       await expect(canvas.getByRole('heading', { level: 1 })).toHaveTextContent('Not signed out of Polkadot App');
       await expect(byTestId('session-window-phone-failed')).toHaveAttribute('data-tone', 'warn');
       await expect(canvas.getByRole('alert')).toHaveTextContent(
-        'Polkadot App could not be told. It still lists this browser.',
+        'Polkadot App could not be reached, so it still lists this browser as signed in.',
       );
       await expect(byTestId('session-window-failure')).toBe(canvas.getByRole('alert'));
       await expect(canvas.queryByText('alice.01')).toBeNull();

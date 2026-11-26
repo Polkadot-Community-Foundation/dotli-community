@@ -190,6 +190,7 @@ function createHarness({
       isStale() {
         const check = local ? Promise.resolve(false) : Promise.resolve().then(() => walletFound?.() ?? false);
         staleChecks.push(check);
+        changes.notify();
         return check;
       },
     });
@@ -242,7 +243,10 @@ function createHarness({
     nextBoots,
     /** Every stale check the page core made, in order. */
     staleChecks,
-    /** Notified at each boot context and outcome, store listener change and call on a fake runtime or connection. */
+    /**
+     * Notified at each boot context and outcome, stale check, store listener change and call on a fake runtime or
+     * connection.
+     */
     changes,
   };
 }
@@ -857,7 +861,7 @@ describe('page core', () => {
     expect(unsubscribe).toBeTypeOf('function');
     expect(nth(runtimes, 0).dispose).toHaveBeenCalledTimes(1);
     expect(contexts).toHaveLength(1);
-    expect(contexts[0]?.isLive()).toBe(false);
+    expect(contexts[0]?.ended.aborted).toBe(true);
     expect(outcomes).toEqual(['ok']);
   });
 
@@ -981,7 +985,7 @@ describe('page core', () => {
 
     // Then the late core is dropped and the other product's core serves
     expect(late.dispose).toHaveBeenCalledTimes(1);
-    expect(contexts[1]?.isLive()).toBe(false);
+    expect(contexts[1]?.ended.aborted).toBe(true);
     expect(contexts[2]?.product.label).toBe('other');
     expect(next.runtime).toBe(nth(runtimes, 1).runtime);
     expect(contexts).toHaveLength(3);
@@ -1005,7 +1009,7 @@ describe('page core', () => {
 
     // Then its redial boots while the dropped one is still held
     expect(contexts.map(context => context.product.label)).toEqual(['dotli', 'dotli', 'other', 'other']);
-    expect(contexts[1]?.isLive()).toBe(false);
+    expect(contexts[1]?.ended.aborted).toBe(true);
   });
 
   it("As a dApp user whose core goes down while another product's redial still boots for a request, I see my redial boot once that one is up", async () => {
@@ -1049,7 +1053,7 @@ describe('page core', () => {
 
     // Then the redial's core serves
     expect(next.runtime).toBe(replacement.runtime);
-    expect(contexts[1]?.isLive()).toBe(true);
+    expect(contexts[1]?.ended.aborted).toBe(false);
     expect(replacement.dispose).not.toHaveBeenCalled();
   });
 
@@ -1145,10 +1149,9 @@ describe('page core', () => {
 
   it('As a Polkadot App user, I log in from another tab and the login reaches my core until its last lease goes', async () => {
     // Given a core that follows the store
-    const { core, runtimes, storeListeners, changes } = createHarness();
+    const { core, runtimes, storeListeners } = createHarness();
     const lease = await core.acquire();
     const runtime = nth(runtimes, 0);
-    await changes.until(() => runtime.notifySessionStoreChanged.mock.calls.length === 1);
 
     // When the store changes, then the last lease goes
     for (const listener of storeListeners) {
@@ -1157,8 +1160,39 @@ describe('page core', () => {
     lease.release();
 
     // Then the core heard the change and the store has no listener left
-    expect(runtime.notifySessionStoreChanged).toHaveBeenCalledTimes(2);
+    expect(runtime.notifySessionStoreChanged).toHaveBeenCalledTimes(1);
     expect(storeListeners.size).toBe(0);
+  });
+
+  it('As a Polkadot App user, I open a page with my session stored and my core restores it without being told the store changed', async () => {
+    // Given a page core
+    const { core, runtimes, staleChecks } = createHarness();
+
+    // When a core boots with no store change while it boots
+    await core.acquire();
+    await Promise.all(staleChecks);
+
+    // Then the core was never told the store changed, which would cut its own restore short
+    expect(nth(runtimes, 0).notifySessionStoreChanged).not.toHaveBeenCalled();
+  });
+
+  it('As a Polkadot App user, I log in from another tab while my core boots and my core is told once it boots', async () => {
+    // Given a core whose boot is in flight
+    const { core, nextBoots, storeListeners, changes } = createHarness();
+    const held = createHeldBoot({ changes });
+    nextBoots.push(held.boot);
+    const lease = core.acquire();
+
+    // When the store changes before the boot ends, and the boot then ends
+    for (const listener of [...storeListeners]) {
+      listener();
+    }
+    const runtime = held.resolve();
+    await lease;
+    await changes.until(() => runtime.notifySessionStoreChanged.mock.calls.length === 1);
+
+    // Then the core is told once
+    expect(runtime.notifySessionStoreChanged).toHaveBeenCalledTimes(1);
   });
 
   it('As a local wallet user, I boot my core and it follows no stored session', async () => {
@@ -1440,13 +1474,13 @@ describe('page core after a failed wallet read', () => {
   it('As the page, I tell the core of a stored session change that throws and the failure is reported while the stale check still runs', async () => {
     // Given a pairing core whose runtime throws when told of a store change, and a store that now holds the wallet
     let walletFound = false;
-    const { core, runtimes, storeListeners, counted, changes } = createReportingHarness({
+    const { core, runtimes, storeListeners, staleChecks, counted, changes } = createReportingHarness({
       walletFound: () => walletFound,
     });
     recordLog({ onFinished: onTestFinished, level: 'error' });
     await core.acquire();
     const pairing = nth(runtimes, 0);
-    await changes.until(() => pairing.notifySessionStoreChanged.mock.calls.length === 1);
+    await Promise.all(staleChecks);
     pairing.notifySessionStoreChanged.mockImplementation(() => {
       throw new Error('notify broke');
     });
@@ -1520,11 +1554,11 @@ describe('page core retirement', () => {
 
     // When the core goes down and the redial ends
     nth(runtimes, 0).providers[0]?.goDown();
-    const downCore = { live: contexts[0]?.isLive(), inService: contexts[0]?.isInService() };
+    const downCore = { ended: contexts[0]?.ended.aborted, inService: contexts[0]?.isInService() };
     await changes.until(() => outcomes.length === 2 && outcomes.at(-1) === 'ok');
 
     // Then the old core stayed live out of service, and the new one serves
-    expect(downCore).toEqual({ live: true, inService: false });
+    expect(downCore).toEqual({ ended: false, inService: false });
     expect(contexts[1]?.isInService()).toBe(true);
   });
 
@@ -1543,7 +1577,7 @@ describe('page core retirement', () => {
 
     // Then it spoke for the session until now, and the page dials nothing for the product it left
     expect(inServiceBefore).toBe(true);
-    expect(contexts[0]?.isLive()).toBe(true);
+    expect(contexts[0]?.ended.aborted).toBe(false);
     expect(contexts[0]?.isInService()).toBe(false);
     expect(contexts[1]?.isInService()).toBe(true);
     expect(contexts).toHaveLength(2);
@@ -1568,8 +1602,8 @@ describe('page core with nobody holding it', () => {
     nth(fakes.runtimes, 0).providers[0]?.goDown();
     await fakes.changes.until(() => fakes.outcomes.length === 2);
     lease.release();
-    // The replacement follows the store, and checks itself, once as it boots.
-    await fakes.changes.until(() => nth(fakes.runtimes, 1).notifySessionStoreChanged.mock.calls.length === 1);
+    // The replacement checks itself once as it boots.
+    await fakes.changes.until(() => fakes.staleChecks.length === 2);
 
     function markWalletFound(found: boolean): void {
       walletFound = found;
@@ -1618,7 +1652,7 @@ describe('page core with nobody holding it', () => {
     // Then it goes, and nothing is booted in its place
     expect(nth(runtimes, 1).dispose).toHaveBeenCalledTimes(1);
     expect(contexts).toHaveLength(2);
-    expect(contexts[1]?.isLive()).toBe(false);
+    expect(contexts[1]?.ended.aborted).toBe(true);
     expect(storeListeners.size).toBe(0);
     expect(counted('wallet.core_redial')).toEqual([{ outcome: 'ok', reason: 'closed' }]);
   });

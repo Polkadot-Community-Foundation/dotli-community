@@ -5,31 +5,35 @@
 .icon {
   flex-shrink: 0;
   box-sizing: border-box;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-full);
   background: var(--chrome-avatar);
-  box-shadow: var(--chrome-shadow-raised);
   outline: 1px solid var(--chrome-ring-subtle);
   outline-offset: -1px;
   object-fit: cover;
+}
+.icon[data-size='sm'] {
+  width: 24px;
+  height: 24px;
 }
 
 .icon[data-fallback] {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--chrome-text);
-  font-size: var(--fs-caption);
+  background: var(--chat-bg-avatar);
+  color: var(--chat-fg-avatar);
+  font-size: var(--fs-title);
   font-weight: var(--fw-semibold);
+}
+.icon[data-size='sm'][data-fallback] {
+  font-size: var(--fs-caption);
 }
 
 @media (max-width: 560px) {
   .icon {
-    width: 32px;
-    height: 32px;
-  }
-  .icon[data-fallback] {
-    font-size: var(--fs-body);
+    width: 44px;
+    height: 44px;
   }
 }

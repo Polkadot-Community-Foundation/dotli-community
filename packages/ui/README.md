@@ -33,8 +33,8 @@ The UI that more than one dotli app shows. It has no domain and no data source.
 | `Accordion`, `AccordionProps`, `Button`, `ButtonLink`, `ButtonVariant`, `Chip`, `IconButton`, `IconTile`                      | Primitives.                                     |
 | `Choice`, `SegmentedControl`, `SegmentOption`, `StepSlider`, `StepSliderProps`, `StepSliderStop`, `Spinner`                   | Primitives.                                     |
 | `StatusDot`, `Surface`, `SurfaceHead`, `SurfaceFoot`, `Hint`, `Switch`, `Well`, `Callout`, `Row`, `Stack`, `SectionLabel`     | Primitives.                                     |
-| `Listbox`                                                                                                                     | Primitives.                                     |
-| `Modal`, `Popover`, `usePopover`, `Tooltip`, `LayerTracker`, `ModalFocusFallback`, `TrackedLayer`                             | Floating layers.                                |
+| `Listbox`, `RowNote`                                                                                                          | Primitives.                                     |
+| `Drawer`, `Modal`, `Popover`, `usePopover`, `Tooltip`, `LayerTracker`, `ModalFocusFallback`, `TrackedLayer`                   | Floating layers.                                |
 | `ActionGroup`, `ActionItem`, `ActionItemProps`, `ActionsContext`, `ActionGroupMorph`, `MoreIds`                               | The action group.                               |
 | `ActionAlert`, `ActionBar`, `ActionEntry`                                                                                     | The action group.                               |
 | `PINNED`                                                                                                                      | The action group priority that never collapses. |
@@ -44,6 +44,7 @@ The UI that more than one dotli app shows. It has no domain and no data source.
 | `ModalView`, `ModalOutcome`, `ModalEntry`, `ModalField`, `ModalButton`, `ModalButtonVariant`, `ModalHandoff`                  | Store types.                                    |
 | `ToastEntry`, `PageContent`                                                                                                   | Store types.                                    |
 | `focusables`, `runWhenIdle`, `preloadWhenIdle`, `isPhoneViewport`, `watchPhoneViewport`, `prefersReducedMotion`, `StatusTone` | Page helpers.                                   |
+| `pinPageAboveKeyboard`                                                                                                        | Holds a page in place over the keyboard.        |
 | `createDrags`, `Drags`                                                                                                        | One pointer drag per component.                 |
 | `isFocusLostOrInside`, `focusTrigger`                                                                                         | Helpers.                                        |
 | `mountRoot`, `RootBoundary`, `ensureOverlayRoot`                                                                              | Roots.                                          |
@@ -69,8 +70,14 @@ Fakes for the specs and stories of other packages. Functional tests use them too
 
 ### `@dotli/ui/brand`
 
-`LogoSymbol`, `LogoWordmark` and `PetalMark` are the logo components. `PetalMark` draws six petals that can `pulse`.
-Astro renders them at build time with no directive, so they ship no code there.
+`Logo` draws the Polkadot logo. Its `variant` picks the symbol alone (`symbol`) or the symbol with the word (`full`),
+and its `height` is the symbol's height in pixels. The full logo reads as "Polkadot" to assistive technology, and the
+symbol alone is hidden from it. Its `beta` flag draws the Beta tag out of the flow, where the variant puts it: over the
+end of the word, or just past the symbol's top-right corner. Its root wraps the drawing and takes the caller's `class`
+and test id, so a height set there sizes the whole logo.
+
+`PetalMark` draws six petals that can `pulse`. Astro renders the brand marks at build time with no directive, so they
+ship no code there.
 
 ### `@dotli/ui/icons`
 
@@ -80,6 +87,9 @@ One component per icon, named `<Thing>Icon` (`CloseIcon`, `InfoIcon` and the res
 
 The tokens and global styles. The apps import it once.
 
+It carries the brand typeface, which the build bundles and serves from the page's own origin. Sans text sets in it and
+falls back to the system face while it loads or where it lacks a script. Monospace text keeps the system face.
+
 ## Design
 
 - **Stores render, others act:** `toasts`, `modals` and `pageScreen` hold their state in an atom. The overlays render
@@ -87,18 +97,50 @@ The tokens and global styles. The apps import it once.
 - **Overlays mount late:** toasts and dialogs queue until the app mounts `Overlays`. Its container is marked
   `data-overlays`, so a full-page screen keeps it.
 - **One layer stack:** floating layers share one stack. It makes the page inert under the top modal layer.
+- **Placed at the trigger:** a floating layer anchored to a trigger opens below it when its content fits there, and
+  otherwise on the side with more room. It stays on screen from side to side. It follows the trigger while open. It
+  grows only as far as the visible area, the on-screen keyboard included, and scrolls inside past that.
 - **Responsive popovers:** `Popover` and `DropdownMenu` anchor on a wide screen and become a bottom sheet on a phone.
   The sheet loads in its own chunk, preloaded when the browser is idle on a phone. Heavy content is the app's to load
-  with `lazy()`.
-- **Listbox:** drops below its nearest positioned ancestor and never takes focus, so the control that opened it keeps
-  its keys. Its caller owns which option is active and which is chosen. While `loading` holds a text, a status row with
-  a spinner follows the options, outside the list, and the list is busy.
+  with `lazy()`. On a wide screen `DropdownMenu` is a `Listbox` hung from its button's end, which the button drives as a
+  combobox while it keeps focus, and each item is an option. On a phone its items are menu rows in the sheet, which take
+  focus, and the button is a menu button. The button's ARIA follows the viewport.
+- **Responsive drawer:** `Drawer` is a panel on the right edge of a wide screen, beside the page, and the standard modal
+  bottom sheet on a phone. The panel is not modal and has no scrim, so the page beside it stays usable while it is open.
+  It insets from the page's content edges and follows them as they move. A modal opened while it is open paints over it
+  and makes it inert. The drawer picks the form by the viewport and follows it while open, and its content moves between
+  the forms with its state and focus. Escape with focus inside it, its close button and a swipe toward its edge each
+  close it, and so does a press on the phone sheet's scrim. A press beside the panel does not. A close by the keyboard,
+  Escape or Enter or Space on the close button, returns focus to the initiator, the control that held it at opening or
+  the one the drawer is handed. A close by a pointer does too, unless the drawer is told to let focus go to the document
+  instead, so a pointer user's close moves focus into no control. Its title is text or markup a heading may hold, and
+  names the drawer. A text title also ends its close button's name. Its content mounts at each opening and stays until
+  the exit transition ends, or goes at once when no transition runs, such as under reduced motion.
+- **Listbox:** opens at its anchor in a floating layer, at least as wide as the anchor, and never takes focus, so the
+  control that opened it keeps its keys. A press outside the anchor and the list, Escape and focus leaving them close it
+  through `onClose`, and its caller sets `open` from that. A press on the anchor leaves it open. The caller also owns
+  which option is active and which is chosen. A pick hands the caller its click, whose `detail` is 0 for a click from
+  script. While `loading` holds a text, a status row with a spinner follows the options, outside the list, and the list
+  is busy. A `Group` puts options in a section, a group named by its visible heading, and the caller leaves out an empty
+  one. An option's `end` holds trailing markup after its text, such as a status and a chevron, which never shrinks, and
+  the text ellipsizes before it. An option with `remove` ends in a cross that removes it without picking it. The cross
+  is a plain element for mouse and touch only, out of the tab order and the accessibility tree, since an option may hold
+  no interactive control. The option announces Shift+Delete, and the caller's key handling removes the active option on
+  it.
 - **Action group:** moves the lowest priority items into a More menu when they do not fit. Items join through
   `ActionsContext`.
 - **Icons as components:** every `icon` prop takes a component, except in `Choice` and `SegmentedControl`, whose slot
   takes markup.
 - **Text only:** the error page and the notifier take text, so nothing a visitor typed is parsed as markup.
 - **Notifier:** always shows a toast. A hidden or unfocused tab also gets a system notification when allowed.
+- **Keyboard pin:** `pinPageAboveKeyboard` takes a page box and the scroll box inside it, and returns its stop. While
+  mobile Safari's keyboard is open for a field inside the page box, the box carries `data-keyboard-open`, and
+  `--visible-height` and `--pan-offset` hold the visual viewport's height and offset. The page's CSS shifts and cuts the
+  page by them, and the helper writes no other style. A drag in the page box that the scroll box cannot take is
+  cancelled, and a tap in the page box outside any control blurs the field. A field outside the page box, such as an
+  overlay's, gets none of this, and neither does a touch that starts outside it, such as a drag or a tap in a layer
+  portaled out of the page. Once the keyboard closes, the page is back at its top, whichever field the keyboard was for,
+  and after a pinned session the scroll box is too.
 - **Root boundary:** a broken root is reported once and renders nothing. Mounted roots, floating layers and the apps'
   islands all use it.
 

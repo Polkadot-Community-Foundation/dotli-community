@@ -5,9 +5,17 @@
 // write its page into this window. It never throws, and its outcome names the step that failed.
 
 import { createReporter, defineCount, m } from '@dotli/metrics';
-import { CONTENT_ERRORS, type ArchiveFiles, type fetchArchive, type FetchResult } from '@dotli/content';
-import type { validateSandboxParams } from '@dotli/sandbox-wire';
+import {
+  CONTENT_ERRORS,
+  createRootVerifyingBlockSource,
+  type ArchiveFiles,
+  type ArchiveTransport,
+  type FetchResult,
+  type readArchive,
+} from '@dotli/content';
+import type { validateSandboxContract } from '@dotli/sandbox-wire';
 import { createStateMachine, getErrorName, type HandlerOf, type MachineTypes, type Transition } from '@dotli/shared';
+import { CID } from 'multiformats/cid';
 
 import { APP_LOG_TAG } from '../kit/appLogTag.js';
 import type { BitswapBridge } from '../hostLink/createBitswapBridge.js';
@@ -19,7 +27,7 @@ const report = createReporter({ flow: 'content' });
 /** Count. A transition of a sandbox load threw, a bug. Tagged `outcome` (error) and `reason` (the error's name). */
 const loadTransitionMetric = defineCount<'error'>('sandbox.load_transition');
 
-export type SandboxParams = ReturnType<typeof validateSandboxParams>;
+export type SandboxParams = ReturnType<typeof validateSandboxContract>;
 
 /**
  * Each step names the failure wherever it is reported. `verify` is never entered: a content mismatch is attributed to
@@ -29,7 +37,7 @@ export type LoadStep =
   'init' | 'sw_register' | 'content_fetch' | 'verify' | 'decrypt' | 'sw_store' | 'archive_index' | 'render';
 
 export type LoadInput = {
-  /** The host's contract, read from the URL. */
+  /** The host's contract, received over the authenticated handshake. */
   params: SandboxParams;
   /** 1 for the page's first load, one more for each retry. */
   attempt: number;
@@ -52,8 +60,8 @@ export type LoadProductDeps = {
   purge: () => Promise<void>;
   /** Resolves once a service worker controls the page, or the page goes on without one, with whether one does. */
   registerWorker: (options: { waitForFreshController: boolean }) => Promise<boolean>;
-  /** Fetches and verifies the content a CID names. Rejects when it cannot, or when the bytes do not match the CID. */
-  fetchArchive: typeof fetchArchive;
+  /** Reads the content a CID names over a transport. Rejects when it cannot, or when the bytes fail their check. */
+  readArchive: typeof readArchive;
   /** The block source the host relays, or null on the IPFS gateway. */
   blockSource: BitswapBridge['requestBlock'] | null;
   /** The files of encrypted content once its password is given, or null when it is not encrypted. */
@@ -282,7 +290,15 @@ export async function loadProduct({ params, attempt }: LoadInput, deps: LoadProd
     const { showStatus } = hostMessages;
     // Bitswap goes through the host-relayed protocol bridge, so the sandbox runs no libp2p.
     showStatus(blockSource === null ? 'Fetching via IPFS gateway...' : 'Fetching via bitswap...');
-    const result = await deps.fetchArchive(cid, { onStatus: showStatus, bitswapBlockSource: blockSource });
+    const transport: ArchiveTransport =
+      blockSource === null
+        ? { kind: 'gateway' }
+        : {
+            kind: 'blockSource',
+            // The host's relay checked every block. Re-hashing the root ties the walk to the CID this sandbox was given.
+            blockSource: createRootVerifyingBlockSource(CID.parse(cid), blockCid => blockSource(blockCid.toString())),
+          };
+    const result = await deps.readArchive(cid, transport, { onStatus: showStatus, measure: true });
     return { result, ms: deps.measureSinceStart() };
   }
 

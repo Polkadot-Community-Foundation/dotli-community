@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { asProductId } from '@parity/truapi';
 import { createRoot, createSignal, flush } from 'solid-js';
-import { createMemoryStorage, resetAllStoresForTests } from '@dotli/shared/testing';
+import { resetAllStoresForTests } from '@dotli/shared/testing';
 import { createChatConnections } from './createChatConnections.js';
 import { createChatStore, type ChatStore } from './createChatStore.js';
 import { toProductId } from '../../kit/getAskedProductId.js';
@@ -19,16 +19,14 @@ const LABEL = 'chatty';
 const PRODUCT = asProductId(toProductId(LABEL));
 
 let chat: ChatStore;
-let local: Storage;
 let connections: ReturnType<typeof createChatConnections>;
 let stopState: () => void = () => undefined;
 
 beforeEach(() => {
   connections = createChatConnections();
   chat = createChatStore({ repo: createMemoryChatRepo(), connections });
-  local = createMemoryStorage();
-  stopState = chatPanelState.start({ chat: () => Promise.resolve(chat), storage: local });
-  productState.setLoaded({ label: LABEL, productId: PRODUCT, details: { chat: true } });
+  stopState = chatPanelState.start({ chat: () => Promise.resolve(chat), connections });
+  productState.setLoaded({ label: LABEL, productId: PRODUCT });
   authState.set({ tag: 'Connected', session: { connected: true } });
 });
 
@@ -37,20 +35,61 @@ afterEach(() => {
   resetAllStoresForTests();
 });
 
-/** The dock's props, read from the page's chat state under a fresh owner, with the room it keeps for the panel. */
-function mountDock() {
-  const reserved: number[] = [];
-  const { dock, dispose } = createRoot(d => ({
-    dock: useChatDock(chat, px => {
-      reserved.push(px);
-    }),
-    dispose: d,
-  }));
+/** The dock's props, read from the page's chat state under a fresh owner. */
+function mountDock(docked: boolean[] = []) {
+  const layout = {
+    setSidePanel: (panel: { docked: boolean }) => {
+      docked.push(panel.docked);
+    },
+  };
+  const { dock, dispose } = createRoot(d => ({ dock: useChatDock(chat, layout), dispose: d }));
   flush();
-  return { dock, dispose, reserved };
+  return { dock, dispose };
 }
 
 describe('useChatDock', () => {
+  it('As a user, I open the chat panel and the page docks it, then I close it and the page undocks it', async () => {
+    // Given a room of a connected product, so the panel can open
+    connections.register(PRODUCT, createRecordingConnection());
+    await chat.createRoom(PRODUCT, { roomId: 'main', name: 'Main', icon: '' });
+    await chat.settle();
+    const docked: boolean[] = [];
+    const { dispose } = mountDock(docked);
+
+    // When
+    chatPanelState.setOpen(true);
+    flush();
+
+    // Then
+    expect(docked.at(-1)).toBe(true);
+
+    // When
+    chatPanelState.setOpen(false);
+    flush();
+
+    // Then
+    expect(docked.at(-1)).toBe(false);
+    dispose();
+  });
+
+  it('As a user with the panel open, I lose the chat island and the page undocks the panel', async () => {
+    // Given a room of a connected product, so the panel can open
+    connections.register(PRODUCT, createRecordingConnection());
+    await chat.createRoom(PRODUCT, { roomId: 'main', name: 'Main', icon: '' });
+    await chat.settle();
+    const docked: boolean[] = [];
+    const { dispose } = mountDock(docked);
+    chatPanelState.setOpen(true);
+    flush();
+    expect(docked.at(-1)).toBe(true);
+
+    // When
+    dispose();
+
+    // Then
+    expect(docked.at(-1)).toBe(false);
+  });
+
   it('As the chat panel, the composer is asked to take focus once after I pick a room', () => {
     // Given
     const { dock, dispose } = mountDock();
@@ -99,23 +138,29 @@ describe('useChatDock', () => {
     dispose();
   });
 
-  it("As a user, the panel's title is the product's published name, else its label", () => {
+  it("As the dock, I name the open panel's sole room, and no room once the panel closes", async () => {
     // Given
+    await chat.createRoom(PRODUCT, { roomId: 'main', name: 'Main', icon: '' });
     const { dock, dispose } = mountDock();
 
-    // Then
-    expect(dock.conversation.productName()).toBe(LABEL);
-
-    // When
-    productState.setLoaded({
-      label: LABEL,
-      productId: PRODUCT,
-      details: { chat: true, facts: { displayName: 'Chatty' } },
+    // When the panel body opens on the product's rooms
+    const body = createRoot(d => {
+      dock.conversation.openFeed().follow(() => null);
+      return d;
     });
+    flush();
+    await chat.settle();
     flush();
 
     // Then
-    expect(dock.conversation.productName()).toBe('Chatty');
+    expect(dock.shown()).toMatchObject({ contact: { id: 'main' }, sole: true });
+
+    // When the panel body closes
+    body();
+    flush();
+
+    // Then
+    expect(dock.shown()).toBeNull();
     dispose();
   });
 
@@ -150,38 +195,6 @@ describe('useChatDock', () => {
 
     // Then
     expect(chat.view.get().productId).toBeNull();
-    dispose();
-  });
-
-  it('As a user, the product frame keeps clear of the open panel, as wide as I drag it, and takes the room back as it closes', () => {
-    // Given a closed panel
-    const { dock, dispose, reserved } = mountDock();
-
-    // Then the frame keeps its whole width
-    expect(reserved).toEqual([]);
-
-    // When
-    chatPanelState.setOpen(true);
-    flush();
-
-    // Then
-    expect(reserved).toEqual([360]);
-
-    // When I drag the edge past the widest panel, then let go
-    dock.onResize(9999);
-    flush();
-    dock.onResizeEnd();
-
-    // Then the frame keeps clear of the clamped width, which is kept for the next session
-    expect(reserved).toEqual([360, 560]);
-    expect(local.getItem('dotli:chat-panel-width')).toBe('560');
-
-    // When
-    dock.onClose();
-    flush();
-
-    // Then
-    expect(reserved).toEqual([360, 560, 0]);
     dispose();
   });
 });

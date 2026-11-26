@@ -20,7 +20,8 @@ export { Spinner } from './components/primitives/Spinner.js';
 export { StatusDot } from './components/primitives/StatusDot.js';
 export { Hint, Surface, SurfaceFoot, SurfaceHead } from './components/primitives/Surface.js';
 export { Switch } from './components/primitives/Switch.js';
-export { Callout, Row, Well } from './components/primitives/Well.js';
+export { Callout, Row, RowNote, Well } from './components/primitives/Well.js';
+export { Drawer } from './components/floating/Drawer.js';
 export { Modal } from './components/floating/Modal.js';
 export { Popover, usePopover } from './components/floating/Popover.js';
 export { Tooltip } from './components/floating/Tooltip.js';
@@ -62,6 +63,7 @@ export { focusables } from './page/focusables.js';
 export { preloadWhenIdle } from './page/preloadWhenIdle.js';
 export { runWhenIdle } from './page/runWhenIdle.js';
 export { isPhoneViewport, watchPhoneViewport } from './page/phoneViewport.js';
+export { pinPageAboveKeyboard } from './page/pinPageAboveKeyboard.js';
 export { prefersReducedMotion } from './page/reducedMotion.js';
 export type { StatusTone } from './page/statusTone.js';
 

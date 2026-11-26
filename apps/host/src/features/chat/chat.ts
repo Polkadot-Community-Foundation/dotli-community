@@ -1,17 +1,19 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// What the chat panel reads and asks for. The room and bot records hold only the fields the panel shows, so a story
+// What the chat panel reads and asks for. The room records hold only the fields the panel shows, so a story
 // builds them without a product, and the runtime's records fit them.
 
 import type { Accessor } from 'solid-js';
 import type {
   HexString,
   HostRendererActionSubscribeItem,
+  ImageSource,
   ProductRendererRenderRequest,
   RendererNode,
 } from '@parity/truapi';
 import type { ChatMessageRecord, ChatRoomFooter } from './createChatStore.js';
+import type { LoadedImage } from './readChatImage.js';
 
 /** Where a custom message's renderer streams its trees. */
 export type ChatRenderSink = {
@@ -19,7 +21,7 @@ export type ChatRenderSink = {
   onError?: (error: Error) => void;
 };
 
-/** What a message asks of the product: a custom tree, a tap on an action or a gesture inside a tree. */
+/** What a message asks of the product: a custom tree, an image in it, a tap on an action or a gesture inside a tree. */
 export type ChatMessageActions = {
   /** Streams replacement trees into `sink` until disposed. Never throws: a failure reaches `sink.onError`. */
   renderCustomMessage: (params: {
@@ -35,6 +37,11 @@ export type ChatMessageActions = {
   }) => Promise<void>;
   /** Hands a gesture inside a custom message's tree to the product. Rejects when it cannot reach the product. */
   triggerRendererAction: (productId: string, item: HostRendererActionSubscribeItem) => Promise<void>;
+  /**
+   * Resolves the bytes and type of an image a custom message's tree names. Rejects when it cannot be drawn, and with
+   * the signal's reason once `signal` aborts.
+   */
+  loadImage: (productId: string, source: ImageSource, signal: AbortSignal) => Promise<LoadedImage>;
 };
 
 export type ChatRoom = {
@@ -47,22 +54,15 @@ export type ChatRoom = {
   footer?: ChatRoomFooter | undefined;
 };
 
-export type ChatBot = {
-  botId: string;
-  name: string;
-  /** URL or base64 image, as supplied by the product. */
-  icon: string;
-  createdAt: number;
-};
-
 export type ChatContacts = {
   rooms: readonly ChatRoom[];
-  bots: readonly ChatBot[];
   lastMessageTimes: ReadonlyMap<string, number>;
 };
 
 /** The product's rooms and the shown room's messages, as the open panel reads them. */
 export type ChatFeed = {
+  /** The product the feed follows, which draws the shown room's footer card. Null while it follows none. */
+  productId: Accessor<string | null>;
   /** Null until the first room list read lands. */
   contacts: Accessor<ChatContacts | null>;
   /** The last room list read failed. The rooms read before it stay. */
@@ -76,22 +76,26 @@ export type ChatFeed = {
   follow: (shown: Accessor<string | null>) => void;
 };
 
+/** How a room opens. */
+export type OpenRoomParams = {
+  /** Whether its composer takes focus once its messages show. True unless the panel opened the room itself. */
+  focusComposer?: boolean;
+};
+
 /** What the open panel shows of the page's chat state, and what it asks the page to do. */
 export type ChatConversation = {
   loggedIn: Accessor<boolean>;
-  /** The product's published name, else its label. The title while no room is open. */
-  productName: Accessor<string | null>;
-  /** Null shows the room list. */
+  /** Null shows the room list, or the room when it is the only one. */
   activeRoomId: Accessor<string | null>;
   unreadByRoom: Accessor<Readonly<Record<string, number>>>;
   composerError: Accessor<string | null>;
-  /** Called as the panel body opens, under its owner, so its reads stop as the panel closes. */
+  /** Called as the panel body mounts, under its owner, so its reads stop as it unmounts. */
   openFeed: () => ChatFeed;
-  openRoom: (roomId: string) => void;
+  openRoom: (roomId: string, params?: OpenRoomParams) => void;
   backToRooms: () => void;
   /** The open room is no longer in the list. */
   roomGone: () => void;
-  /** True once after a room was picked, which asks the composer to take focus. */
+  /** True once after the user picked a room, which asks the composer to take focus. */
   claimComposerFocus: () => boolean;
   setComposerError: (message: string | null) => void;
   /**

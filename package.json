@@ -4,7 +4,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/paritytech/dotli.git"
+    "url": "git+https://github.com/paritytech/dotli-community.git"
   },
   "engines": {
     "node": "^24.16.0 || >=26.3.0",
@@ -24,6 +24,7 @@
     "test:vrt": "VRT=1 vitest run --config vitest.storybook.config.ts",
     "test": "turbo run test test:root",
     "test:root": "node --test scripts/*.test.ts",
+    "test:functional": "npm run build:test && npm run --workspace apps/host test:functional",
     "test:e2e:local": "E2E_PRODUCT_URL=${E2E_PRODUCT_URL:-http://localhost:5199} npm run link:truapi && VITE_NETWORKS=paseo-next-v2,previewnet VITE_APP_DEBUG=true npm run build && npm run --workspace apps/host test:e2e:local",
     "lint": "turbo run lint lint:root",
     "lint:root": "eslint . && node scripts/checkProse.ts",
@@ -44,25 +45,25 @@
     "@config/vite": "*",
     "@dotli/config": "*",
     "@dotli/ui": "*",
-    "@storybook/addon-a11y": "10.6.7",
-    "@storybook/addon-docs": "10.6.7",
-    "@storybook/addon-vitest": "10.6.7",
+    "@storybook/addon-a11y": "10.6.8",
+    "@storybook/addon-docs": "10.6.8",
+    "@storybook/addon-vitest": "10.6.8",
     "@types/node": "26.6.6",
     "esbuild": "0.28.2",
     "eslint": "10.15.0",
     "happy-dom": "21.0.4",
     "husky": "9.1.7",
-    "knip": "6.45.1",
-    "lint-staged": "17.6.1",
+    "knip": "6.48.0",
+    "lint-staged": "17.6.2",
     "prettier": "3.10.1",
     "prettier-plugin-astro": "1.1.2",
-    "storybook": "10.6.7",
+    "storybook": "10.6.8",
     "storybook-solidjs-vite": "10.7.4",
-    "terser": "5.51.2",
-    "turbo": "2.11.11",
+    "terser": "5.51.4",
+    "turbo": "2.11.13",
     "typescript": "6.0.3",
     "vite": "8.3.8",
-    "vitest": "5.1.0"
+    "vitest": "5.1.1"
   },
   "packageManager": "npm@12.2.2",
   "workspaces": [
@@ -71,7 +72,7 @@
     "packages/*"
   ],
   "dependencies": {
-    "@parity/truapi": "0.31.0"
+    "@parity/truapi": "0.32.0"
   },
   "overrides": {
     "deepmerge-ts": "8.0.2"
