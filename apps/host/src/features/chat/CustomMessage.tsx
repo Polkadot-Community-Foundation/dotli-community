@@ -9,7 +9,9 @@ import type { JSX } from '@solidjs/web';
 import type { HexString, RenderContext, RendererNode } from '@parity/truapi';
 import { toHex } from '@dotli/shared';
 import { Spinner } from '@dotli/ui';
-import { CustomNode } from './CustomNode.js';
+import { CircleAlertIcon } from '@dotli/ui/icons';
+import { CustomNode } from './renderer/CustomNode.js';
+import type { CustomImageLoad } from './renderer/types.js';
 import type { ChatMessageActions } from './chat.js';
 import { visibilityWatcher, type WatchVisibility } from './visibility.js';
 import s from './CustomMessage.module.css';
@@ -17,19 +19,19 @@ import s from './CustomMessage.module.css';
 const LOADING = 'Loading…';
 
 export type CustomMessageProps = {
-  chat: Pick<ChatMessageActions, 'renderCustomMessage' | 'triggerRendererAction'>;
+  chat: Pick<ChatMessageActions, 'renderCustomMessage' | 'triggerRendererAction' | 'loadImage'>;
   /** Without one, the browser's IntersectionObserver. */
   watchVisibility?: WatchVisibility | undefined;
   productId: string;
-  roomId: string;
-  messageId: string;
-  messageType: string;
+  /** What the body is drawn for. Goes verbatim on the render request and on every action fired inside it. */
+  context: RenderContext;
   /** Stored product-defined payload, hex-encoded. */
   payload: HexString;
 };
 
+/** Draws a product's custom body from props it reads once, so a caller remounts it, keyed, to draw another body. */
 export function CustomMessage(props: CustomMessageProps): JSX.Element {
-  // A message's identity never changes for its row, so read it once.
+  // A body's identity never changes, so read it once.
   const mount = untrack(() => ({ ...props }));
   const [tree, setTree] = createSignal<RendererNode>();
   const [placeholder, setPlaceholder] = createSignal<string | undefined>(LOADING);
@@ -37,16 +39,7 @@ export function CustomMessage(props: CustomMessageProps): JSX.Element {
   const [actionFailed, setActionFailed] = createSignal(false);
   let root: HTMLDivElement | undefined;
 
-  // The same context names the body on the render request and on every
-  // action fired inside it, so the product can pair the two.
-  const context: RenderContext = {
-    tag: 'ChatMessage',
-    value: {
-      roomId: mount.roomId,
-      messageId: mount.messageId,
-      messageType: mount.messageType,
-    },
-  };
+  const { context } = mount;
 
   const onAction = (actionId: string, payload?: Uint8Array): void => {
     setActionFailed(false);
@@ -60,6 +53,8 @@ export function CustomMessage(props: CustomMessageProps): JSX.Element {
         setActionFailed(true);
       });
   };
+
+  const loadImage: CustomImageLoad = (source, signal) => mount.chat.loadImage(mount.productId, source, signal);
 
   let stopRender: (() => void) | null = null;
 
@@ -115,7 +110,9 @@ export function CustomMessage(props: CustomMessageProps): JSX.Element {
     >
       <Show
         when={placeholder()}
-        fallback={<Show when={tree()}>{node => <CustomNode node={node()} onAction={onAction} />}</Show>}
+        fallback={
+          <Show when={tree()}>{node => <CustomNode node={node()} onAction={onAction} loadImage={loadImage} />}</Show>
+        }
       >
         {text => (
           <span class={s['placeholder']} data-testid="chat-custom-placeholder">
@@ -128,6 +125,7 @@ export function CustomMessage(props: CustomMessageProps): JSX.Element {
       </Show>
       <Show when={actionFailed()}>
         <span class={s['error']} role="alert" data-testid="chat-custom-error">
+          <CircleAlertIcon class={s['errorIcon']} size={14} />
           The app could not be reached. Try again.
         </span>
       </Show>

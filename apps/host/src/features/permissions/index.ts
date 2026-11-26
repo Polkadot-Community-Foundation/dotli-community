@@ -5,8 +5,9 @@ export { PermissionsButtonIsland } from './panel/PermissionsButtonIsland.js';
 export { PermissionsItem } from './panel/PermissionsItem.js';
 export { SignIcon } from './panel/SignIcon.js';
 export { createBrowserBlockCheck } from './prompts/createBrowserBlockCheck.js';
+export { createHostFetchGate } from './prompts/createHostFetchGate.js';
 export type { BrowserPermissionStatus, BrowserPermissions } from './policy/createBrowserPermissions.js';
-export { browserPermissions } from './policy/createBrowserPermissions.js';
+export { browserPermissions, isBrowserBlocked } from './policy/createBrowserPermissions.js';
 export { hostPrompts } from './prompts/createHostPrompts.js';
 export type { PermissionAuthorizations } from './policy/createPermissionAuthorizations.js';
 export { createPermissionAuthorizations } from './policy/createPermissionAuthorizations.js';
@@ -15,7 +16,14 @@ export { getLastingStatus, isDismissed, isGranted, toPermissionDecision } from '
 export { pagePermissions, productPermissions } from './policy/pagePermissions.js';
 export { getGrantButtons } from './prompts/permissionDialog.js';
 export type { EnforceablePermissionName, PermissionStatus } from './policy/permissionPolicy.js';
-export { ALL_PERMISSIONS, hasFrameDirective, isEnforceableDevicePermission } from './policy/permissionPolicy.js';
+export {
+  ALL_PERMISSIONS,
+  isAutoGrantPermission,
+  isBrowserConsented,
+  isRemotePermission,
+  isUnsupportedPermission,
+  PERMISSION_NAMES,
+} from './policy/permissionPolicy.js';
 export type { PermissionsChange, ProductPermissions } from './policy/productPermissions.js';
 export { createProductPermissions } from './policy/productPermissions.js';
 export { isRestricted, resolveBrowserBlock } from './prompts/resolveBrowserBlock.js';

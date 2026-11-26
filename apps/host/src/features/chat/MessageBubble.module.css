@@ -1,71 +1,134 @@
 /* Copyright 2026 Parity Technologies (UK) Ltd. */
 /* SPDX-License-Identifier: AGPL-3.0-only */
 
+/* A message on its author's side. */
 .row {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 .row[data-author='user'] {
-  justify-content: flex-end;
-}
-/* Bubbles of one run sit close, so a run ends with its own space. */
-.row[data-run-end] {
-  margin-bottom: var(--sp-1);
+  align-items: flex-end;
 }
 
+/* The body and its time side by side, the time on the body's last line. */
 .bubble {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
   box-sizing: border-box;
   max-width: 85%;
   margin: 0;
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: 12px;
-  background: var(--fill);
-  color: var(--text-strong);
+  padding: var(--sp-3) var(--sp-3) var(--sp-1_5);
+  border-radius: var(--r-md);
+  background: var(--chat-bg-surface-main);
+  color: var(--chat-fg-primary);
   font-size: var(--fs-body);
-  line-height: 1.4;
+  line-height: var(--lh-tight);
+  --bubble-muted: var(--chat-fg-tertiary);
+}
+.row[data-author='user'] > .bubble {
+  padding-right: var(--sp-2);
+  background: var(--chat-bg-own);
+  color: var(--chat-fg-own);
+  --bubble-muted: var(--chat-fg-own-muted);
+}
+
+/* Lifts the text's last line level with the time. */
+.body {
+  min-width: 0;
+  padding-bottom: var(--sp-1_5);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.row[data-author='user'] .bubble {
-  background: var(--chat-bg-own);
-}
 
-.bubble[data-look='event'] {
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--fs-caption);
-  font-style: italic;
-}
-
+/* A wide body takes the bubble's width, so its time goes on a line of its own below it. */
+.bubble[data-look='actions'],
 .bubble[data-look='custom'] {
+  flex-direction: column;
+  align-items: stretch;
   width: 85%;
 }
-
-.meta {
-  display: block;
-  color: var(--text-muted);
-  font-size: var(--fs-caption);
+.bubble[data-look='actions'] > .body,
+.bubble[data-look='custom'] > .body {
+  padding-bottom: 0;
 }
 
 .time {
-  display: block;
-  box-sizing: border-box;
-  margin: var(--sp-1) 0 0;
+  flex: none;
+  margin: 0;
   padding: 0;
-  color: var(--text-muted);
-  font-size: var(--fs-label);
-  font-style: normal;
   cursor: default;
 }
-.row[data-author='user'] .time {
-  text-align: right;
+.bubble > .time {
+  align-self: flex-end;
+  color: var(--bubble-muted);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-tight);
+  white-space: nowrap;
 }
-/* An event reads as one line beside the conversation. */
-.bubble[data-look='event'] .time {
-  display: inline;
-  margin: 0 0 0 var(--sp-1_5);
+
+/* An event is a quiet pill between the messages, never a bubble. */
+.event {
+  display: flex;
+  align-self: center;
+  align-items: center;
+  gap: var(--sp-1_5);
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 0;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-full);
+  background: var(--fill-subtle);
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+}
+.event > .time {
+  font-size: var(--fs-label);
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1_5);
+  margin: var(--sp-1_5) 0 0;
+  color: var(--bubble-muted);
+  font-size: var(--fs-caption);
+}
+
+.meta-icon {
+  flex: none;
+}
+
+.file {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.file-icon {
+  flex: none;
+  color: var(--bubble-muted);
+}
+
+.file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.file-name {
+  font-weight: var(--fw-medium);
+}
+
+.file-kind {
+  color: var(--bubble-muted);
+  font-size: var(--fs-caption);
 }
 
 .actions {
@@ -77,9 +140,9 @@
   padding: 0;
 }
 .actions:first-child {
-  margin-top: var(--sp-hair);
+  margin-top: 0;
 }
 .actions[data-layout='grid'] {
-  flex-direction: row;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }

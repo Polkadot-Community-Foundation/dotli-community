@@ -3,15 +3,15 @@
 
 import { Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { SectionLabel } from '@dotli/ui';
-import { LogoSymbol } from '@dotli/ui/brand';
+import { SectionLabel, Spinner } from '@dotli/ui';
+import { Logo } from '@dotli/ui/brand';
 import { AccountAvatar } from '../account/index.js';
 import type { AccountSession } from '../account/index.js';
 import { shortenAccount } from '../account/index.js';
 import { TrustedShieldIcon } from './TrustedShieldIcon.js';
 import { VerifiedShieldIcon } from './VerifiedShieldIcon.js';
 import { CONNECTION_LABELS } from './connectionLabels.js';
-import type { AuthorUsername, ProductAuthor } from './createProductAuthor.js';
+import type { AuthorName, ProductAuthor } from './createProductAuthor.js';
 import type { AuthorStatus } from './productCardState.js';
 import type { ProductCardView } from './productCardView.js';
 import type { ShieldState } from './urlPillState.js';
@@ -24,7 +24,10 @@ export function ProductCard(props: ProductCardProps): JSX.Element {
   return (
     <div class={s['card']} data-testid="product-card">
       <div class={s['icon']}>
-        <Show when={props.card.icon} fallback={<LogoSymbol class={s['mark']} height={36} testId="product-card-mark" />}>
+        <Show
+          when={props.card.icon}
+          fallback={<Logo variant="symbol" class={s['mark']} height={36} testId="product-card-mark" />}
+        >
           {icon => (
             <img class={s['image']} src={icon()} alt="" width="40" height="40" data-testid="product-card-icon" />
           )}
@@ -57,49 +60,80 @@ export function ProductCard(props: ProductCardProps): JSX.Element {
 
 function getAuthorSection(author: AuthorStatus): JSX.Element {
   switch (author.status) {
-    // The section appears once an author is found. Loading and no owner show nothing.
+    // Before the read starts, and with no owner, there is no section.
     case 'idle':
-    case 'loading':
       return null;
+    // The same row as the loaded author, so the card does not move when the author arrives.
+    case 'loading':
+      return (
+        <AuthorSection loading>
+          <AuthorRow session={{}}>
+            <Spinner class={s['authorSpinner']} testId="product-card-author-spinner" />
+          </AuthorRow>
+        </AuthorSection>
+      );
     case 'ready':
       return author.author === null ? null : (
-        <div class={s['author']} data-testid="product-card-author">
-          <SectionLabel class={s['label']} text="Author" />
-          <AuthorRow author={author.author} />
-        </div>
+        <AuthorSection loading={false}>
+          <AuthorRow session={getAvatarSession(author.author.name)}>
+            <AuthorText author={author.author} />
+          </AuthorRow>
+        </AuthorSection>
       );
   }
 }
 
-function AuthorRow(props: { author: ProductAuthor }): JSX.Element {
+function AuthorSection(props: { loading: boolean; children: JSX.Element }): JSX.Element {
   return (
-    <div class={s['row']}>
-      <AccountAvatar session={getAvatarSession(props.author.username)} size="sm" decorative />
-      <div class={s['who']}>
-        <Show when={props.author.username}>
-          {username => (
-            <span class={s['username']} data-testid="product-card-author-name">
-              {username().name}
-            </span>
-          )}
-        </Show>
-        <span class={s['address']} data-testid="product-card-author-address">
-          {shortenAccount(props.author.address) ?? props.author.address}
-        </span>
-      </div>
+    <div class={s['author']} data-testid="product-card-author" aria-busy={props.loading ? 'true' : undefined}>
+      <SectionLabel class={s['label']} text="Author" />
+      {props.children}
     </div>
   );
 }
 
-function getAvatarSession(username: AuthorUsername | null): AccountSession {
-  if (username === null) {
+/** The author's avatar beside `children`. */
+function AuthorRow(props: { session: AccountSession; children: JSX.Element }): JSX.Element {
+  return (
+    <div class={s['row']}>
+      <AccountAvatar session={props.session} size="sm" decorative testId="product-card-author-avatar" />
+      {props.children}
+    </div>
+  );
+}
+
+/** The author's shown name when there is one, else the address. */
+function AuthorText(props: { author: ProductAuthor }): JSX.Element {
+  return (
+    <Show
+      when={props.author.name}
+      fallback={
+        <span class={s['address']} data-testid="product-card-author-address">
+          {shortenAccount(props.author.address) ?? props.author.address}
+        </span>
+      }
+    >
+      {name => (
+        <span class={s['authorName']} data-testid="product-card-author-name">
+          {name().text}
+        </span>
+      )}
+    </Show>
+  );
+}
+
+/** The session the avatar draws from. A dotNS name is no People username, so it keeps the user glyph. */
+function getAvatarSession(name: AuthorName | null): AccountSession {
+  if (name === null) {
     return {};
   }
-  switch (username.kind) {
+  switch (name.kind) {
     case 'full':
-      return { fullUsername: username.name };
+      return { fullUsername: name.text };
     case 'lite':
-      return { liteUsername: username.name };
+      return { liteUsername: name.text };
+    case 'dotns':
+      return {};
   }
 }
 

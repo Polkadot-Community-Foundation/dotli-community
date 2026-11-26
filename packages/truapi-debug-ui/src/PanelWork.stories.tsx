@@ -1,6 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/* eslint-disable no-restricted-properties -- Predates the story contract: its plays still assert copy. */
+
 // The panel's work per frame, click and tick at its 2000-event capacity, counted through the computations it is
 // handed and Solid's dev warnings, with layout from the real browser.
 
@@ -18,14 +20,20 @@ import {
   withFakeClock,
   type FakeClock,
 } from './testing/stories/debugPanelFixtures.js';
-import { debugPanelStory } from './testing/stories/debugPanelStory.js';
+import { debugPanelA11y, debugPanelStory } from './testing/stories/debugPanelStory.js';
 
 const meta = {
   ...debugPanelStory,
   title: 'Debug/Panel work',
   // The panel mounts on the page itself, as the host mounts it, so the canvas stays empty.
   tags: ['!autodocs'],
-  parameters: { ...debugPanelStory.parameters, debugPanel: { mount: false } },
+  parameters: {
+    ...debugPanelStory.parameters,
+    debugPanel: { mount: false },
+    // These stories count work at capacity. Axe over 2000 rows would take most of their time, and the panel's
+    // accessibility is checked by its stories at a normal size.
+    a11y: { ...debugPanelA11y, test: 'off' },
+  },
   render: () => <div data-testid="story-host-page" />,
   beforeEach: setUpDebugPanel,
 } satisfies Meta;

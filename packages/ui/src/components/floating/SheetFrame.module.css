@@ -51,19 +51,28 @@
 .head {
   position: relative;
   flex: none;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  column-gap: var(--sp-3);
+  gap: var(--sp-3);
   padding: var(--sp-6) var(--sp-4) var(--sp-3);
   touch-action: none;
   cursor: grab;
 }
 .heading {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: var(--sp-2);
   min-width: 0;
+}
+/* A chip beside the title, such as a version, filled by the content. */
+.aside {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+.aside:empty {
+  display: none;
 }
 /* Sized to the title it leads, not to a card head. The heading in the selector outranks the tile's own size. */
 .heading > .icon > svg {
@@ -81,13 +90,17 @@
   border-radius: var(--r-full);
   background: var(--chrome-ring-strong);
 }
+/* A row, so markup in the title lines up beside its text. */
 .title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   min-width: 0;
   margin: 0;
   color: var(--chrome-text);
   font-size: var(--fs-title-lg);
   font-weight: var(--fw-semibold);
-  line-height: var(--lh-tight);
+  line-height: var(--lh-body);
   overflow-wrap: anywhere;
   text-wrap: balance;
 }

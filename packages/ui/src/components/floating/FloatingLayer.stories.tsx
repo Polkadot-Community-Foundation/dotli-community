@@ -7,6 +7,7 @@ import { expect, fn, waitFor, within } from 'storybook/test';
 import { trustedInput } from '@config/storybook/play';
 import { appears } from '@dotli/ui/testing';
 import { Button } from '../primitives/Button.js';
+import { FloatingLayer } from './FloatingLayer.js';
 import { AnchorBoundary, LayerTracker, type TrackedLayer } from './layerContext.js';
 import { Popover } from './Popover.js';
 
@@ -14,6 +15,7 @@ const onOther = fn().mockName('onOther');
 const onOpenChange = fn().mockName('onOpenChange');
 const onOpenChangeA = fn().mockName('onOpenChangeA');
 const onOpenChangeB = fn().mockName('onOpenChangeB');
+const onLayerClose = fn().mockName('onLayerClose');
 /** The layers the page tracks, as an auto-hiding bar tracks its own. */
 const tracked = new Set<TrackedLayer>();
 // The surface is portalled into the body, outside the story's canvas.
@@ -52,6 +54,32 @@ function Harness() {
         style={{ position: 'fixed', inset: '120px 0 0 0', width: '100%', height: '200px', border: '0' }}
         srcdoc="<body style='margin:0;height:100vh;background:#335'><button>product</button></body>"
       />
+    </div>
+  );
+}
+
+/** A layer that runs its own closes, open below a text input that cannot be its invoker, beside plain text. */
+function SelfDismissing() {
+  const [trigger, setTrigger] = createSignal<HTMLInputElement | undefined>(undefined, { ownedWrite: true });
+  const [open, setOpen] = createSignal(true);
+  return (
+    <div style={{ display: 'flex', gap: '72px', 'align-items': 'flex-start' }}>
+      <input ref={setTrigger} type="text" aria-label="Name" data-testid="input" />
+      <p data-testid="outside">Outside</p>
+      <FloatingLayer
+        id="story-self-dismiss"
+        kind="self-dismiss"
+        open={open()}
+        onClose={reason => {
+          onLayerClose(reason);
+          setOpen(false);
+        }}
+        trigger={trigger}
+        placement="trigger-start"
+        testId="self-dismiss-surface"
+      >
+        <div style={{ padding: '12px' }}>Layer</div>
+      </FloatingLayer>
     </div>
   );
 }
@@ -99,6 +127,7 @@ const meta = {
     onOpenChange.mockClear();
     onOpenChangeA.mockClear();
     onOpenChangeB.mockClear();
+    onLayerClose.mockClear();
   },
 } satisfies Meta<typeof Harness>;
 
@@ -120,7 +149,7 @@ export const ClickOutsideReachesTarget: Story = {
 };
 
 /** As a dotli user, I click inside the product frame and the open popover closes while focus stays in the frame. */
-export const ClosesOnWindowBlur: Story = {
+export const ClosesOnPressInProductFrame: Story = {
   play: async ({ step }) => {
     await step('Given the popover is open', openPopover);
     await step('When I click inside the product iframe', async () => {
@@ -129,6 +158,20 @@ export const ClosesOnWindowBlur: Story = {
     await step('Then the popover closed and focus stayed in the iframe', async () => {
       await waitFor(() => expect(getSurface()).not.toHaveAttribute('data-open'));
       await expect(document.activeElement).toBe(body.getByTestId('product'));
+    });
+  },
+};
+
+/** As a dotli user, I switch to another app or the browser's own UI and the open popover stays open. */
+export const StaysOpenWhenTheWindowLosesFocus: Story = {
+  play: async ({ step }) => {
+    await step('Given the popover is open', openPopover);
+    await step('When the window loses focus with no element of the page taking it', () => {
+      window.dispatchEvent(new FocusEvent('blur'));
+    });
+    await step('Then the popover is still open', async () => {
+      await expect(onOpenChange.mock.calls).toEqual([[true]]);
+      await expect(getSurface()).toHaveAttribute('data-open');
     });
   },
 };
@@ -253,6 +296,34 @@ export const HiddenTriggerHandsFocusToBoundary: Story = {
     await step("Then it closed and the boundary's fallback has focus", async () => {
       await waitFor(() => expect(getSurface()).not.toHaveAttribute('data-open'));
       await waitFor(() => expect(body.getByTestId('other')).toHaveFocus());
+    });
+  },
+};
+
+/**
+ * As a dotli user typing in an input with a layer below it, I press in the input and the layer stays open, and I press
+ * outside both and it closes as an outside press.
+ */
+export const SelfDismissKeepsItsTrigger: Story = {
+  render: () => <SelfDismissing />,
+  play: async ({ step }) => {
+    const surface = body.getByTestId('self-dismiss-surface');
+    await step('Given the layer is open', async () => {
+      await waitFor(() => expect(surface).toHaveAttribute('data-open'));
+    });
+    await step('When I press in the input', async () => {
+      await (await trustedInput()).click(body.getByTestId('input'));
+    });
+    await step('Then the layer is still open', async () => {
+      await expect(surface).toHaveAttribute('data-open');
+      await expect(onLayerClose).not.toHaveBeenCalled();
+    });
+    await step('When I press the text beside the input', async () => {
+      await (await trustedInput()).click(body.getByTestId('outside'));
+    });
+    await step('Then the layer closed once, as an outside press', async () => {
+      await waitFor(() => expect(surface).not.toHaveAttribute('data-open'));
+      await expect(onLayerClose.mock.calls).toEqual([['outside']]);
     });
   },
 };

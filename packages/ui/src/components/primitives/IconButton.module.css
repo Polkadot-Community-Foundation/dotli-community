@@ -10,6 +10,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   gap: var(--sp-1_5);
   box-sizing: border-box;
   width: var(--h-bar-control);
@@ -21,7 +22,7 @@
   background: transparent;
   color: var(--chrome-text);
   font-family: inherit;
-  font-size: 0.75rem;
+  font-size: var(--fs-caption);
   cursor: pointer;
   transition:
     background var(--dur-fast),

@@ -3,18 +3,17 @@
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { asProductId } from '@parity/truapi';
-import { PERMISSIONS_REQUEST_DEVICE_PERMISSION } from '@parity/truapi/wire-table';
-import { isSandboxOrigin } from '@dotli/config';
+import { getBackend, getNetwork, isSandboxOrigin } from '@dotli/config';
 import {
+  SANDBOX_SCHEMA_VERSION,
   startSandboxChannel,
   type SandboxChannel,
   type SandboxMessageType,
   type SandboxNavigateMessage,
 } from '@dotli/sandbox-wire';
-import { createDeferred, realTimers, type Timers } from '@dotli/shared';
+import { bindLogSink, createDeferred, realTimers, type Timers } from '@dotli/shared';
 import { atom } from 'nanostores';
 import { catchError, catchRejection, createManualTimers, nth, readOutcome } from '@dotli/shared/testing';
-import { encodeResponseFrame } from '../../../testing/encodeResponseFrame.js';
 import { bindReports } from '../../../testing/bindReports.js';
 import { rethrow } from '../../../testing/rethrow.js';
 import { createCoreAuthCommands } from '../../account/index.js';
@@ -109,8 +108,6 @@ type CreateTopbarLoginParams = {
 type BuildSubdomainProductParams = {
   /** The product's content id, `cid` by default. */
   cid?: string;
-  /** Whether the product declares chat, no by default. */
-  chat?: boolean;
 };
 
 /** The host page, at the root of a dev host. */
@@ -134,6 +131,8 @@ function createHarness({
   loadCheckerPanel,
 }: CreateHarnessParams = {}) {
   const hosts: FakeIframeHost[] = [];
+  // What each frame's `onPort` returned for the port of its latest document.
+  const retireDocuments = new Map<FakeIframeHost, () => void>();
   let held: Promise<undefined> | null = null;
   let asked = 0;
   let failing: Error | null = null;
@@ -221,14 +220,19 @@ function createHarness({
     announce,
     /** Renders `product` and answers the core connection it asks for. */
     settle,
-    /** The sandbox in a frame asking to be rebuilt, as it does after a reload, or another window of its origin asking. */
-    askToRecover,
+    /** The sandbox in a frame asking the host for its contract, as it does at boot and on reload, or another window asking. */
+    askForContract,
     /** The sandbox in a frame asking the page to navigate `to`, or another window asking. */
     askToNavigate,
     /** Answers the connection the render on a replacement core asks for, and waits until the product is back on screen. */
     reconnect,
     /** Puts up both screens the way the shell does, as disposers the test can count. */
     putUpScreens,
+    /**
+     * A product document in frame `host` taking a port, as the iframe host connects each one: the port of the document
+     * it replaced is retired first. Returns the frames posted to the new document, in order.
+     */
+    openDocument,
     /** How many listeners the permission store holds. */
     countPermissionListeners: () => permissionListeners.size,
     /** How many handlers the sandbox channel holds. */
@@ -271,7 +275,7 @@ function createHarness({
 
   function announce(change: Partial<PermissionsChange> & { label: string }): void {
     for (const listener of [...permissionListeners]) {
-      listener({ permissions: [], allowChanged: true, fromPrompt: false, ...change });
+      listener({ permissions: [], allowChanged: true, ...change });
     }
   }
 
@@ -281,8 +285,8 @@ function createHarness({
     await rendered;
   }
 
-  function askToRecover(params: SandboxAskParams = {}): void {
-    postFromSandbox({ type: 'dotli:sandbox-recover' }, params);
+  function askForContract(params: SandboxAskParams = {}): void {
+    postFromSandbox({ type: 'dotli:sandbox-contract-request' }, params);
   }
 
   function askToNavigate({ to, ...params }: AskToNavigateParams): void {
@@ -313,6 +317,32 @@ function createHarness({
     frameView.showScreen('page', disposePage);
     return { disposeLoading, disposePage };
   }
+
+  function openDocument(host = 0): unknown[] {
+    const framed = nth(hosts, host);
+    retireDocuments.get(framed)?.();
+    const frames: unknown[] = [];
+    const retire = framed.options.onPort(createRecordingPort(frames, fakes.changes.notify));
+    if (typeof retire === 'function') {
+      retireDocuments.set(framed, retire);
+    }
+    return frames;
+  }
+}
+
+/** The host's end of a product document's channel, which records each frame posted into it in `frames`. */
+function createRecordingPort(frames: unknown[], onFrame: () => void): MessagePort {
+  const port = {
+    onmessage: null,
+    start: () => undefined,
+    close: () => undefined,
+    postMessage(frame: unknown): void {
+      frames.push(frame);
+      onFrame();
+    },
+  };
+  // The frame's provider reads no other member of the port, so the record stands in for it.
+  return port as unknown as MessagePort;
 }
 
 /** A sandbox message, as the browser delivers it from the window `source` of `origin`. */
@@ -326,14 +356,15 @@ function crash(connection: FakeCoreProvider): void {
 }
 
 function buildIframeProduct(label: string): FrameProduct {
-  return { mode: 'iframe', label, url: `https://${label}.example/app`, chat: Promise.resolve(false) };
+  return {
+    mode: 'iframe',
+    label,
+    url: `https://${label}.example/app`,
+  };
 }
 
-function buildSubdomainProduct(
-  label: string,
-  { cid = 'cid', chat = false }: BuildSubdomainProductParams = {},
-): FrameProduct {
-  return { mode: 'subdomain', label, cid, chat: Promise.resolve(chat), facts: {} };
+function buildSubdomainProduct(label: string, { cid = 'cid' }: BuildSubdomainProductParams = {}): FrameProduct {
+  return { mode: 'subdomain', label, cid, facts: {} };
 }
 
 /** Whether the iframe of every host is the one attached at the same place, compared by identity. */
@@ -496,7 +527,13 @@ describe('product frame renders', () => {
 
     // When
     await fakes.settle(
-      { mode: 'subdomain', label: 'doom', cid: 'cid', base: '/Doom.dot', chat: Promise.resolve(false), facts: {} },
+      {
+        mode: 'subdomain',
+        label: 'doom',
+        cid: 'cid',
+        base: '/Doom.dot',
+        facts: {},
+      },
       0,
     );
     const url = new URL(nth(fakes.hosts, 0).options.iframeUrl);
@@ -543,7 +580,6 @@ describe('product frame renders', () => {
         label: 'pr16.back-me-up',
         cid: 'cid',
         base: '/pr16.back-me-up',
-        chat: Promise.resolve(false),
         facts: {},
       },
       0,
@@ -554,8 +590,8 @@ describe('product frame renders', () => {
     expect(url.hostname).toMatch(/^sn--[0-9a-f]{59}\.app\.localhost$/);
   });
 
-  it("As a visitor, I open a link carrying the sandbox's own params and get the host's values only, with my own params byte for byte ahead of them", async () => {
-    // Given
+  it("As a visitor, I open a link whose query reuses the contract's param names and my query reaches the frame unchanged", async () => {
+    // Given a link whose own query reuses names the contract once owned
     const search =
       '?fullReset=1&cid=forged&v=0&network=forged&chainBackend=forged&resolutionId=forged&q=a%20b&path=/x&flag';
     const fakes = createHarness({
@@ -566,51 +602,26 @@ describe('product frame renders', () => {
     await fakes.settle(buildSubdomainProduct('product', { cid: 'real-cid' }), 0);
     const url = new URL(nth(fakes.hosts, 0).options.iframeUrl);
 
-    // Then
+    // Then the host writes no contract params into the URL, so the visitor's own query passes through byte for byte,
+    // harmless because the sandbox reads its contract only over the handshake.
     expect(url.pathname).toBe('/foo%20bar');
-    expect(url.searchParams.has('fullReset')).toBe(false);
-    expect(url.searchParams.getAll('cid')).toEqual(['real-cid']);
-    expect(url.searchParams.getAll('v')).toHaveLength(1);
-    expect(url.searchParams.getAll('v')).not.toContain('0');
-    expect(url.searchParams.getAll('network')).not.toContain('forged');
-    expect(url.searchParams.getAll('chainBackend')).not.toContain('forged');
-    expect(url.searchParams.getAll('resolutionId')).not.toContain('forged');
-    expect(url.search).toMatch(/^\?q=a%20b&path=\/x&flag&cid=real-cid&/);
+    expect(url.search).toBe(search);
   });
 
-  it('As a visitor, I open a link that says fullReset=0 after the host scheduled a reset and the sandbox is purged once, by the host', async () => {
+  it('As a dApp user, I open an app and it connects as an App, with no chat served on its connection', async () => {
     // Given
-    const fakes = createHarness({ location: { href: 'http://localhost:3000/?fullReset=0', search: '?fullReset=0' } });
-    pendingResets.schedule(['sandbox']);
-
-    // When
-    await fakes.settle(buildSubdomainProduct('product'), 0);
-    const resets = new URL(nth(fakes.hosts, 0).options.iframeUrl).searchParams.getAll('fullReset');
-
-    // Then
-    expect(resets).toEqual(['1']);
-  });
-
-  it('As a dApp user, I open an app that declares chat and one that does not, and the first connects as a Worker recorded chat-capable and the second as an App', async () => {
-    // Given
+    const registered: string[] = [];
+    onTestFinished(chatConnections.onRegister(productId => registered.push(productId)));
     const fakes = createHarness();
 
     // When
-    await fakes.settle(buildSubdomainProduct('chatty', { chat: true }), 0);
-    const chattyProviders = nth(fakes.runtimes, 0).createProvider.mock.calls.length;
-    const chattyState = productState.store.get();
-    await fakes.settle(buildSubdomainProduct('quiet'), 1);
+    await fakes.settle(buildSubdomainProduct('chatty'), 0);
 
     // Then
-    expect(nth(fakes.runtimes, 0).createProvider).toHaveBeenNthCalledWith(
-      chattyProviders,
-      expect.objectContaining({ executionKind: 'Worker' }),
-    );
-    expect(chattyState).toMatchObject({ status: 'loaded', label: 'chatty', chat: true });
-    expect(fakes.runtimes.at(-1)?.createProvider).toHaveBeenLastCalledWith(
+    expect(nth(fakes.runtimes, 0).createProvider).toHaveBeenLastCalledWith(
       expect.objectContaining({ executionKind: 'App' }),
     );
-    expect(productState.store.get()).toMatchObject({ status: 'loaded', label: 'quiet', chat: false });
+    expect(registered).toEqual([]);
   });
 
   it('As a dApp user, I open a product and the page records the id its core parsed, so its chat is keyed as the core keys it', async () => {
@@ -620,7 +631,7 @@ describe('product frame renders', () => {
     });
 
     // When
-    await fakes.settle(buildSubdomainProduct('chatty', { chat: true }), 0);
+    await fakes.settle(buildSubdomainProduct('chatty'), 0);
 
     // Then
     expect(productState.store.get()).toMatchObject({ status: 'loaded', label: 'chatty', productId: 'canonical.paseo' });
@@ -638,7 +649,7 @@ describe('product frame renders', () => {
     };
 
     // When
-    await fakes.settle({ mode: 'subdomain', label: 'doom', cid: 'cid', chat: Promise.resolve(false), facts }, 0);
+    await fakes.settle({ mode: 'subdomain', label: 'doom', cid: 'cid', facts }, 0);
 
     // Then
     expect(fakes.frameView.titles).toEqual([{ mode: 'subdomain', label: 'doom', displayName: 'DOOM' }]);
@@ -728,7 +739,6 @@ describe('product frame status', () => {
         label: 'doom',
         cid: 'cid',
         base: '/Doom.dot',
-        chat: Promise.resolve(false),
         facts: {},
       }),
     );
@@ -760,25 +770,6 @@ describe('product frame status', () => {
     expect(firstOutcome).toBe('resolved');
     expect(fakes.readLastStatus()).toBe('connected');
   });
-
-  it('As a dApp user with a chat view waiting for my product, I open a newer version before the first connects and the chat view gets only the live connection', async () => {
-    // Given a chat product whose first render is superseded before its connection is answered
-    const registered: string[] = [];
-    onTestFinished(chatConnections.onRegister(productId => registered.push(productId)));
-    const fakes = createHarness();
-    const first = fakes.frame.render(buildSubdomainProduct('product', { cid: 'first-cid', chat: true }));
-    await fakes.changes.until(() => fakes.connections.length === 1);
-    const second = fakes.frame.render(buildSubdomainProduct('product', { cid: 'second-cid', chat: true }));
-    await readOutcome(first);
-
-    // When the first connection is answered late, then the second
-    await answerConnection(fakes, 0);
-    await answerConnection(fakes, 1);
-    await second;
-
-    // Then
-    expect(registered).toHaveLength(1);
-  });
 });
 
 describe('product frame app roots', () => {
@@ -808,7 +799,7 @@ describe('product frame app roots', () => {
     // Then
     expect(disposeLoading).toHaveBeenCalledTimes(1);
     expect(fakes.listOnScreen()).toHaveLength(1);
-    expect(fakes.listOnScreen()[0]?.options.iframeUrl).toContain('cid=second-cid');
+    expect(fakes.listOnScreen()[0]).toBe(fakes.hosts.at(-1));
   });
 
   it('As a user, I open an app by iframe and both the page and the loading roots go', async () => {
@@ -900,8 +891,7 @@ describe('product frame halted', () => {
     const connectionClosedOnHalt = live.dispose.mock.calls.length;
     const { disposeLoading, disposePage } = fakes.putUpScreens();
 
-    // When its sandbox asks to be rebuilt, a device permission changes, and its core goes down
-    fakes.askToRecover();
+    // When a device permission changes and its core goes down
     fakes.announce({ label: 'product', permissions: ['Camera'] });
     crash(live);
 
@@ -914,10 +904,10 @@ describe('product frame halted', () => {
   });
 
   it('As a visitor whose app failed for good while it was being rebuilt, I stay on the failure screen and the rebuild is dropped', async () => {
-    // Given a product on screen whose sandbox asked to be rebuilt
+    // Given a product on screen whose frame a permission change is rebuilding
     const fakes = createHarness();
     await fakes.settle(buildSubdomainProduct('product'), 0);
-    fakes.askToRecover();
+    fakes.announce({ label: 'product', permissions: ['Camera'] });
 
     // When the app fails for good under the failure screen while the rebuild still leases its core
     fakes.frame.halt();
@@ -966,18 +956,18 @@ describe('product frame disposed', () => {
     expect(fakes.countPermissionListeners()).toBe(0);
   });
 
-  it('As a dApp user who left the page, I see the sandbox that was on screen ask to be rebuilt and nothing is rebuilt or listens for it', async () => {
+  it('As a dApp user who left the page, I see the sandbox that was on screen ask the host for its contract and nothing answers or listens for it', async () => {
     // Given a product on screen, then the frame disposed
     const fakes = createHarness();
     await fakes.settle(buildSubdomainProduct('product'), 0);
+    const { iframe } = nth(fakes.hosts, 0);
     fakes.frame.dispose();
 
-    // When its sandbox asks to be rebuilt
-    fakes.askToRecover();
+    // When its sandbox asks the host for its contract
+    fakes.askForContract();
 
-    // Then no frame is asked for, and the sandbox channel holds no handler of the frame
-    expect(fakes.countFramesAsked()).toBe(1);
-    expect(fakes.connections).toHaveLength(1);
+    // Then nothing is answered, and the sandbox channel holds no handler of the frame
+    expect(readFramePosts(iframe)).toEqual([]);
     expect(fakes.countChannelHandlers()).toBe(0);
   });
 
@@ -1022,28 +1012,6 @@ describe('product frame disposed', () => {
     expect(pendingBeforeDispose).toBe(1);
     expect(timers.countPending()).toBe(0);
     expect(counted('product.rerender')).toEqual([{ outcome: 'ok', reason: 'replacement' }]);
-  });
-
-  it('As an operator, I watch a frame disposed while a rebuild at the sandbox ask waits out its interval and see no failure reported', async () => {
-    // Given a product rebuilt at its sandbox's ask, whose rebuild waits out the interval
-    const timers = createManualTimers();
-    const fakes = createHarness({ timers });
-    const { counted } = bindReports({ onReport: fakes.changes.notify });
-    await fakes.settle(buildSubdomainProduct('product'), 0);
-    fakes.askToRecover();
-    await answerConnection(fakes, 1);
-    await fakes.changes.until(() => counted('product.rerender').length === 1);
-    await timers.advance(0);
-    const pendingBeforeDispose = timers.countPending();
-
-    // When the frame is disposed
-    fakes.frame.dispose();
-    await timers.advance(0);
-
-    // Then the wait ended at once, and only the rebuild that was shown is counted
-    expect(pendingBeforeDispose).toBe(1);
-    expect(timers.countPending()).toBe(0);
-    expect(counted('product.rerender')).toEqual([{ outcome: 'ok', reason: 'recover' }]);
   });
 
   it('As a dApp user who left the page, I see a product rendered after it resolve with nothing mounted', async () => {
@@ -1103,184 +1071,6 @@ describe('product frame disposed', () => {
 });
 
 describe('product frame rebuilds', () => {
-  it('As a dApp user, I keep the product open while its sandbox is rebuilt and the tab title is shown again for it', async () => {
-    // Given a product on screen
-    const fakes = createHarness();
-    await fakes.settle(buildSubdomainProduct('titled'), 0);
-
-    // When its sandbox asks to be rebuilt
-    fakes.askToRecover();
-    await answerConnection(fakes, 1);
-    await fakes.changes.until(() => (fakes.hosts[0]?.dispose.mock.calls.length ?? 0) > 0);
-
-    // Then the page names the same product again, from whatever its root manifest has published by now
-    expect(fakes.frameView.titles).toEqual([
-      { mode: 'subdomain', label: 'titled' },
-      { mode: 'subdomain', label: 'titled' },
-    ]);
-  });
-
-  it('As a dApp user, I keep an app whose sandbox asks to be rebuilt twice in a row and it is rebuilt once', async () => {
-    // Given
-    const timers = createManualTimers();
-    const fakes = createHarness({ timers });
-    await fakes.settle(buildSubdomainProduct('twice'), 0);
-
-    // When
-    fakes.askToRecover();
-    fakes.askToRecover();
-    await answerConnection(fakes, 1);
-    await fakes.changes.until(() => fakes.hosts.length === 2);
-    await timers.advance(5_000);
-
-    // Then
-    expect(fakes.readLastStatus()).toBe('connected');
-    expect(fakes.connections).toHaveLength(2);
-  });
-
-  it('As a dApp user whose product reloaded its frame, I get the frame told that the host accepted its ask', async () => {
-    // Given a settled subdomain product
-    const fakes = createHarness();
-    await fakes.settle(buildSubdomainProduct('accepted'), 0);
-
-    // When its frame asks to recover
-    fakes.askToRecover();
-
-    // Then the frame is told, at the origin the ask came from, before any core connection is answered
-    const { iframe, options } = nth(fakes.hosts, 0);
-    expect(readFramePosts(iframe)).toEqual([
-      { message: { type: 'dotli:sandbox-recover-accepted' }, targetOrigin: options.allowedOrigin },
-    ]);
-  });
-
-  it('As a dApp user whose reloaded frame cannot be told, I still get it rebuilt at its ask', async () => {
-    // Given a settled subdomain product whose frame's posts throw
-    const failure = new Error('The frame cannot be posted to');
-    const heard: [unknown, SandboxMessageType][] = [];
-    const fakes = createHarness({
-      reportHandlerError: (error, type) => {
-        heard.push([error, type]);
-      },
-    });
-    await fakes.settle(buildSubdomainProduct('untold'), 0);
-    breakFramePosts(nth(fakes.hosts, 0).iframe, failure);
-
-    // When its frame asks to recover and the next connection is answered
-    fakes.askToRecover();
-    await answerConnection(fakes, 1);
-    await fakes.changes.until(() => fakes.hosts.length === 2);
-
-    // Then the frame is rebuilt and the channel heard the post's error
-    expect(fakes.hosts).toHaveLength(2);
-    expect(heard).toEqual([[failure, 'dotli:sandbox-recover']]);
-  });
-
-  it('As a dApp user whose rebuilt sandbox reloads while an older ask still waits, I see the newer ask wait out the interval and rebuild the frame on screen', async () => {
-    // Given a rebuild at the sandbox's ask whose new frame is still being built
-    const timers = createManualTimers();
-    const fakes = createHarness({ timers });
-    await fakes.settle(buildSubdomainProduct('asking'), 0);
-    const release = fakes.holdNextFrame();
-    fakes.askToRecover();
-    await answerConnection(fakes, 1);
-    await fakes.changes.until(() => fakes.countFramesAsked() === 2);
-
-    // When the old frame asks again, then the new frame comes up and asks too, and the newer ask rebuilds it
-    fakes.askToRecover();
-    release();
-    await fakes.changes.until(() => fakes.readLastStatus() === 'connected' && fakes.hosts.length === 2);
-    fakes.askToRecover({ host: 1 });
-    await timers.advance(5_000);
-    await answerConnection(fakes, 2);
-    await fakes.changes.until(() => fakes.hosts.length === 3 && fakes.readLastStatus() === 'connected');
-    await timers.advance(10_000);
-
-    // Then the newer ask rebuilt the frame on screen, and nothing else did
-    expect(fakes.connections).toHaveLength(3);
-  });
-
-  it("As a dApp user, I keep my app open while a sandbox of another product asks to rebuild it and the app I'm on stays", async () => {
-    // Given
-    const fakes = createHarness();
-    await fakes.settle(buildSubdomainProduct('mine'), 0);
-    const other = new URL(nth(fakes.hosts, 0).options.allowedOrigin ?? '');
-    other.hostname = 'other.app.localhost';
-
-    // When
-    fakes.askToRecover({ origin: other.origin });
-
-    // Then
-    expect(fakes.readLastStatus()).toBe('connected');
-    expect(fakes.connections).toHaveLength(1);
-  });
-
-  it('As a dApp user, I keep my app open while a window of its origin that is not the frame on screen asks to rebuild it and the app stays', async () => {
-    // Given another window on the product's origin, such as a frame the product nested in itself
-    const timers = createManualTimers();
-    const fakes = createHarness({ timers });
-    await fakes.settle(buildSubdomainProduct('nested'), 0);
-    const nested = {};
-
-    // When
-    fakes.askToRecover({ from: nested });
-    await timers.advance(0);
-
-    // Then
-    expect(fakes.readLastStatus()).toBe('connected');
-    expect(fakes.countFramesAsked()).toBe(1);
-    expect(fakes.connections).toHaveLength(1);
-    expect(readFramePosts(nth(fakes.hosts, 0).iframe)).toEqual([]);
-  });
-
-  it('As a dApp user whose rebuilt sandbox reloads again at once, I see it wait and rebuilt once the interval has passed', async () => {
-    // Given a product rebuilt once at its sandbox's ask
-    const timers = createManualTimers();
-    const fakes = createHarness({ timers });
-    await fakes.settle(buildSubdomainProduct('looping'), 0);
-    fakes.askToRecover();
-    await answerConnection(fakes, 1);
-    await fakes.changes.until(() => fakes.readLastStatus() === 'connected' && fakes.hosts.length === 2);
-
-    // When the rebuilt sandbox asks again within the interval, then the interval passes
-    fakes.askToRecover({ host: 1 });
-    await timers.advance(0);
-    const waiting = {
-      status: fakes.readLastStatus(),
-      connections: fakes.connections.length,
-      pending: timers.countPending(),
-    };
-    await timers.advance(5_000);
-    await answerConnection(fakes, 2);
-    await fakes.changes.until(() => fakes.hosts.length === 3);
-
-    // Then it waited on the interval, then it was rebuilt
-    expect(waiting).toEqual({ status: 'connected', connections: 2, pending: 1 });
-    expect(fakes.hosts).toHaveLength(3);
-  });
-
-  it('As a dApp user whose sandbox keeps asking to be rebuilt while each rebuild fails, I see one more rebuild wait and the rest dropped', async () => {
-    // Given a product whose rebuilds fail
-    const timers = createManualTimers();
-    const fakes = createHarness({ timers });
-    await fakes.settle(buildSubdomainProduct('failing'), 0);
-    fakes.failFrames(new Error('Failed to fetch dynamically imported module'));
-
-    // When its sandbox asks four times while the first rebuild runs
-    for (let ask = 0; ask < 4; ask += 1) {
-      fakes.askToRecover();
-    }
-    await answerConnection(fakes, 1);
-    await fakes.changes.until(() => fakes.readLastStatus() === 'failed');
-    await timers.advance(5_000);
-    await answerConnection(fakes, 2);
-    await fakes.changes.until(() => fakes.countFramesAsked() === 3);
-    await timers.advance(10_000);
-
-    // Then
-    expect(fakes.connections).toHaveLength(3);
-    expect(fakes.listStatuses()).toEqual(['connecting', 'connected', 'connecting', 'failed', 'connecting', 'failed']);
-  });
-
   it('As a user, I change a device permission in the menu and the app is rebuilt in a new frame', async () => {
     // Given
     const fakes = createHarness();
@@ -1308,81 +1098,77 @@ describe('product frame rebuilds', () => {
     expect(fakes.readLastStatus()).toBe('connected');
     expect(fakes.connections).toHaveLength(1);
   });
+});
 
-  it("As a user, I grant a device permission in the app's own prompt and the app is rebuilt only once my answer has reached it", async () => {
-    // Given a product whose frame is piped to a core the test speaks for
+describe('product frame contract', () => {
+  it('As a reloaded sandbox, I ask the host for my contract and the frame on screen is answered with the one it loaded', async () => {
+    // Given a subdomain product on screen
     const fakes = createHarness();
-    const port = new MessageChannel();
-    onTestFinished(() => {
-      port.port2.close();
-    });
-    const toProduct: unknown[] = [];
-    port.port2.onmessage = event => {
-      toProduct.push(event.data);
-      fakes.changes.notify();
-    };
-    const rendered = fakes.frame.render(buildSubdomainProduct('prompted'));
-    const core = await answerConnection(fakes, 0);
-    await rendered;
-    void nth(fakes.hosts, 0).options.onPort(port.port1);
-    const answer = encodeResponseFrame({
-      requestId: 'camera-prompt',
-      method: PERMISSIONS_REQUEST_DEVICE_PERMISSION,
-      value: new Uint8Array(),
-    });
+    await fakes.settle(buildSubdomainProduct('contracted', { cid: 'real-cid' }), 0);
+    const { iframe, options } = nth(fakes.hosts, 0);
 
-    // When the user grants the camera, other core traffic reaches the product first, and then the answer
-    fakes.announce({ label: 'prompted', permissions: ['Camera'], fromPrompt: true });
-    core.listener?.(buildLoginResponseFrame('unrelated', { kind: 'success', value: 'Success' }));
-    await fakes.changes.until(() => toProduct.length === 1);
-    const connectionsBeforeAnswer = fakes.connections.length;
-    core.listener?.(answer);
-    await answerConnection(fakes, 1);
-    await fakes.changes.until(() => (fakes.hosts[0]?.dispose.mock.calls.length ?? 0) > 0 && toProduct.length === 2);
-
-    // Then nothing was rebuilt before the answer, and the app is rebuilt in a new frame after it
-    expect(connectionsBeforeAnswer).toBe(1);
-    expect(nth(fakes.hosts, 0).dispose).toHaveBeenCalled();
-    expect(toProduct).toHaveLength(2);
+    // When its frame asks the host for its contract
+    fakes.askForContract();
+    // Then the frame is answered, at the origin the ask came from, with the contract the host built for it
+    expect(readFramePosts(iframe)).toEqual([
+      {
+        message: {
+          type: 'dotli:sandbox-contract',
+          cid: 'real-cid',
+          chainBackend: getBackend(),
+          network: getNetwork(),
+          v: String(SANDBOX_SCHEMA_VERSION),
+        },
+        targetOrigin: options.allowedOrigin,
+      },
+    ]);
   });
 
-  it('As a dApp user, I open another app while my device grant is on its way and I am told that app failed, not that it was replaced', async () => {
-    // Given a product on screen, piped to a core the test speaks for, whose device grant still waits for its answer
+  it('As a dApp user, I keep my app while a nested window of its origin asks the host for the contract and nothing is answered', async () => {
+    // Given a product on screen and another window on its origin, such as a frame the product nested in itself
     const fakes = createHarness();
-    const port = new MessageChannel();
-    onTestFinished(() => {
-      port.port2.close();
+    await fakes.settle(buildSubdomainProduct('nested'), 0);
+    const nested = {};
+
+    // When that window, not the frame on screen, asks the host for the contract
+    fakes.askForContract({ from: nested });
+
+    // Then the frame on screen is answered with nothing
+    expect(readFramePosts(nth(fakes.hosts, 0).iframe)).toEqual([]);
+  });
+
+  it('As a dApp user whose frame cannot be told its contract, I see the host report the failed post', async () => {
+    // Given a settled subdomain product whose frame's posts throw
+    const failure = new Error('The frame cannot be posted to');
+    const heard: [unknown, SandboxMessageType][] = [];
+    const fakes = createHarness({
+      reportHandlerError: (error, type) => {
+        heard.push([error, type]);
+      },
     });
-    const toProduct: unknown[] = [];
-    port.port2.onmessage = event => {
-      toProduct.push(event.data);
-      fakes.changes.notify();
-    };
-    const rendered = fakes.frame.render(buildSubdomainProduct('prompted'));
-    const core = await answerConnection(fakes, 0);
-    await rendered;
-    void nth(fakes.hosts, 0).options.onPort(port.port1);
-    fakes.announce({ label: 'prompted', permissions: ['Camera'], fromPrompt: true });
-    // And a render of another app asked for, whose frame is held
-    const release = fakes.holdNextFrame();
-    const opened = fakes.frame.render(buildSubdomainProduct('next'));
-    await answerConnection(fakes, 1);
-    await fakes.changes.until(() => fakes.countFramesAsked() === 2);
-    const failure = new Error('The frame could not be built');
+    await fakes.settle(buildSubdomainProduct('untold'), 0);
+    breakFramePosts(nth(fakes.hosts, 0).iframe, failure);
 
-    // When the grant's answer reaches the product on screen, and then the other app's frame fails
-    core.listener?.(
-      encodeResponseFrame({
-        requestId: 'camera-prompt',
-        method: PERMISSIONS_REQUEST_DEVICE_PERMISSION,
-        value: new Uint8Array(),
-      }),
-    );
-    await fakes.changes.until(() => toProduct.length === 1);
-    release(failure);
+    // When its frame asks the host for its contract
+    fakes.askForContract();
 
-    // Then the render I asked for fails with that failure
-    expect(await catchRejection(opened)).toBe(failure);
+    // Then the channel heard the post's error, tagged with the contract request
+    expect(heard).toEqual([[failure, 'dotli:sandbox-contract-request']]);
+  });
+
+  it('As a reloaded sandbox after a scheduled reset, I ask the host for my contract and it carries the reset', async () => {
+    // Given a reset scheduled before the product renders
+    const fakes = createHarness();
+    pendingResets.schedule(['sandbox']);
+    await fakes.settle(buildSubdomainProduct('reset'), 0);
+    const { iframe } = nth(fakes.hosts, 0);
+
+    // When its frame asks the host for its contract
+    fakes.askForContract();
+
+    // Then the reply carries the reset, the one-shot taken once for the render
+    const [post] = readFramePosts(iframe);
+    expect(post?.message).toMatchObject({ type: 'dotli:sandbox-contract', fullReset: '1' });
   });
 });
 
@@ -1422,8 +1208,8 @@ describe('product frame navigates the page', () => {
   });
 });
 
-describe('product frame and a device grant during a rebuild', () => {
-  it("As a user, I grant a device permission in the app's own prompt while its frame is rebuilt and the new frame gets the grant", async () => {
+describe('product frame and a permission change during a rebuild', () => {
+  it('As a user, I change a device permission in the menu while the app is rebuilt and the new frame gets the change', async () => {
     // Given a product whose frame is being rebuilt, past the point where the new frame read its policy
     const fakes = createHarness();
     await fakes.settle(buildSubdomainProduct('regrant'), 0);
@@ -1432,19 +1218,19 @@ describe('product frame and a device grant during a rebuild', () => {
     await answerConnection(fakes, 1);
     await fakes.changes.until(() => fakes.countFramesAsked() === 2);
 
-    // When the user grants the camera in the app's own prompt
-    fakes.announce({ label: 'regrant', permissions: ['Camera'], fromPrompt: true });
+    // When the user changes the camera in the menu
+    fakes.announce({ label: 'regrant', permissions: ['Camera'] });
     release();
     await answerConnection(fakes, 2);
     await fakes.changes.until(() => fakes.readLastStatus() === 'connected' && fakes.countFramesAsked() === 3);
 
-    // Then the frame is built once more, so its policy is read after the grant
+    // Then the frame is built once more, so its policy is read after the change
     expect(fakes.listOnScreen()).toHaveLength(1);
     expect(fakes.listOnScreen()[0]).toBe(fakes.hosts.at(-1));
     expect(fakes.hosts[1]?.dispose).toHaveBeenCalled();
   });
 
-  it("As a user, I grant a device permission for another app while this app's frame is rebuilt and this frame is left alone", async () => {
+  it("As a user, I change a device permission of another app while this app's frame is rebuilt and this frame is left alone", async () => {
     // Given a product whose frame is being rebuilt
     const fakes = createHarness();
     await fakes.settle(buildSubdomainProduct('mine'), 0);
@@ -1453,8 +1239,8 @@ describe('product frame and a device grant during a rebuild', () => {
     await answerConnection(fakes, 1);
     await fakes.changes.until(() => fakes.countFramesAsked() === 2);
 
-    // When a prompt grant arrives for another product
-    fakes.announce({ label: 'other', permissions: ['Camera'], fromPrompt: true });
+    // When a permission change arrives for another product
+    fakes.announce({ label: 'other', permissions: ['Camera'] });
     release();
     await fakes.changes.until(() => fakes.readLastStatus() === 'connected');
 
@@ -1513,6 +1299,26 @@ describe('product frame and the topbar login', () => {
   });
 });
 
+describe('product frame documents', () => {
+  it('As a developer whose local product navigates its whole page, I see the core send its frames only to the new page', async () => {
+    // Given a local product on screen whose page took its port
+    const fakes = createHarness();
+    const rendered = fakes.frame.render(buildIframeProduct('product'));
+    const core = await answerConnection(fakes, 0);
+    await rendered;
+    const before = fakes.openDocument();
+
+    // When the product navigates to a new page, which takes a port of its own, and the core sends a frame
+    const after = fakes.openDocument();
+    const frame = new Uint8Array([1]);
+    core.listener?.(frame);
+    await fakes.changes.until(() => after.length === 1);
+
+    // Then
+    expect({ before, after }).toEqual({ before: [], after: [frame] });
+  });
+});
+
 describe('product frame and the page core', () => {
   it('As a dApp user whose core goes down under my product, I keep it open and it is rendered again on the replacement core', async () => {
     // Given
@@ -1535,11 +1341,11 @@ describe('product frame and the page core', () => {
   });
 
   it('As an operator, I watch a rebuild that a newer render took over and see it counted as aborted with its reason', async () => {
-    // Given a rebuild at the sandbox's ask, still connecting
+    // Given a rebuild from a permission change, still connecting
     const fakes = createHarness();
     const { counted } = bindReports({ onReport: fakes.changes.notify });
     await fakes.settle(buildSubdomainProduct('rebuilt'), 0);
-    fakes.askToRecover();
+    fakes.announce({ label: 'rebuilt', permissions: ['Camera'] });
     await fakes.changes.until(() => fakes.connections.length === 2);
 
     // When the shell renders another product
@@ -1549,7 +1355,7 @@ describe('product frame and the page core', () => {
     await fakes.changes.until(() => counted('product.rerender').length === 1);
 
     // Then
-    expect(counted('product.rerender')).toEqual([{ outcome: 'aborted', reason: 'recover' }]);
+    expect(counted('product.rerender')).toEqual([{ outcome: 'aborted', reason: 'permission' }]);
   });
 
   it('As a dApp user whose replacement core cannot boot, I see the frame report failed and stop there, with my product on screen and its dead core let go', async () => {
@@ -1571,10 +1377,20 @@ describe('product frame and the page core', () => {
     expect(fakes.runtimes[0]?.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it('As an operator, I watch a replacement core that cannot boot and see it reported once, as the redial', async () => {
+  it('As an operator, I watch a replacement core that cannot boot and see it reported and logged once, as the redial', async () => {
     // Given
     const fakes = createHarness();
     const { captures, counted } = bindReports({ onReport: fakes.changes.notify });
+    const errorLines: string[] = [];
+    onTestFinished(
+      bindLogSink({
+        emit({ level, message }) {
+          if (level === 'error') {
+            errorLines.push(message);
+          }
+        },
+      }),
+    );
     const rendered = fakes.frame.render(buildSubdomainProduct('product'));
     const dead = await answerConnection(fakes, 0);
     await rendered;
@@ -1587,6 +1403,7 @@ describe('product frame and the page core', () => {
     // Then
     expect(counted('product.rerender')).toEqual([{ outcome: 'error', reason: 'replacement' }]);
     expect(captures.exception.mock.calls.map(([, context]) => context.step)).toEqual(['core_redial']);
+    expect(errorLines).toHaveLength(1);
   });
 
   it('As a dApp user, I name another product after a redial failed and the new product is not reported lost', async () => {
@@ -1804,38 +1621,6 @@ describe('product frame and the page core', () => {
     expect(fakes.runtimes[2]?.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("As a dApp user whose frame gave up on its cores, I grant a device permission in the app's own prompt and the app is rebuilt", async () => {
-    // Given a product left on screen by a frame that gave up on its dying cores
-    const timers = createManualTimers();
-    const fakes = createHarness({ timers });
-    const rendered = fakes.frame.render(buildSubdomainProduct('product'));
-    const first = await answerConnection(fakes, 0);
-    await rendered;
-    crash(first);
-    const second = await fakes.reconnect(1);
-    crash(second);
-    await timers.advance(5_000);
-    crash(await fakes.reconnect(2));
-    await timers.advance(60_000);
-    const statusBeforeGrant = fakes.readLastStatus();
-    const pendingBeforeGrant = timers.countPending();
-
-    // When the user grants the camera in the app's prompt, whose answer can no longer reach the product
-    fakes.announce({ label: 'product', permissions: ['Camera'], fromPrompt: true });
-    const pendingAfterGrant = timers.countPending();
-    await timers.advance(3_000);
-    await fakes.reconnect(3);
-
-    // Then the wait for the answer ran on the frame's timers, the app is rebuilt in a new frame once it is over, and the
-    // frame it replaced goes alone
-    expect(statusBeforeGrant).toBe('failed');
-    expect(pendingAfterGrant).toBe(pendingBeforeGrant + 1);
-    expect(fakes.listOnScreen()).toHaveLength(1);
-    expect(fakes.listOnScreen()[0]).toBe(fakes.hosts.at(-1));
-    expect(nth(fakes.hosts, 2).dispose).toHaveBeenCalledTimes(1);
-    expect(fakes.runtimes[2]?.dispose).toHaveBeenCalledTimes(1);
-  });
-
   it('As a dApp user whose core outlives the window before it dies, I keep my product open and it is rendered again with a fresh budget', async () => {
     // Given a product whose core died twice in quick succession
     const timers = createManualTimers();
@@ -1890,7 +1675,7 @@ describe('product frame and the page core', () => {
     // Then the product is back on screen
     expect(fakes.readLastStatus()).toBe('connected');
     expect(fakes.listStatuses()).not.toContain('failed');
-    expect(fakes.listOnScreen()[0]?.options.iframeUrl).toContain('cid=fresh-cid');
+    expect(fakes.listOnScreen()[0]).toBe(fakes.hosts.at(-1));
   });
 
   it('As a dApp user whose core dies while a newer render connects to it, I keep my product open and that render is shown on the replacement core', async () => {
@@ -1914,7 +1699,7 @@ describe('product frame and the page core', () => {
     expect(nth(fakes.runtimes, 1).createProvider).toHaveBeenCalledTimes(1);
     expect(fakes.runtimes[0]?.dispose).toHaveBeenCalledTimes(1);
     expect(fakes.listOnScreen()).toHaveLength(1);
-    expect(fakes.listOnScreen()[0]?.options.iframeUrl).toContain('cid=second-cid');
+    expect(fakes.listOnScreen()[0]).toBe(fakes.hosts.at(-1));
   });
 
   it('As a dApp user whose app could not be rebuilt after a permission change, I keep it open when its core goes down and it is rendered again on the replacement core', async () => {

@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
 import { asProductId } from '@parity/truapi';
-import { createMemoryStorage, resetAllStoresForTests } from '@dotli/shared/testing';
+import { resetAllStoresForTests } from '@dotli/shared/testing';
 import { createChatConnections } from '../chat/index.js';
 import { createChatStore } from '../chat/index.js';
 import { createMemoryChatRepo } from '../chat/createChatStore.fake.js';
@@ -19,11 +19,12 @@ afterEach(() => {
 
 describe('pageActionNeeded', () => {
   it('As a user with the chat panel closed, I get a product message and the capsule leads with the action dot', async () => {
-    // Given a loaded chat product, logged in, with the panel closed
+    // Given a loaded chat product with a room, logged in, with the panel closed
     const chat = createChatStore({ repo: createMemoryChatRepo(), connections: createChatConnections() });
-    onTestFinished(chatPanelState.start({ chat: () => Promise.resolve(chat), storage: createMemoryStorage() }));
+    onTestFinished(chatPanelState.start({ chat: () => Promise.resolve(chat) }));
     const product = asProductId(toProductId('chatty'));
-    productState.setLoaded({ label: 'chatty', productId: product, details: { chat: true } });
+    await chat.createRoom(product, { roomId: 'main', name: 'Main', icon: '' });
+    productState.setLoaded({ label: 'chatty', productId: product });
     authState.set({ tag: 'Connected', session: { connected: true } });
 
     // When the product posts

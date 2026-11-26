@@ -12,7 +12,8 @@ Build-time and runtime configuration:
 
 ## Responsibilities
 
-- **Owns** the network table (dotNS contracts, chain services, TLD) and the active network.
+- **Owns** the network table (dotNS contracts, chain services, TLD, whether it is a test network) and the active
+  network.
 - **Owns** each network's signed Trinity stack, which the TrUAPI core boots from.
 - **Owns** the local roots, read by pages and the local servers.
 - **Owns** the backend and cache settings with their storage keys. It also owns the settings' URL form.
@@ -45,7 +46,7 @@ Build-time and runtime configuration:
 | `resolveSettings`, `ResolvedSettings`, `Settings`, `SettingsSources`                           | Resolves settings at boot.    |
 | `getSharedSettings`, `SharedSettings`, `hasStoredSettings`, `writeLocalSettings`               | Stored settings.              |
 | `parseSettingsFromSearch`, `writeSettingsToSearch`, `ParsedUrlSettings`                        | Settings in URL params.       |
-| `getBackend`, `parseBackend`, `Backend`, `BACKEND_KEY`, `BACKEND_FACTS`                        | The backend setting.          |
+| `getBackend`, `getDefaultBackend`, `parseBackend`, `Backend`, `BACKEND_KEY`, `BACKEND_FACTS`   | The backend setting.          |
 | `hasLightClient`, `hasSharedWorker`, `isVerifiedSession`, `isSharedWorkerAvailable`            | What a backend can do.        |
 | `getCacheSettings`, `CacheSettings`, `CACHE_KEY`                                               | Cache switches.               |
 
@@ -86,4 +87,5 @@ The network table for Node tooling. Reads no page state.
 - **Fixed entry:** a worker never receives the runtime config, so it imports `./fixed`, never the bare entry.
 - **Stacks:** each network's link and signed descriptor are build copies that the `trinity-stack` CLI keeps and
   verifies. `npm run stacks:update` fetches newer copies, and a chain wipe needs one, since the core dials only the
-  genesis hashes the descriptor names. A page loads one network's copy as served, since the core checks its signature.
+  genesis hashes the descriptor names. The network table must name the same hashes, since the chain pool serves only
+  those. A page loads one network's copy as served, since the core checks its signature.

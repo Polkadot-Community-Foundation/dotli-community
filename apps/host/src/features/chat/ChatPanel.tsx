@@ -1,39 +1,62 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The chat panel's contents. The host's chat dock owns the panel element.
+// The chat panel's contents: the room list or the shown room's messages and what the product docks under them, the
+// composer or a card, and a hint about either.
 
 import {
-  type Accessor,
   createEffect,
   createMemo,
   createSignal,
   For,
+  Match,
   onCleanup,
   onSettled,
   Show,
+  Switch,
   untrack,
 } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { ChevronLeftIcon, CloseIcon, SendIcon } from '@dotli/ui/icons';
+import { isShallowEqual } from '@dotli/shared';
+import { Spinner } from '@dotli/ui';
+import { ArrowUpIcon, ChatIcon, CircleAlertIcon, LockIcon } from '@dotli/ui/icons';
 import { ContactRow } from './ContactRow.js';
-import { ResizeHandle } from './ResizeHandle.js';
+import { CustomMessage } from './CustomMessage.js';
 import { MessageRow } from './MessageRow.js';
 import { ChatReplyUndeliveredError } from './chatReplyUndeliveredError.js';
 import type { ChatConversation } from './chat.js';
-import { contactEntries, type ContactEntry } from './contacts.js';
-import { endsRun } from './messageRuns.js';
+import type { ChatRoomFooter } from './createChatStore.js';
+import { contactEntries, type ContactEntry, getShownContact } from './contacts.js';
+import { getDayLabel, isDayStart } from './messageDays.js';
 import s from './ChatPanel.module.css';
 
-// Relative bubble timestamps go stale while the panel sits open.
+// Day labels and the rooms' times roll over at midnight while the panel sits open.
 const TIME_REFRESH_MS = 60_000;
 
 type View = 'loading' | 'empty' | 'list' | 'conversation';
 
+/** What the panel tells the user in place of, or below, its rooms and messages. */
+type Hint = { kind: 'loading' | 'loggedOut' | 'noRooms' | 'failed' | 'noMessages' } | { kind: 'error'; text: string };
+
+/** A hint either fills the space the rooms or messages would take, or sits at the foot above the composer. */
+const HINT_PLACES = {
+  loading: 'center',
+  loggedOut: 'center',
+  noRooms: 'center',
+  failed: 'center',
+  noMessages: 'center',
+  error: 'foot',
+} satisfies Record<Hint['kind'], 'center' | 'foot'>;
+
 // Within this many px of the end, the reader counts as at the newest message.
 const STICK_THRESHOLD_PX = 24;
 
-function PanelBody(props: { conversation: ChatConversation; onClose: () => void }): JSX.Element {
+export type ChatPanelProps = {
+  conversation: ChatConversation;
+};
+
+/** The panel's contents. Its reads run from its mount to its unmount. */
+export function ChatPanel(props: ChatPanelProps): JSX.Element {
   // The binding is fixed for the panel's life.
   const chat = untrack(() => props.conversation);
   const feed = chat.openFeed();
@@ -68,17 +91,25 @@ function PanelBody(props: { conversation: ChatConversation; onClose: () => void 
 
   const contacts = createMemo((): ContactEntry[] | null => {
     const shown = feed.contacts();
-    return shown === null ? null : contactEntries(shown.rooms, shown.bots, shown.lastMessageTimes);
+    return shown === null ? null : contactEntries(shown.rooms, shown.lastMessageTimes);
   });
 
-  const activeContact = createMemo(() => {
-    const id = chat.activeRoomId();
-    return id === null ? undefined : contacts()?.find(c => c.id === id);
-  });
+  // An open room that is not in the list yet shows the list, so its messages are not read either.
+  const shown = createMemo(() => getShownContact(contacts(), chat.activeRoomId()));
 
-  // A room that is not in the list yet shows the list, so its messages are not read either.
   // eslint-disable-next-line solid/reactivity -- the feed tracks the shown room in an effect of its own.
-  feed.follow(() => activeContact()?.id ?? null);
+  feed.follow(() => shown()?.contact.id ?? null);
+
+  // Showing the sole room opens it, so it stays open once a second room appears, and the page treats it as open.
+  // The user did not pick it, so its composer leaves the keyboard down.
+  createEffect(
+    () => (chat.activeRoomId() === null ? (shown()?.contact.id ?? null) : null),
+    roomId => {
+      if (roomId !== null) {
+        chat.openRoom(roomId, { focusComposer: false });
+      }
+    },
+  );
 
   // Refocus the row a move blurred.
   createEffect(contacts, () => {
@@ -111,7 +142,7 @@ function PanelBody(props: { conversation: ChatConversation; onClose: () => void 
     if (list.length === 0) {
       return 'empty';
     }
-    return activeContact() === undefined ? 'list' : 'conversation';
+    return shown() === null ? 'list' : 'conversation';
   });
 
   // Whether the reader is at the newest message. Growth never clears it, so a reader at the bottom stays there.
@@ -135,7 +166,7 @@ function PanelBody(props: { conversation: ChatConversation; onClose: () => void 
   };
 
   createEffect(
-    () => activeContact()?.id,
+    () => shown()?.contact.id,
     () => {
       stuck = true;
       focusComposerIfAsked();
@@ -161,32 +192,61 @@ function PanelBody(props: { conversation: ChatConversation; onClose: () => void 
     };
   });
 
-  const title = (): string => activeContact()?.name ?? chat.productName() ?? 'Chat';
-
   // The product chose what its room shows below the messages.
-  const composing = (): boolean => view() === 'conversation' && activeContact()?.footer !== 'Empty';
+  const footer = (): ChatRoomFooter | null => (view() === 'conversation' ? (shown()?.contact.footer ?? null) : null);
+  const composing = (): boolean => footer() === 'TextInput';
 
-  const hint = createMemo((): { text: string; error: boolean } | null => {
-    const v = view();
-    if (feed.contactsFailed() || (v === 'conversation' && feed.messagesFailed())) {
-      return { text: 'Chat could not be loaded.', error: true };
-    }
-    if (v === 'empty') {
-      const text = chat.loggedIn() ? 'Waiting for the app to start a chat.' : 'Log in to chat with this app.';
-      return { text, error: false };
-    }
-    if (v !== 'conversation') {
-      return null;
-    }
+  // Equal cards are one card, so a re-read room keeps its render and only a new card starts another.
+  const footerCard = createMemo(
+    () => {
+      const card = footer();
+      const contact = shown()?.contact;
+      const productId = feed.productId();
+      if (card === null || typeof card === 'string' || contact === undefined || productId === null) {
+        return null;
+      }
+      return { productId, roomId: contact.id, ...card.value };
+    },
+    { equals: isShallowEqual },
+  );
+
+  const conversationHint = (): Hint | null => {
     const composerError = chat.composerError();
     if (composerError !== null) {
-      return { text: composerError, error: true };
+      return { kind: 'error', text: composerError };
     }
-    if (!composing()) {
-      return { text: 'This chat is read only.', error: false };
+    return feed.messages()?.length === 0 ? { kind: 'noMessages' } : null;
+  };
+
+  const hint = createMemo((): Hint | null => {
+    const v = view();
+    if (feed.contactsFailed() || (v === 'conversation' && feed.messagesFailed())) {
+      // Only a panel with nothing to show fills with the failure. Rooms or messages read before stay in view.
+      return v === 'loading' || v === 'empty'
+        ? { kind: 'failed' }
+        : { kind: 'error', text: 'Chat could not be loaded.' };
     }
-    return feed.messages()?.length === 0 ? { text: 'No messages yet.', error: false } : null;
+    switch (v) {
+      case 'loading':
+        return { kind: 'loading' };
+      case 'empty':
+        return { kind: chat.loggedIn() ? 'noRooms' : 'loggedOut' };
+      case 'list':
+        return null;
+      case 'conversation':
+        return conversationHint();
+    }
   });
+
+  const hintPlace = (): string | undefined => {
+    const shown = hint();
+    return shown === null ? undefined : HINT_PLACES[shown.kind];
+  };
+
+  const errorText = (): string | null => {
+    const shown = hint();
+    return shown?.kind === 'error' ? shown.text : null;
+  };
 
   // Mirrors the input, so Send is off while there is nothing to send.
   const [draft, setDraft] = createSignal('');
@@ -197,9 +257,9 @@ function PanelBody(props: { conversation: ChatConversation; onClose: () => void 
 
   const submit = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault();
-    const roomId = chat.activeRoomId();
+    const roomId = shown()?.contact.id;
     const input = inputEl;
-    if (roomId === null || input === undefined) {
+    if (roomId === undefined || input === undefined) {
       return;
     }
     const text = input.value.trim();
@@ -226,37 +286,7 @@ function PanelBody(props: { conversation: ChatConversation; onClose: () => void 
   };
 
   return (
-    <>
-      <div class={s['header']}>
-        <button
-          type="button"
-          class={s['headerButton']}
-          id="chat-panel-back"
-          title="Back to rooms"
-          aria-label="Back to rooms"
-          hidden={view() !== 'conversation'}
-          onClick={() => {
-            chat.backToRooms();
-          }}
-        >
-          <ChevronLeftIcon />
-        </button>
-        <span class={s['title']} id="chat-panel-title">
-          {title()}
-        </span>
-        <button
-          type="button"
-          class={s['headerButton']}
-          id="chat-panel-close"
-          title="Close chat"
-          aria-label="Close chat"
-          onClick={() => {
-            props.onClose();
-          }}
-        >
-          <CloseIcon size={14} />
-        </button>
-      </div>
+    <div class={s['panel']}>
       {/* role="list" again because Safari drops it from a list without bullets. */}
       <ul class={s['rooms']} id="chat-panel-rooms" role="list" aria-label="Chat rooms" hidden={view() !== 'list'}>
         <Show when={view() === 'list'}>
@@ -275,6 +305,9 @@ function PanelBody(props: { conversation: ChatConversation; onClose: () => void 
                   id={id}
                   name={contact().name}
                   icon={contact().icon}
+                  readOnly={contact().footer === 'Empty'}
+                  lastMessageAt={contact().lastMessageAt}
+                  now={now()}
                   unread={chat.unreadByRoom()[id] ?? 0}
                   onOpen={chat.openRoom}
                 />
@@ -303,7 +336,6 @@ function PanelBody(props: { conversation: ChatConversation; onClose: () => void 
       >
         <div
           class={s['thread']}
-          data-testid="chat-panel-thread"
           ref={el => {
             threadEl = el;
           }}
@@ -311,28 +343,51 @@ function PanelBody(props: { conversation: ChatConversation; onClose: () => void 
           <Show when={view() === 'conversation'}>
             <For each={feed.messages() ?? []} keyed={r => r.seq}>
               {(record, index) => (
-                <MessageRow
-                  chat={chat.actions}
-                  record={record()}
-                  now={now()}
-                  endsRun={endsRun(record(), feed.messages()?.[index() + 1])}
-                  onActionError={() => {
-                    chat.setComposerError('The app could not be reached.');
-                  }}
-                />
+                <>
+                  <Show when={isDayStart(record(), feed.messages()?.[index() - 1])}>
+                    <p class={s['day']} data-testid="chat-day">
+                      {getDayLabel(record().timestamp, now())}
+                    </p>
+                  </Show>
+                  <MessageRow
+                    chat={chat.actions}
+                    record={record()}
+                    onActionError={() => {
+                      chat.setComposerError('The app could not be reached.');
+                    }}
+                  />
+                </>
               )}
             </For>
           </Show>
         </div>
       </div>
-      <p
-        class={s['hint']}
-        id="chat-panel-hint"
-        data-error={hint()?.error === true ? '' : undefined}
-        hidden={hint() === null}
-      >
-        {hint()?.text ?? ''}
-      </p>
+      <div class={s['hint']} id="chat-panel-hint" data-place={hintPlace()} hidden={hint() === null}>
+        <Switch>
+          <Match when={hint()?.kind === 'loading'}>
+            <Spinner class={s['spinner']} />
+            <p class={s['line']}>Loading chat</p>
+          </Match>
+          <Match when={hint()?.kind === 'loggedOut'}>
+            <LockIcon class={s['mark']} size={28} />
+            <p class={s['heading']}>Log in to chat</p>
+            <p class={s['line']}>Chats with this app open once you log in.</p>
+          </Match>
+          <Match when={hint()?.kind === 'noRooms'}>
+            <ChatIcon class={s['mark']} size={28} />
+            <p class={s['heading']}>No chats yet</p>
+            <p class={s['line']}>Waiting for the app to start a chat.</p>
+          </Match>
+          <Match when={hint()?.kind === 'failed'}>
+            <CircleAlertIcon class={s['failedMark']} size={28} />
+            <p class={s['heading']}>Chat could not be loaded</p>
+          </Match>
+          <Match when={hint()?.kind === 'noMessages'}>
+            <p class={s['line']}>No messages yet.</p>
+          </Match>
+          <Match when={errorText()}>{text => <p class={s['error']}>{text()}</p>}</Match>
+        </Switch>
+      </div>
       <form
         class={s['composer']}
         id="chat-panel-composer"
@@ -341,60 +396,46 @@ function PanelBody(props: { conversation: ChatConversation; onClose: () => void 
           void submit(event);
         }}
       >
-        <input
-          id="chat-panel-input"
-          class={s['input']}
-          type="text"
-          placeholder="Message"
-          autocomplete="off"
-          maxlength="4000"
-          disabled={!composing()}
-          ref={el => {
-            inputEl = el;
-          }}
-          onInput={event => {
-            setDraft(event.currentTarget.value);
-          }}
-        />
-        <button
-          type="submit"
-          class={s['send']}
-          id="chat-panel-send"
-          title="Send"
-          aria-label="Send"
-          disabled={draft().trim() === ''}
-        >
-          <SendIcon />
-        </button>
+        <div class={s['field']}>
+          <input
+            id="chat-panel-input"
+            class={s['input']}
+            type="text"
+            placeholder="Write a message..."
+            autocomplete="off"
+            maxlength="4000"
+            disabled={!composing()}
+            ref={el => {
+              inputEl = el;
+            }}
+            onInput={event => {
+              setDraft(event.currentTarget.value);
+            }}
+          />
+          <button
+            type="submit"
+            class={s['send']}
+            id="chat-panel-send"
+            title="Send"
+            aria-label="Send"
+            disabled={draft().trim() === ''}
+          >
+            <ArrowUpIcon size={20} />
+          </button>
+        </div>
       </form>
-    </>
-  );
-}
-
-export type ChatPanelProps = {
-  open: Accessor<boolean>;
-  /** In px, which a drag on the panel's edge starts from. */
-  width: Accessor<number>;
-  onClose: () => void;
-  /** The width a drag on the edge asks for, before any clamp. */
-  onResize: (width: number) => void;
-  /** The drag ended, so the width can be kept. */
-  onResizeEnd: () => void;
-  conversation: ChatConversation;
-};
-
-export function ChatPanel(props: ChatPanelProps): JSX.Element {
-  return (
-    <>
-      <ResizeHandle
-        id="chat-panel-resize"
-        width={props.width}
-        onResize={props.onResize}
-        onResizeEnd={props.onResizeEnd}
-      />
-      <Show when={props.open()}>
-        <PanelBody conversation={props.conversation} onClose={props.onClose} />
+      <Show when={footerCard()} keyed>
+        {card => (
+          <div class={s['footerCard']} data-testid="chat-footer-card">
+            <CustomMessage
+              chat={chat.actions}
+              productId={card.productId}
+              context={{ tag: 'ChatRoomFooter', value: { roomId: card.roomId, messageType: card.messageType } }}
+              payload={card.payload}
+            />
+          </div>
+        )}
       </Show>
-    </>
+    </div>
   );
 }

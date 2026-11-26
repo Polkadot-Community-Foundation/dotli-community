@@ -87,7 +87,6 @@ const bootRuntime = createCoreRuntimeBoot({
   createCallbacks: options =>
     createHostCallbacks({
       ...options,
-      prompts: hostPrompts,
       notifications: pageNotifications(),
       createAsks:
         pageRole.get() === 'signin-window'
@@ -134,7 +133,7 @@ const bridge = createBridge({
   session: sessionState,
 });
 
-const { initBridge, setPageProduct, startProductFrame } = bridge;
+const { initBridge, setPageProduct, startProductFrame, createModalScope } = bridge;
 
 // Whether the window already serves a site, which it decides once per page.
 let servingSite = false;
@@ -373,6 +372,7 @@ export const hostBridge = {
   windowStore,
   startSessionLease,
   acquirePageCore,
+  createModalScope,
   windowSignOut,
   startSessionState,
   rereadSession,

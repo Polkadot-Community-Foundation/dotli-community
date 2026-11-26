@@ -7,104 +7,217 @@
   color-scheme: dark;
 }
 
+/* No bar here, so menus from the header's buttons anchor to them instead. The buttons are the header's tallest
+   item, so they span its row. */
+:global(:root:has(body[data-landing])) {
+  --landing-edge: var(--sp-6);
+  --topbar-bottom: calc(var(--landing-edge) + var(--h-bar-control) + var(--safe-top));
+  --topbar-inline-end: calc(var(--landing-edge) + var(--safe-right));
+}
+
+/* The page never scrolls, so the backdrop can run past the visible area to the screen's foot, under a mobile browser's
+   translucent toolbar. Mobile Safari clips a fixed box at the toolbar, so the backdrop is positioned in the page rather
+   than fixed to the viewport, and the content scrolls in a box of its own. */
+:global(:root:has(body[data-landing])) {
+  overflow: clip;
+}
+
+/* A stacking context of its own, so a backdrop below zero paints over the page's background, not under it. */
 .landing {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  box-sizing: border-box;
-  min-height: 100dvh;
+  position: relative;
+  isolation: isolate;
   margin: 0;
-  padding: calc(var(--sp-8) + var(--safe-top)) calc(var(--sp-8) + var(--safe-right))
-    calc(var(--sp-8) + var(--safe-bottom)) calc(var(--sp-8) + var(--safe-left));
+  padding: 0;
   background: var(--bg-page);
   color: var(--text-strong);
   font-family: var(--font-sans);
+  /* The height the page has to show itself in, cut by the keyboard while it is open. */
+  --landing-height: var(--visible-height, 100dvh);
 }
 
-/* The landing page has no topbar, so these buttons sit under the status bar in an installed PWA. */
-.corner {
+/* Mobile Safari shows a strip under the home indicator below 100lvh, and no unit or inset measures it, so the orbit
+   paints a margin past its box that covers the strip on current phones. */
+.backdrop {
+  --orbit-bleed: 100px;
   position: absolute;
-  top: calc(16px + var(--safe-top));
-  right: calc(16px + var(--safe-right));
+  inset: 0 0 auto;
+  z-index: -1;
+  height: 100lvh;
+  pointer-events: none;
+}
+
+/* The visible area, so the footer stays above a mobile browser's toolbar and the content shrinks above the keyboard. */
+.content {
   display: flex;
-  gap: var(--sp-1);
-  align-items: center;
+  flex-direction: column;
   box-sizing: border-box;
+  height: var(--landing-height);
   margin: 0;
   padding: 0;
+  overflow-y: auto;
 }
 
-.center {
+/* While the keyboard is open, the page follows the visible area Safari pans to. */
+.landing[data-keyboard-open] {
+  transform: translateY(var(--pan-offset));
+}
+
+/* The page has no topbar, so the header clears the status bar in an installed PWA. */
+.header {
   display: flex;
-  flex: 1;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   box-sizing: border-box;
   width: 100%;
   margin: 0;
+  padding: calc(var(--landing-edge) + var(--safe-top)) calc(var(--landing-edge) + var(--safe-right)) var(--landing-edge)
+    calc(var(--landing-edge) + var(--safe-left));
+}
+
+.home {
+  display: flex;
+  flex: none;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--r-xs);
+  color: var(--text-strong);
+  text-decoration: none;
+}
+.home:focus-visible {
+  outline: var(--chrome-focus-ring);
+  outline-offset: 2px;
+}
+
+/* At the end even on a wrapped row, where the menus open. */
+.actions {
+  display: flex;
+  gap: var(--sp-1);
+  align-items: center;
+  margin: 0 0 0 auto;
   padding: 0;
 }
 
-.content {
+.main {
   display: flex;
+  flex: 1;
   flex-direction: column;
   align-items: center;
   box-sizing: border-box;
   width: 100%;
-  max-width: 440px;
+  margin: 0;
+  /* Shrinks with the page's height, so the title and the field still fit above the keyboard. */
+  padding: clamp(var(--sp-10), calc(var(--landing-height) * 0.09), var(--sp-14)) calc(var(--sp-4) + var(--safe-right)) 0
+    calc(var(--sp-4) + var(--safe-left));
+}
+
+.intro {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 600px;
   margin: 0;
   padding: 0;
   text-align: center;
 }
 
-/* The input and, under it, its suggestions. */
-.nav {
-  position: relative;
-  width: 100%;
-  max-width: var(--w-landing);
-}
-
-/* Holds only the wordmark and its tag, so no line box adds space under it. */
 .title {
-  position: relative;
-  display: flex;
-  margin: var(--sp-5) 0 0;
+  margin: 0;
   padding: 0;
+  /* The brand grid's Heading step, 56/64, at its widest, and smaller on a short page. */
+  font-size: min(clamp(32px, 4vw, 56px), calc(var(--landing-height) * 0.06));
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-heading);
+  letter-spacing: -0.04em;
+  color: var(--text-strong);
 }
 
-/* The topbar's Beta tag at the wordmark's scale. Out of the flow, so the wordmark stays centered. */
-.beta {
-  position: absolute;
-  top: calc(-1 * var(--sp-1));
-  left: calc(100% + var(--sp-2));
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 var(--sp-2);
-  border-radius: var(--r-full);
-  background: var(--fill-strong);
-  color: var(--text-secondary);
-  font: var(--fw-semibold) var(--fs-label) / 1 var(--font-sans);
-  letter-spacing: var(--ls-caps);
+/* The headline breaks only between its two lines. */
+.line {
+  display: block;
+  white-space: nowrap;
 }
 
-.subtitle {
-  margin: var(--sp-4) 0 0;
+.lead {
+  max-width: 460px;
+  margin: var(--sp-4) auto 0;
   padding: 0;
   font-size: var(--fs-title-lg);
   line-height: var(--lh-body);
   color: var(--text-secondary);
+  text-wrap: balance;
+}
+
+/* The input and, under it, its suggestions. */
+.nav {
+  width: 100%;
+  max-width: var(--w-landing);
+}
+
+/* Just under the name form. */
+.invite {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3) var(--sp-6);
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: var(--sp-5) calc(var(--landing-edge) + var(--safe-right)) calc(var(--sp-6) + var(--safe-bottom))
+    calc(var(--landing-edge) + var(--safe-left));
+  font-size: var(--fs-small);
+  color: var(--text-secondary);
+}
+
+.notice {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-5);
+  margin: 0;
+  padding: 0;
+}
+
+.link {
+  border-radius: var(--r-hair);
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+@media (hover: hover) {
+  .link:hover {
+    color: var(--text-strong);
+  }
+}
+.link:focus-visible {
+  outline: var(--chrome-focus-ring);
+  outline-offset: 2px;
 }
 
 @media (max-width: 560px) {
-  .landing {
-    padding-right: calc(var(--sp-4) + var(--safe-right));
-    padding-left: calc(var(--sp-4) + var(--safe-left));
+  :global(:root:has(body[data-landing])) {
+    --landing-edge: var(--sp-4);
   }
-}
-
-/* No bar here, so menus from the corner's buttons anchor to the corner instead. */
-:global(:root:has(body[data-landing])) {
-  --topbar-bottom: calc(16px + var(--h-bar-control) + var(--safe-top));
-  --topbar-inline-end: calc(16px + var(--safe-right));
+  .main {
+    padding-top: calc(var(--landing-height) * 0.18);
+  }
+  /* Under about 330px the clamp's floor would push the longer line past the screen. */
+  .title {
+    font-size: min(32px, 9vw, calc(var(--landing-height) * 0.06));
+  }
 }

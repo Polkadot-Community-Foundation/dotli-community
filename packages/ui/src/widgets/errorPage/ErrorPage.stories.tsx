@@ -1,6 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/* eslint-disable no-restricted-properties -- Predates the story contract: its plays still assert copy. */
+
 import type { Meta, StoryObj } from 'storybook-solidjs-vite';
 import { expect, within } from 'storybook/test';
 import { RotateCwIcon, SlidersIcon } from '../../icons.js';
@@ -31,7 +33,7 @@ export const TitleActionsAndIcons: Story = {
         detail: 'The network did not answer.',
         actions: [
           { label: 'Reload', icon: RotateCwIcon, onClick: () => undefined },
-          { label: 'Open Settings', icon: SlidersIcon, onClick: () => undefined },
+          { label: 'Open settings', icon: SlidersIcon, onClick: () => undefined },
         ],
       });
 
@@ -39,7 +41,7 @@ export const TitleActionsAndIcons: Story = {
       await expect(canvas.getByTestId('error-page-title')).toHaveTextContent('Could not load the app');
       await expect(canvas.getByTestId('error-page-icon').tagName).toBe('svg');
       await expect(canvas.getByRole('button', { name: 'Reload' })).toBeVisible();
-      await expect(canvas.getByRole('button', { name: 'Open Settings' })).toBeVisible();
+      await expect(canvas.getByRole('button', { name: 'Open settings' })).toBeVisible();
       await expect(canvas.getAllByTestId('error-page-action-icon')).toHaveLength(2);
     });
   },
@@ -128,13 +130,13 @@ export const KeyboardOrderMatchesReading: Story = {
           title: 'Could not load the app',
           actions: [
             { label: 'Reload', primary: true, onClick: () => undefined },
-            { label: 'Open Settings', onClick: () => undefined },
+            { label: 'Open settings', onClick: () => undefined },
           ],
         });
 
         // Then
         const buttons = canvas.getAllByRole('button');
-        await expect(buttons.map(b => b.textContent)).toEqual(['Open Settings', 'Reload']);
+        await expect(buttons.map(b => b.textContent)).toEqual(['Open settings', 'Reload']);
         await expect(buttons[1]).toHaveAttribute('data-variant', 'primary');
         await expect(buttons[1]).toHaveAttribute('id', 'error-retry-btn');
       },
