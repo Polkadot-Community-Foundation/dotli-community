@@ -8,6 +8,7 @@ import type { ProductId } from '@parity/truapi';
 import type { Permissions, RequiredHostCallbacks, UserConfirmation } from '@parity/truapi-host';
 import { createNavigateTo } from './createNavigateTo.js';
 import { createNotificationAdapters, type NotificationScheduler } from './createNotificationAdapters.js';
+import { createGameAdapters, type GameReminderScheduler } from './createGameAdapters.js';
 import { localStorageCallbacks } from './createLocalStorageCallbacks.js';
 import { createProductOperations } from './createProductOperations.js';
 import { createPreimageAdapters } from './createPreimageAdapters.js';
@@ -19,7 +20,6 @@ import { createAuthStateChanged } from '../../account/index.js';
 import { createChatPlatform } from './createChatPlatform.js';
 import { coreStorage } from '../../account/index.js';
 import type { CoreContext } from '../core/createPageCore.js';
-import type { HostPrompts } from '../../permissions/index.js';
 
 /** What one core's callbacks are built for. */
 export type CoreCallbacksParams = {
@@ -45,10 +45,8 @@ export type HostAsks = (core: CoreContext) => {
 
 /** One core's params, plus what the callbacks ask the page for. */
 type Params = CoreCallbacksParams & {
-  /** The page's prompts, which show the user's notifications. */
-  prompts: HostPrompts;
-  /** Where push notifications wait until due. */
-  notifications: NotificationScheduler;
+  /** Where push notifications and game reminders wait until due. */
+  notifications: NotificationScheduler & GameReminderScheduler;
   /** Builds the callbacks that answer the core's permission and confirmation asks. */
   createAsks: HostAsks;
 };
@@ -58,7 +56,6 @@ export function createHostCallbacks({
   core,
   getProductId,
   sessionInMemory,
-  prompts,
   notifications,
   createAsks,
 }: Params): RequiredHostCallbacks {
@@ -70,7 +67,6 @@ export function createHostCallbacks({
       label,
       getProductId,
       scheduler: notifications,
-      notify: prompts.notify,
     }),
     permissions,
     features: { featureSupported: getFeatureSupport },
@@ -78,7 +74,7 @@ export function createHostCallbacks({
     // native cores alone, and Bulletin preimages, the browser core's own, are V4 on every host.
     extrinsicVersion: { transactionExtensionVersions: () => Promise.resolve({ chains: [] }) },
     productStorage: localStorageCallbacks,
-    productOperations: createProductOperations(),
+    productOperations: createProductOperations({ core }),
     coreStorage: coreStorage.createAdapters({ sessionInMemory }),
     auth: {
       authStateChanged: createAuthStateChanged(pairing?.label ?? label, {
@@ -92,6 +88,8 @@ export function createHostCallbacks({
     locale: { subscribeLocale: createLocaleSubscribe() },
     preimage: createPreimageAdapters(label),
     chain: { connect: createChainConnect() },
+    // Always served, since the core serves game calls to the game product alone.
+    game: createGameAdapters({ label, scheduler: notifications }),
     // Always served, since the core denies chat calls on non-Chat executions and without a session.
     chat: createChatPlatform(),
   };

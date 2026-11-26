@@ -3,88 +3,62 @@
 
 import type { Meta, StoryObj } from 'storybook-solidjs-vite';
 import { expect, fn, waitFor } from 'storybook/test';
-import type { ChatMessageRecord } from './createChatStore.js';
+import { onChatSurface } from '../../testing/stories/chatFrames.js';
+import customMessageStories from './CustomMessage.stories.js';
+import { ActionsGrid, Custom } from './MessageBubble.stories.js';
 import { MessageRow } from './MessageRow.js';
 
-const NOW = 1_700_000_000_000;
+const ACTIONS = ActionsGrid.args.record;
 
-function record(content: unknown): ChatMessageRecord {
-  return {
-    seq: 1,
-    productId: 'app.dot',
-    roomId: 'main',
-    messageId: 'm1',
-    author: 'product',
-    content,
-    timestamp: NOW - 5 * 60_000,
-  };
-}
-
-/** The chat intents a row calls. */
-function chat() {
-  return {
-    triggerAction: fn(() => Promise.resolve()),
-    renderCustomMessage: fn(() => () => undefined),
-    triggerRendererAction: fn(() => Promise.resolve()),
-  };
-}
+const chat = { ...customMessageStories.args.chat, triggerAction: fn(() => Promise.resolve()) };
 
 const meta = {
   title: 'Host/Chat/MessageRow',
   component: MessageRow,
-  parameters: {
-    chrome: true,
-  },
+  parameters: { chrome: true },
   args: {
-    chat: chat(),
-    record: record({ tag: 'Text', value: { text: 'hello' } }),
-    now: NOW,
-    endsRun: true,
+    chat,
+    record: Custom.args.record,
     onActionError: fn(),
   },
+  decorators: [onChatSurface],
 } satisfies Meta<typeof MessageRow>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** As a user, I press an action button and it reaches the app, or I am told it could not. */
-export const ActionButtonsReachApp: Story = {
-  args: {
-    chat: {
-      ...chat(),
-      triggerAction: fn(() => Promise.reject(new Error('offline'))),
-    },
-    record: record({
-      tag: 'Actions',
-      value: {
-        text: 'Choose',
-        layout: 'Grid',
-        actions: [
-          { actionId: 'yes', title: 'Yes' },
-          { actionId: 'no', title: 'No' },
-        ],
-      },
-    }),
-  },
-  play: async ({ args, canvas, userEvent, step }) => {
-    await step('When I press Yes and the app cannot be reached', async () => {
-      await userEvent.click(canvas.getByRole('button', { name: 'Yes' }));
+/** As a reader, I see a custom message the product renders live in its card, above its time. */
+export const Default: Story = {};
+
+/** As a user, I press an action message's button and the tap reaches the app with the message it came from. */
+export const ActionTapReachesApp: Story = {
+  args: { record: ACTIONS },
+  play: async ({ canvas, userEvent, step }) => {
+    await step('When I press Water', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: 'Water' }));
     });
-    await step('Then the action reached the app and the failure is reported', async () => {
-      await expect(args.chat.triggerAction).toHaveBeenCalledWith({
-        productId: 'app.dot',
-        roomId: 'main',
-        trigger: { messageId: 'm1', actionId: 'yes' },
+    await step('Then the app gets the action with the message it came from', async () => {
+      await expect(chat.triggerAction).toHaveBeenCalledWith({
+        productId: ACTIONS.productId,
+        roomId: ACTIONS.roomId,
+        trigger: { messageId: ACTIONS.messageId, actionId: 'Water' },
       });
-      await waitFor(() => expect(args.onActionError).toHaveBeenCalledTimes(1));
     });
   },
 };
 
-/** As a reader, I see a custom message the product renders, before its time. */
-export const CustomMessageBeforeTimestamp: Story = {
-  tags: ['!autodocs'],
+/** As a user, I press an action message's button when the app cannot be reached and the failure is reported once. */
+export const UnreachableActionIsReported: Story = {
   args: {
-    record: record({ tag: 'Custom', value: { messageType: 'poll', payload: '0x01' } }),
+    record: ACTIONS,
+    chat: { ...chat, triggerAction: fn(() => Promise.reject(new Error('offline'))) },
+  },
+  play: async ({ args, canvas, userEvent, step }) => {
+    await step('When I press Water and the app cannot be reached', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: 'Water' }));
+    });
+    await step('Then the failure is reported once', async () => {
+      await waitFor(() => expect(args.onActionError).toHaveBeenCalledTimes(1));
+    });
   },
 };

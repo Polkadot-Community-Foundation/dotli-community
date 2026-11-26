@@ -1,6 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/* eslint-disable no-restricted-properties -- Predates the story contract: its plays still assert copy. */
+
 import { createSignal, onCleanup, onSettled } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import type { Meta, StoryObj } from 'storybook-solidjs-vite';
@@ -64,6 +66,23 @@ export const NothingFocusedOnLoad: Story = {
     await step('Then nothing has focus, so a screen reader starts at the top and no keyboard pops up', async () => {
       await waitFor(() => expect(canvas.getByRole('combobox')).toBeEnabled());
       await expect(document.activeElement).toBe(document.body);
+    });
+  },
+};
+
+/** As a visitor, I press the suffix beside the name, and the name field takes focus. */
+export const SuffixFocusesTheField: Story = {
+  play: async ({ canvas, userEvent, step }) => {
+    await step('Given the form knows my network', async () => {
+      await waitFor(() => expect(canvas.getByRole('combobox')).toBeEnabled());
+    });
+
+    await step('When I press the suffix', async () => {
+      await userEvent.click(canvas.getByText(SUFFIX));
+    });
+
+    await step('Then the name field has focus', async () => {
+      await expect(canvas.getByRole('combobox')).toHaveFocus();
     });
   },
 };

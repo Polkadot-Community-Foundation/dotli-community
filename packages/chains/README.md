@@ -30,7 +30,8 @@ pool.
 | `createCoreRpcChainTransport`, `isCoreRpcChainSupported`, `getConnectedAssetHubRpcEndpoint` | Gateway chains.                    |
 | `ChainTransport`, `ChainTransportHooks`, `ConnectionStatus`, `RPC_FOLLOW_LIMIT`             | Transport types and follow limit.  |
 | `createChainPool`, `ChainPool`, `ChainPoolControl`, `ChainPoolWatcher`, `ChainActivity`     | The chain pool.                    |
-| `requireBrokerLocalProvider`, `ChainBrokerManager`, `StringJsonRpcConnection`               | A provider leased from the broker. |
+| `StringJsonRpcConnection`                                                                   | A remote session on the pool.      |
+| `requireBrokerLocalProvider`                                                                | A provider leased from the broker. |
 | `ChainHaltError`, `getHaltReason`, `RemoteChainHalt`, `createChainHaltedError`              | Chain halts.                       |
 | `createJsonRpcError`                                                                        | Every transport's error answer.    |
 | `loadProvider`                                                                              | Lazy loader of the light client.   |
@@ -55,12 +56,12 @@ flowchart LR
 - **Light client:** one per context. Its database is saved per genesis hash, so a repeat visit skips the checkpoint
   sync.
 - **Gateway providers:** reconnect and replay subscriptions. They never import smoldot.
-- **Pool:** each lease is a consumer. A chain closes after its last lease, or at once when it halts. Watchers and status
-  listeners hear each change once the call that made it has returned, so one that asks the pool for a chain finds the
-  pool settled.
+- **Pool:** each lease is a consumer. A chain closes after its last lease, or at once when it halts. Watchers hear each
+  change once the call that made it has returned, so one that asks the pool for a chain finds the pool settled.
 - **Healing:** a local lease takes the rebuilt chain after a halt. A remote session ends and hears why.
 - **Lanes:** each lane is one connection. Follows spread across lanes to stay under the transport's follow limit. A halt
-  of any lane halts the chain.
+  of any lane halts the chain. A chain reads connected while any lane is, and connecting only while none is and one
+  opens.
 - **Pause:** closes every connection and keeps every lease. Sessions above stay connected.
 - **Broker:** shares one connection between JSON-RPC sessions. Each session owns its own upstream follow. A halt is
   final.

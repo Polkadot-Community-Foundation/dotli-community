@@ -5,7 +5,7 @@
 // only writer of chat data, so every write is announced through `subscribe` and shown through `view`. User replies and
 // custom-message taps reach the product through its live connection.
 
-import type { ChatMessageContent, HostRendererActionSubscribeItem } from '@parity/truapi';
+import type { ChatMessageContent, HostRendererActionSubscribeItem, ImageSource } from '@parity/truapi';
 import { createReporter, defineCount } from '@dotli/metrics';
 import { createListenerSet, createRandomId, realTimers, type Timers } from '@dotli/shared';
 import {
@@ -18,6 +18,9 @@ import {
 import { ChatReplyUndeliveredError } from './chatReplyUndeliveredError.js';
 import { chatConnections, type ChatConnection, type ChatConnections } from './createChatConnections.js';
 import { createChatView, type ChatChange, type ChatViewRepo } from './createChatView.js';
+import { ImageUnavailableError } from './imageUnavailableError.js';
+import { reportUnavailableImage } from './reportUnavailableImage.js';
+import type { LoadedImage } from './readChatImage.js';
 import { reportFailedChatStorage } from './reportFailedChatStorage.js';
 import { NOT_CONNECTED, startCustomRender, type RenderCustomMessageParams } from './startCustomRender.js';
 
@@ -41,6 +44,8 @@ export type ChatRepo = ChatViewRepo & {
   setRoomFooter(params: SetRoomFooterParams): Promise<boolean>;
   /** Answers TrUAPI `ChatBotRegistrationStatus`. A re-registration refreshes the name and icon. */
   registerBot(bot: Omit<ChatBotRecord, 'createdAt'>): Promise<'New' | 'Exists'>;
+  /** Whether the product has a room with this id. */
+  hasRoom(productId: string, roomId: string): Promise<boolean>;
   /** Resolves the message's `seq` once it is stored. */
   appendMessage(message: Omit<ChatMessageRecord, 'seq'>): Promise<number>;
 };
@@ -172,9 +177,13 @@ export function createChatStore({ repo, connections, timers = realTimers }: Para
       return status;
     },
 
-    /** Stores the product's message and resolves its new id. Rejects when the repo fails. */
+    /**
+     * Stores the product's message and resolves its new id. Its change says whether it landed in one of the product's
+     * rooms. Rejects when the repo fails.
+     */
     async postProductMessage({ productId, roomId, content }: PostProductMessageParams): Promise<string> {
       const messageId = createRandomId();
+      const inRoom = await repo.hasRoom(productId, roomId);
       await repo.appendMessage({
         productId,
         roomId,
@@ -183,7 +192,7 @@ export function createChatStore({ repo, connections, timers = realTimers }: Para
         content,
         timestamp: timers.now(),
       });
-      notify({ kind: 'message', productId, roomId, author: 'product' });
+      notify({ kind: 'message', productId, roomId, author: 'product', inRoom });
       return messageId;
     },
 
@@ -255,6 +264,27 @@ export function createChatStore({ repo, connections, timers = realTimers }: Para
     },
 
     /**
+     * Resolves the bytes and type of an image a custom message's tree names, on the product's newest connection.
+     * Rejects with `ImageUnavailableError` without a live connection and when the image cannot be read or drawn, each
+     * reported, and with the signal's reason once `signal` aborts.
+     */
+    async loadImage(productId: string, source: ImageSource, signal: AbortSignal): Promise<LoadedImage> {
+      try {
+        const connection = connections.get(productId);
+        if (connection === undefined) {
+          throw new ImageUnavailableError('not_connected', NOT_CONNECTED);
+        }
+        return await connection.loadImage(source, signal);
+      } catch (error) {
+        // A node that let go of its image aborted the load, which is no failure.
+        if (!signal.aborted) {
+          reportUnavailableImage(error, 'chat_image_load');
+        }
+        throw error;
+      }
+    },
+
+    /**
      * The product's rooms, in creation order. A failed read is reported, and the call then rejects with the repo's
      * error.
      */
@@ -266,6 +296,16 @@ export function createChatStore({ repo, connections, timers = realTimers }: Para
         throw error;
       }
     },
+
+    /** Whether the product has a room. Resolves false when the read fails, which is reported. */
+    async hasContacts(productId: string): Promise<boolean> {
+      try {
+        return (await repo.listRooms(productId)).length > 0;
+      } catch (error) {
+        reportFailedChatStorage(error, 'chat_contacts_check');
+        return false;
+      }
+    },
   };
 }
 
@@ -275,11 +315,15 @@ export const chatStore = createChatStore({
     createRoom: chat.createRoom,
     setRoomFooter: chat.setRoomFooter,
     registerBot: chat.registerBot,
+    hasRoom: hasStoredRoom,
     appendMessage: chat.appendMessage,
     listRooms: chat.listRooms,
-    listBots: chat.listBots,
     readLatestMessageTimestamps: chat.getLatestMessageTimestamps,
     listMessages: chat.listMessages,
   },
   connections: chatConnections,
 });
+
+async function hasStoredRoom(productId: string, roomId: string): Promise<boolean> {
+  return (await chat.listRooms(productId)).some(room => room.roomId === roomId);
+}

@@ -1,23 +1,23 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createEffect, onCleanup } from 'solid-js';
+import { createEffect, createMemo, onCleanup } from 'solid-js';
 import type { ChatStore } from './createChatStore.js';
-import { productState } from '../page/index.js';
+import { productFrameLayout, productState, type ProductFrameLayout } from '../page/index.js';
 import { useStore } from '@dotli/stores-solid';
-import { productFrameLayout } from '../page/index.js';
 import type { ChatConversation, ChatFeed } from './chat.js';
 import type { ChatDockProps } from './ChatDock.js';
 import { chatPanelState } from './chatPanelState.js';
-import { topbarState } from '../page/index.js';
+import { contactEntries, getShownContact } from './contacts.js';
 
 /** The open panel's view of `chat`, read only while the panel body lives. */
 function openFeed(chat: ChatStore): ChatFeed {
-  const productId = useStore(chatPanelState.store, state => state.runtimeProductId);
+  const runtimeProductId = useStore(chatPanelState.store, state => state.runtimeProductId);
   const loadId = useStore(productState.store, state => state.loadId);
   onCleanup(chatPanelState.markFollowedRoomSeen(chat.view));
   const initial = chat.view.get();
   return {
+    productId: useStore(chat.view, state => state.productId, { initial }),
     contacts: useStore(chat.view, state => state.contacts, { initial }),
     contactsFailed: useStore(chat.view, state => state.contactsFailed, { initial }),
     messages: useStore(chat.view, state => state.messages, { initial }),
@@ -26,7 +26,7 @@ function openFeed(chat: ChatStore): ChatFeed {
     follow: shown => {
       createEffect(
         () => {
-          const id = productId();
+          const id = runtimeProductId();
           return id === null ? null : { productId: id, roomId: shown(), loadId: loadId() };
         },
         target => {
@@ -42,21 +42,15 @@ function openFeed(chat: ChatStore): ChatFeed {
 
 /** What the chat panel shows of the page's chat state, for an island's own lifetime. */
 function useChatConversation(chat: ChatStore): ChatConversation {
-  // Slices, so a width drag or the composer-focus flag never re-runs the rows.
-  const label = useStore(chatPanelState.store, state => state.label);
-  const displayName = useStore(productState.store, state =>
-    state.status === 'loaded' ? state.facts.displayName : undefined,
-  );
-
   function send(roomId: string, text: string): Promise<void> {
     const productId = chatPanelState.store.get().runtimeProductId;
     // The panel only opens for a loaded product, so there is always one while it can send.
     return productId === null ? Promise.resolve() : chat.postUserMessage({ productId, roomId, text });
   }
 
+  // Slices, so the composer-focus flag never re-runs the rows.
   return {
     loggedIn: useStore(chatPanelState.store, state => state.loggedIn),
-    productName: () => displayName() ?? label(),
     activeRoomId: useStore(chatPanelState.store, state => state.activeRoomId),
     unreadByRoom: useStore(chatPanelState.store, state => state.unreadByRoom),
     composerError: useStore(chatPanelState.store, state => state.composerError),
@@ -71,35 +65,32 @@ function useChatConversation(chat: ChatStore): ChatConversation {
   };
 }
 
-/**
- * The docked panel's props, for an island's own lifetime. It keeps the product frame clear of the open panel through
- * `reserveRight`, which takes the px the panel covers at the page's right edge.
- */
+/** The chat drawer's props, for an island's own lifetime. */
 export function useChatDock(
   chat: ChatStore,
-  reserveRight: (px: number) => void = productFrameLayout.setChatWidth,
+  layout: Pick<ProductFrameLayout, 'setSidePanel'> = productFrameLayout,
 ): ChatDockProps {
+  const conversation = useChatConversation(chat);
+  // The view the open panel follows, so its rooms are null while the drawer is closed.
+  const contacts = useStore(chat.view, state => state.contacts, { initial: chat.view.get() });
   const open = useStore(chatPanelState.store, state => state.open);
-  const width = useStore(chatPanelState.store, state => state.width);
-  createEffect(
-    () => (open() ? width() : 0),
-    (px, previous) => {
-      if (px !== 0 || (previous ?? 0) !== 0) {
-        reserveRight(px);
-      }
-    },
-  );
+  // The page stages itself while the panel is docked, so a gone island must undock it.
+  createEffect(open, docked => {
+    layout.setSidePanel({ docked });
+  });
+  onCleanup(() => {
+    layout.setSidePanel({ docked: false });
+  });
   return {
     open,
-    width,
-    topbarHidden: useStore(topbarState.store, state => !state.visible),
     available: useStore(chatPanelState.store, chatPanelState.isButtonVisible),
-    onClose: () => {
-      chatPanelState.setOpen(false);
-    },
-    onResize: chatPanelState.setWidth,
-    onResizeEnd: chatPanelState.persistWidth,
-    conversation: useChatConversation(chat),
-    handOver: chatPanelState.setElement,
+    onOpenChange: chatPanelState.setOpen,
+    conversation,
+    shown: createMemo(() => {
+      const read = contacts();
+      const entries = read === null ? null : contactEntries(read.rooms, read.lastMessageTimes);
+      return getShownContact(entries, conversation.activeRoomId());
+    }),
+    restoreFocus: chatPanelState.getTrigger,
   };
 }

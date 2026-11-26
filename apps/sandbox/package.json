@@ -2,7 +2,7 @@
   "name": "@dotli/sandbox",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.14.0",
+  "version": "0.16.1",
   "type": "module",
   "sideEffects": [
     "./src/boot/boot.ts",
@@ -20,9 +20,9 @@
     "@config/eslint": "*",
     "@config/typescript": "*",
     "@config/vite": "*",
-    "@solidjs/vite-plugin": "3.0.0-next.57",
+    "@solidjs/vite-plugin": "3.0.1",
     "fake-indexeddb": "6.2.8",
-    "storybook": "10.6.7",
+    "storybook": "10.6.8",
     "storybook-solidjs-vite": "10.7.4"
   },
   "dependencies": {
@@ -32,8 +32,9 @@
     "@dotli/sandbox-wire": "*",
     "@dotli/shared": "*",
     "@dotli/ui": "*",
-    "@solidjs/web": "2.0.0-rc.22",
+    "@solidjs/web": "2.0.3",
+    "multiformats": "14.0.7",
     "nanostores": "1.5.5",
-    "solid-js": "2.0.0-rc.22"
+    "solid-js": "2.0.3"
   }
 }

@@ -206,6 +206,7 @@ function createFakeLightClient({ presync, resolveDotName, sync = [], detail = []
         resolveDotName: resolveDotName ?? (() => Promise.resolve(null)),
         resolveExecutableManifest: () => Promise.reject(new Error('no manifests in this test')),
         resolveOwner: () => Promise.resolve(null),
+        resolvePrimaryName: () => Promise.resolve(null),
         resolveRootManifest: () => Promise.reject(new Error('no manifests in this test')),
         readLabelStores: () => Promise.resolve([]),
         readNewLabels: stores => Promise.resolve({ stores: [...stores], labels: [] }),
@@ -1573,7 +1574,7 @@ describe('worker lifecycle', () => {
     // Given a lifecycle serving one port that subscribed to its status
     const { lifecycle, timers, close } = startLifecycle();
     const session = openSession(lifecycle);
-    lifecycle.hear(session);
+    lifecycle.addStatusSink(session, { send: () => undefined, interrupt: () => undefined });
 
     // When the worker fails, is then marked ready, and its queued close runs
     lifecycle.fail(new Error(FATAL));

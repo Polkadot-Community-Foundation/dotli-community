@@ -1,6 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/* eslint-disable no-restricted-properties -- Predates the story contract: its plays still assert copy. */
+
 import { snapshot, untrack } from 'solid-js';
 import type { Meta, StoryObj } from 'storybook-solidjs-vite';
 import { expect, waitFor, within } from 'storybook/test';
@@ -28,7 +30,7 @@ const meta = {
         { label: 'App', value: 'playground.dot' },
         { label: 'Permission', value: 'Use your camera' },
       ],
-      notice: 'Granting this permission will reload the application.',
+      notice: 'Granting this permission reloads the app.',
       buttons: [
         { label: 'Deny', variant: 'danger', result: 'denied' },
         { label: 'Always allow', variant: 'secondary', result: 'granted' },
@@ -67,7 +69,7 @@ export const PermissionRequest: Story = {
         'Permission',
       ]);
       await expect(body.getByTestId('prompt-dialog-notice')).toHaveTextContent(
-        'Granting this permission will reload the application.',
+        'Granting this permission reloads the app.',
       );
       await expect(readFooter()).toEqual([
         ['Deny', 'danger'],

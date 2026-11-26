@@ -9,16 +9,17 @@ Code and workflow corrections go to the repo, never agent memory. This holds in 
 
 A correction has three possible homes:
 
-1. **A decision.** The default. A fresh `decision-keeper` files it as precedent. A later session meets it only when a
-   question it answers comes up, so it costs no context at start.
+1. **A decision.** The default. A fresh `oracle` keeps the technique or priority behind it as a rule for its
+   scenario, or keeps nothing when it only settles the task at hand. A later session meets the rule only when a question
+   it answers comes up, so it costs no context at start.
 2. **A check.** A lint rule or a test, where one can express the correction. It decides every case without being read.
 3. **A rule.** An owner doc and a checklist row, which every change is held to. Only when the owner says the
    correction binds every change.
 
 ## When to run
 
-- **In an `architecture` skill run**, at the moments its "Decisions and the decision keeper" lists.
-- **Outside a skill run**, whenever the owner corrects a code or workflow choice.
+- **In an `architecture` skill run**, at the moments its "Decisions and the oracle" lists.
+- **Outside a skill run**, whenever the owner corrects a code or workflow choice, through the `consult-oracle` skill.
 
 Outside a skill run, run it only for **substantive** corrections, meaning more general than the task at hand:
 
@@ -33,13 +34,13 @@ something to propose.
 
 ## Procedure
 
-1. **Record it.** Send a fresh `decision-keeper` a `RECORD`: the question the correction answers, the options, the
+1. **Record it.** Send a fresh `oracle` a `RECORD`: the question the correction answers, the options, the
    owner's words verbatim and the source (a design path, a PR or the branch). Asking the owner is not needed, since the
-   keeper's change shows in the diff. Outside a skill run, name the files the keeper changed to the owner, who commits
+   oracle's change shows in the diff. Outside a skill run, name the files the oracle changed to the owner, who commits
    them with the work.
 2. **Offer a check.** When a lint rule or a test can express the correction, propose it to the owner, through
-   `AskUserQuestion` or, in a skill run, a `QUESTION`. On approval, add it in the current change. Then send the keeper a
-   `RECORD` with the decision's ID and the check, so the decision is marked as enforced.
+   `AskUserQuestion` or, in a skill run, a `QUESTION`. On approval, add it in the current change. Then send the oracle a
+   `RECORD` with the rule's name and the check, so the rule is marked as enforced.
 3. **Promote it to a rule** only when the owner says it binds every change:
    - Add the rule to the owner doc and heading `## Where rules land` names. Each rule has exactly one owner doc.
    - Add a one-line row to the mirror checklist, citing the owner as `(<doc> § <heading>)` and, for AGENTS.md
@@ -66,7 +67,7 @@ something to propose.
 | Where code or files go                                | `docs/code/placement.md`                                                                                          | `docs/claude/architecture-checklist.md`                                        |
 | What a package owns or may import                     | that package's `README.md` or `eslint.config.js`, then the summary in `docs/code/placement.md` in the same commit | `docs/claude/architecture-checklist.md`, only when a diff can show a violation |
 | A new threshold definition                            | `docs/code/glossary.md`                                                                                           | none                                                                           |
-| Workflow or agent behaviour                           | `.claude/skills/architecture/SKILL.md`                                                                            | none                                                                           |
+| Workflow or agent behaviour                           | the skill or agent file that runs that workflow                                                                            | none                                                                           |
 
 The mirror column is the default. Some rules sit in both checklists, so the checklist whose section fits the diff
 surface decides, or the row goes in both where both apply. A checklist row exists only when a diff can show a violation.

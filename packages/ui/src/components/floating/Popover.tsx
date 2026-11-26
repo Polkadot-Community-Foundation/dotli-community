@@ -3,10 +3,10 @@
 
 import { createContext, createEffect, useContext, type Accessor } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { createSheetPreload } from './AnchoredContent.js';
 import { createAnchored, type Anchored } from './createAnchored.js';
 import { createContentPreload } from './createContentPreload.js';
 import { createTriggerWiring } from './createTriggerWiring.js';
+import { createSheetPreload } from './SheetContent.js';
 import { SurfaceSlot } from './SurfaceSlot.js';
 import type { CloseReason } from './closeReason.js';
 import type { Placement } from './FloatingLayer.js';
@@ -63,7 +63,8 @@ export function Popover(props: PopoverProps): JSX.Element {
       anchored.setOpen(false);
     },
   });
-  createTriggerWiring({ state, trigger: () => props.trigger, haspopup: 'dialog' });
+  createTriggerWiring({ state, trigger: () => props.trigger, popup: () => ({ haspopup: 'dialog' }) });
+  createInvoker(state, () => props.trigger);
   createContentPreload({ content: () => props.preload });
   createSheetPreload();
 
@@ -90,6 +91,31 @@ export function Popover(props: PopoverProps): JSX.Element {
         </PopoverSurface>
       </SurfaceSlot>
     </PopoverContext>
+  );
+}
+
+/**
+ * Makes the trigger the invoker of the anchored layer while it holds one. A sheet showing in the layer's place takes the
+ * invoker away.
+ */
+function createInvoker(state: PopoverState, trigger: () => HTMLElement | undefined): void {
+  createEffect(
+    () => {
+      const element = trigger();
+      return element === undefined ? undefined : { element, invokes: !(state.sheet() && state.open()) };
+    },
+    wiring => {
+      if (wiring === undefined) {
+        return;
+      }
+      const { element } = wiring;
+      if (wiring.invokes) {
+        element.setAttribute('popovertarget', state.id);
+      }
+      return () => {
+        element.removeAttribute('popovertarget');
+      };
+    },
   );
 }
 

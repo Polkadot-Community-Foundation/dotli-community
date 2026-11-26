@@ -2,17 +2,19 @@
   "name": "@config/vite",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "0.14.0",
+  "version": "0.16.1",
   "type": "module",
   "sideEffects": false,
   "exports": {
     "./app": "./src/app.ts",
+    "./astro-modulepreload": "./src/astroModulePreload.ts",
     "./astro-pwa": "./src/astroPwa.ts",
     "./build-info": "./src/buildInfoPlugin.ts",
     "./css-modules": "./src/cssModules.ts",
     "./dependency-versions": "./src/dependencyVersions.ts",
     "./inline-script": "./src/inlineScript.ts",
     "./mode-sync": "./src/modeSync.ts",
+    "./page-modules": "./src/readPageModules.ts",
     "./runtime-network-config": "./src/runtimeNetworkConfigPlugin.ts",
     "./service-worker": "./src/serviceWorker.ts",
     "./serving": "./src/serving.ts",
@@ -28,7 +30,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@sentry/vite-plugin": "11.12.0",
+    "@sentry/vite-plugin": "11.16.0",
     "vite-plugin-mkcert": "2.1.0",
     "vite-plugin-pwa": "2.0.0",
     "vite-plugin-wasm": "3.6.0"
@@ -36,6 +38,6 @@
   "devDependencies": {
     "@config/eslint": "*",
     "@config/typescript": "*",
-    "astro": "7.4.12"
+    "astro": "7.4.13"
   }
 }

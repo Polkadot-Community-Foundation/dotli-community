@@ -4,7 +4,8 @@ description: >-
   Use before any non-trivial change to code in `apps/`, `packages/` or `config/`, such as new code, a new, moved or
   renamed file, a new abstraction, extended behaviour or a refactor that moves logic. The single entry point that
   decides what the change is and where it goes before any file path is chosen, then builds it in small slices the owner
-  steers. Skip for a trivial edit as `docs/code/glossary.md` defines it.
+  steers. Skip for a trivial edit as `docs/code/glossary.md` defines it, and for a simplification, which the
+  `reduce-complexity` skill runs.
 ---
 
 # Architecture
@@ -48,8 +49,8 @@ holds:
 - the stages in order, each as one frame sentence with its layers and its share of the goal
 - a `Carries` section for facts a later stage needs, such as a contract, a seam or a measured cost
 
-The owner's decisions go to the decision keeper, not the roadmap. A roadmap written before the keeper existed keeps its
-`Rules` section, and those rules bind its stages.
+The owner's decisions go to the oracle, not the roadmap. A roadmap written before the oracle existed keeps its `Rules`
+section, and those rules bind its stages.
 
 The roadmap is a gate the owner approves. The agent that wrote it then ends with `DONE`. Each stage is its own change
 with its own `architect`, which runs steps 1 to 6 for that stage alone. Its first message names the roadmap and the
@@ -66,13 +67,13 @@ what later stages need. The main session then starts the next stage (`CLAUDE.md`
 5. Build it in slices. Each slice is one commit, and the owner says go or names a fix.
 6. Review it, fix what the review confirms, write the outcome record and send `DONE`.
 
-At any step, a question about how to build goes to the decision keeper first.
+At any step, a question about how to build goes to the oracle first.
 
-## Decisions and the decision keeper
+## Decisions and the oracle
 
-The owner's decisions are precedent. The `decision-keeper` agent (`.claude/agents/decision-keeper.md`) owns their store
-in `docs/decisions/` and decides how it is laid out and searched. Nothing else reads or writes the store, and no session
-reads it at start. Dispatch a fresh keeper for each call.
+How the owner solves recurring problems is precedent. The `oracle` agent (`.claude/agents/oracle.md`) keeps it as rules
+for scenarios in `docs/decisions/` and decides how the store is laid out and searched. Nothing else reads or writes the
+store, and no session reads it at start. Dispatch a fresh oracle for each call.
 
 **What to build is the owner's alone.** Ask these straight as a `QUESTION`, and record nothing, since they bind this
 change only:
@@ -82,39 +83,39 @@ change only:
 - the step 2 stop, and a radius that turns out well beyond what step 2 measured
 - a request outside this change, and a file that changed under you
 
-**How to build goes to the keeper first.** Any other question for the owner, such as where a module goes, what an
-interface between layers looks like or how a failure is handled, goes to the keeper as an `ASK`. An `ASK` holds:
+**How to build goes to the oracle first.** Any other question for the owner, such as where a module goes, what an
+interface between layers looks like or how a failure is handled, goes to the oracle as an `ASK`. An `ASK` holds:
 
 - the question
 - the situation in general terms, as a shape another change could meet, not this change's files
 - the options, unranked
-- the paths the keeper may read to judge the case
+- the paths the oracle may read to judge the case
 
-The keeper answers one of two ways:
+The oracle answers one of two ways:
 
-- `PRECEDENT`: take the option it names, and cite its IDs in the next `APPROVAL`. No question goes to the owner.
-- `ASK_OWNER`: ask the owner as a `QUESTION`, with your recommended option first. Quote the keeper's closest IDs, and
+- `PRECEDENT`: take the option it names, and cite its rules in the next `APPROVAL`. No question goes to the owner.
+- `ASK_OWNER`: ask the owner as a `QUESTION`, with your recommended option first. Quote the oracle's closest rules, and
   the condition that differs for each, beside the options.
 
-**Record the owner's answers on how to build.** Send the keeper a `RECORD` when:
+**Record the owner's answers on how to build.** Send the oracle a `RECORD` when:
 
 - the owner answers a `QUESTION` that came from `ASK_OWNER`
 - a steering fix states a preference beyond its own lines, such as "we don't do X here"
 - the owner overturns a call made by precedent
 
 A `RECORD` holds the question, the options, the owner's words verbatim and the source (the design path or PR). For an
-overturn it also names the overturned ID.
+overturn it also names the overturned rule. The oracle keeps only what reaches beyond this change, so it may answer
+`NOT_KEPT`.
 
-**Your preference never reaches the keeper.** An `ASK` lists the options in no ranked order and with no lean in their
+**Your preference never reaches the oracle.** An `ASK` lists the options in no ranked order and with no lean in their
 wording. A `RECORD` carries the owner's choice, never the option you recommended. A preference in the brief anchors the
-keeper on your reading, and the store would fill with your judgment instead of the owner's.
+oracle on your reading, and the store would fill with your judgment instead of the owner's.
 
-**The keeper never commits.** Stage its changes under `docs/decisions/` with the current slice commit, or in a commit of
-their own when no slice is open. When the keeper says a layout change is due, send it a `LAYOUT` call between slices,
+**The oracle never commits.** Stage its changes under `docs/decisions/` with the current slice commit, or in a commit of
+their own when no slice is open. When the oracle says a layout change is due, send it a `LAYOUT` call between slices,
 and commit the result on its own, named in the next `APPROVAL`.
 
-Every decision is precedent by default, for later changes too. It is always cited where it is used, never applied
-silently.
+A rule the oracle names is always cited where it is used, never applied silently.
 
 ## Step 1: Frame and goal
 
@@ -123,12 +124,13 @@ trigger or resulting state is unclear), run event storming with the owner first 
 Claude). Do not guess the package.
 
 Then write the goal: the end state the owner's request asks for, as a check a reader can run against the code once the
-change is done, such as "no module the audit names keeps a lifecycle phase outside one state value". Quote the owner's
-words beside it. Never narrow it to what is easy to prove. The goal stays fixed for the whole change:
+change is done, such as "no module the audit names keeps a lifecycle phase outside one state value". Beside it, restate
+in your own words what the owner meant, so the owner can see it was understood. Never quote the owner. Never narrow the
+goal to what is easy to prove. The goal stays fixed for the whole change:
 
 - The `reviewer` checks the code against it, and `DONE` reports each item as met or not met.
-- Only the owner narrows it. A cut is a `QUESTION` that shows the goal before and after, and never goes to the keeper.
-  The design records the cut with the owner's words.
+- Only the owner narrows it. A cut is a `QUESTION` that shows the goal before and after, and never goes to the oracle.
+  The design records the cut and what the owner meant by it, restated.
 - In a staged change the roadmap holds the goal, and a stage copies its share from the roadmap without rewriting it.
 
 ## Step 2: Size
@@ -152,15 +154,15 @@ Place the change with `docs/code/placement.md`:
 - § Inside an app and § Inside a package, for the folder and file.
 - § Cut rules, for where one concern ends and the next begins.
 
-If nothing fits, ask the keeper, then the owner (docs/code/placement.md § No home found). Never invent a package or a
+If nothing fits, ask the oracle, then the owner (docs/code/placement.md § No home found). Never invent a package or a
 file to resolve it.
 
 ## Step 4: Design
 
-Clarify what the frame leaves open, one question at a time, sorted as "Decisions and the decision keeper" sets. Then
-write `docs/_plans/<topic>-design.md`, at most about 60 lines:
+Clarify what the frame leaves open, one question at a time, sorted as "Decisions and the oracle" sets. Then write
+`docs/_plans/<topic>-design.md`, at most about 60 lines:
 
-- the frame, and the goal with the owner's words
+- the frame, and the goal with what the owner meant, restated
 - the placement, and the files expected to change
 - the interfaces between layers, and what happens when each layer fails
 - what is out of scope
@@ -184,22 +186,22 @@ Build the change as a run of slices. A slice is one commit the owner can read in
 files, that leaves typecheck and tests passing. Slices that set an interface between layers come before the slices that
 use it.
 
-**Writing a slice.** Write it yourself when it is small, or dispatch one fresh implementer ("Subagents"). Every line
-follows `docs/code/style.md` and the Architecture gate. Tests follow (docs/code/placement.md § Inside a package) for
-where they live and (AGENTS.md § Code style, Tests:) for how they behave. The implementer bans in "Subagents" bind you
-too.
+**Writing a slice.** Dispatch one fresh `implementer` ("Subagents"), which carries the code style, placement and the
+Architecture gate. Write a slice yourself only when it is small, and then read `.claude/agents/implementer.md` first,
+since its rules bind you too.
 
 **Judgment calls.** A call that shapes a public surface, a file's responsibility, a failure path or what a test covers
-goes to the keeper as an `ASK`. A smaller call is yours. List it as own judgment when the owner might decide it
-otherwise. An implementer that stops at a call gets the answer through `SendMessage` and goes on, and the smaller calls
-it lists in its report are yours to list.
+goes to the oracle as an `ASK`. A smaller call is yours. List it as own judgment when the owner might decide it
+otherwise. An implementer that stops at a call hands it back as a ready `ASK`. Send it to the oracle as it stands, give
+the implementer the answer through `SendMessage`, and it goes on. The smaller calls it lists in its report are yours to
+list.
 
 **The stop.** After each slice commits, stop with an `APPROVAL` that holds:
 
 - the commit hash and its file stat
 - what changed and why, in a few lines
-- each judgment call with its basis, precedent IDs or "own judgment"
-- the keeper's changes to `docs/decisions/`, if any
+- each judgment call with its basis, the precedent rules or "own judgment"
+- the oracle's changes to `docs/decisions/`, if any
 - what the next slice does
 
 The owner says go, or names a fix and its scope. A fix lands as its own commit, and the stop repeats for it. A fix that
@@ -208,7 +210,7 @@ change.
 
 **A discovery.** Update the design in place, and name the change in the next `APPROVAL`. A discovery that changes the
 goal, or a radius well beyond what step 2 measured, stops as a `QUESTION`. One that changes the placement or an
-interface between layers goes to the keeper as an `ASK` first.
+interface between layers goes to the oracle as an `ASK` first.
 
 ## Step 6: Review and fix
 
@@ -222,12 +224,12 @@ confirmed only when the code shows the defect at its `file:line`, and the verifi
 finding confirmed or dropped in the review file, with one line why. It never adds a finding or changes a severity. A
 dropped finding is never fixed or raised again. Minor findings skip verification.
 
-**Fix.** Every confirmed blocking or major finding, and every minor one, is fixed in this branch, in one fresh dispatch
-or by you when small. A fix that would change the goal, the placement or an interface between layers follows "A
-discovery" in step 5 first. The fixer may close a minor finding when the fix would make the code worse, or when the
-finding misreads what the code is for, with the reason in one line under the finding. "It is minor" and "out of scope"
-are not reasons. Read each closure and send back any whose reason does not hold. A fix that changes only docs or
-comments ends the review.
+**Fix.** Every confirmed blocking or major finding, and every minor one, is fixed in this branch, in one fresh
+`implementer` dispatch or by you when small, as step 5 says. A fix that would change the goal, the placement or an
+interface between layers follows "A discovery" in step 5 first. The fixer may close a minor finding when the fix would
+make the code worse, or when the finding misreads what the code is for, with the reason in one line under the finding.
+"It is minor" and "out of scope" are not reasons. Read each closure and send back any whose reason does not hold. A fix
+that changes only docs or comments ends the review.
 
 **Scoped re-review.** A fresh subagent runs the `reviewer` skill on the fix's commit range, with the IDs of the findings
 it answers. It checks that each is fixed and audits the fix's diff. After a blocking or major fix it also reads every
@@ -242,12 +244,12 @@ or accept them.
 
 - the slices, and the fixes the owner asked for at their stops
 - each question asked of the owner, and whether the owner took your recommended option
-- the calls the keeper answered with `PRECEDENT`, and the overturns among them
-- the keeper's dispatches
+- the calls the oracle answered with `PRECEDENT`, and the overturns among them
+- the oracle's dispatches
 - every finding by ID with its outcome, such as fixed or dropped by verification
 - the time from your first message to the last commit
 
-The record is statistics for the owner, who uses it to adjust this flow. No agent reads it back. The keeper never sees
+The record is statistics for the owner, who uses it to adjust this flow. No agent reads it back. The oracle never sees
 it, and no brief points at it. Token counts come from the session logs afterwards.
 
 Then send `DONE`. Finishing the branch (merge or PR) is a separate step the owner starts.
@@ -256,14 +258,9 @@ Then send `DONE`. Finishing the branch (merge or PR) is a separate step the owne
 
 ### The Architecture gate
 
-The `## Architecture` section of `AGENTS.md` is a gate, not a nicety. Every implementer brief states it outright:
-
-- each layer owns one responsibility a reader can name from its module
-- the interfaces between layers are small and explicit
-- each layer recovers from its own failures without waiting to be asked and reports its status up
-- calls across layers are idempotent
-
-Where a fix would add a special case, move the responsibility to the layer that owns it.
+The `## Architecture` section of `AGENTS.md` is a gate, not a nicety. The `implementer` agent states it outright and
+holds every line to it, and so does a design. Where a fix would add a special case, move the responsibility to the layer
+that owns it.
 
 ### A request that breaks a convention
 
@@ -279,36 +276,27 @@ so the seat runs on your model.
 - **A side investigation**, such as the call sites of a symbol or how a module recovers. Locate code with a fresh
   `Explore` on its own default. Read how it behaves with a fresh `general-purpose` on session, or inline. Inputs: one
   question, the paths to start from and the answer format.
-- **The keeper**: `subagent_type: "decision-keeper"`, on its own model. Input: one `ASK`, `RECORD` or `LAYOUT`.
-- **A slice implementer**: `general-purpose`, on `sonnet` when the brief fully defines the slice, such as a rename or a
-  mechanical reshape, and on session otherwise. Inputs: the design path, the slice's goal and files in a few lines, what
-  earlier slices found that it needs, and the bans below.
-- **The reviewer, a verifier, a fix of blocking or major findings, a scoped re-review**: session. **A minor sweep**:
-  `sonnet`.
+- **The oracle**: `subagent_type: "oracle"`, on its own model. Input: one `ASK`, `RECORD` or `LAYOUT`.
+- **A slice implementer**: `subagent_type: "implementer"`, on `sonnet` when the brief fully defines the slice, such as a
+  rename or a mechanical reshape, and on session otherwise. Inputs: the design path, the slice's goal and files in a few
+  lines, and what earlier slices found that it needs. The agent carries the code style, the Architecture gate and the
+  check and commit rules, so the brief never repeats them.
+- **A fix of blocking or major findings**: `implementer` on session. **A minor sweep**: `implementer` on `sonnet`.
+- **The reviewer, a verifier, a scoped re-review**: `general-purpose` on session. None of them is given the code style
+  docs beyond what its own skill reads.
 
 Briefs carry paths and inputs, never your verdicts. A seat writes its full report to the file its brief names. Its final
 message, at most 10 lines, gives that path and its counts.
 
-Every brief of a seat that reads code says how it looks up symbols:
+Every brief of a seat that reads code, other than the implementer, which carries its own, says how it reads:
 
 - Load LSP with `ToolSearch` (`select:LSP`) before the first lookup.
 - Answer a symbol question with LSP: `findReferences` for its users, `workspaceSymbol` or `goToDefinition` for where it
   is defined, `hover` for its type. Send independent calls in one turn.
 - Grep only plain text, config, Markdown and non-TypeScript files, or after an LSP call fails, and name that failure in
   the report.
-
-Every implementer brief carries these bans in words:
-
-- Read `docs/code/style.md` before the first edit, and write every line to it.
-- At a call the brief does not settle that shapes a public surface, a file's responsibility, a failure path or what a
-  test covers, stop and report it with the options you see. Never pick one. List the smaller calls you made in your
-  report.
-- No size, perf or measuring builds.
-- No slow Playwright suite before a commit. Commit after the fast checks, and run that suite on its own.
-- No sleeps or fixed timeouts. Wait on a readiness signal.
-- A rewrite that repeats one shape across many sites is one `perl -pi` or `node` script that fails when a pattern
-  matches nothing, followed by a read of its diff.
-- Stage only your files, by path.
+- Read a file whole, once, and again only after it changed. Keep each command's output under about 20k characters, so it
+  is never saved to a file.
 
 ## Red flags
 
@@ -316,8 +304,8 @@ Every implementer brief carries these bans in words:
 - **A task list, code snippets or per-file steps in the design.** The slices decide them.
 - **A slice the owner cannot read in a few minutes**, or two slices with no stop between them that the owner did not
   allow.
-- **A question about how to build that the keeper never saw**, or a call decided by precedent without its ID.
-- **A question about what to build sent to the keeper**, or its answer recorded as precedent.
+- **A question about how to build that the oracle never saw**, or a call decided by precedent without its rule.
+- **A question about what to build sent to the oracle**, or its answer recorded as precedent.
 - **Your recommended option in an `ASK` or a `RECORD`.**
 - **Treating the frame as an estimate, or "it's only a small diff".** Diff size says nothing about braid
   (docs/abstract/simple-vs-easy.md § The classification). Measure the radius before the design.
@@ -325,7 +313,7 @@ Every implementer brief carries these bans in words:
 
 ## See also
 
-- `.claude/agents/decision-keeper.md`: how the owner's decisions are stored and matched.
+- `.claude/agents/oracle.md`: how the owner's decisions are stored and matched.
 - `docs/abstract/simple-vs-easy.md`: the step 2 size probe, blast radius against braid.
 - `docs/abstract/event-storming.md`: finding the seam when the frame does not fit one vocabulary.
 - `docs/code/glossary.md`: the workflow thresholds.

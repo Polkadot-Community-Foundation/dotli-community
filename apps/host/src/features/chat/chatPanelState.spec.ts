@@ -13,16 +13,33 @@ import { authState } from '../account/index.js';
 import { recordNotified } from '../../testing/recordNotified.js';
 import { chatPanelState } from './chatPanelState.js';
 import { createDeferred, noop } from '@dotli/shared';
-import { createMemoryStorage, resetAllStoresForTests as resetStores } from '@dotli/shared/testing';
+import { resetAllStoresForTests as resetStores } from '@dotli/shared/testing';
 
 let remove: () => void = noop;
-let local: Storage;
 let chat: ChatStore;
 let connections: ReturnType<typeof createChatConnections>;
 
-function showProduct(label: string): void {
-  productState.setLoaded({ label, productId: asProductId(toProductId(label)), details: { chat: true } });
+/** Shows the product `label` with the rooms `roomIds` and a chat connection, to a logged-in user. */
+async function showProduct(label: string, roomIds: string[] = ['main']): Promise<void> {
+  connections.register(toProductId(label), createRecordingConnection());
+  productState.setLoaded({ label, productId: asProductId(toProductId(label)) });
   authState.set({ tag: 'Connected', session: { connected: true } });
+  for (const roomId of roomIds) {
+    await chat.createRoom(toProductId(label), { roomId, name: roomId, icon: '' });
+  }
+}
+
+/** Resolves once the panel state shows the chat button. */
+function waitForButton(): Promise<void> {
+  const shown = createDeferred<undefined>();
+  onTestFinished(
+    chatPanelState.store.subscribe(state => {
+      if (chatPanelState.isButtonVisible(state)) {
+        shown.resolve(undefined);
+      }
+    }),
+  );
+  return shown.promise;
 }
 
 async function postProductMessage(label: string, roomId: string): Promise<void> {
@@ -34,10 +51,9 @@ async function postProductMessage(label: string, roomId: string): Promise<void> 
 }
 
 beforeEach(() => {
-  local = createMemoryStorage();
   connections = createChatConnections();
   chat = createChatStore({ repo: createMemoryChatRepo(), connections });
-  remove = chatPanelState.start({ chat: () => Promise.resolve(chat), storage: local });
+  remove = chatPanelState.start({ chat: () => Promise.resolve(chat), connections });
 });
 
 afterEach(() => {
@@ -46,29 +62,123 @@ afterEach(() => {
 });
 
 describe('chat panel state', () => {
-  it('As a user, I load a product and log in and see the chat button only for a chat-capable product while logged in', () => {
-    // When a product that declares no chat loads, then loads again declaring chat, then I log in
-    productState.setLoaded({ label: 'first-app', productId: asProductId(toProductId('first-app')) });
-    const withoutChat = chatPanelState.isButtonVisible();
-    productState.setLoaded({
-      label: 'first-app',
-      productId: asProductId(toProductId('first-app')),
-      details: { chat: true },
-    });
-    const loggedOut = chatPanelState.isButtonVisible();
+  it('As a logged-in user, I open a product that has a room and see the chat button once its chat connection registers', async () => {
+    // Given a product with a room from an earlier visit, shown with no chat connection yet
     authState.set({ tag: 'Connected', session: { connected: true } });
+    const productId = asProductId(toProductId('app'));
+    await chat.createRoom(productId, { roomId: 'main', name: 'Main', icon: '' });
+    productState.setLoaded({ label: 'app', productId });
+    const before = chatPanelState.isButtonVisible();
+    const shown = waitForButton();
+
+    // When
+    connections.register(productId, createRecordingConnection());
+    await shown;
 
     // Then
-    expect({ withoutChat, loggedOut, loggedIn: chatPanelState.isButtonVisible() }).toEqual({
-      withoutChat: false,
-      loggedOut: false,
-      loggedIn: true,
-    });
+    expect(before).toBe(false);
+    expect(chatPanelState.store.get().available).toBe(true);
   });
 
-  it('As a user, I see my product fail to load and the chat button go away', () => {
+  it('As a user, I open a product whose chat connection registered before it showed and see chat available at once', () => {
     // Given
-    showProduct('app');
+    const productId = asProductId(toProductId('app'));
+    connections.register(productId, createRecordingConnection());
+
+    // When
+    productState.setLoaded({ label: 'app', productId });
+
+    // Then
+    expect(chatPanelState.store.get().available).toBe(true);
+  });
+
+  it('As a user with the chat panel open, I see chat stay available and open when its connection ends', async () => {
+    // Given
+    const productId = asProductId(toProductId('app'));
+    const unregister = connections.register(productId, createRecordingConnection());
+    productState.setLoaded({ label: 'app', productId });
+    authState.set({ tag: 'Connected', session: { connected: true } });
+    await chat.createRoom(productId, { roomId: 'main', name: 'Main', icon: '' });
+    chatPanelState.setOpen(true);
+
+    // When
+    unregister();
+
+    // Then
+    expect(chatPanelState.store.get()).toMatchObject({ available: true, open: true });
+  });
+
+  it('As a user, I leave a product with chat for one with no chat connection and see chat unavailable', async () => {
+    // Given
+    await showProduct('app');
+
+    // When
+    productState.setLoaded({ label: 'next', productId: asProductId(toProductId('next')) });
+
+    // Then
+    expect(chatPanelState.store.get().available).toBe(false);
+  });
+
+  it('As a user, I see no chat when a chat connection registers for a product not on show', () => {
+    // Given
+    productState.setLoaded({ label: 'app', productId: asProductId(toProductId('app')) });
+
+    // When
+    connections.register(toProductId('other'), createRecordingConnection());
+
+    // Then
+    expect(chatPanelState.store.get().available).toBe(false);
+  });
+
+  it('As a user who is not logged in, I see no chat button for a product with chat and a room', async () => {
+    // Given
+    const productId = asProductId(toProductId('app'));
+    connections.register(productId, createRecordingConnection());
+
+    // When
+    productState.setLoaded({ label: 'app', productId });
+    await chat.createRoom(productId, { roomId: 'main', name: 'Main', icon: '' });
+
+    // Then
+    expect(chatPanelState.store.get().hasContacts).toBe(true);
+    expect(chatPanelState.isButtonVisible()).toBe(false);
+  });
+
+  it('As a user, I leave a product before the read of its rooms lands and see no chat button for the next one', async () => {
+    // Given a read of the first product's rooms, waiting
+    remove();
+    const first = asProductId(toProductId('first'));
+    const asked = createDeferred<undefined>();
+    const check = createDeferred<boolean>();
+    function hasContacts(productId: string): Promise<boolean> {
+      if (productId !== first) {
+        return Promise.resolve(false);
+      }
+      asked.resolve(undefined);
+      return check.promise;
+    }
+    authState.set({ tag: 'Connected', session: { connected: true } });
+    connections.register(first, createRecordingConnection());
+    connections.register(toProductId('next'), createRecordingConnection());
+    productState.setLoaded({ label: 'first', productId: first });
+    remove = chatPanelState.start({
+      chat: () => Promise.resolve({ subscribe: chat.subscribe, hasContacts }),
+      connections,
+    });
+    await asked.promise;
+
+    // When the next product loads, then the first read lands
+    productState.setLoaded({ label: 'next', productId: asProductId(toProductId('next')) });
+    check.resolve(true);
+    await check.promise;
+
+    // Then
+    expect(chatPanelState.isButtonVisible()).toBe(false);
+  });
+
+  it('As a user, I see my product fail to load and the chat button go away', async () => {
+    // Given
+    await showProduct('app');
 
     // When
     productState.setError();
@@ -78,9 +188,9 @@ describe('chat panel state', () => {
     expect(chatPanelState.store.get().available).toBe(false);
   });
 
-  it('As a user, I log out and see the chat panel close', () => {
+  it('As a user, I log out and see the chat panel close', async () => {
     // Given
-    showProduct('app');
+    await showProduct('app');
     chatPanelState.setOpen(true);
 
     // When
@@ -93,7 +203,7 @@ describe('chat panel state', () => {
 
   it('As a user, I get product messages outside the room I am viewing and see them count as unread, per room', async () => {
     // Given
-    showProduct('app');
+    await showProduct('app', ['a', 'b']);
 
     // When
     await postProductMessage('app', 'a');
@@ -105,9 +215,21 @@ describe('chat panel state', () => {
     expect(chatPanelState.getTotalUnread()).toBe(3);
   });
 
+  it('As a user, I get a message the product posts to its bot and see nothing unread', async () => {
+    // Given
+    await showProduct('app');
+    await chat.registerBot(toProductId('app'), { botId: 'helper', name: 'Helper', icon: '' });
+
+    // When
+    await postProductMessage('app', 'helper');
+
+    // Then
+    expect(chatPanelState.getTotalUnread()).toBe(0);
+  });
+
   it('As a user viewing a room, I get a new message there and see it seen at once while other rooms stay unread', async () => {
     // Given
-    showProduct('app');
+    await showProduct('app', ['a', 'b']);
     await postProductMessage('app', 'a');
     await postProductMessage('app', 'a');
     await postProductMessage('app', 'b');
@@ -124,8 +246,7 @@ describe('chat panel state', () => {
 
   it('As a user, I send a message and another product gets one, and neither counts as unread', async () => {
     // Given
-    showProduct('app');
-    connections.register(toProductId('app'), createRecordingConnection());
+    await showProduct('app');
 
     // When
     await chat.postUserMessage({ productId: toProductId('app'), roomId: 'a', text: 'hello' });
@@ -137,7 +258,7 @@ describe('chat panel state', () => {
 
   it('As a user, I load a different product and see the open room, unread counts and composer error reset', async () => {
     // Given
-    showProduct('app');
+    await showProduct('app', ['a']);
     await postProductMessage('app', 'a');
     chatPanelState.setOpen(true);
     chatPanelState.openRoom('a');
@@ -151,14 +272,14 @@ describe('chat panel state', () => {
     expect(chatPanelState.store.get().runtimeProductId).toBe('next.dot');
   });
 
-  it('As a user, I reload the same product and keep my open room', () => {
+  it('As a user, I reload the same product and keep my open room', async () => {
     // Given
-    showProduct('app');
+    await showProduct('app');
     chatPanelState.setOpen(true);
     chatPanelState.openRoom('a');
 
     // When
-    productState.setLoaded({ label: 'app', productId: asProductId(toProductId('app')), details: { chat: true } });
+    productState.setLoaded({ label: 'app', productId: asProductId(toProductId('app')) });
 
     // Then
     expect(chatPanelState.store.get().activeRoomId).toBe('a');
@@ -170,15 +291,15 @@ describe('chat panel state', () => {
     productState.setLoaded({ label: 'early', productId: asProductId('early.dot') });
 
     // When
-    remove = chatPanelState.start({ storage: local });
+    remove = chatPanelState.start();
 
     // Then
     expect(chatPanelState.store.get().runtimeProductId).toBe('early.dot');
   });
 
-  it('As a user, I go back to the room list and see the composer error cleared', () => {
+  it('As a user, I go back to the room list and see the composer error cleared', async () => {
     // Given
-    showProduct('app');
+    await showProduct('app');
     chatPanelState.setOpen(true);
     chatPanelState.openRoom('a');
     chatPanelState.setComposerError('oops');
@@ -190,55 +311,15 @@ describe('chat panel state', () => {
     expect(chatPanelState.store.get()).toMatchObject({ activeRoomId: null, composerError: null });
   });
 
-  it('As a user, I drag the panel width past its bounds and see it clamped, persisted and restored when the panel opens', () => {
-    // Given
-    showProduct('app');
-
-    // When the panel is dragged wide and saved, then dragged narrow, then opens
-    chatPanelState.setWidth(9999);
-    chatPanelState.persistWidth();
-    const persisted = chatPanelState.store.get().width;
-    const stored = local.getItem('dotli:chat-panel-width');
-    chatPanelState.setWidth(10);
-    const narrowed = chatPanelState.store.get().width;
-    chatPanelState.setOpen(true);
-
-    // Then
-    expect({ persisted, stored, narrowed, opened: chatPanelState.store.get().width }).toEqual({
-      persisted: 560,
-      stored: '560',
-      narrowed: 280,
-      opened: 560,
-    });
-  });
-
-  it.each([
-    { stored: '480', opened: 480 },
-    { stored: 'wide', opened: 360 },
-    { stored: '100', opened: 360 },
-    { stored: '900', opened: 560 },
-  ])(
-    'As a returning user, I open the panel at the width I saved, a stored width that does not parse opens at the default, a stored width below the minimum opens at the default, and one above the maximum opens at the maximum (stored $stored)',
-    ({ stored, opened }) => {
-      // Given a width saved in an earlier session and a product with chat
-      local.setItem('dotli:chat-panel-width', stored);
-      showProduct('app');
-
-      // When
-      chatPanelState.setOpen(true);
-
-      // Then
-      expect(chatPanelState.store.get().width).toBe(opened);
-    },
-  );
-
   it('As the chat panel, I follow the login, product and chat changes and read each new value at once', async () => {
     // Given each input set from inside the listener of the one before, and every listener reading the panel
     const seen: unknown[] = [];
+    connections.register(toProductId('app'), createRecordingConnection());
+    await chat.createRoom(toProductId('app'), { roomId: 'a', name: 'A', icon: '' });
     onTestFinished(
       authState.loggedInStore.listen(() => {
         seen.push({ loggedIn: chatPanelState.store.get().loggedIn });
-        productState.setLoaded({ label: 'app', productId: asProductId(toProductId('app')), details: { chat: true } });
+        productState.setLoaded({ label: 'app', productId: asProductId(toProductId('app')) });
       }),
     );
     onTestFinished(
@@ -268,26 +349,23 @@ describe('chat panel state', () => {
     });
   });
 
-  it('As a user, I drag the panel past its clamp and clear no error, and the panel redraws only for a new width', () => {
+  it('As a user, I clear no error, and the panel redraws only for a new error', () => {
     // Given
-    productState.setLoaded({ label: 'app', productId: asProductId('app.dot'), details: { chat: true } });
-    chatPanelState.setWidth(10_000);
+    productState.setLoaded({ label: 'app', productId: asProductId('app.dot') });
     const notified = recordNotified(chatPanelState.store);
 
     // When
-    chatPanelState.setWidth(10_000);
-    chatPanelState.setWidth(900);
     chatPanelState.setComposerError(null);
-    chatPanelState.setWidth(400);
+    chatPanelState.setComposerError('oops');
 
     // Then
-    expect(notified.map(state => state.width)).toEqual([400]);
+    expect(notified.map(state => state.composerError)).toEqual(['oops']);
   });
 
   it('As a user whose page started the chat panel state twice, I get a product message and see it count once as unread', async () => {
     // Given
-    onTestFinished(chatPanelState.start({ chat: () => Promise.resolve(chat), storage: local }));
-    showProduct('app');
+    onTestFinished(chatPanelState.start({ chat: () => Promise.resolve(chat) }));
+    await showProduct('app', ['a']);
 
     // When
     await postProductMessage('app', 'a');
@@ -302,7 +380,7 @@ describe('chat panel state', () => {
     authState.set({ tag: 'Connected', session: { connected: true } });
 
     // When
-    remove = chatPanelState.start({ chat: () => Promise.resolve(chat), storage: local });
+    remove = chatPanelState.start({ chat: () => Promise.resolve(chat), connections });
 
     // Then
     expect(chatPanelState.store.get().loggedIn).toBe(true);
@@ -312,9 +390,9 @@ describe('chat panel state', () => {
     // Given a panel state stopped while its chat store still loads
     remove();
     const loading = createDeferred<ChatStore>();
-    chatPanelState.start({ chat: () => loading.promise, storage: local })();
+    chatPanelState.start({ chat: () => loading.promise, connections })();
     remove = noop;
-    showProduct('app');
+    await showProduct('app', ['a']);
 
     // When the store loads and the product posts
     loading.resolve(chat);
@@ -332,7 +410,7 @@ describe('chat panel state, rooms seen', () => {
     repo.reads.hold.messages = true;
     remove();
     chat = createChatStore({ repo, connections });
-    remove = chatPanelState.start({ chat: () => Promise.resolve(chat), storage: local });
+    remove = chatPanelState.start({ chat: () => Promise.resolve(chat), connections });
     return {
       /** Lets the waiting read land, once it has started. */
       async release() {
@@ -344,7 +422,7 @@ describe('chat panel state, rooms seen', () => {
 
   it('As a user, I open a room with unread messages and see it marked seen once its messages show', async () => {
     // Given
-    showProduct('app');
+    await showProduct('app', ['r1']);
     chatPanelState.setOpen(true);
     onTestFinished(chatPanelState.markFollowedRoomSeen(chat.view));
 
@@ -362,7 +440,7 @@ describe('chat panel state, rooms seen', () => {
   it('As a user who closed the panel, I wait for a late conversation read and see nothing marked seen', async () => {
     // Given: an unread message in a room, opened with its read waiting.
     const reads = holdReads();
-    showProduct('app');
+    await showProduct('app', ['r1']);
     chatPanelState.setOpen(true);
     await postProductMessage('app', 'r1');
     onTestFinished(chatPanelState.markFollowedRoomSeen(chat.view));
@@ -382,7 +460,7 @@ describe('chat panel state, rooms seen', () => {
   it('As a user who went back to the list, I wait for a late conversation read and see nothing marked seen', async () => {
     // Given: a room open, and its read waiting.
     const reads = holdReads();
-    showProduct('app');
+    await showProduct('app', ['r1']);
     chatPanelState.setOpen(true);
     await postProductMessage('app', 'r1');
     onTestFinished(chatPanelState.markFollowedRoomSeen(chat.view));
